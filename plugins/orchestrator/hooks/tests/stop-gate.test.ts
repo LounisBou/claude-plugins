@@ -14,10 +14,11 @@ import {
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE,
 } from '../stop-gate.ts'
-import { register as registerGuards } from '../guards.ts'
+import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
 import { roundEntry } from '../round.ts'
+import { parseWait } from '../relay.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
 
 // A turn's question for the operator in the decide shape: the orchestrator's stop gate refuses an
@@ -2183,23 +2184,23 @@ const turnStarts = (wait: Record<string, Function>, dollar: any) => wait['turn.s
 const NOTHING_RUNS = { background_tasks: [], session_crons: [] }
 
 test('a declaration is validated: a known kind, and what it blocks where the kind needs it', () => {
-  expect(parseDeclaration({ kind: 'operator', blocks: '  G3:\n the scope ' })).toEqual({ wait: { kind: 'operator', blocks: 'G3: the scope' } })
+  expect(parseDeclaration({ kind: 'operator', blocks: '  G3:\n the scope ', question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G3: the scope', question: ASKED } })
   expect(parseDeclaration({ kind: 'tool', blocks: 'ci-watch.sh 12' })).toEqual({ wait: { kind: 'tool', blocks: 'ci-watch.sh 12' } })
   expect(parseDeclaration({ kind: 'deferred', blocks: '2 items' })).toEqual({ wait: { kind: 'deferred', blocks: '2 items' } })
   expect(parseDeclaration({ kind: 'done', blocks: 'whatever' })).toEqual({ wait: { kind: 'done', blocks: '' } })
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: true })).toEqual({ wait: { kind: 'operator', blocks: 'G1', urgent: true } })
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: false })).toEqual({ wait: { kind: 'operator', blocks: 'G1' } })
-  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes' }]) {
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: true, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', urgent: true, question: ASKED } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: false, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', question: ASKED } })
+  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes', question: ASKED }, { kind: 'tool', blocks: 'x', question: ASKED }]) {
     expect('error' in parseDeclaration(bad)).toBe(true)
   }
 })
 
 test('an operator question may declare the subject it asks consent on, read by the relay in its own turn only', () => {
   const waiver = { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: waiver })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: waiver, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver, question: ASKED } })
   for (const bad of [
-    { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
-    { kind: 'operator', blocks: 'G1', consent: { kind: 'merge', repo: 'acme/thing' } },
+    { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
+    { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'merge', repo: 'acme/thing' } },
   ]) expect('error' in parseDeclaration(bad)).toBe(true)
   const declarations = new Declarations()
   declarations.turnStarted()
@@ -2236,13 +2237,13 @@ test('with no wait declared, the gate reads the last line, and its refusal teach
 test('a declared operator wait releases the stop whatever the last line says', async () => {
   const wait = waitMounted()
   const fx = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
-  expect((await declare(wait, fx.dollar, { kind: 'operator', blocks: 'G2: the scope' })).isError).toBeUndefined()
+  expect((await declare(wait, fx.dollar, { kind: 'operator', blocks: 'G2: the scope', question: ASKED })).isError).toBeUndefined()
   // The model's own line says done, which the open row would refuse: the declaration decides.
   const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: done`, ...NOTHING_RUNS }))
   expect((passed.answer as any)?.block).toBeUndefined()
   expect(fx.written.some(l => l.endsWith('| stop gate: check1 blocks G2: the scope'))).toBe(true)
   // A declared operator wait that blocks nothing is refused as the line would be.
-  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'nothing' })
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'nothing', question: ASKED })
   const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: ASKED, ...NOTHING_RUNS }))
   expect(String((held.answer as any).block)).toContain('blocks nothing')
 })
@@ -2304,11 +2305,116 @@ test('the turn\'s end hands the declared wait to its readers, and shows the answ
   expect(machineLine(seen)).toBe('waiting: tool — ci-watch.sh 12')
   expect(shown).toEqual({ text: 'Watching.' })
   // An urgent operator wait reaches the turn's end as the urgent line the relay reads.
-  await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true })
+  await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true, question: ASKED })
   await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, (x: any) => { seen = x.answer; return { text: x.answer } })
   expect(URGENT_LINE.test(machineLine(seen))).toBe(true)
   expect(MACHINE_LINE.exec(machineLine(seen))?.[1]).toBe('G4: the scope')
   // An agent's end is not the session's.
   await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, (x: any) => { seen = x.answer; return { text: x.answer } })
   expect(seen).toBe('Done.')
+})
+
+// --- the question rides with the declaration (hooks/wait.ts, hooks/guards.ts) -------------------------
+
+const SIX = ['**Question 1 of 1**', '_Subject_ : a thing', '_Choices_ :', ...'ABCDEF'.split('').map(l => `- **${l}** : ${l}`)].join('\n')
+const BARE = ['**Question 1 of 1**', '_Subject_ : a thing', '_Choices_ :', '- **A** : a', '- **B** : b', '_Recommendation_ : A'].join('\n')
+const TWO = [ASKED, ASKED.replace('1 of 1', '2 of 2')].join('\n\n')
+
+test('declare_wait on the operator is refused without its question block, and names what is wrong with one', async () => {
+  const wait = waitMounted()
+  const { dollar } = fakeDollar({})
+  const missing = await declare(wait, dollar, { kind: 'operator', blocks: 'the mode' })
+  expect(missing.isError).toBe(true)
+  expect(missing.result).toContain('`question`')
+  for (const bare of ['', '   ', '**Question 1 of 1**', 'Which mode, A or B?']) {
+    const refused = await declare(wait, dollar, { kind: 'operator', blocks: 'the mode', question: bare })
+    expect(refused.isError).toBe(true)
+  }
+  expect((await declare(wait, dollar, { kind: 'operator', blocks: 'the mode', question: SIX })).result).toContain('more than five choices')
+  expect((await declare(wait, dollar, { kind: 'operator', blocks: 'the mode', question: BARE })).result).toContain('no argument')
+  expect((await declare(wait, dollar, { kind: 'operator', blocks: 'the mode', question: TWO })).result).toContain('One question per turn')
+  expect((await declare(wait, dollar, { kind: 'tool', blocks: 'a run', question: ASKED })).isError).toBe(true)
+  // Nothing was declared by the refusals: the stop reads the message alone.
+  const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Nothing will wake you')
+})
+
+test('a valid question is accepted, and the round entry holds it though the prose around it asks nothing', async () => {
+  const wait = waitMounted()
+  const { dollar } = fakeDollar({})
+  const accepted = await declare(wait, dollar, { kind: 'operator', blocks: 'the report', question: ASKED })
+  expect(accepted.isError).toBeUndefined()
+  let handed = ''
+  const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'J\'attends votre choix.' }, (x: any) => { handed = x.answer; return { text: x.answer } })
+  const entry = roundEntry('a1b2c3', 'Orch: belt', parseWait(handed)!, '2026-11-12T10:00:00.000Z', '2026-11-12T10:00:00.000Z')
+  expect(entry.question).toContain('**Question 1 of 1**')
+  expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
+  // What the operator reads in the tab holds the question too, never the machine line.
+  expect(String((shown as any).text)).toContain('**Question 1 of 1**')
+  expect(String((shown as any).text)).not.toContain('waiting: operator')
+  // A message that already shows its block is not given a second one.
+  let again = ''
+  await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, (x: any) => { again = x.answer; return { text: x.answer } })
+  expect(again.split('**Question 1 of 1**').length).toBe(2)
+})
+
+test('a turn that declared its question passes the stop whatever its prose, first stop and re-fired stop alike', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({})
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  const first = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends votre choix.', ...NOTHING_RUNS }))
+  expect(first.answer).toBe(first.passed)
+  const refired = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends toujours.', stop_hook_active: true, ...NOTHING_RUNS }))
+  expect(refired.answer).toBe(refired.passed)
+  expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
+})
+
+// The coordinator of the machine, as its record names it, and the messages the module sent it.
+function withCoordinator(fx: ReturnType<typeof fakeDollar>): string[] {
+  const sent: string[] = []
+  const read = fx.dollar.fs.read
+  fx.dollar.fs.read = async (p: string) => (p === `${STATE}/coordinator.json` ? '{"name":"Coord: ops [c0ffee]"}' : read(p))
+  fx.dollar.session.send = async ({ text }: { to: unknown; text: string }) => { sent.push(text); return { isDelivered: true } }
+  return sent
+}
+const UNASKED = 'the report\n\nwaiting: operator — blocks: the mode'
+
+test('a re-fired stop whose operator wait still holds no question is refused twice more, then passes with a log line and a notice', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({})
+  const sent = withCoordinator(fx)
+  const refired = () => stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(REFIRED_REFUSALS).toBe(2)
+  const first = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
+  expect((first.answer as any).block).toContain('**Question i of N**')
+  for (let i = 0; i < REFIRED_REFUSALS; i++) expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+  expect(sent).toEqual([])
+  const last = await refired()
+  expect(last.answer).toBe(last.passed)
+  expect(fx.written.filter(l => l.includes('an operator wait with no question let through after 2 more refusals')).length).toBe(1)
+  expect(sent.length).toBe(1)
+  expect(sent[0]).toContain('Orch: belt')
+  expect(sent[0]).toContain('no question block')
+  // A later turn starts over: its first stop is refused, and so is its re-fired one.
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
+  expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+})
+
+test('a re-fired stop the gate used to step aside from still does when nothing asks the operator, or the session is no orchestrator', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({})
+  const quiet = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'stopped.', stop_hook_active: true }))
+  expect(quiet.answer).toBe(quiet.passed)
+  const asked = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the mode`, stop_hook_active: true }))
+  expect(asked.answer).toBe(asked.passed)
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
+  const relay = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(relay.answer).toBe(relay.passed)
+})
+
+test('the notice to the coordinator is only a log line when there is none to tell', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({})
+  for (let i = 0; i <= REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(fx.written.some(l => l.includes('no coordinator to tell'))).toBe(true)
 })

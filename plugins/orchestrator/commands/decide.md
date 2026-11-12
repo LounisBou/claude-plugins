@@ -56,9 +56,8 @@ The shape is the method's question (`method:lifecycle`, « Questions to the oper
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
 « or your own words ». Then call
-`declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
-that message but the « Recorded » line of the answer just given: no status, no other
-question, no agent report.
+`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
+that message but the « Recorded » line of the answer just given: no status.
 
 ## 3. Wait for the answer
 
