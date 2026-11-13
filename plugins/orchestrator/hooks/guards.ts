@@ -34,6 +34,7 @@ import {
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
+import { agentStopNudge } from './agent-stop.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, type WaitRead } from './unanswered-question.ts'
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, REFERENCED } from './supervision.ts'
@@ -515,6 +516,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return next(e)
       }
       const role = roleOf(name)
+      if (role === 'agent') {
+        const nudge = agentStopNudge(String(e.last_assistant_message ?? ''), hostTasks(e.background_tasks, e.session_crons))
+        if (nudge === null) return next(e)
+        await logLine($, 'stop gate: agent told what to end on')
+        return refuse(nudge)
+      }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       // One question per turn, for the orchestrator and the coordinator alike: read off the
       // message alone, before any read the checks pay.
