@@ -393,7 +393,7 @@ if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; 
                 END { flush() }' "$rulings" 2>/dev/null || true)
             rchars=$(LC_ALL=C tr -d '\200-\277' < "$rulings" | wc -c | tr -d ' ')
             [ "$rchars" -le "$rulings_warn" ] \
-                || printf '%s:%s: warning: rulings file %s is %s characters, over %s: move out what is carried out or superseded (not a finding)\n' \
+                || printf '%s:%s: warning: rulings file %s is %s characters, over %s: mark what is carried out [done: <ref>] or superseded [superseded: <date>], succession.sh live moves it out (not a finding)\n' \
                     "$brief" "$rl_line" "$rulings" "$rchars" "$rulings_warn"
         fi
     fi
@@ -413,7 +413,7 @@ if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; 
         if [ -f "$state_file" ]; then
             schars=$(LC_ALL=C tr -d '\200-\277' < "$state_file" | wc -c | tr -d ' ')
             [ "$schars" -le "$state_warn" ] \
-                || printf '%s:%s: warning: state file %s is %s characters, over %s: prune it, lifecycle item 0 — the live part stays, the finished journal goes to an archive (not a finding)\n' \
+                || printf '%s:%s: warning: state file %s is %s characters, over %s: prune it, lifecycle item 0 — write its LIVE SUMMARY line, succession.sh live moves the journal before it to an archive (not a finding)\n' \
                     "$brief" "${sl%%:*}" "$state_file" "$schars" "$state_warn"
         fi
     fi
