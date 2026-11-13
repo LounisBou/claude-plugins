@@ -190,16 +190,17 @@ Display: "PASS {pass_count} — Running review..."
 
 ### Step 3: Run review
 
-Invoke the review using the Skill tool or by launching review agents directly:
+Run the review (Skill tool or review agents):
 - Launch code-reviewer and silent-failure-hunter in parallel (minimum)
 - Optionally add comment-analyzer, pr-test-analyzer, code-simplifier
+- End each agent's prompt with `begin_pass`'s `report_request`, verbatim
 
-Wait for ALL agent hand-backs (3 tries). Aggregate.
+Wait for ALL hand-backs (3 tries). Aggregate.
 
 ### Step 4: Check for clean exit
 
-Count ALL findings across all agents (Critical + Important + Suggestions). The
-loop computes the verdict from each agent's closing findings block.
+Count ALL findings (Critical + Important + Suggestions); the loop reads each
+agent's closing findings block.
 
 **If total findings == 0:**
 → go to Step 7 (Exit Summary) with exit_reason = "clean"
@@ -266,10 +267,10 @@ Display:
 ### Skipped Issues (if any)
 - {issue description} — Reason: {suggestion/ambiguous/already_attempted}
 
-{the `record:` line of the exit answer, verbatim}
+{the last `record:` line, verbatim}
 ```
 
-The last line is the `record:` line the answer that carried `exit` ended with, copied
+The last line is the `record:` line the last answer that carried one ended with, copied
 as it stands, whether it names a path or says `none — <why>`. When the tool was not
 listed, or the exit answer carried no such line, print `record: none — the loop tool
 is not available`.

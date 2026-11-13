@@ -10,7 +10,8 @@
     "norms": 23604,
     "orchestrator": 67231,
     "pr-review": 24192,
-    "statusbar": 775
+    "statusbar": 775,
+    "telemetry": 273
   },
   "duplicates": 65
 }

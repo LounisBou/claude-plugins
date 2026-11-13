@@ -49,6 +49,10 @@ export type Loop = {
   exit?: string
   // Whether this loop's review record was attempted: one per loop.
   isRecorded: boolean
+  // Whether the review record is still owed: GitHub kept failing transiently when it was written.
+  isRecordPending: boolean
+  // The head the checkout was at when the loop ended: the record is written at it, and no other.
+  reviewedHead?: string
   // Whether a review runs: from begin_pass to the findings the loop accepts.
   isReviewing: boolean
   // A reviewer's loop: one pass, no fix, its findings are the verdict.
@@ -75,7 +79,7 @@ export type Loop = {
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 
 export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string): void {
   loop.isActive = true
@@ -89,6 +93,8 @@ export function resetLoop(testCommand: string, isReviewOnly = false, dir?: strin
   loop.fixes = []
   loop.exit = undefined
   loop.isRecorded = false
+  loop.isRecordPending = false
+  loop.reviewedHead = undefined
   loop.isReviewing = false
   loop.isReviewOnly = isReviewOnly
   loop.reports = []

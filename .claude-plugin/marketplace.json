@@ -49,7 +49,7 @@
       "name": "implement",
       "source": "./plugins/implement",
       "description": "The feature lifecycle as five commands: brainstorm and plan a feature, run its phases, check a delivery, close the branch, prepare the next one.",
-      "version": "0.6.12",
+      "version": "0.6.13",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.9.18",
+      "version": "0.9.19",
       "author": {
         "name": "Lounis Bou"
       }
@@ -95,6 +95,15 @@
       "source": "./plugins/statusbar",
       "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
       "version": "2.2.2",
+      "author": {
+        "name": "Lounis Bou"
+      }
+    },
+    {
+      "name": "telemetry",
+      "source": "./plugins/telemetry",
+      "description": "Records what every session does (role, model, effort, turns, context, tokens, cost, tools, refusals, questions, spawns, dispatches) as redacted JSON lines, one file per day, and exports them on demand to a private repository named by the environment.",
+      "version": "0.1.0",
       "author": {
         "name": "Lounis Bou"
       }

@@ -15,6 +15,16 @@ export const REPORT_REQUEST = '\n\nEnd your answer with one fenced ```json block
   + 'every finding you report, and an empty list when you found none. The block is due even then, in place of any '
   + 'prose such as "no findings" an earlier line allows. The review\'s verdict is computed from this block alone.'
 
+// Whitespace aside: a prompt the session wrote keeps the words, not always the line breaks.
+const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+// Whether a review agent's prompt carries the request, which the session writes there itself.
+export const carriesRequest = (prompt: string): boolean => squash(prompt).includes(squash(REPORT_REQUEST))
+
+// The deny of a review agent's call without the request: the session issues the call again.
+export const READER_DENY = 'pr-review auto-fix-loop: a review agent\'s prompt ends with the findings-block request, '
+  + 'which this call lacks. Issue the same call again, its prompt ending with this text, verbatim:' + REPORT_REQUEST
+
 const FENCE = /```json\s*\n([\s\S]*?)\n\s*```/g
 
 // The findings of an agent's answer: its last JSON block, or null when it has none

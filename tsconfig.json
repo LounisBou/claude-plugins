@@ -1,5 +1,5 @@
 {
-  "$comment": "What the strict check covers today. A plugin's TypeScript joins `include` the day it passes; it never leaves (docs/conventions.md, \u00ab Ratchets \u00bb).",
+  "$comment": "What the strict check covers today. A plugin's TypeScript joins `include` the day it passes; it never leaves (docs/conventions.md, « Ratchets »).",
   "extends": "./tsconfig.base.json",
   "include": [
     "scripts/**/*.ts",
@@ -13,6 +13,9 @@
     "plugins/orchestrator/hooks/gauge-core.ts",
     "plugins/orchestrator/hooks/move.ts",
     "plugins/orchestrator/hooks/gauge.ts",
-    "plugins/orchestrator/hooks/host.ts"
+    "plugins/orchestrator/hooks/host.ts",
+    "plugins/telemetry/skills/*/scripts/**/*.ts",
+    "plugins/telemetry/hooks/collect.ts",
+    "plugins/telemetry/hooks/register.ts"
   ]
 }
