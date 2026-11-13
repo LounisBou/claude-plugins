@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionDefects, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
+import { parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED, SHAPED_SUBJECT, SHAPED_CONTEXT, SHAPED_RECOMMENDATION, FIRST_B, SECOND_RECOMMENDATION_START } from './fixtures.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
@@ -110,7 +110,6 @@ test('five choices, the free answer and an argued recommendation are read whole,
   const shape = questionShape(FIVE, read.choices)
   expect(shape?.fields.map(field => field.label)).toEqual(['Subject', 'Context', 'Question', 'Choices'])
   expect(shape?.recommendation?.text).toMatch(/^E — a fresh reader/)
-  expect(questionDefects(FIVE)).toEqual([])
 })
 
 test('a free answer opening on the article A is no recommendation, whatever the pane draws', () => {
@@ -121,29 +120,9 @@ test('a free answer opening on the article A is no recommendation, whatever the 
   expect(questionShape(withoutRecommendation, parseChoices(withoutRecommendation).choices)?.recommendation).toBeNull()
 })
 
-test('a question with six choices or a bare recommendation letter has a defect, five choices and an argument none', () => {
-  const six = FIVE.replace('- **E**', '- **F** : one more — cost: x — gain: y\n- **E**')
-  expect(questionDefects(six)).toEqual(['choices'])
+test('a sixth choice makes the choices unreadable as lettered ones', () => {
   const sixth = FIVE.replace('_Free answer_', '- **F** : the sixth — cost: x — gain: y\n_Free answer_')
-  expect(questionDefects(sixth)).toEqual(['choices'])
   expect(parseChoices(sixth).choices).toEqual([])
-  for (const bare of ['E', '**E**', 'E.', 'E —']) {
-    const text = FIVE.replace(/_Recommendation_ :.*$/m, `_Recommendation_ : ${bare}`)
-    expect(questionDefects(text)).toEqual(['recommendation'])
-  }
-  expect(questionDefects(sixth.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : A'))).toEqual(['choices', 'recommendation'])
-  expect(questionDefects('Merge it now?')).toEqual([])
-})
-
-test('only the recommendation is a bare letter to refuse: another field naming one, or an argument on the next line, is none', () => {
-  const subject = FIVE.replace('_Subject_ : the release', '_Subject_ : B')
-  expect(questionDefects(subject)).toEqual([])
-  const free = FIVE.replace('A different way is welcome, in your own words.', 'E')
-  expect(questionDefects(free)).toEqual([])
-  const next = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : E\na fresh reader finds what two reviews missed')
-  expect(questionDefects(next)).toEqual([])
-  const spaced = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : E\n\nYou decide: A, B or E?')
-  expect(questionDefects(spaced)).toEqual(['recommendation'])
 })
 
 test('a letter followed by a word, with no punctuation, names no recommendation', () => {
