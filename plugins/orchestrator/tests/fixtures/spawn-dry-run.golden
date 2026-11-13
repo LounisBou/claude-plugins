@@ -543,7 +543,7 @@ ERROR: spawn: refused: no startup prompt: the host writes no transcript before a
 exit=1
 ### successor, derived name
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--f-@TIME@.txt)" --name 'Orch: f' --remote-control 'Orch: f'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--f-@TIME@.txt)" --name 'Orch: f' --remote-control 'Orch: f'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Orch--f-@TIME@.txt
@@ -564,14 +564,14 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
 exit=0
 ### successor, typed name
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: g' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--g-@TIME@.txt)" --name 'Orch: g' --remote-control 'Orch: g'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: g' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--g-@TIME@.txt)" --name 'Orch: g' --remote-control 'Orch: g'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Orch--g-@TIME@.txt
@@ -592,14 +592,14 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
 exit=0
 ### successor, no remote control
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--f-@TIME@.txt)" --name 'Orch: f'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--f-@TIME@.txt)" --name 'Orch: f'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Orch--f-@TIME@.txt
@@ -620,7 +620,7 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=no
 mode_check=skipped
 program=/bin/sh -l <launch-file>
@@ -717,7 +717,7 @@ program=/bin/sh -l <launch-file>
 exit=0
 ### wake
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--w-@TIME@.txt)" --name 'Orch: w' --remote-control 'Orch: w'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--w-@TIME@.txt)" --name 'Orch: w' --remote-control 'Orch: w'
 effort=high
 pair_source=record
 prompt_file=@WORK@/state/prompts/prompt-Orch--w-@TIME@.txt
@@ -738,7 +738,7 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
@@ -750,7 +750,7 @@ exit=0
 ### a resumed wake
 spawn: the resumed session's pair cannot be read (no transcript for session abcdef12-3456-4789-8abc-def012345678 under @WORK@/projects)
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--resume' abcdef12-3456-4789-8abc-def012345678 --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--w-@TIME@.txt)" --name 'Orch: w' --remote-control 'Orch: w'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto '--resume' abcdef12-3456-4789-8abc-def012345678 --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--w-@TIME@.txt)" --name 'Orch: w' --remote-control 'Orch: w'
 effort=high
 pair_source=record
 prompt_file=@WORK@/state/prompts/prompt-Orch--w-@TIME@.txt
@@ -771,7 +771,7 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
@@ -785,7 +785,7 @@ ERROR: spawn: refused: --resume is a wake's: it names the session a paused orche
 exit=1
 ### open
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--o-@TIME@.txt)" --name 'Orch: o' --remote-control 'Orch: o'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--o-@TIME@.txt)" --name 'Orch: o' --remote-control 'Orch: o'
 effort=none
 pair_source=host default
 prompt_file=@WORK@/state/prompts/prompt-Orch--o-@TIME@.txt
@@ -806,7 +806,7 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
@@ -820,7 +820,7 @@ ERROR: spawn: refused: --tier is not an opening's: an opened orchestrator runs u
 exit=1
 ### open, bound deep tier
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--o-@TIME@.txt)" --name 'Orch: o' --remote-control 'Orch: o'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch: o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch--o-@TIME@.txt)" --name 'Orch: o' --remote-control 'Orch: o'
 effort=none
 pair_source=host default
 prompt_file=@WORK@/state/prompts/prompt-Orch--o-@TIME@.txt
@@ -841,7 +841,7 @@ mcp=none
 mcp_file=none
 account_connectors=no
 synced_skills=removed
-tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
