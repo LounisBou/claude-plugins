@@ -13,6 +13,7 @@ const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 const WARN_LOG = '/data/guard-warn.log'
 const AUTO_MERGE = '/data/auto-merge.json'
 const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
+const PLAN = '/data/check-plans/acme/thing/12.json'
 const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
 
 let sessions = 0
@@ -68,6 +69,8 @@ type World = {
   filesFails?: string
   // The repository's E2E exemption file, as written (an object) or as raw text.
   exemption?: unknown
+  // The pull request's check plan file, as written.
+  plan?: unknown
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
   fingerprintFails?: string
@@ -118,6 +121,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
   const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
+  if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
   const session = 'guard-session-' + ++sessions
   const records: Record<string, string> = { ...(w.records ?? FOUR) }
@@ -2782,11 +2786,11 @@ test('a rebase that leaves the diff unchanged carries the review, the norms chec
   expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
 })
 
-test('a rebase that changed the diff carries nothing', async ($, on) => {
+test('a rebase that changed the diff carries nothing but the operator\'s E2E waiver', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+    + ' norms: no record at 0123456; e2e carried from abcdef0'])
 })
 
 test('an E2E pass at the earlier head is not carried: E2E runs again, the review and norms are carried', async ($, on) => {
@@ -2828,13 +2832,13 @@ test('a second gate read with the records unchanged still reads Ready with the s
     + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
 })
 
-test('a head whose commits cannot be fingerprinted (a merge in the pull request) carries nothing, and says so in one line', async ($, on) => {
+test('a head whose commits cannot be fingerprinted (a merge in the pull request) carries nothing but the E2E waiver, and says so in one line', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual([
     'github: acme/thing#12: no record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-      + ' norms: no record at 0123456, e2e: no record at 0123456',
+      + ' norms: no record at 0123456; e2e carried from abcdef0',
   ])
 })
 
@@ -2873,13 +2877,13 @@ test('a kept fingerprint of another version is computed again, and a kept count 
   expect(JSON.parse(seen.files[fingerprintFile(OLD)])).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME })
 })
 
-test('an earlier head of more commits whose top ones are the head\'s carries nothing, and is not fingerprinted', async ($, on) => {
+test('an earlier head of more commits whose top ones are the head\'s carries nothing but the E2E waiver, and is not fingerprinted', async ($, on) => {
   const seen = await world($, on, {
     records: {}, labels: ['Ready'], commits: 2, tree: earlier(CLEAN_OLD, OLD_DIR, 3), fingerprints: { [HEAD]: SAME, [OLD]: SAME },
   })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+    + ' norms: no record at 0123456; e2e carried from abcdef0'])
   expect(fingerprintRuns(seen)).toEqual([HEAD + ' x2'])
 })
 
@@ -2981,4 +2985,100 @@ test('the daily pruning removes the fingerprints kept past 90 days with the old 
   }
   const seen = await world($, on, { tree })
   expect(seen.runs.map((r) => r.argv)).toEqual([['rm', '-rf', '--', fingerprintFile(OLD)]])
+})
+
+// ---- the check plan of a pull request, and its durable waiver ----
+
+const planOf = (e2e: Record<string, string>, norms: Record<string, string> = { need: 'required', reason: '' }) => ({
+  v: 1, repo: 'acme/thing', pr: 12, e2e: { reason: '', ...e2e }, norms: { reason: '', ...norms }, review: { need: 'full', reason: '' }, at: '2026-11-14T09:00:00Z',
+})
+const planCall = (plan: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+  ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', plan, ...over }) as any
+const ONLY_REVIEW = Object.fromEntries([record('review', 'pass')])
+
+test('a pull request whose plan needs no E2E is Ready with no E2E record, its line naming the plan\'s reason', async ($, on) => {
+  const seen = await world($, on, { records: TWO, plan: planOf({ need: 'none', reason: 'docs only' }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual(['github: acme/thing#12 Ready at 0123456: a clean review, a passed norms check, no E2E needed'
+    + ' (check plan, 2026-11-14: docs only) and green CI hold at its head.'])
+})
+
+test('a plan that needs no norms check and screenshots in place of E2E leaves the review alone required', async ($, on) => {
+  const plan = planOf({ need: 'screenshots', reason: 'a colour change' }, { need: 'none', reason: 'one CSS line' })
+  const seen = await world($, on, { records: ONLY_REVIEW, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 Ready at 0123456: a clean review, no norms check needed (check plan, 2026-11-14:'
+    + ' one CSS line), no E2E needed (check plan, 2026-11-14: desktop and mobile screenshots in its place, a colour change) and green CI hold at its head.'])
+})
+
+for (const [label, w] of [
+  ['a plan that requires E2E', { records: TWO, plan: planOf({ need: 'required' }) }],
+  ['a failed run under a plan that needs no E2E', { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, plan: planOf({ need: 'none', reason: 'docs only' }) }],
+  ['a plan that does not parse', { records: TWO, plan: planOf({ need: 'none', reason: '' }) }],
+] as const) {
+  test('with ' + label + ' a pull request with no passed E2E stays Not Ready', async ($, on) => {
+    const seen = await world($, on, w)
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(readinessRuns(seen)).toEqual([])
+  })
+}
+
+test('the record tool writes the plan, posts it on the pull request, and the gate reads it at once', async ($, on) => {
+  const seen = await world($, on, { records: TWO })
+  const out: any = await $.tool.call(planCall({ e2e: 'none: docs only', norms: 'required' }))
+  expect(out.deny).toBeUndefined()
+  expect(out.result).toContain('github: check plan of acme/thing#12: e2e none, norms required, review full')
+  expect(out.result).toContain('Ready at 0123456')
+  expect(JSON.parse(seen.files[PLAN])).toMatchObject({ v: 1, repo: 'acme/thing', pr: 12, e2e: { need: 'none', reason: 'docs only' }, norms: { need: 'required', reason: '' } })
+  const comment = seen.runs.find((r) => r.command === 'pr-comment')
+  expect(comment.args.pr).toBe(12)
+  expect(comment.args.body).toContain('- e2e: none — docs only')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a plan is refused when a need other than required gives no reason, or a need is unknown', async ($, on) => {
+  const seen = await world($, on)
+  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'one-pass' }, []]) {
+    expect(((await $.tool.call(planCall(plan))) as any).deny).toContain('github: a check plan is')
+  }
+  expect(seen.files[PLAN]).toBeUndefined()
+})
+
+test('a new plan may require more, never lift a check the plan required', async ($, on) => {
+  const seen = await world($, on, { plan: planOf({ need: 'none', reason: 'docs only' }) })
+  const stricter: any = await $.tool.call(planCall({ e2e: 'required', norms: 'required' }))
+  expect(stricter.deny).toBeUndefined()
+  const lifted: any = await $.tool.call(planCall({ e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' }))
+  expect(lifted.deny).toContain('requires e2e and norms and review: only the operator\'s waiver lifts a required check')
+  expect(JSON.parse(seen.files[PLAN]).e2e.need).toBe('required')
+})
+
+test('an E2E waiver is refused when the plan needs no E2E: nothing was planned to waive', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, plan: planOf({ need: 'none', reason: 'docs only' }) })
+  const words = 'no E2E for this docs change, 2026-11-02'
+  await ($ as any).prompt.submit({ text: words, origin: { kind: 'composer' }, wait: false })
+  const out: any = await $.tool.call(waiveCall(words))
+  expect(out.deny).toContain('needs no E2E (none: docs only): a waiver lifts only a check the plan requires')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('the operator\'s waiver at an earlier head stands for a later head of another diff', async ($, on) => {
+  const waived = earlier([at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })])
+  const seen = await world($, on, { records: TWO, tree: waived, fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a failed run after the waiver at an earlier head voids it for the later heads', async ($, on) => {
+  const failedLater = earlier([at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' }), at('e2e', 'fail', {}, '2026-11-01T11:00:00Z')])
+  const seen = await world($, on, { records: TWO, tree: failedLater, fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('the plan files are refused to Write and Bash', async ($, on) => {
+  await world($, on)
+  expect(((await $.tool.call({ tool: 'Write', file_path: PLAN, content: '{}' } as any)) as any).deny).toContain('a check plan through')
+  expect(((await $.tool.call(bash('rm -rf "$CLAUDE_PLUGIN_DATA/check-plans/acme"'))) as any).deny).toContain('a check plan through')
 })

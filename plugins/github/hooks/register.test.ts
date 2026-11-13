@@ -2634,3 +2634,8 @@ test('a failed guard refuses a write or a command naming the E2E exemption files
   expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
   expect(writeNetRefusal('/work/docs/e2e-exempt.md')).toBe(null)
 })
+
+test('a failed guard refuses a write or a command naming the check plan files', () => {
+  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(NET_REFUSAL)
+})

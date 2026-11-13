@@ -6,6 +6,7 @@
 
 import { ACCEPTANCE, acceptedOver, accepts, answersAcceptance, isAcceptance, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import type { Excused } from './check-plan.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
 // warn: an act that is not ready goes ahead with one warn line. enforce: it is
@@ -637,11 +638,24 @@ export function carries(record: PrRecord): boolean {
   return accepts(record) && !isAcceptance(record) && !(record.kind === 'e2e' && record.result === 'pass')
 }
 
+// The operator's E2E waiver of the pull request at an earlier head, whatever its diff: it stands for every
+// later head while it is the newest E2E record across them. A record file there that may be a later E2E
+// record but does not parse stands for none.
+export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>): Carried | undefined {
+  let newest: { record: PrRecord; from: string } | undefined
+  for (const [head, files] of found) {
+    if (unreadableRecords(files).some((file) => file.kinds.includes('e2e'))) return undefined
+    const record = headLatest(gate, head, files).get('e2e')
+    if (record && (!newest || record.at > newest.record.at)) newest = { record, from: head }
+  }
+  return newest?.record.result === 'waived' ? { kind: 'e2e', from: newest.from } : undefined
+}
+
 // What a pull request misses to be ready at its head: the four conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
-// e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
+// excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string, carried: Carried[] = []): string[] {
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = []): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -651,7 +665,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eE
   for (const kind of KINDS) {
     const record = latest.get(kind)
     if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
-    if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
+    if (excused[kind] && record?.result !== 'fail') continue
     if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
@@ -778,13 +792,14 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
 // accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
-// e2eExempt: the exemption that stood for its E2E, named.
+// excused: the kinds the check plan or the exemption stood for, named.
 // carried: the kinds counted at the head from an earlier head of the same diff.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string,
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, excused: Excused = {},
   carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, '
-    + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head'
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', '
+    + (excused.norms ? 'no norms check needed (' + excused.norms + ')' : 'a passed norms check') + ', '
+    + (excused.e2e ? 'no E2E needed (' + excused.e2e + ')' : 'passed E2E') + ' and green CI hold at its head'
     + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }
 
