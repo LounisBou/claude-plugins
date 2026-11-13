@@ -60,8 +60,8 @@ never turns green, in `checks-status` too. Actions call failed: `error:` on stde
 run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
 instead.
 
-`file-at-ref` returns `content`, plus `binary`. When the file is not valid UTF-8,
-`binary` is true and `content` holds base64 — the bytes are never decoded lossily.
+`file-at-ref` returns `content` and `binary`: a file not valid UTF-8 has `binary` true and
+`content` in base64, never decoded lossily.
 
 `pr-merge --sha <full sha>` sends the head that was verified, and GitHub refuses the merge
 if the head has moved since.
@@ -234,10 +234,9 @@ python3 "$GH" image-upload screenshot.png --title "Login screen"
 # ![Login screen](https://github.com/acme/thing/blob/pr-assets/<sha>.png?raw=true)
 ```
 
-`image-upload` also takes several files in one call, each with its own `--title`,
-repeated once per file in the same order. The `markdown` field joins each titled block
-with a horizontal rule, and the JSON carries an `images` list (one `{url, path, reused,
-title}` entry per file) instead of a single `url`/`path`/`reused`:
+`image-upload` takes several files in one call, one `--title` per file, in order.
+`markdown` joins the titled blocks with a horizontal rule; the JSON has an `images` list
+(one `{url, path, reused, title}` per file) in place of `url`/`path`/`reused`:
 
 ```
 python3 "$GH" image-upload before.png after.png --title "Before" --title "After"
@@ -250,9 +249,8 @@ python3 "$GH" image-upload before.png after.png --title "Before" --title "After"
 # ![After](https://github.com/acme/thing/blob/pr-assets/<sha2>.png?raw=true)
 ```
 
-`--title` given for a multi-file call must be repeated exactly once per file, or the
-call is refused as a usage error. A multi-file call with no `--title` at all is refused
-too: each block between two rules needs its title.
+A multi-file call without exactly one `--title` per file is refused as a usage error:
+each block between two rules needs its title.
 
 Requires push access to the repository.
 
@@ -306,14 +304,14 @@ names no consumer.
 
 A review record is refused from the session that pushed the head it reviews.
 
-Not producers: `start-review` (a walkthrough the operator submits themselves) and `process-comments` (answers to comments). A human `APPROVED` review on GitHub is no record.
+Not producers: `start-review` (the operator submits it), `process-comments` (answers to comments), a human `APPROVED` review on GitHub.
 
 ### E2E a pull request does not need
 
 Both routes are `hooks/e2e-scope.ts`'s.
 
-- **No runtime.** `not-applicable` is written only when no file of the pull request (`pr-files`
-  at the head) holds runtime, by the rule `runtimeFiles` states; the refusal names the files.
+- **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
+  head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator as a waiver does, or a consent record
@@ -322,12 +320,12 @@ Both routes are `hooks/e2e-scope.ts`'s.
 
 ### What the contract does not stop
 
-The records guard (« Guards » below) does not see a script that writes under the root or runs `record.py` itself. The guards stop a forgotten review, norms check or E2E, not a session set on forging one.
+The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards stop a forgotten review, norms check or E2E, not a forger.
 
 ## Pushing from the sandbox
 
-Outgoing SSH is blocked in the sandbox, even through `!`. Push over HTTPS with gh's
-token and an empty `credential.helper=` first, to avoid the keychain dialogs:
+SSH is blocked in the sandbox, even through `!`: push over HTTPS with gh's token, an
+empty `credential.helper=` first (no keychain dialog):
 `git -c credential.helper= -c credential.helper='!f(){ echo username=x-access-token; echo "password=$(gh auth token)"; }; f' push https://github.com/<owner>/<repo>.git HEAD:<branch>`.
 A push by URL does not update `refs/remotes/origin/*`: `--force-with-lease` takes an
 explicit sha (`--force-with-lease=<branch>:<full sha>`). Same pattern for `fetch`.
@@ -335,16 +333,12 @@ Never « external terminal ».
 
 ## Guards
 
-**Writing rules read.** A commit (`git commit`), a pull request or an issue opened, edited
-with a title or a body, or commented (`gh pr create`, `gh issue create`, `gh pr
-comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue
-edit` with a title or a body), and every call of this tool that carries a text, waits
-until the files of `writing/` its kind of text needs, which the refusal names, were read
-whole in the context that writes it: the Read tool from a file's first line to its last, or
-a Bash `cat` or `sed -n '1,$p'` of it.
-Each subagent reads for itself, and a compaction asks for one more read. The command
-is read word by word, so a message or a body that only mentions one of these commands
-passes. Until then the call is refused with:
+**Writing rules read.** A commit (`git commit`), `gh pr create`, `gh issue create`, `gh pr
+comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue edit` with
+a title or a body, and every call of this tool carrying a text wait until the `writing/` files
+the refusal names were read whole in the context that writes: Read from first line to last, or
+Bash `cat` or `sed -n '1,$p'`. Each subagent reads for itself; a compaction asks one more read.
+The command is read word by word: a text that only mentions these commands passes. Until then:
 
 ```
 github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
