@@ -16,7 +16,7 @@ import {
   unreadRefusal,
 } from './guards.ts'
 import {
-  acceptanceOriginRefusal, acceptanceOverRefusal, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
+  acceptanceNamesRefusal, acceptanceOriginRefusal, acceptanceOverRefusal, latestFailedReviewFile, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
@@ -1783,7 +1783,9 @@ async function writeAcceptance($: any, e: any, origin: string): Promise<{ result
   }
   const { read } = headRecordsRead(gate, await headRecords($, gate))
   const failed = over.includes('/') ? undefined : read.get(over)
-  if (!failed || !answersAcceptance(failed)) return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') }
+  if (!failed || !answersAcceptance(failed)) {
+    return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') + acceptanceNamesRefusal(gate.head, latestFailedReviewFile(read)) }
+  }
   const later = [...read.entries()].find(([name, r]) => name !== over && r.kind === failed.kind && r.at >= failed.at)
   if (later) return { deny: acceptanceOverRefusal(over, gate.head, 'is followed by ' + later[0]) }
   const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)

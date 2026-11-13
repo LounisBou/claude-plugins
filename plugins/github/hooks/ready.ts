@@ -557,6 +557,13 @@ function latestByKind(read: Map<string, PrRecord>): Map<Kind, PrRecord> {
   return latest
 }
 
+/** The file of the latest review record of the head, when it is a failed one: the file an acceptance passes as `over`. */
+export function latestFailedReviewFile(read: Map<string, PrRecord>): string | undefined {
+  const latest = latestByKind(read).get(ACCEPTANCE.kind)
+  if (!latest || !answersAcceptance(latest)) return undefined
+  return [...read.entries()].find(([, record]) => record === latest)?.[0]
+}
+
 // The failed record an acceptance answers, when it is among the head's records: an acceptance counts
 // only beside it, so one is never carried to another head.
 function acceptedFile(record: PrRecord, read: Map<string, PrRecord>): string | undefined {
@@ -781,6 +788,13 @@ export function acceptanceOriginRefusal(origin: string): string {
 export function acceptanceOverRefusal(over: string, head: string, why: string): string {
   return 'github: ' + (over || 'no record') + ' ' + why + ' at ' + head7(head) + ', the pull request\'s head: an acceptance answers'
     + ' the latest failed ' + ACCEPTANCE.kind + ' of the head it is written at.'
+}
+
+// What an acceptance refused for an `over` that names no failed record is told: the file to pass, or that none exists.
+export function acceptanceNamesRefusal(head: string, file: string | undefined): string {
+  return file
+    ? ' The latest failed ' + ACCEPTANCE.kind + ' at ' + head7(head) + ' is ' + file + ': pass it as over.'
+    : ' There is no failed ' + ACCEPTANCE.kind + ' to accept at ' + head7(head) + ': no ' + ACCEPTANCE.kind + ' record, or the latest is not a failed one.'
 }
 
 // A plugin's name as a producer slug.
