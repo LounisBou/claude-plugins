@@ -40,10 +40,10 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: any, dir?: string): Record<string, unknown> {
+export function act(e: any, dir?: { dir: string } | { why: string }): Record<string, unknown> {
   const action = String(e?.action ?? '')
   if (action === 'start') {
-    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir)
+    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined)
     if (loop.isReviewOnly) return { pass: 0, max_passes: 1, next: 'call begin_pass, run the review, report its findings: no fix is made, the loop ends there' }
     return { pass: 0, max_passes: MAX_PASSES, next: 'call begin_pass, then run the review' }
   }
@@ -281,14 +281,15 @@ const textOf = (answer: any): string => String(answer?.result ?? answer?.text ??
 
 const git = ($: any, argv: string[], dir?: string) => $.process.run(['git', ...argv], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
 
-// The top directory of the checkout the session is in, or undefined when it is in none.
-async function checkoutDir($: any): Promise<string | undefined> {
+// The top directory of the checkout the session is in, or why it is in none.
+async function checkoutDir($: any): Promise<{ dir: string } | { why: string }> {
   try {
     const run = await git($, ['rev-parse', '--show-toplevel'])
     const top = String(run.stdout ?? '').trim()
-    return run.exitCode === 0 && top.startsWith('/') ? top : undefined
-  } catch {
-    return undefined
+    if (run.exitCode === 0 && top.startsWith('/')) return { dir: top }
+    return { why: String(run.stderr ?? '').trim() || 'git rev-parse --show-toplevel answered ' + (top || 'nothing') }
+  } catch (err: any) {
+    return { why: String(err?.message ?? err).trim() }
   }
 }
 
@@ -334,6 +335,7 @@ async function recordReview($: any, exit: string): Promise<string | null> {
     if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return `record: none — ${NO_GITHUB}`
     // The checkout the loop started in: a later shell `cd` does not move the record to another one.
     const dir = loop.dir
+    if (!dir) return 'record: none — the loop started outside a git checkout (' + (loop.dirWhy || 'no directory read') + ')'
     const status = await git($, ['status', '--porcelain', '-uno'], dir)
     if (status.exitCode !== 0) return 'record: none — git status failed: ' + String(status.stderr ?? '').trim()
     if (String(status.stdout).trim() !== '') return 'record: none — the tracked files have changes: a record is written on a clean checkout of the head'

@@ -54,7 +54,7 @@ echo "== the tool is no longer vendored here =="
 check "github-curl is gone" "absent" \
   "$([ -e "$ROOT/skills/github-curl" ] && echo present || echo absent)"
 
-check "manifest declares the dependency" "github@lounisbou >=0.12.0" \
+check "manifest declares the dependency" "github@lounisbou >=0.20.0" \
   "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))["dependencies"][0]; print("%s@%s %s" % (d["name"], d["marketplace"], d["version"]))' "$ROOT/.claude-plugin/plugin.json")"
 
 # No skill may hardcode a sibling plugin's cache path.

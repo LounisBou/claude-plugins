@@ -1510,12 +1510,16 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
 
 // ---- records ----
 
-// A path that exists and is a directory: a spawn in another one fails with a raw ENOENT.
-async function isDirectory($: any, path: string): Promise<boolean> {
+// Why a path is no directory, or undefined when it is one. The host's `$.fs.stat` says `dir`; a
+// spawn in a path that is none fails with a raw ENOENT, so the refusal comes first.
+async function notDirectory($: any, path: string): Promise<string | undefined> {
   try {
-    return (await $.fs.stat(path)).kind === 'directory'
-  } catch {
-    return false
+    return (await $.fs.stat(path)).kind === 'dir' ? undefined : 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
+  } catch (err: any) {
+    const why = String(err?.message ?? err).trim()
+    return /ENOENT|no such file|not found/i.test(why)
+      ? 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
+      : 'cannot stat dir ' + path + ': ' + why
   }
 }
 
@@ -1526,7 +1530,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
-  if (dir !== undefined && !(await isDirectory($, dir))) return { deny: 'github: dir ' + dir + ' is not a directory: name the checkout the tests ran in' }
+  const notDir = dir === undefined ? undefined : await notDirectory($, dir)
+  if (notDir) return { deny: 'github: ' + notDir }
   const inDir = dir ? { cwd: dir } : {}
   const owned = recordKindFor(origin)
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)

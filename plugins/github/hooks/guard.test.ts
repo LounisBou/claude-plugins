@@ -45,7 +45,7 @@ type World = {
   // (a file past what one read copies): only an append keeps it.
   warnLog?: string
   // The files and directories $.fs sees beside the records, by path.
-  tree?: Record<string, { kind: 'file' | 'directory'; mtimeMs: number; text?: string }>
+  tree?: Record<string, { kind: 'file' | 'directory' | 'dir'; mtimeMs: number; text?: string }>
   // The move that puts a new auto-merge.json in place fails with this stderr.
   mvFails?: string
   // pr-readiness fails with this stderr.
@@ -56,6 +56,8 @@ type World = {
   heads?: string[]
   // The head's records directory is there but cannot be listed, with this error.
   listFails?: string
+  // A stat that fails with this text, whatever the path.
+  statFails?: string
   // The branch whose pull request (#12) pr-get answers with its labels as they stand.
   branch?: string
   // Every git run fails in the host itself, with this error.
@@ -137,7 +139,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { value: undefined }
   })
   on('fs.exists', (_$: any, e: any) => ({ value: e.path in tree || e.path in seen.files || (!!w.listFails && e.path === HEAD_DIR) }))
-  on('fs.stat', (_$: any, e: any) => (e.path === WARN_LOG && seen.warnLog !== undefined
+  on('fs.stat', (_$: any, e: any) => w.statFails ? { deny: w.statFails } : (e.path === WARN_LOG && seen.warnLog !== undefined
     ? { value: { kind: 'file', size: seen.warnLog.length, mtimeMs: 0, isLink: false } }
     : e.path in tree ? { value: { kind: tree[e.path].kind, size: 0, mtimeMs: tree[e.path].mtimeMs, isLink: false } } : { deny: 'ENOENT ' + e.path }))
   on('fs.list', (_$: any, e: any) => {
@@ -1108,8 +1110,9 @@ const AWAY = { 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' }, 'status 
 const REVIEW_DIR = '/review/thing'
 // The checkouts these tests name exist as directories.
 const CHECKOUTS: NonNullable<World['tree']> = {
-  [REVIEW_DIR]: { kind: 'directory', mtimeMs: 1 },
-  '/nowhere': { kind: 'directory', mtimeMs: 1 },
+  // The host's own kind for a directory: `dir`.
+  [REVIEW_DIR]: { kind: 'dir', mtimeMs: 1 },
+  '/nowhere': { kind: 'dir', mtimeMs: 1 },
 }
 const REVIEW_ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } }
 
@@ -1150,6 +1153,22 @@ test('a checkout named that is no directory is refused, naming it, before any gi
   const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/gone/away' } as any)
   expect(out.deny).toContain('/gone/away is not a directory')
   expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named that is a file, or whose stat fails for another reason, is refused with its own cause', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, tree: { '/work/file.txt': { kind: 'file', mtimeMs: 1 } } })
+  const file: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/work/file.txt' } as any)
+  expect(file.deny).toContain('/work/file.txt is not a directory')
+  expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
+})
+
+test('a stat that fails but for a missing path is reported as it failed', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, statFails: 'EACCES: permission denied' })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/locked' } as any)
+  expect(out.deny).toContain('cannot stat dir /locked: ')
+  expect(out.deny).toContain('EACCES')
+  expect(out.deny).not.toContain('is not a directory')
   expect(recordRun(seen)).toBeUndefined()
 })
 
