@@ -78,7 +78,8 @@ export type WaitKind = typeof WAIT_KINDS[number]
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
 // consent: the subject an operator question asks his consent on (core's consent-record.ts); his
 // answer to it in the round is then written as that subject's consent record.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject }
+// question: the full `**Question i of N**` block an operator wait puts him, carried by the call itself.
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string }
 
 // The one machine line a declaration spells: the gate decides on it as on the line it replaces,
 // so a declared wait and a written one are held by the same checks.
@@ -92,7 +93,7 @@ export function waitLine(wait: DeclaredWait): string {
 }
 
 // The sentence every refusal about the ending carries: the call that declares the wait.
-const DECLARE = 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.'
+const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.'
 
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
@@ -473,6 +474,10 @@ export type Held = { case: string; reason: string }
 // it as a busy agent's would; and a session that handed over is never told nothing
 // will wake it — its successor's « takeover confirmed » will.
 //
+// A question of the session's still open in the round (`questionOpen`) wakes it too, by its
+// answer: a turn that advanced other work meanwhile ends on no line, or on its tool line, with
+// nothing else in flight, and never puts the question again.
+//
 // The tool line is decided first on the host's own word (`tasks`, hostTasks above): what the
 // host holds in flight for the session is what will wake it, and a tool line with none of it,
 // no process of its own, no watch, no subscription and no busy agent is refused. The process
@@ -489,6 +494,7 @@ export function checkWake(facts: {
   awaiting?: boolean
   hostUnread?: boolean
   tasks?: readonly string[] | null
+  questionOpen?: boolean
 }): Held | { blocks: string } | { tool: string; notRunning?: true } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
   const last = machineLine(facts.message)
   const matched = MACHINE_LINE.exec(last)
@@ -508,7 +514,8 @@ export function checkWake(facts: {
   if (tool) {
     if (facts.tasks !== undefined && facts.tasks !== null) {
       // A session that handed over is woken by its successor's « takeover confirmed », as at its other endings.
-      if (facts.tasks.length > 0 || running.length > 0 || facts.watching || facts.awaiting || busy || facts.handedOver) return { tool: tool[1].trim() }
+      // A question still open in the round is answered later: the answer wakes the session.
+      if (facts.tasks.length > 0 || running.length > 0 || facts.watching || facts.awaiting || busy || facts.handedOver || facts.questionOpen) return { tool: tool[1].trim() }
       return { case: 'tool-not-running', reason: TOOL_NOT_RUNNING }
     }
     if (running.length > 0 || facts.watching || facts.hostUnread) return { tool: tool[1].trim() }
@@ -530,6 +537,8 @@ export function checkWake(facts: {
   if (last.toLowerCase().startsWith('waiting:') || last.endsWith('?')) {
     return { case: 'question-without-blocks', reason: QUESTION }
   }
+  // A question still open in the round: its answer wakes the session.
+  if (facts.questionOpen) return null
   if (facts.resident) {
     // An idle resident agent waits on a background command of its own, and that
     // command wakes it as a running turn would: something will wake the orchestrator.

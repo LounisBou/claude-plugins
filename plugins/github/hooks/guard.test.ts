@@ -12,6 +12,7 @@ const RECORDS = '/cfg/pr-records'
 const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 const WARN_LOG = '/data/guard-warn.log'
 const AUTO_MERGE = '/data/auto-merge.json'
+const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
 const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
 
 let sessions = 0
@@ -45,7 +46,7 @@ type World = {
   // (a file past what one read copies): only an append keeps it.
   warnLog?: string
   // The files and directories $.fs sees beside the records, by path.
-  tree?: Record<string, { kind: 'file' | 'directory'; mtimeMs: number; text?: string }>
+  tree?: Record<string, { kind: 'file' | 'directory' | 'dir'; mtimeMs: number; text?: string }>
   // The move that puts a new auto-merge.json in place fails with this stderr.
   mvFails?: string
   // pr-readiness fails with this stderr.
@@ -56,10 +57,24 @@ type World = {
   heads?: string[]
   // The head's records directory is there but cannot be listed, with this error.
   listFails?: string
+  // A stat that fails with this text, whatever the path.
+  statFails?: string
   // The branch whose pull request (#12) pr-get answers with its labels as they stand.
   branch?: string
   // Every git run fails in the host itself, with this error.
   gitThrows?: string
+  // pr-files' answer: the pull request's files, or a failing exit with this stderr.
+  files?: Array<Record<string, unknown>>
+  filesFails?: string
+  // The repository's E2E exemption file, as written (an object) or as raw text.
+  exemption?: unknown
+  // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
+  fingerprints?: Record<string, string>
+  fingerprintFails?: string
+  // The pull request's commit count pr-gate answers; omitted, none.
+  commits?: number
+  // A head directory that is there but cannot be listed.
+  unlistable?: string
 }
 
 type Seen = {
@@ -71,6 +86,10 @@ type Seen = {
   files: Record<string, string>
   // The context each prompt entered with.
   contexts: string[][]
+  // The paths $.fs read, in order.
+  reads: string[]
+  // The input of each permission check the tools asked.
+  checks: any[]
 }
 
 function record(kind: string, result: string, at = '2026-11-01T10:00:00Z', over: Record<string, unknown> = {}): [string, string] {
@@ -90,14 +109,16 @@ function gateOf(w: World, pull?: Pull) {
   const head = pull ? heads[Math.min(pull.reads++, heads.length - 1)] : HEAD
   return w.gate ?? {
     repo: 'acme/thing', pr: 12, state: 'open', draft: pull?.draft ?? w.draft ?? true, head, labels: pull?.labels ?? w.labels ?? ['Not Ready'],
+    ...(w.commits === undefined ? {} : { commits: w.commits }),
     ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1, ...(w.ci ?? {}) },
   }
 }
 
 async function world($: any, on: any, w: World = {}): Promise<Seen> {
-  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [] }
+  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
+  if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
   const session = 'guard-session-' + ++sessions
   const records: Record<string, string> = { ...(w.records ?? FOUR) }
   const pull: Pull = { labels: [...(w.labels ?? ['Not Ready'])], draft: w.draft ?? true, reads: 0 }
@@ -109,7 +130,10 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
   on('session.cwd', () => ({ value: '/work' }))
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
-  on('tool.check', (_$: any, e: any) => (e.tool === 'AskUserQuestion' || e.tool === 'Read' ? { decision: 'allow' } : w.verdict ?? { decision: 'allow' }))
+  on('tool.check', (_$: any, e: any) => {
+    seen.checks.push(e.input)
+    return e.tool === 'AskUserQuestion' || e.tool === 'Read' ? { decision: 'allow' } : w.verdict ?? { decision: 'allow' }
+  })
   on('tool.call', { tool: 'Read' }, (_$: any, e: any) =>
     ({ result: { type: 'text', file: { filePath: e.file_path, content: '', numLines: 222, startLine: 1, totalLines: 222 } } }))
   on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
@@ -132,11 +156,12 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { value: undefined }
   })
   on('fs.exists', (_$: any, e: any) => ({ value: e.path in tree || e.path in seen.files || (!!w.listFails && e.path === HEAD_DIR) }))
-  on('fs.stat', (_$: any, e: any) => (e.path === WARN_LOG && seen.warnLog !== undefined
+  on('fs.stat', (_$: any, e: any) => w.statFails ? { deny: w.statFails } : (e.path === WARN_LOG && seen.warnLog !== undefined
     ? { value: { kind: 'file', size: seen.warnLog.length, mtimeMs: 0, isLink: false } }
     : e.path in tree ? { value: { kind: tree[e.path].kind, size: 0, mtimeMs: tree[e.path].mtimeMs, isLink: false } } : { deny: 'ENOENT ' + e.path }))
   on('fs.list', (_$: any, e: any) => {
     if (e.path === HEAD_DIR && w.listFails) return { deny: w.listFails }
+    if (e.path === w.unlistable) return { deny: 'EACCES ' + e.path }
     if (e.path === HEAD_DIR) {
       return { value: Object.keys(records).map((name) => ({ name, kind: 'file', size: 1, isLink: false })) }
     }
@@ -145,6 +170,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { deny: 'ENOENT ' + e.path }
   })
   on('fs.read', (_$: any, e: any) => {
+    seen.reads.push(e.path)
     if (e.path in seen.files) return { value: seen.files[e.path] }
     if (tree[e.path]?.text !== undefined) return { value: tree[e.path].text }
     if (e.path.startsWith(HEAD_DIR + '/')) {
@@ -214,6 +240,13 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       if (w.gateFails) return { value: { exitCode: 3, stdout: '', stderr: w.gateFails } }
       const gate = gateOf(w, pull)
       return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: w.readStderr ?? '' } }
+    }
+    if (stdin.command === 'pr-files' && w.filesFails) return { value: { exitCode: 3, stdout: '', stderr: w.filesFails } }
+    if (stdin.command === 'pr-files' && w.files) return { value: { exitCode: 0, stdout: JSON.stringify(w.files), stderr: '' } }
+    if (stdin.command === 'pr-fingerprint') {
+      const fingerprint = w.fingerprints?.[stdin.args.head]
+      if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: w.fingerprintFails ?? 'error: commit 1234567 is a merge' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args.head, commits: stdin.args.count ?? 2, fingerprint }), stderr: '' } }
     }
     if (stdin.command === 'pr-checks' && w.readStderr) return { value: { exitCode: 0, stdout: 'ok', stderr: w.readStderr } }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
@@ -1101,10 +1134,16 @@ test('a record is refused away from the head, or on a checkout with changes', as
 // A session whose own directory is another checkout (the orchestrator's, or a pinned review worktree).
 const AWAY = { 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' }, 'status --porcelain -uno': { exitCode: 0, stdout: ' M x.ts\n' } }
 const REVIEW_DIR = '/review/thing'
+// The checkouts these tests name exist as directories.
+const CHECKOUTS: NonNullable<World['tree']> = {
+  // The host's own kind for a directory: `dir`.
+  [REVIEW_DIR]: { kind: 'dir', mtimeMs: 1 },
+  '/nowhere': { kind: 'dir', mtimeMs: 1 },
+}
 const REVIEW_ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } }
 
 test('a record names the checkout the tests ran in, and is written at its head there', async ($, on) => {
-  const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, labels: ['Ready'] })
+  const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, tree: CHECKOUTS, labels: ['Ready'] })
   const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', detail: 'ran', dir: REVIEW_DIR } as any)
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe(HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json')
@@ -1112,7 +1151,7 @@ test('a record names the checkout the tests ran in, and is written at its head t
 })
 
 test('a checkout named away from the pull request\'s head is refused, naming both shas and the checkout', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } } })
+  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } }, tree: CHECKOUTS })
   const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR } as any)
   expect(out.deny).toContain('the checkout is at fedcba9, the pull request\'s head is 0123456')
   expect(out.deny).toContain(REVIEW_DIR)
@@ -1120,19 +1159,71 @@ test('a checkout named away from the pull request\'s head is refused, naming bot
 })
 
 test('a checkout named with changes in its tracked files is refused, whatever the session\'s directory holds', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } } })
+  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } }, tree: CHECKOUTS })
   const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR } as any)
   expect(out.deny).toContain('the tracked files have changes')
   expect(recordRun(seen)).toBeUndefined()
 })
 
 test('a checkout named by a relative path, or that is no git checkout, is refused', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN, gitIn: { '/nowhere': {} } })
+  const seen = await world($, on, { git: CLEAN, gitIn: { '/nowhere': {} }, tree: CHECKOUTS })
   const relative: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: 'review/thing' } as any)
   expect(relative.deny).toContain('dir is the absolute path of the checkout the tests ran in')
   const none: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/nowhere' } as any)
   expect(none.deny).toContain('/nowhere has no commit to read')
   expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named that is no directory is refused, naming it, before any git runs there', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/gone/away' } as any)
+  expect(out.deny).toContain('/gone/away is not a directory')
+  expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named that is a file, or whose stat fails for another reason, is refused with its own cause', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, tree: { '/work/file.txt': { kind: 'file', mtimeMs: 1 } } })
+  const file: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/work/file.txt' } as any)
+  expect(file.deny).toContain('/work/file.txt is not a directory')
+  expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
+})
+
+test('a stat that fails but for a missing path is reported as it failed', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, statFails: 'EACCES: permission denied' })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/locked' } as any)
+  expect(out.deny).toContain('cannot stat dir /locked: ')
+  expect(out.deny).toContain('EACCES')
+  expect(out.deny).not.toContain('is not a directory')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named with no GitHub origin, and no repository given, is refused with that cause', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'remote get-url origin': { exitCode: 0, stdout: '/srv/local/thing.git\n' } } }, tree: CHECKOUTS })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', dir: REVIEW_DIR } as any)
+  expect(out.deny).toContain(REVIEW_DIR + ' has no GitHub origin remote')
+  expect(out.deny).toContain('{"repo": "owner/name"}')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a head refusal names the repository and the pull request it compared', async ($, on) => {
+  await world($, on, { git: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' } as any)
+  expect(out.deny).toContain('the pull request\'s head is 0123456 (acme/thing#12)')
+})
+
+test('a git status that fails is reported with its error, not as changed files', async ($, on) => {
+  const seen = await world($, on, { git: { ...CLEAN, 'status --porcelain -uno': { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository\n' } } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' } as any)
+  expect(out.deny).toContain('git status failed: fatal: not a git repository')
+  expect(out.deny).not.toContain('have changes')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('the permission check receives the checkout the record names', async ($, on) => {
+  const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, tree: CHECKOUTS, labels: ['Ready'] })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', detail: 'ran', dir: REVIEW_DIR } as any)
+  expect(seen.checks.map((c) => c.dir)).toContain(REVIEW_DIR)
 })
 
 test('a record is refused on a checkout whose tracked files changed', async ($, on) => {
@@ -1307,6 +1398,28 @@ test('an acceptance with no failed review at the head is refused', accepting('or
   const seen = await world($, on)
   expect((await accept($, { over: FOUR_REVIEW })).deny).toContain('github: ' + FOUR_REVIEW + ' is no failed review record at 0123456, the pull request\'s head')
   expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a refused acceptance over a wrong file names the latest failed review to pass as over', accepting('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD })
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('The latest failed review at 0123456 is ' + FAILED[0] + ': pass it as over.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a refused acceptance says there is no failed review to accept when the head has no review record', accepting('orchestrator'), async ($, on) => {
+  await world($, on)
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
+  expect(deny).not.toContain('pass it as over')
+})
+
+test('a refused acceptance says there is no failed review to accept when the latest review passed', accepting('orchestrator'), async ($, on) => {
+  const later = record('review', 'pass', '2026-11-01T12:00:00Z')
+  await world($, on, { records: { ...FAILED_AT_HEAD, [later[0]]: later[1] } })
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
+  expect(deny).not.toContain('pass it as over')
 })
 
 test('an acceptance of a failed review of another head is refused', accepting('orchestrator'), async ($, on) => {
@@ -2256,4 +2369,616 @@ test('a pr-gate answer that does not parse is given back as it is, with no secon
   expect(await $.tool.call(gh('pr-gate', { pr: 12 }))).toEqual({ result: 'not json' })
   expect(gates(seen)).toBe(1)
   expect(readinessRuns(seen)).toEqual([])
+})
+
+// ---- E2E a pull request does not need ----
+
+const TWO = Object.fromEntries([record('review', 'pass'), record('norms', 'pass')])
+const EXEMPT = {
+  v: 1, repo: 'acme/thing', exempt: true, paths: [], labels: [], detail: 'no E2E on thing, 2026-11-13', session: 's', at: '2026-11-13T10:00:00Z',
+}
+const EXEMPT_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, a passed norms check, no E2E needed'
+  + ' (E2E exemption of acme/thing, 2026-11-13: no E2E on thing, 2026-11-13) and green CI hold at its head.'
+
+test('a pull request of a repository the operator exempted is Ready with no E2E record, its line naming the exemption', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: EXEMPT })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual([EXEMPT_LINE])
+})
+
+for (const [label, exemption] of [
+  ['no exemption', undefined], ['a revoked exemption', { ...EXEMPT, exempt: false }], ['an exemption file that does not parse', '{'],
+  ['an exemption of another shape', { ...EXEMPT, v: 2 }],
+] as const) {
+  test('with ' + label + ' a pull request with no E2E record stays Not Ready, as before', async ($, on) => {
+    const seen = await world($, on, { records: TWO, exemption, autoMerge: ['acme/thing'] })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(readinessRuns(seen)).toEqual([])
+    let merge: any
+    await inPhase('enforce', async () => {
+      merge = await $.tool.call(gh('pr-merge', { pr: 12 }))
+    })
+    expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
+  })
+}
+
+test('an exemption by label or by paths does not cover a pull request without the label and with a file outside the paths', async ($, on) => {
+  const ruled = { ...EXEMPT, labels: ['no-e2e'], paths: ['docs/'] }
+  const seen = await world($, on, { records: TWO, exemption: ruled, files: [{ filename: 'docs/a.md' }, { filename: 'src/a.ts' }] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('an exemption by paths covers a pull request whose files all match, and none whose files cannot be read', async ($, on) => {
+  const ruled = { ...EXEMPT, paths: ['docs/'] }
+  const seen = await world($, on, { records: TWO, exemption: ruled, files: [{ filename: 'docs/a.md' }, { filename: 'docs/b.svg' }] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('an exemption by paths covers nothing when the files cannot be read', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, paths: ['docs/'] }, filesFails: 'error: rate limited' })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('an exemption by label covers a pull request carrying it', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, labels: ['no-e2e'] }, labels: ['Not Ready', 'No-E2E'] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a failed E2E record holds a pull request of an exempted repository', async ($, on) => {
+  const seen = await world($, on, { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, exemption: EXEMPT })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+const exemptCall = (exempt: boolean, detail: string, over: Record<string, unknown> = {}) =>
+  ({ tool: 'mcp__github__record', repo: 'acme/thing', exempt, detail, ...over }) as any
+const exemptionOf = (seen: Seen) => JSON.parse(seen.files[EXEMPTION])
+const HIS_EXEMPTION = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
+
+test('the operator\'s typed words exempt a repository through the record tool, with its rules, and revoke it', async ($, on) => {
+  const seen = await world($, on)
+  const before: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
+  expect(before.deny).toContain('an E2E exemption quotes the operator')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  await typed($, HIS_EXEMPTION)
+  const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
+  expect(set.deny).toBeUndefined()
+  expect(set.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/')
+  expect(exemptionOf(seen)).toMatchObject({ v: 1, repo: 'acme/thing', exempt: true, paths: ['docs/'], labels: ['no-e2e'], detail: HIS_EXEMPTION })
+  const revoke: any = await $.tool.call(exemptCall(false, HIS_EXEMPTION))
+  expect(revoke.result).toBe('github: acme/thing no longer exempt from E2E')
+  expect(exemptionOf(seen)).toMatchObject({ exempt: false, paths: [], labels: [] })
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an exemption with no rule covers every pull request of the repository', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, HIS_EXEMPTION)
+  const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
+  expect(set.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('an exemption may quote the operator\'s answer in a consent record of the repository\'s exemption, not of a waiver', async ($, on) => {
+  const words = 'exempt thing from E2E, 2026-11-13'
+  const exemptionConsent = consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer: words })
+  const seen = await world($, on, consentWorld({ a: exemptionConsent }))
+  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + words))
+  expect(out.deny).toBeUndefined()
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('a consent record of a waiver of one pull request does not exempt the repository', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent() }))
+  const out: any = await $.tool.call(exemptCall(true, CONSENT_WORDS))
+  expect(out.deny).toContain('an E2E exemption quotes the operator')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
+test('an exemption is refused undated, without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, 'plus de dérogation E2E sur ce dépôt')
+  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur ce dépôt'))
+  expect(undated.deny).toContain('with their date (YYYY-MM-DD)')
+  await typed($, HIS_EXEMPTION)
+  const unnamed: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { repo: 'thing' }))
+  expect(unnamed.deny).toContain('{"repo": "owner/name"}')
+  const ruled: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: 'docs/' }))
+  expect(ruled.deny).toContain('"paths" and "labels" are lists')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
+test('words that grant no exemption, or do not name the repository, exempt nothing', async ($, on) => {
+  const seen = await world($, on)
+  for (const words of ['lance les tests du dépôt, 2026-11-13', 'lance les tests de thing, 2026-11-13', 'plus de dérogation E2E sur ce dépôt, 2026-11-13']) {
+    await typed($, words)
+    const out: any = await $.tool.call(exemptCall(true, words))
+    expect(out.deny, words).toContain('an E2E exemption quotes the operator')
+  }
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
+test('the repository named outside the operator\'s quoted words does not count', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on)
+  await typed($, 'plus de dérogation E2E pour docs/')
+  const outside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E pour docs/ » — operator about acme/thing, ' + RECEIVED_DAY, { paths: ['docs/'] }))
+  expect(outside.deny).toContain('an E2E exemption quotes the operator')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  await typed($, 'plus de dérogation E2E sur thing pour docs/')
+  const inside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E sur thing pour docs/ » — operator, ' + RECEIVED_DAY, { paths: ['docs/'] }))
+  expect(inside.deny).toBeUndefined()
+})
+
+test('each rule of an exemption is in the operator\'s words as given', async ($, on) => {
+  const seen = await world($, on)
+  const words = 'plus de dérogation E2E sur thing, 2026-11-13'
+  await typed($, words)
+  for (const rule of [{ paths: ['docs/'] }, { labels: ['no-e2e'] }]) {
+    const out: any = await $.tool.call(exemptCall(true, words, rule))
+    expect(out.deny, JSON.stringify(rule)).toContain('each rule as given')
+  }
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  const given = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
+  await typed($, given)
+  const quoted: any = await $.tool.call(exemptCall(true, given, { paths: ['docs/'], labels: ['no-e2e'] }))
+  expect(quoted.deny).toBeUndefined()
+  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'], labels: ['no-e2e'] })
+})
+
+test('a rule found only inside a longer word of the operator\'s words is not given', async ($, on) => {
+  const seen = await world($, on)
+  for (const [words, rule] of [
+    ['plus de dérogation E2E sur thing pour src/docs/, 2026-11-13', { paths: ['docs/'] }],
+    ['plus de dérogation E2E sur thing pour docs/api, 2026-11-13', { paths: ['docs/'] }],
+    ['plus de dérogation E2E sur thing avec no-e2e, 2026-11-13', { labels: ['e2e'] }],
+    ['plus de dérogation E2E sur thing avec e2e-skip, 2026-11-13', { labels: ['e2e'] }],
+  ] as const) {
+    await typed($, words)
+    const out: any = await $.tool.call(exemptCall(true, words, rule))
+    expect(out.deny, words).toContain('each rule as given')
+  }
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  const whole = 'plus de dérogation E2E sur thing pour docs/, avec e2e.'
+  await typed($, whole + ' 2026-11-13')
+  const given: any = await $.tool.call(exemptCall(true, whole + ' 2026-11-13', { paths: ['docs/'], labels: ['e2e'] }))
+  expect(given.deny).toBeUndefined()
+})
+
+const answeredExemption = (answer: string) => consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer })
+
+for (const [answer, rule] of [
+  ['lance les tests du dépôt, 2026-11-13', {}],
+  ['plus de dérogation E2E sur ce dépôt, 2026-11-13', {}],
+  ['exempt thing from E2E, 2026-11-13', { paths: ['docs/'] }],
+  ['exempt thing from E2E for no-e2e, 2026-11-13', { labels: ['e2e'] }],
+] as const) {
+  test('a consent answer the typed route refuses exempts nothing: ' + answer + ' ' + JSON.stringify(rule), async ($, on) => {
+    const seen = await world($, on, consentWorld({ a: answeredExemption(answer) }))
+    const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + answer + ' — on acme/thing, exempt, docs/ e2e', rule))
+    expect(out.deny).toContain('an E2E exemption quotes the operator')
+    expect(seen.files[EXEMPTION]).toBeUndefined()
+  })
+}
+
+test('a consent answer that does not name the repository revokes nothing', async ($, on) => {
+  const seen = await world($, on, { exemption: EXEMPT, ...consentWorld({ a: answeredExemption('remets les E2E, 2026-11-13') }) })
+  const out: any = await $.tool.call(exemptCall(false, 'operator ruled: remets les E2E, 2026-11-13 — acme/thing'))
+  expect(out.deny).toContain('an E2E exemption quotes the operator')
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('a consent answer with the exemption, the repository and each rule exempts', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: answeredExemption('exempt thing from E2E for docs/, 2026-11-13') }))
+  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: exempt thing from E2E for docs/, 2026-11-13', { paths: ['docs/'] }))
+  expect(out.deny).toBeUndefined()
+  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'] })
+})
+
+test('a revocation names the repository in the operator\'s words', async ($, on) => {
+  const seen = await world($, on, { exemption: EXEMPT })
+  await typed($, 'plus de dérogation E2E sur ce dépôt, 2026-11-13')
+  const unnamed: any = await $.tool.call(exemptCall(false, 'plus de dérogation E2E sur ce dépôt, 2026-11-13'))
+  expect(unnamed.deny).toContain('an E2E exemption quotes the operator')
+  expect(exemptionOf(seen).exempt).toBe(true)
+  await typed($, 'remets les E2E sur thing, 2026-11-13')
+  const named: any = await $.tool.call(exemptCall(false, 'remets les E2E sur thing, 2026-11-13'))
+  expect(named.result).toBe('github: acme/thing no longer exempt from E2E')
+})
+
+test('an exemption of a repository named with a dot segment is refused before any file is written', async ($, on) => {
+  const seen = await world($, on)
+  for (const repo of ['../auto-merge', 'o/..', './thing', '.../x']) {
+    const words = 'plus de dérogation E2E sur ' + repo + ', 2026-11-13'
+    await typed($, words)
+    const out: any = await $.tool.call(exemptCall(true, words, { repo }))
+    expect(out.deny, repo).toContain('{"repo": "owner/name"}')
+  }
+  expect(seen.files).toEqual({})
+})
+
+const LABELLED = { ...EXEMPT, labels: ['no-e2e'] }
+
+test('a label an exemption names is refused to the tool, on or off, another label passes', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED })
+  const added: any = await $.tool.call(gh('label-add', { pr: 12, label: ['bug', 'No-E2E'] }))
+  expect(added.deny).toBe('github: label-add refused: No-E2E exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  const removed: any = await $.tool.call(gh('label-remove', { pr: 12, name: 'no-e2e' }))
+  expect(removed.deny).toBe('github: label-remove refused: no-e2e exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  const other: any = await $.tool.call(gh('label-add', { pr: 12, label: ['bug'] }))
+  expect(other.deny).toBeUndefined()
+  expect(seen.runs.filter((r) => r.command).map((r) => r.command)).toEqual(['label-add'])
+})
+
+test('a label an exemption names is refused to Bash, on any route, another label passes', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED, git: { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } } })
+  for (const command of [
+    'gh pr edit 12 -R acme/thing --add-label no-e2e',
+    'gh pr edit 12 --remove-label bug,no-e2e',
+    'gh issue edit 12 -R acme/thing --add-label NO-E2E',
+    'gh pr create -R acme/thing --draft --label no-e2e',
+    ENGINE + ' --repo acme/thing label-add 12 no-e2e',
+    ENGINE + ' label-remove 12 no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -f \'labels[]=no-e2e\'',
+    'gh api -X DELETE repos/acme/thing/issues/12/labels/no-e2e',
+    'gh api -X DELETE repos/acme/thing/issues/12/labels',
+    'gh api -X POST repos/acme/thing/issues/12/labels --input body.json',
+    'gh api -X POST repos/acme/thing/issues/12/labels -F \'labels[]=@labels.txt\'',
+    'gh api repos/acme/thing/issues/12/labels -F labels[]=@labels.txt',
+    'gh api -X PATCH repos/acme/thing/issues/12 -F \'labels[]=@labels.txt\'',
+    'gh api -X PATCH repos/acme/thing/pulls/12 -f \'labels[]=no-e2e\'',
+    'gh label edit bug -R acme/thing --name no-e2e',
+    'gh api graphql -f query=\'mutation { addLabelsToLabelable(input: {labelableId: "x", labelIds: ["y"]}) { clientMutationId } }\'',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toContain('exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  }
+  expect(seen.bash).toEqual([])
+  const other: any = await $.tool.call(bash('gh pr edit 12 -R acme/thing --add-label bug'))
+  expect(other.deny).toBeUndefined()
+})
+
+test('a gh api field joined to its flag is read as a spaced one: a label an exemption names is refused', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED })
+  for (const command of [
+    'gh api -X POST repos/acme/thing/issues/12/labels -f labels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -flabels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=@labels.txt',
+    'gh api -XPATCH repos/acme/thing/issues/12 -Flabels[]=@labels.txt',
+    'gh api repos/acme/thing/issues/12/labels --raw-field=labels[]=no-e2e',
+    'gh api repos/acme/thing/issues/12/labels --field=labels[]=no-e2e',
+    'gh api repos/acme/thing/issues/12/labels --field=labels[]=@labels.txt',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toContain('exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  }
+  expect(seen.bash).toEqual([])
+})
+
+test('a gh api path whose repository is a placeholder is read as the checkout\'s repository', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED, git: { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } } })
+  for (const command of [
+    'gh api -X POST \'repos/{owner}/{repo}/issues/12/labels\' -f labels[]=no-e2e',
+    'gh api -X POST repos/:owner/:repo/issues/12/labels -f labels[]=no-e2e',
+    'gh api -X POST "repos/{owner}/thing/issues/12/labels" -f labels[]=no-e2e',
+    'gh api -X DELETE \'repos/{owner}/{repo}/issues/12/labels/no-e2e\'',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toContain('exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  }
+  expect(seen.bash).toEqual([])
+})
+
+test('the exemption files are refused to Write, Edit and Bash', async ($, on) => {
+  const seen = await world($, on)
+  for (const call of [
+    { tool: 'Write', file_path: EXEMPTION, content: '{}' },
+    { tool: 'Edit', file_path: '/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json', old_string: 'a', new_string: 'b' },
+    bash('echo {} > /data/e2e-exempt/acme/thing.json'),
+    bash('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"'),
+  ]) {
+    const out: any = await $.tool.call(call as any)
+    expect(out.deny, JSON.stringify(call)).toContain('github: an E2E exemption changes only through mcp__github__record')
+  }
+  const mention: any = await $.tool.call(bash('git commit -m "docs: explain e2e-exempt/ files"'))
+  expect(mention.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['git commit -m "docs: explain e2e-exempt/ files"'])
+})
+
+const noneCall = (detail?: string) =>
+  ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'not-applicable', ...(detail === undefined ? {} : { detail }) }) as any
+const DOCS_ONLY = [{ filename: 'README.md' }, { filename: 'plugins/github/tests/run-tests.sh' }, { filename: '.github/workflows/ci.yml' }]
+
+test('E2E not applicable on a pull request whose files hold no runtime is recorded without the operator', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, records: TWO, files: DOCS_ONLY })
+  const out: any = await $.tool.call(noneCall('documentation and tests only'))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('not-applicable')
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('E2E not applicable on a pull request that changes code is refused, naming the files', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: [...DOCS_ONLY, { filename: 'hooks/register.ts' }, { filename: 'package.json' }] })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toBe('github: E2E is not applicable only to a pull request whose files hold no runtime;'
+    + ' acme/thing#12 changes hooks/register.ts, package.json.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused without its reason', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: DOCS_ONLY })
+  for (const detail of [undefined, '  ']) {
+    const bare: any = await $.tool.call(noneCall(detail))
+    expect(bare.deny).toContain('its reason in "detail"')
+  }
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused when the files of the pull request cannot be read', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, filesFails: 'error: rate limited' })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toContain('the files of acme/thing#12 cannot be read: error: rate limited')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused when the pull request lists no files yet', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: [] })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toContain('the files of acme/thing#12 cannot be read: pr-files answered no files')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused when the head moves while the files are read', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: DOCS_ONLY, heads: [HEAD, MOVED] })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toContain('the head moved from 0123456 to fedcba9')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+// ---- records carried across a rebase that leaves the diff unchanged ----
+
+const OLD = 'abcdef0123456789abcdef0123456789abcdef01'
+const OLD_DIR = RECORDS + '/acme/thing/' + OLD
+const SAME = 'a'.repeat(64)
+const OTHER = 'b'.repeat(64)
+const fingerprintRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-fingerprint')
+  .map((r) => r.args.head + (r.args.count === undefined ? '' : ' x' + r.args.count))
+// Each world's earlier head directory has a new mtime, as a directory a record lands in does.
+let earlierMtime = 0
+const fingerprintFile = (head: string) => '/data/fingerprint.acme%2Fthing.12.' + head + '.json'
+
+// The earlier head's records as the store holds them, beside the current head's directory, and the
+// commit count a gate read found at that head (none when null).
+function earlier(records: Array<[string, string]>, dir = OLD_DIR, commits: number | null = 2): World['tree'] {
+  const tree: NonNullable<World['tree']> = {
+    [RECORDS + '/acme/thing']: { kind: 'directory', mtimeMs: 0 },
+    [dir]: { kind: 'directory', mtimeMs: ++earlierMtime },
+  }
+  if (commits !== null) {
+    const head = dir.slice(dir.lastIndexOf('/') + 1)
+    tree[fingerprintFile(head)] = { kind: 'file', mtimeMs: 0, text: JSON.stringify({ v: 3, repo: 'acme/thing', pr: 12, head, commits }) }
+  }
+  for (const [name, text] of records) tree[dir + '/' + name] = { kind: 'file', mtimeMs: 0, text }
+  return tree
+}
+const at = (kind: string, result: string, over: Record<string, unknown> = {}, when = '2026-11-01T10:00:00Z') =>
+  record(kind, result, when, { head: OLD, ...over })
+const CLEAN_OLD = [at('review', 'pass'), at('norms', 'pass'), at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })]
+
+test('a rebase that leaves the diff unchanged carries the review, the norms check and the E2E waiver: Ready on green CI', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
+    + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
+  // Each head is fingerprinted once, the earlier one over the head's commit count: the second read takes both from the data directory.
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('a rebase that changed the diff carries nothing', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+})
+
+test('an E2E pass at the earlier head is not carried: E2E runs again, the review and norms are carried', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('norms', 'pass'), at('e2e', 'pass')])
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456;'
+    + ' review carried from abcdef0, norms carried from abcdef0'])
+})
+
+test('a review that failed last at the earlier head is not carried, nor is a kind already recorded at the head', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('review', 'fail', {}, '2026-11-01T11:00:00Z'), at('norms', 'pass'), at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })])
+  const seen = await world($, on, {
+    records: Object.fromEntries([record('e2e', 'fail')]), labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' e2e: fail at 0123456 by p-e2e; norms carried from abcdef0'])
+})
+
+test('a review failed at a later head of the same diff is not carried from an earlier head where it passed', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
+  }
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+})
+
+test('a second gate read with the records unchanged still reads Ready with the same carried kinds', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
+    + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
+})
+
+test('a head whose commits cannot be fingerprinted (a merge in the pull request) carries nothing, and says so in one line', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual([
+    'github: acme/thing#12: no record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
+    'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+      + ' norms: no record at 0123456, e2e: no record at 0123456',
+  ])
+})
+
+test('the records of another pull request with the same diff are never carried, nothing is fingerprinted', async ($, on) => {
+  const tree = earlier(CLEAN_OLD.map(([name]) => at(name.split('.')[0], name.startsWith('e2e') ? 'waived' : 'pass', { pr: 13, detail: 'no E2E, 2026-11-01' })))
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(fingerprintRuns(seen)).toEqual([])
+})
+
+test('a refused Ready label names the records carried beside what is missing', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('norms', 'pass')])
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: e2e: no record at 0123456; review carried from abcdef0, norms carried from abcdef0.')
+})
+
+test('an earlier head whose commits cannot be fingerprinted carries nothing, and says so in one line', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME },
+    fingerprintFails: 'error: abcdef0 has fewer than 2 commits along its first parents',
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
+    + ' error: abcdef0 has fewer than 2 commits along its first parents')
+  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456')
+})
+
+test('a kept fingerprint of another version is computed again, and a kept count is fingerprinted once', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  seen.files[fingerprintFile(HEAD)] = JSON.stringify({ v: 2, fingerprint: OTHER, commits: 2 })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+  expect(JSON.parse(seen.files[fingerprintFile(OLD)])).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME })
+})
+
+test('an earlier head of more commits whose top ones are the head\'s carries nothing, and is not fingerprinted', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], commits: 2, tree: earlier(CLEAN_OLD, OLD_DIR, 3), fingerprints: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD + ' x2'])
+})
+
+test('the commit count a gate read finds at its head is kept for when it is an earlier head', async ($, on) => {
+  const seen = await world($, on, { commits: 4 })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(seen.files[fingerprintFile(HEAD)])).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: HEAD, commits: 4 })
+})
+
+test('an earlier head whose commit count was never read carries nothing of the kinds it holds, and says so', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD, OLD_DIR, null), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
+    + ' the pull request was never read at that head, its commit count is not known')
+  expect(fingerprintRuns(seen)).toEqual([HEAD])
+})
+
+test('a review failed at a later head that cannot be fingerprinted is not carried from an earlier head where it passed', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
+  }
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review record carried to 0123456: 1111111\'s commits cannot be fingerprinted:'
+    + ' error: commit 1234567 is a merge')
+})
+
+test('an earlier head whose records cannot be listed lets no earlier head carry, and says so', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = { ...earlier(CLEAN_OLD), ...earlier([], RECORDS + '/acme/thing/' + LATER) }
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], tree, unlistable: RECORDS + '/acme/thing/' + LATER, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no record carried to 0123456: the records of 1111111 cannot be listed:'
+    + ' github: $.fs.list: EACCES ' + RECORDS + '/acme/thing/' + LATER)
+  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(fingerprintRuns(seen)).toEqual([])
+})
+
+test('a review record that does not parse at the head is not carried over from an earlier head, and is named', async ($, on) => {
+  const seen = await world($, on, { records: { 'review.20261102T100000Z.p-review.json': '{"v": 1, "kind": "rev' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456, unreadable record review.20261102T100000Z.p-review.json;'
+    + ' norms carried from abcdef0, e2e carried from abcdef0.')
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('a record that does not parse at the head and whose name gives no kind lets no kind be carried', async ($, on) => {
+  const seen = await world($, on, { records: { 'stray.json': 'not json' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456, unreadable record stray.json.')
+  expect(fingerprintRuns(seen)).toEqual([])
+})
+
+test('a review record that does not parse at a later head of the same diff is not carried over from an earlier head, read after read', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([['review.20261101T110000Z.p-review.json', '']], RECORDS + '/acme/thing/' + LATER),
+  }
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  for (const read of [1, 2]) {
+    const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+    expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+    expect(seen.logs[read - 1]).toBe('github: acme/thing#12: no review record carried to 0123456:'
+      + ' 1111111\'s record review.20261101T110000Z.p-review.json does not parse')
+  }
+})
+
+test('an earlier head whose records name only other pull requests is read once, until a record lands in it', async ($, on) => {
+  const tree = earlier([at('review', 'pass', { pr: 13 })])
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const oldReads = () => seen.reads.filter((path) => path.startsWith(OLD_DIR + '/')).length
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(oldReads()).toBe(1)
+  expect(fingerprintRuns(seen)).toEqual([])
+  const [name, text] = at('norms', 'pass')
+  tree![OLD_DIR + '/' + name] = { kind: 'file', mtimeMs: 0, text }
+  tree![OLD_DIR] = { kind: 'directory', mtimeMs: ++earlierMtime }
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  // Read again once it changed: the new record names the pull request, so it is fingerprinted.
+  expect(oldReads()).toBe(3)
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('the daily pruning removes the fingerprints kept past 90 days with the old records', async ($, on) => {
+  const now = Date.now()
+  const tree: World['tree'] = {
+    [RECORDS]: { kind: 'directory', mtimeMs: now },
+    '/data': { kind: 'directory', mtimeMs: now },
+    [fingerprintFile(OLD)]: { kind: 'file', mtimeMs: now - 100 * DAY },
+    [fingerprintFile(HEAD)]: { kind: 'file', mtimeMs: now - 10 * DAY },
+    '/data/auto-merge.json': { kind: 'file', mtimeMs: now - 100 * DAY },
+  }
+  const seen = await world($, on, { tree })
+  expect(seen.runs.map((r) => r.argv)).toEqual([['rm', '-rf', '--', fingerprintFile(OLD)]])
 })

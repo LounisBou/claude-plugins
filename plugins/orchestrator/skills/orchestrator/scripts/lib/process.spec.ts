@@ -11,6 +11,8 @@ const node = process.execPath
 test('run collects stdout and the exit status, without a shell', async () => {
   assert.deepEqual(await run([node, '-e', 'process.stdout.write("a $HOME;"); process.exit(3)']), { status: 3, stdout: 'a $HOME;', stderr: '' })
   assert.deepEqual(await run([node, '-e', 'process.stdout.write(process.cwd())'], { cwd: '/' }), { status: 0, stdout: '/', stderr: '' })
+  assert.deepEqual(await run([node, '-e', 'process.stdout.write(process.env.RUN_SPEC_VAR ?? "unset")'], { env: { RUN_SPEC_VAR: 'set' } }), { status: 0, stdout: 'set', stderr: '' })
+  assert.deepEqual(await run([node, '-e', 'process.stdout.write(process.env.RUN_SPEC_VAR ?? "unset")']), { status: 0, stdout: 'unset', stderr: '' })
   assert.deepEqual(await run([node, '-e', 'process.stderr.write("why")'], { stderr: 'pipe' }), { status: 0, stdout: '', stderr: 'why' })
 })
 

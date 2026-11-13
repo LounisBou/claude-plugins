@@ -14,6 +14,8 @@ export type WaitKind = (typeof WAIT_KINDS)[number]
 export interface Wait {
   readonly kind: WaitKind
   readonly blocks: string
+  /** The question block an operator wait carries (`input.question`); absent from any other kind. */
+  readonly question?: string
 }
 
 export interface Reading {
@@ -37,7 +39,9 @@ const DECISION_LINE = /^[\s>*-]*Decision: (.+?) (?:→|->) (.+?)\s*$/u
 
 function waitOfInput(input: unknown): Wait | null {
   if (!isRecord(input) || !isKind(input['kind'])) return null
-  return { kind: input['kind'], blocks: typeof input['blocks'] === 'string' ? input['blocks'].replace(/\s+/gu, ' ').trim() : '' }
+  const blocks = typeof input['blocks'] === 'string' ? input['blocks'].replace(/\s+/gu, ' ').trim() : ''
+  const question = input['kind'] === 'operator' && typeof input['question'] === 'string' ? input['question'].trim() : ''
+  return { kind: input['kind'], blocks, ...(question === '' ? {} : { question }) }
 }
 
 /** The blocks of a message's content; a plain string is one text block. */
@@ -104,7 +108,7 @@ export function readTranscript(text: string): Reading {
   const last = messages.at(-1)
   const idle = last?.type === 'assistant' && last.message['stop_reason'] === 'end_turn'
   const wait = declared
-  return { idle, wait, decisions, signature: `${messages.length}|${idle}|${wait?.kind ?? '-'}|${wait?.blocks ?? ''}` }
+  return { idle, wait, decisions, signature: `${messages.length}|${idle}|${wait?.kind ?? '-'}|${wait?.blocks ?? ''}|${wait?.question ?? ''}` }
 }
 
 /** The transcript of a session: `<projects>/<any project>/<session>.jsonl`, or null. */

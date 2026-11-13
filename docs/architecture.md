@@ -35,7 +35,7 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── drift, github, implement, norms, orchestrator, pr-review (a copy in core/)
+        └───── drift, github, implement, norms, orchestrator, pr-review, telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
@@ -43,7 +43,7 @@ change: a change that crosses plugins is one pull request.
   contract (`contracts.md`) and a dependency declared, with a version range, in its manifest.
 - The edges above are the dependencies the manifests declare. One reading is not declared
   yet and is listed in `contracts.md`: implement and bugs-bot run the orchestrator's
-  launcher. statusbar and cloudflare depend on no plugin.
+  launcher. statusbar, cloudflare and telemetry depend on no plugin.
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
@@ -59,7 +59,7 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
 reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
-cloudflare stands outside it.
+cloudflare stands outside it; telemetry observes every role and changes none.
 
 ## Packaging
 

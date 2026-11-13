@@ -192,6 +192,12 @@ describe('outcome evals: deciding the orchestration is over', () => {
     assert.deepEqual(run.orchestration, { agentsOpened: 0, decisions: [], askedOperator: 'which name?' })
   })
 
+  it("reports the question the operator wait carries in place of what it blocks", async () => {
+    const asking = jsonl([prompt(), { ...declare('operator', 'the name'), message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't', name: WAIT_TOOL, input: { kind: 'operator', blocks: 'the name', question: '**Question 1 of 1**' } }] } }, result, said('Over.')])
+    const run = await agent(fakeLauncher(), () => asking).run(input())
+    assert.equal(run.orchestration?.askedOperator, '**Question 1 of 1**')
+  })
+
   it('keeps waiting through turns that wait on a tool or declare nothing', async () => {
     const quiet = jsonl([prompt(), said('Spawned.')])
     const watching = ended('tool', 'a monitor')

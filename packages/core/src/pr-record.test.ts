@@ -33,6 +33,16 @@ describe('pull request records', () => {
     assert.ok(failed && !accepts(failed))
   })
 
+  it('lets an E2E not applicable through the gate, never a review or a norms check', () => {
+    const read = (change: Record<string, unknown>) => parsePrRecord({ ...RECORD, ...change })
+    const e2eNone = read({ kind: 'e2e', result: 'not-applicable', detail: 'documentation only' })
+    assert.ok(e2eNone && accepts(e2eNone))
+    for (const kind of ['review', 'norms']) {
+      const none = read({ kind, result: 'not-applicable', detail: 'documentation only' })
+      assert.ok(none && !accepts(none), kind)
+    }
+  })
+
   it('lets an acceptance of a failed review through, and of no other kind', () => {
     const read = (change: Record<string, unknown>) => parsePrRecord({ ...RECORD, ...change })
     const accepted = read({ result: 'accepted', producer: 'orchestrator', detail: acceptanceDetail('review.x.json', 'nits only') })

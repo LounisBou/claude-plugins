@@ -1,6 +1,6 @@
 // workspace — a checkout per phase, with the project's local material.
 //
-//   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path
+//   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none
 //   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
 //   workspace.sh delete <path> [--discard]                     refuses unpushed work unless told; also removes the host's
 //                                                              temporary directory of the path when no live process uses it
@@ -100,9 +100,9 @@ function chomp(text: string): string {
   return text.replace(/\n+$/, '')
 }
 
-async function git(ctx: Context, dir: string, args: readonly string[], signal?: AbortSignal): Promise<Ran> {
+async function git(ctx: Context, dir: string, args: readonly string[], signal?: AbortSignal, env?: Readonly<Record<string, string>>): Promise<Ran> {
   const s = signal ?? ctx.signal
-  return ctx.deps.run(['git', '-C', dir, ...args], { stderr: 'pipe', ...(s === undefined ? {} : { signal: s }) })
+  return ctx.deps.run(['git', '-C', dir, ...args], { stderr: 'pipe', ...(s === undefined ? {} : { signal: s }), ...(env === undefined ? {} : { env }) })
 }
 
 /** The output of a git read that succeeded, else undefined. */
@@ -338,10 +338,24 @@ async function removeHostTmp(ctx: Context, paths: readonly string[]): Promise<vo
   }
 }
 
-/** Every path in one pass, each kept at its place under the root; false when the copy fails. */
-export function copyList(from: string, to: string, paths: readonly string[]): boolean {
-  try {
-    for (const rel of paths) {
+/** The path a pass stopped at and what the filesystem said. */
+export interface CopyFailure {
+  readonly path: string
+  readonly error: string
+}
+
+/**
+ * A path the pass may copy: a file or a link. A nested repository or worktree (git lists it as a
+ * directory) and anything inside a git directory belong to their own repository, never to this copy.
+ */
+export function copyable(rel: string): boolean {
+  return !rel.endsWith('/') && !rel.split('/').includes('.git')
+}
+
+/** Every path in one pass, each kept at its place under the root; the first failure, or undefined. */
+export function copyFiles(from: string, to: string, paths: readonly string[]): CopyFailure | undefined {
+  for (const rel of paths) {
+    try {
       const source = join(from, rel)
       const target = join(to, rel)
       mkdirSync(dirname(target), { recursive: true })
@@ -353,11 +367,16 @@ export function copyList(from: string, to: string, paths: readonly string[]): bo
         copyFileSync(source, target)
         chmodSync(target, info.mode & 0o7777)
       }
+    } catch (e) {
+      return { path: rel, error: e instanceof Error ? e.message : String(e) }
     }
-    return true
-  } catch {
-    return false
   }
+  return undefined
+}
+
+/** Every path in one pass, each kept at its place under the root; false when the copy fails. */
+export function copyList(from: string, to: string, paths: readonly string[]): boolean {
+  return copyFiles(from, to, paths) === undefined
 }
 
 /** One manifest path, file or directory: 'absent' when the source has none, 'failed' when the copy fails. */
@@ -435,8 +454,11 @@ async function globalExcluded(ctx: Context, src: string, target: string, notLoca
     ? await gitList(ctx, src, ['ls-files', '-z', '--others', '--ignored', `--exclude-from=${exclude}`])
     : [])
   const listed = await gitList(ctx, src, ['ls-files', '-z', '--others', '--ignored', `--exclude-from=${path}`])
-  return { files: listed.filter(f => !underSettings(f) && !present(join(target, f)) && !locals.has(f)), path }
+  return { files: listed.filter(f => copyable(f) && !underSettings(f) && !present(join(target, f)) && !locals.has(f)), path }
 }
+
+/** How long the read of a branch on the origin may take before the origin counts as unreadable. */
+const PROBE_MS = 30_000
 
 const NAME = /^[A-Za-z0-9._-]+$/
 
@@ -462,6 +484,14 @@ function parseLine(argv: readonly string[], cmd: string, valued: readonly string
   return { pos, opts }
 }
 
+/** A copy pass that stops names the path and the error on stderr, then removes the checkout. */
+function copyOrFail(ctx: Context, from: string, to: string, paths: readonly string[], what: string, fail: (text: string) => never): void {
+  const failure = copyFiles(from, to, paths)
+  if (failure === undefined) return
+  say(ctx, `copy failed at ${failure.path}: ${failure.error}`)
+  fail(what)
+}
+
 async function topLevel(ctx: Context, cmd: string, src: string): Promise<string> {
   const top = await gitOut(ctx, src, ['rev-parse', '--show-toplevel'])
   if (top === undefined) throw new Refused(`${cmd}: not a git repository: ${src}`)
@@ -484,19 +514,39 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   const src = await topLevel(ctx, 'create', given)
   if (!NAME.test(name)) throw new Refused(`create: name must match [A-Za-z0-9._-]+: ${name}`)
   let base = opts.get('--base') ?? ''
+  const explicit = base !== ''
   if (base === '') base = (await gitOut(ctx, src, ['rev-parse', '--abbrev-ref', 'HEAD'])) ?? ''
-  // A base is a local branch of the source, or an origin/ remote-tracking ref of it: a source
-  // whose local branch lags its remote would otherwise hand the phase a stale base with no way
-  // to name the fresh one (§35). Only origin/, because the checkout's origin is pointed at the
-  // source's origin and nothing else; the remote's head is fetched into the checkout below,
-  // since a clone carries only what the source's local branches reach.
+  // An explicit base is read from the source's origin, never from the source's own branch: a
+  // local branch that lags its remote would hand the work a stale base, and a branch only the
+  // remote holds would be refused (§35). So `--base <branch>` starts from `origin/<branch>`
+  // when the origin has it, and from the local branch only when the origin has none; the
+  // `origin/<branch>` spelling still names a remote-tracking ref of the source. The head of the
+  // remote is fetched into the checkout below, since a clone carries only what the source's
+  // local branches reach.
+  const origin = (await gitOut(ctx, src, ['remote', 'get-url', 'origin'])) ?? ''
+  const local = (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`])).status === 0
+  const unknown = new Refused(`create: the source has no branch or origin/ remote-tracking ref ${base}`)
   let remoteBranch = ''
-  if ((await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`])).status === 0) {
-    // A local branch.
-  } else if (base.startsWith('origin/') && (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/remotes/${base}`])).status === 0) {
+  let unreadable: string | undefined
+  if (!local && base.startsWith('origin/') && (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/remotes/${base}`])).status === 0) {
     remoteBranch = base.slice('origin/'.length)
-  } else {
-    throw new Refused(`create: the source has no branch or origin/ remote-tracking ref ${base}`)
+  } else if (explicit && origin !== '') {
+    // `origin/<b>` names the origin's branch <b> when the source holds no such local branch, even
+    // as a remote-tracking ref it never fetched; the probe asks for the bare name. It never
+    // prompts for a credential: an origin that wants one is unreadable.
+    const asked = !local && base.startsWith('origin/') ? base.slice('origin/'.length) : base
+    const probe = await git(ctx, src, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${asked}`], AbortSignal.timeout(PROBE_MS), { GIT_TERMINAL_PROMPT: '0' })
+    const why = probe.status === null ? `no answer within ${PROBE_MS / 1000} s` : probe.stderr.trim() || `git exited ${probe.status}`
+    if (probe.status === 0) remoteBranch = asked
+    else if (probe.status === 2) {
+      if (!local) throw unknown
+    } else if (local) {
+      unreadable = why.split('\n')[0] ?? ''
+    } else {
+      throw new Refused(`create: cannot read origin to resolve ${base}: ${why}`)
+    }
+  } else if (!local) {
+    throw unknown
   }
   const target = `${ctx.root}/${basename(src)}/${name}`
   makeParent('create', target)
@@ -511,7 +561,7 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
 
   // origin is the real remote, so the implementer's push reaches it; a source without one
   // yields a checkout without one, and says so.
-  const url = (await gitOut(ctx, src, ['remote', 'get-url', 'origin'])) ?? ''
+  const url = origin
   if (url !== '') {
     if ((await git(ctx, target, ['remote', 'set-url', 'origin', url])).status !== 0) fail(`cannot point origin at ${url}`)
   } else {
@@ -527,6 +577,10 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
     if ((await git(ctx, target, ['checkout', '--quiet', '-B', remoteBranch, `origin/${remoteBranch}`])).status !== 0) {
       fail(`cannot check out ${remoteBranch} from origin/${remoteBranch}`)
     }
+  }
+  if (explicit) {
+    const sha = (await gitOut(ctx, target, ['rev-parse', 'HEAD'])) ?? ''
+    say(ctx, remoteBranch !== '' ? `base: origin/${remoteBranch} at ${sha}` : unreadable === undefined ? `base: local branch ${base} at ${sha}, origin has none` : `base: local branch ${base} at ${sha}, origin unreadable (${unreadable})`)
   }
 
   const exclude = join(src, '.git', 'info', 'exclude')
@@ -552,14 +606,14 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
       const dir = `${src}/.claude/`
       for (const f of await gitList(ctx, src, ['ls-files', '-z', '--others', `--exclude-from=${rules}`, '--', dir])) {
         if (`/${f}` === '/.claude/settings.local.json') withheld++
-        else list.push(f)
+        else if (copyable(f)) list.push(f)
       }
       const listed = await git(ctx, src, ['-c', 'core.quotePath=false', 'ls-files', '--others', '--ignored', '--directory', `--exclude-from=${rules}`, '--', dir])
       skipped = listed.stdout.split('\n').filter(l => l !== '').length
     } finally {
       rmSync(rules, { force: true })
     }
-    if (!copyList(src, target, list)) fail('copying the local settings directory failed')
+    copyOrFail(ctx, src, target, list, 'copying the local settings directory failed', fail)
     say(ctx, `copied the local settings directory (${list.length} files, ${skipped} skipped by the exclude file, ${withheld} withheld: the operator's own settings.local.json never travels into a checkout)`)
     list = []
   }
@@ -568,8 +622,8 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   //    read the way git reads them and only present files are copied.
   let excluded: string[] = []
   if (excludeText !== undefined) {
-    excluded = (await gitList(ctx, src, ['ls-files', '-z', '--others', '--ignored', `--exclude-from=${exclude}`])).filter(f => !underSettings(f))
-    if (!copyList(src, target, excluded)) fail('copying the excluded files failed')
+    excluded = (await gitList(ctx, src, ['ls-files', '-z', '--others', '--ignored', `--exclude-from=${exclude}`])).filter(f => !underSettings(f) && copyable(f))
+    copyOrFail(ctx, src, target, excluded, 'copying the excluded files failed', fail)
   }
   say(ctx, `copied ${excluded.length} excluded files`)
 
@@ -585,7 +639,7 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   //    own exclude file, so step 2 never lists it (§40). A path already copied by step 1 or 2
   //    is skipped here so it is copied once and counted once.
   const global = await globalExcluded(ctx, src, target, false)
-  if (!copyList(src, target, global.files)) fail('copying the files kept out by the global excludes failed')
+  copyOrFail(ctx, src, target, global.files, 'copying the files kept out by the global excludes failed', fail)
   if (global.path !== '') appendFileSync(own, `# workspace.sh: the operator's global excludes\n${asLines(readFileSync(global.path, 'utf8'))}`)
   say(ctx, `copied ${global.files.length} files kept out by the global excludes`)
 

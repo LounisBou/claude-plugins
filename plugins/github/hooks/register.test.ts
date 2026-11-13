@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
+import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfNoneRefusal, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { lint, NEGATIVE_PHRASES, proseLines, refusal, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
 
@@ -2593,6 +2593,14 @@ test('a review of a head this session pushed is refused; another kind, or anothe
   expect(selfReviewRefusal('norms', head, pushed)).toBe(null)
 })
 
+test('an E2E not applicable on a head this session pushed is refused; a pass, or another head, is not', () => {
+  const head = 'a'.repeat(40)
+  const pushed = new Set([head])
+  expect(String(selfNoneRefusal('not-applicable', head, pushed))).toContain('says so from another session')
+  expect(selfNoneRefusal('not-applicable', 'b'.repeat(40), pushed)).toBe(null)
+  expect(selfNoneRefusal('pass', head, pushed)).toBe(null)
+})
+
 test('/github:protect checks the default branch, and applies the protection only on « apply »', async ($, on) => {
   const asked: string[] = []
   on('env.get', () => ({ value: undefined }))
@@ -2619,4 +2627,10 @@ test('the records guard reads the words as the shell does', () => {
   expect(touchesRecords('python3 /x/engine/rec""ord.py --kind review')).toBe(true)
   expect(touchesRecords("cat ~/.claude/pr-rec'ords'/a/b/c.json")).toBe(true)
   expect(touchesRecords('python3 scripts/report.py')).toBe(false)
+})
+
+test('a failed guard refuses a write or a command naming the E2E exemption files', () => {
+  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
+  expect(writeNetRefusal('/work/docs/e2e-exempt.md')).toBe(null)
 })

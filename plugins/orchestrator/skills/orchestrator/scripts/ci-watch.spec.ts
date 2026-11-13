@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
+import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
 import type { Ran, RunOptions } from './lib/process.ts'
 
 const HA = 'a'.repeat(40)
@@ -32,6 +32,7 @@ interface Script {
   dependents?: string
   guardFails?: string
   repoView?: string
+  repoViewFails?: string
 }
 
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
@@ -64,7 +65,7 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly out: 
         return ok(argv.includes('--dependents') ? script.dependents ?? '' : script.guard ?? '')
       }
       const verb = `${argv[1]} ${argv[2]}`
-      if (verb === 'repo view') return ok(script.repoView ?? 'acme/thing\n')
+      if (verb === 'repo view') return script.repoViewFails !== undefined ? failed(script.repoViewFails) : ok(script.repoView ?? 'acme/thing\n')
       if (verb === 'pr view') {
         if (line.includes('mergeCommit')) return script.merge === undefined ? failed('gh: HTTP 404\n') : ok(`${script.merge}\n`)
         const view = nth('view', script.view)
@@ -146,6 +147,65 @@ test('the command line: a number, then known options; the bounds are numbers', (
   assert.deepEqual(parseArgs(['7'], { CI_WATCH_BASE_WORKFLOWS: 'Lint,CI,\nX' }).workflows, ['Lint', 'CI'])
 })
 
+test('the target: a number, owner/name#number or a pull request URL, and a repository named twice is one', () => {
+  assert.deepEqual(parseTarget('7'), { pr: '7', repo: undefined })
+  assert.deepEqual(parseTarget('Acme/the-thing.js#12'), { pr: '12', repo: 'Acme/the-thing.js' })
+  assert.deepEqual(parseTarget('https://github.com/acme/thing/pull/12'), { pr: '12', repo: 'acme/thing' })
+  assert.deepEqual(parseTarget('https://github.com/acme/thing/pull/12/files?w=1#diff'), { pr: '12', repo: 'acme/thing' })
+  for (const bad of ['', 'x7', 'acme#7', 'acme/thing', 'acme/thing#', 'a/b/c#7', 'https://github.com/acme/thing/issues/7', 'https://example.com/acme/thing/pull/7']) {
+    assert.equal(parseTarget(bad), undefined, bad)
+  }
+  const named = (argv: string[]): string => {
+    try {
+      const parsed = parseArgs(argv, {})
+      return `${parsed.pr}|${parsed.repo}`
+    } catch (error) {
+      if (error instanceof Said) return `${error.line}|${error.code}`
+      throw error
+    }
+  }
+  assert.equal(named(['acme/thing#12']), '12|acme/thing')
+  assert.equal(named(['https://github.com/acme/thing/pull/12']), '12|acme/thing')
+  assert.equal(named(['7', '--repo', 'acme/thing']), '7|acme/thing')
+  assert.equal(named(['acme/thing#12', '--repo', 'ACME/Thing']), '12|ACME/Thing')
+  assert.equal(named(['acme/thing#12', '--repo', 'other/thing']), 'unread 12 the target names acme/thing and --repo names other/thing|5')
+  assert.equal(named(['https://github.com/acme/thing/pull/12', '--repo', 'other/thing']), 'unread 12 the target names acme/thing and --repo names other/thing|5')
+})
+
+test('a target that names the repository is watched on it, whatever the directory is', async () => {
+  for (const argv of [['acme/thing#7', '--interval', '1'], ['https://github.com/acme/thing/pull/7', '--interval', '1']]) {
+    const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', repoViewFails: 'fatal: not a git repository\n' })
+    assert.equal((await watch(options(argv), deps)).line, `green 7 ${HA} ${GATE} on acme/thing`)
+    assert.deepEqual(deps.calls.filter(call => !call.includes(' -R acme/thing') && !call.startsWith('gh pr checks 7 --watch')), [])
+    assert.equal(deps.calls.some(call => call.startsWith('gh repo view')), false)
+  }
+})
+
+test('no repository named, outside a clone: refused in one line, nothing read', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], repoViewFails: '' })
+  const result = await watch(options(), deps).catch((error: unknown) => error)
+  assert.ok(result instanceof Said)
+  assert.equal(`${result.line}|${result.code}`, 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
+  assert.deepEqual(deps.calls, ['gh repo view --json nameWithOwner --jq .nameWithOwner'])
+  const out = fake({ repoViewFails: '' })
+  assert.equal(await main(['7'], { ORCHESTRATOR_STATE_DIR: state }, out), 5)
+  assert.deepEqual(out.out, ['ci-watch: unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>\n'])
+})
+
+test('a failed repo view says why, and an empty answer is refused at once', async () => {
+  const refused = async (script: Script): Promise<string> => {
+    const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], ...script })
+    const result = await watch(options(), deps).catch((error: unknown) => error)
+    assert.ok(result instanceof Said)
+    assert.deepEqual(deps.calls, ['gh repo view --json nameWithOwner --jq .nameWithOwner'])
+    return `${result.line}|${result.code}`
+  }
+  assert.equal(await refused({ repoViewFails: 'To get started with GitHub CLI, please run:  gh auth login\r\nmore\n' }),
+    'unread 7 gh repo view failed: To get started with GitHub CLI, please run:  gh auth login: pass --repo <owner/repo>|5')
+  assert.equal(await refused({ repoView: '' }), 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
+  assert.equal(await refused({ repoView: '\n' }), 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
+})
+
 test('the small readings', () => {
   assert.equal(firstLine('a\r\nb'), 'a')
   assert.equal(joinNames('a\nb,c\n'), 'a, b, c')
@@ -225,7 +285,6 @@ test('a draft: a red of guards alone settles, and its green needs a check behind
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `unread 7 gh pr checks --watch exited 1 with no failing check named (log: ${join(state, 'ci-watch', 'here-pr7.log')})|5`)
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: '' }), 'unread 7 draft_guard.py failed|5')
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], repoView: '' }), 'unread 7 gh repo view failed: no repository read|5')
   const named = fake({ view: [draft], reg: ['2'], watchCodes: [1], guard: 'tests\n' })
   await watch(options(['7', '--repo', 'acme/x']), named).catch(() => undefined)
   assert.ok(named.calls.includes('python3 /plugin/draft_guard.py acme/x 7'))
