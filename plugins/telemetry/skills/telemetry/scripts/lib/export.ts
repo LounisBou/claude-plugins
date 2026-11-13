@@ -100,7 +100,8 @@ export function exportStore(options: ExportOptions): { lines: string[]; code: nu
   const target = join(clone, 'machines', machine)
   mkdirSync(target, { recursive: true })
   for (const day of days) copyFileSync(join(events, day), join(target, day))
-  const added = git(['add', '--', join('machines', machine)], clone)
+  // Forced: an ignore rule of the clone or the machine matching a day file would leave it out unsaid.
+  const added = git(['add', '--force', '--', join('machines', machine)], clone)
   if (added.status !== 0) return fail('add', added)
   if (git(['diff', '--cached', '--quiet'], clone).status !== 0) {
     const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${days.length} day file(s) up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)

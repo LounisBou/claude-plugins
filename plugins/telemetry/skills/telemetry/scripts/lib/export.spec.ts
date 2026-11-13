@@ -81,6 +81,30 @@ test('a reused clone pushes to the repository named now', () => {
   })
 })
 
+test('a day file an ignore rule of the clone or the machine matches is pushed all the same', () => {
+  scratch((root, remote) => {
+    // The repository's own rule: a committed .gitignore ignoring every day file.
+    const seed = join(root, 'seed')
+    assert.equal(git(['clone', '--quiet', remote, seed], root).status, 0)
+    writeFileSync(join(seed, '.gitignore'), '*.jsonl\n')
+    assert.equal(git(['add', '.gitignore'], seed).status, 0)
+    assert.equal(git(['commit', '--quiet', '-m', 'ignore'], seed).status, 0)
+    assert.equal(git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], seed).status, 0)
+    // The machine's rule: an excludes file ignoring the second day.
+    const excludes = join(root, 'excludes')
+    writeFileSync(excludes, '2026-11-14.jsonl\n')
+    const ignoring: Git = (args, cwd) => git(['-c', `core.excludesFile=${excludes}`, ...args], cwd)
+    const state = join(root, 'state')
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git: ignoring })
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    assert.deepEqual(run(), { lines: ['export: 1 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-13.jsonl'], remote).stdout, `${event('2026-11-13T10:00:00Z')}\n`)
+    append(eventsDir(state), event('2026-11-14T10:00:00Z'), new Map())
+    assert.deepEqual(run(), { lines: ['export: 2 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-14.jsonl'], remote).stdout, `${event('2026-11-14T10:00:00Z')}\n`)
+  })
+})
+
 /** Makes `remote` refuse every push (`exit 1`), or accept them again. */
 function refusePushes(remote: string, refuse: boolean): void {
   writeFileSync(join(remote, 'hooks', 'pre-receive'), `#!/bin/sh\nexit ${refuse ? 1 : 0}\n`, { mode: 0o755 })
