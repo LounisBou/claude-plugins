@@ -2056,6 +2056,24 @@ gate8 wf-partial "$PULL8" '{"statuses":[]}' "$RUNS3" '{"workflow_runs":[{"check_
 check "pr-gate never merges two suites a non-empty mapping lacks, nor places them with a mapped one" "FAILURE test  3" "$(ci8)"
 gate8 wf-nosuite "$PULL8" '{"statuses":[]}' '{"check_runs":[{"id":1,"name":"test","app":{"id":1},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":1},"status":"completed","conclusion":"success"}]}'
 check "pr-gate keys on name and app a run with no check suite" "SUCCESS   1" "$(ci8)"
+# Only the latest workflow run of each workflow counts: the jobs a draft-time run
+# skipped, named without the matrix suffix the run after ready_for_review gives
+# them, count as nothing once that newer run exists.
+RUNS4='{"check_runs":[{"id":1,"name":"wip-check","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"build","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":3,"name":"tests","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":4,"name":"code-style","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":11,"name":"wip-check","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":12,"name":"build (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":13,"name":"tests (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":14,"name":"code-style (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+WFRUNS4='{"workflow_runs":[{"id":20,"check_suite_id":200,"workflow_id":1},{"id":10,"check_suite_id":100,"workflow_id":1}]}'
+gate8 wf-stale "$PULL8" '{"statuses":[]}' "$RUNS4" "$WFRUNS4"
+check "pr-gate reads only the latest workflow run, its jobs the total" "SUCCESS   4" "$(ci8)"
+check "pr-checks reads only the latest workflow run" "SUCCESS" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+# The latest run of each workflow: an older run of another workflow is kept.
+RUNS5='{"check_runs":[{"id":1,"name":"lint","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":2,"name":"test","app":{"id":15368},"check_suite":{"id":150},"status":"completed","conclusion":"failure"},{"id":3,"name":"lint (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-each "$PULL8" '{"statuses":[]}' "$RUNS5" '{"workflow_runs":[{"id":10,"check_suite_id":100,"workflow_id":1},{"id":15,"check_suite_id":150,"workflow_id":2},{"id":20,"check_suite_id":200,"workflow_id":1}]}'
+check "pr-gate keeps the latest workflow run of each workflow" "FAILURE test  2" "$(ci8)"
+# A re-run keeps its run id: the re-run of the latest run is still that run, and
+# its newer attempt of a job is the one read.
+RUNS6='{"check_runs":[{"id":1,"name":"build","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":5,"name":"build (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"failure"},{"id":9,"name":"build (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-rerun "$PULL8" '{"statuses":[]}' "$RUNS6" '{"workflow_runs":[{"id":20,"run_attempt":2,"check_suite_id":200,"workflow_id":1},{"id":10,"run_attempt":1,"check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate reads a re-run of the latest workflow run as that run" "SUCCESS   1" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'

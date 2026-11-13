@@ -49,13 +49,13 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
 
-`pr-gate` reads the pull request, then at its head the status, the check runs and the
-Actions runs (`per_page=100`). `state` is `open`, `closed` or `merged`, `head` the full sha, `labels` its names. `ci.total` counts each workflow's latest run of each check plus commit
-statuses. `ci.result` is `FAILURE` when one failed (`ci.failed` names them), `PENDING` when
-one still runs (`ci.running` counts them) or proved nothing: `skipped`, or `neutral` on a
-draft (`ci.skipped` names them), else `SUCCESS` (also with no check). A skipped
-check never turns green, in `checks-status` too.
-Actions call failed: one `error:` line on stderr, every run counted.
+`pr-gate` reads the pull request, then at its head the status, check runs and Actions runs
+(`per_page=100`). `state`: `open`, `closed` or `merged`; `head` the full sha; `labels` its
+names. `ci.total` counts statuses and the latest run of each check in each workflow's latest
+run (greatest run id, kept by a re-run). `ci.result`: `FAILURE` when one failed (`ci.failed`),
+`PENDING` when one runs (`ci.running`) or proved nothing: `skipped`, or `neutral` on a draft
+(`ci.skipped`), else `SUCCESS`. Actions call failed: one `error:` line on stderr, every run
+counted. `gh run rerun` of a draft-time run replays its draft payload, jobs skipped: push.
 
 `file-at-ref` returns `content`, plus `binary`. When the file is not valid UTF-8,
 `binary` is true and `content` holds base64 — the bytes are never decoded lossily.

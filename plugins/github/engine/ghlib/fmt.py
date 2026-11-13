@@ -48,7 +48,23 @@ def _is_id(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _latest_runs(runs, workflows):
+def _stale_suites(workflows, suite_runs):
+    """The check suites of a workflow run older than the latest run of its
+    workflow, the greatest run id: a re-run keeps its run id, so it stays the
+    latest. A suite whose run id is not an integer is never stale."""
+    latest = {}
+    for suite, run_id in (suite_runs or {}).items():
+        workflow = workflows.get(suite)
+        if workflow is not None and _is_id(run_id):
+            latest[workflow] = max(latest.get(workflow, run_id), run_id)
+    return {
+        suite
+        for suite, run_id in (suite_runs or {}).items()
+        if _is_id(run_id) and run_id < latest.get(workflows.get(suite), run_id)
+    }
+
+
+def _latest_runs(runs, workflows, suite_runs=None):
     """The latest run of each check. A check is its name, its app (app.id, or
     app.slug when that is all the payload carries; no app, the name alone) and
     its workflow: every Actions run shares one app, so a job of one workflow
@@ -60,14 +76,19 @@ def _latest_runs(runs, workflows):
     is dropped. The latest is the greatest id, which grows with creation:
     started_at is kept by a re-run, so a re-run of an old run would pass for the
     newest. A run without an integer id, or tied on the greatest id, is kept:
-    nothing here may hide a failure or a running run."""
+    nothing here may hide a failure or a running run, but a run of an older
+    workflow run (suite_runs maps a check suite id to its workflow run id) counts
+    as nothing: only the latest workflow run of each workflow is read."""
     if workflows is None:
         return list(runs)
+    stale = _stale_suites(workflows, suite_runs)
     kept = []
     groups = {}
     for run in runs:
         app = run.get("app") or {}
         suite = (run.get("check_suite") or {}).get("id")
+        if str(suite) in stale:
+            continue
         key = (run.get("name"), app.get("id", app.get("slug")), workflows.get(str(suite)))
         if key[2] is None and suite is not None:
             key = key[:2] + (("suite", suite),)
@@ -81,15 +102,15 @@ def _latest_runs(runs, workflows):
     return kept
 
 
-def gate_ci(statuses, runs, draft, workflows=None):
+def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
     """CI at one head, as the ready guard reads it. Only the latest run of each
-    check counts. A completed check passes
+    check in the latest workflow run of each workflow counts. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is green."""
     commit_statuses = (statuses or {}).get("statuses") or []
-    runs = _latest_runs(runs, workflows)
+    runs = _latest_runs(runs, workflows, suite_runs)
     passing = ("success",) if draft else ("success", "neutral")
     unproven = ("skipped", "neutral") if draft else ("skipped",)
     completed = [run for run in runs if run.get("status") == "completed"]
@@ -120,7 +141,13 @@ def _checks_status(obj):
     # "statuses": [{"state": ..., "context": ...}, ...]}. Its inner list is
     # what legacy commit statuses (as opposed to check runs) actually live in.
     # The verdict is the ready guard's, the one pr-gate reads.
-    ci = gate_ci(obj.get("statuses"), obj.get("check_runs", []), bool(obj.get("draft")), obj.get("workflows"))
+    ci = gate_ci(
+        obj.get("statuses"),
+        obj.get("check_runs", []),
+        bool(obj.get("draft")),
+        obj.get("workflows"),
+        obj.get("workflow_runs"),
+    )
     return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
 
 

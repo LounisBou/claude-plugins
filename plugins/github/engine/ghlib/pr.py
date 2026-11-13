@@ -53,21 +53,25 @@ def pr_status(args):
 
 def _suite_workflows(owner, name, sha):
     """The workflow of each check suite at a head, {suite id as a string: workflow
-    id}, from the Actions runs. None when the call fails: the gate then counts
-    every run rather than guess which belong together."""
+    id}, and its workflow run, {suite id as a string: run id}, from the Actions
+    runs. (None, None) when the call fails: the gate then counts every run rather
+    than guess which belong together."""
     try:
         data = http.rest("GET", "/repos/%s/%s/actions/runs?head_sha=%s&per_page=100" % (owner, name, sha))
     except errors.GhError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc.message), file=sys.stderr)
-        return None
+        return None, None
     except OSError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc), file=sys.stderr)
-        return None
-    return {
-        str(run["check_suite_id"]): run["workflow_id"]
+        return None, None
+    placed = [
+        run
         for run in (data or {}).get("workflow_runs") or []
         if run.get("check_suite_id") is not None and run.get("workflow_id") is not None
-    }
+    ]
+    workflows = {str(run["check_suite_id"]): run["workflow_id"] for run in placed}
+    suite_runs = {str(run["check_suite_id"]): run.get("id") for run in placed}
+    return workflows, suite_runs
 
 
 def pr_checks(args):
@@ -76,11 +80,13 @@ def pr_checks(args):
     sha = (pull.get("head") or {}).get("sha", "")
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    workflows, suite_runs = _suite_workflows(owner, name, sha)
     return {
         "statuses": statuses,
         "check_runs": runs.get("check_runs", []),
         "draft": bool(pull.get("draft")),
-        "workflows": _suite_workflows(owner, name, sha),
+        "workflows": workflows,
+        "workflow_runs": suite_runs,
     }
 
 
@@ -95,7 +101,7 @@ def pr_gate(args):
         raise errors.ApiError("pull request %s has no head sha" % args.pr)
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
-    workflows = _suite_workflows(owner, name, sha)
+    workflows, suite_runs = _suite_workflows(owner, name, sha)
     state = "merged" if pull.get("merged_at") else pull.get("state", "")
     return {
         "repo": ("%s/%s" % (owner, name)).lower(),
@@ -104,7 +110,9 @@ def pr_gate(args):
         "draft": bool(pull.get("draft")),
         "head": sha.lower(),
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
-        "ci": fmt.gate_ci(statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows),
+        "ci": fmt.gate_ci(
+            statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs
+        ),
     }
 
 
