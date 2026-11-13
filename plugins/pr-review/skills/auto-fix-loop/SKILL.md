@@ -266,10 +266,10 @@ Display:
 ### Skipped Issues (if any)
 - {issue description} — Reason: {suggestion/ambiguous/already_attempted}
 
-{the `record:` line of the exit answer, verbatim}
+{the last `record:` line, verbatim}
 ```
 
-The last line is the `record:` line the answer that carried `exit` ended with, copied
+The last line is the `record:` line the last answer that carried one ended with, copied
 as it stands, whether it names a path or says `none — <why>`. When the tool was not
 listed, or the exit answer carried no such line, print `record: none — the loop tool
 is not available`.
