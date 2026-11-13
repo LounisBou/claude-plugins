@@ -179,7 +179,8 @@ test('live prunes the rulings and state files the brief names, archives beside t
     '- 2026-11-08T00:00:00Z « Réponds-moi en français. » — the operator in French. [standing]',
     '- 2026-11-09T10:00:00Z « Merge #12 » → merge acme/app#12. [done: acme/app#12]',
     '- 2026-11-10T06:41:14Z « A » → port into next. [superseded: 2026-11-10T06:55:24Z]',
-    '- 2026-11-10T06:55:24Z « A » → rebuild on home instead.', '',
+    '- 2026-11-10T06:55:24Z « A » → rebuild on home instead.',
+    '- 2026-11-11T09:00:00Z « C » → one correction of acme/app#14. [for: acme/app#14]', '',
   ].join('\n'))
   writeFileSync(state, [
     '# State — Orch: belt', '', '## Live',
@@ -193,7 +194,10 @@ test('live prunes the rulings and state files the brief names, archives beside t
   assert.equal(w.run('check'), 1)
   assert.equal(readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length, before)
   assert.equal(w.run('live', '--next', 'x'), 0)
-  const after = readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length
+  // A takeover reads the rulings but the one for acme/app#14, which stays in the file.
+  const kept = readFileSync(rulings, 'utf8')
+  assert.ok(kept.includes('[for: acme/app#14]'))
+  const after = kept.length - '- 2026-11-11T09:00:00Z « C » → one correction of acme/app#14. [for: acme/app#14]\n'.length + readFileSync(state, 'utf8').length
   const brief = w.read().length
   assert.match(w.out.at(-1) ?? '', new RegExp(`^generation=1 chars=${brief} .* pruned=rulings:2,state:1 takeover_chars=${brief + before}->${brief + after}\\n$`))
   assert.ok(!readFileSync(rulings, 'utf8').includes('Merge #12') && readFileSync(rulings, 'utf8').includes('[standing]'))
