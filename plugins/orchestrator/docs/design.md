@@ -830,7 +830,7 @@ A tier is bound to a family alias, never to a versioned identifier, which goes s
 
 ## 58. One review round, one correction round, and ready is the operator's turn
 
-The orchestrator's process on a pull request it dispatched is one review round, its own triage, one correction round it verifies itself on the artifact, and done; rounds of review repeated until nothing is left are the operator's own process, when he runs reviews by hand (`skills/orchestrator/references/review.md`, « Thresholds a verdict never crosses »). Rounds that repeat until nothing is left converge on nothing: each one reads the previous fix, finds something in it, and orders a fix of its own, and a finding nobody had to fix ships as churn. Where the review record is written, and what a rebase does to it, is that same rule, stated there once; `fixed` and `ready` follow it.
+The orchestrator's process on a pull request it dispatched is one review round, its own triage, one correction round it verifies itself on the artifact, and done; rounds of review repeated until nothing is left are the operator's own process, when he runs reviews by hand (`skills/orchestrator/references/review.md`, « Thresholds a verdict never crosses »). Rounds that repeat until nothing is left converge on nothing: each one reads the previous fix, finds something in it, and orders a fix of its own, and a finding nobody had to fix ships as churn. Where the review record is written, and what a rebase does to it, is that same rule, stated there once; `fixed` and `ready` follow it. Outside auto-merge, his review, taking the pull request out of draft and approving the squash-merge are his by default.
 
 ## 59. A frontend surface is proved by a browser run and screenshots on the pull request
 

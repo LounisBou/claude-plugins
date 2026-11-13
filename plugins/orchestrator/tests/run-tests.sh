@@ -1370,12 +1370,14 @@ check_status "and so is the session exemption" 1 bash "$REC" exempt "$E" --e2e "
 # backend test against a container, a frontend Playwright test committed, the `E2E: none —
 # <reason>` line, silence a finding, nothing in the pull request's description.
 BR="$ORCH_REFS/briefs.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review.md"
-check "briefs.md carries the E2E rule for every phase, and no pointer to a removed item 14" "yes|yes|yes|yes|yes|yes|no" \
+check "briefs.md carries the E2E rule for every phase, and no pointer to item 14" "yes|yes|yes|yes|yes|yes|no" \
   "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')"
 check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
   "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. The line goes in your report')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
 check "the review brief replays the test or judges the reason, and flags silence" "yes|yes|yes|yes" \
-  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'With `E2E: none — <reason>`, you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
+  "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
@@ -1383,9 +1385,9 @@ REVIEW_CALL='mcp__orchestrator__review'
 check "review.md writes the review record with the one call, and nothing of accept" "1|0" \
   "$(grep -o "$REVIEW_CALL" "$RV" | wc -l | tr -d ' ')|$(grep -c 'mcp__orchestrator__accept' "$RV")"
 check "review.md judges findings against the design and sets the rest aside" "yes|yes" \
-  "$(spells "$RV" 'critical is what contradicts the design or the architecture, and only that is kept')|$(spells "$RV" 'each with its one-line reason, and leaves no follow-up row')"
-check "review.md reviews no head the verified correction or a rebase moved, and holds no E2E validation" "yes|yes|no|no|no" \
-  "$(spells "$RV" 'at the head you reviewed or at the correction'"'"'s head once you verified it')|$(spells "$RV" 'you read only its conflict resolution')|$(spells "$RV" 'is reviewed there before the gate can hold')|$(spells "$RV" 'it is ready once he has validated it ready without one')|$(spells "$RV" 'E2E')"
+  "$(spells "$RV" 'critical is what contradicts the design or the architecture, and only that is kept')|$(spells "$RV" 'the rest is set aside with its one-line reason, no follow-up row')"
+check "review.md reviews no head the verified correction or a rebase moved, and holds no per-PR E2E validation" "yes|yes|no|no|yes" \
+  "$(spells "$RV" 'at the head you reviewed or at the correction'"'"'s head once you verified it')|$(spells "$RV" 'you read only its conflict resolution')|$(spells "$RV" 'is reviewed there before the gate can hold')|$(spells "$RV" 'it is ready once he has validated it ready without one')|$(spells "$RV" "14. **The E2E the pull request's check plan requires is replayed and recorded.**")"
 check "design.md says the E2E validation branch was removed" "yes|no" \
   "$(spells "$ROOT/docs/design.md" 'that branch was removed with the method-drift retirements')|$(spells "$ROOT/docs/design.md" '(`--e2e-waiver`')"
 check "the review reference records the surface before ready" "1" \
