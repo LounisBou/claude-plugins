@@ -29,6 +29,15 @@ export const NO_QUESTION =
 // marker and at least its length; one never closed runs to the end), the text both rules count
 // blocks in: a numbering line quoted as an example is no question.
 export function outsideFences(message: string): string {
+  return scanFences(message).kept.join('\n')
+}
+
+// The fence a message ends inside, or null: the marker that opened a block never closed.
+export function openFence(message: string): string | null {
+  return scanFences(message).fence
+}
+
+function scanFences(message: string): { kept: string[]; fence: string | null } {
   const kept: string[] = []
   let fence: string | null = null
   for (const line of message.split('\n')) {
@@ -40,7 +49,7 @@ export function outsideFences(message: string): string {
       fence = null
     }
   }
-  return kept.join('\n')
+  return { kept, fence }
 }
 
 // The refusal for a message with two question blocks or more; null for one block or none.

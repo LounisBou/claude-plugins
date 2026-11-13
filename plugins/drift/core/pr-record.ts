@@ -7,8 +7,11 @@
 export const PR_RECORD_CONTRACT = {
   version: 1,
   kinds: ['review', 'norms', 'e2e'],
-  results: ['pass', 'fail', 'waived', 'accepted'],
+  results: ['pass', 'fail', 'waived', 'not-applicable', 'accepted'],
   waivable: 'e2e',
+  // The kind a pull request may need none of, with the reason in its detail: one whose files hold
+  // no runtime, the writer checks which.
+  not_applicable: 'e2e',
   // The decision that lets a kind pass over a failed record of it, at that record's head only: the
   // result it writes, the kind and the result it answers, and the plugin that alone writes it, with
   // its tool. Its detail is `over <file>: <decision>`, the file being the failed record's name.
@@ -33,7 +36,7 @@ export const PR_RECORD_CONTRACT = {
 const contract = PR_RECORD_CONTRACT
 
 export type Kind = 'review' | 'norms' | 'e2e'
-export type Result = 'pass' | 'fail' | 'waived' | 'accepted'
+export type Result = 'pass' | 'fail' | 'waived' | 'not-applicable' | 'accepted'
 
 export interface PrRecord {
   readonly v: number
@@ -99,12 +102,14 @@ export function parsePrRecord(raw: unknown): PrRecord | undefined {
 }
 
 /**
- * Whether a record lets its kind pass the ready gate: a pass, a waiver where one is allowed, or an
- * acceptance of the kind it answers. An acceptance counts only beside the failed record it names, at
- * the same head: `acceptedOver` names it, the reader of the head's records checks it is there.
+ * Whether a record lets its kind pass the ready gate: a pass, a waiver or a not applicable where one
+ * is allowed, or an acceptance of the kind it answers. An acceptance counts only beside the failed
+ * record it names, at the same head: `acceptedOver` names it, the reader of the head's records checks
+ * it is there.
  */
 export function accepts(record: PrRecord): boolean {
   return record.result === 'pass' || (record.result === 'waived' && record.kind === contract.waivable)
+    || (record.result === 'not-applicable' && record.kind === contract.not_applicable)
     || isAcceptance(record)
 }
 

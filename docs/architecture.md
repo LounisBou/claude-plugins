@@ -35,7 +35,7 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── drift, github, implement, norms, orchestrator, pr-review (a copy in core/)
+        └───── drift, github, implement, norms, orchestrator, pr-review, telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
@@ -43,7 +43,7 @@ change: a change that crosses plugins is one pull request.
   contract (`contracts.md`) and a dependency declared, with a version range, in its manifest.
 - The edges above are the dependencies the manifests declare. One reading is not declared
   yet and is listed in `contracts.md`: implement and bugs-bot run the orchestrator's
-  launcher. statusbar and cloudflare depend on no plugin.
+  launcher. statusbar, cloudflare and telemetry depend on no plugin.
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
@@ -59,7 +59,7 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
 reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
-cloudflare stands outside it.
+cloudflare stands outside it; telemetry observes every role and changes none.
 
 ## Packaging
 
@@ -92,9 +92,9 @@ through `core` and names its own install command when it is missing.
 The pin is raised in that constant, with the integrity the registry publishes for each package it
 installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
 writes them into a lockfile and runs `npm ci`, which refuses a tarball of another hash. Then
-`npm run core`: every plugin carrying core ships the change and raises its version, the next
-install lands beside the old one, and the CI cache keyed on the module installs the new one. An
-old version's directory is removed by hand.
+`npm run core`: every plugin carrying core ships the change, and the next release pull request
+raises its version. Once released, the next install lands beside the old one, and the CI cache
+keyed on the module installs the new one. An old version's directory is removed by hand.
 
 ## Languages
 
@@ -108,9 +108,9 @@ language; when another language needs it, it reads it as data, never as a re-imp
 ## Release
 
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
-from it. A pull request that changes what a plugin ships raises its version, or CI refuses it,
-because the host caches by version. A release is the merge: the
-host installs the version the catalogue names, and no tag is made.
+from it. A pull request raises no version. The release pull request (`npm run release`) raises
+the version of every plugin changed since its last release, because the host caches by version.
+A release is its merge: the host installs the version the catalogue names, and no tag is made.
 
 ## What CI holds
 
@@ -122,10 +122,11 @@ host installs the version the catalogue names, and no tag is made.
 | no committed permission grant, every installer rule listed | `npm run permissions`, `contracts.md` |
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
-| shipped change raises the version (pull requests) | `npm run version-bump`, the same manifests against the base branch |
+| every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
 | prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
+| the release raises every changed plugin in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
 A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`

@@ -50,6 +50,8 @@ export type Gate = {
   draft: boolean
   head: string
   labels: string[]
+  // The pull request's commit count at this head.
+  commits?: number
   ci: { result: string; failed: string[]; running?: number; skipped?: string[]; total: number }
 }
 
@@ -108,6 +110,8 @@ function parseWords(words: string[], valued: string[]): Parsed {
     }
     if (word.startsWith('-') && word !== '-') {
       if (valued.includes(word)) out.opts.push([word, words[++k]])
+      // A short valued flag joined to its value (`-Flabels[]=@f`, `-XPATCH`) is read as gh does.
+      else if (/^-[^-]./.test(word) && valued.includes(word.slice(0, 2))) out.opts.push([word.slice(0, 2), word.slice(2)])
       else out.opts.push([word, undefined])
       continue
     }
@@ -255,7 +259,6 @@ function apiAct(argv: string[]): Act | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const base = { name: 'gh api graphql', unnamed: true }
@@ -332,6 +335,116 @@ export function toolAct(command: string, args: Record<string, unknown>): Act | u
   }
   if (command === 'pr-create') return { kind: args.draft === false ? 'create' : 'create-draft', name: command }
   return undefined
+}
+
+// ---- labels put on or taken off ----
+
+// A label put on, taken off, renamed or deleted, as far as the command shows it: the names it
+// moves, or opaque when it may move any (a body read from a file, every label of a pull request
+// deleted, a GraphQL query). repo: owner/name as the command names it, when it does.
+export type Labelling = { name: string; repo?: string; labels: string[]; opaque?: boolean }
+
+const LABEL_VALUED = ['-n', '--name', '-c', '--color', '-d', '--description']
+const ONE_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/\d+\/labels\/([^/?]+)\/?$/
+const REPO_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/labels\/([^/?]+)\/?$/
+const LABEL_MUTATION = /\b(addLabelsToLabelable|removeLabelsFromLabelable|clearLabelsFromLabelable|updateLabel|deleteLabel)\b/
+
+const splitLabels = (list: string[]): string[] => list.flatMap((value) => value.split(',')).map((label) => label.trim()).filter((label) => label !== '')
+
+function decoded(part: string): string {
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    return part
+  }
+}
+
+// What one gh command does to labels: gh pr|issue edit and create, gh label, gh api.
+function ghLabelling(argv: string[]): Labelling | undefined {
+  if (argv[1] === 'api') return apiLabelling(argv)
+  let k = 1
+  const named: number[] = []
+  while (k < argv.length && named.length < 2) {
+    const word = argv[k]
+    if (word === '-R' || word === '--repo') { k += 2; continue }
+    if (word.startsWith('-')) { k++; continue }
+    named.push(k++)
+  }
+  if (named.length < 2) return undefined
+  const noun = argv[named[0]]
+  const verb = argv[named[1]]
+  const words = argv.filter((_w, i) => i > 0 && i !== named[0] && i !== named[1])
+  const name = 'gh ' + noun + ' ' + verb
+  if (noun === 'label') {
+    if (verb !== 'edit' && verb !== 'delete' && verb !== 'clone') return undefined
+    const parsed = parseWords(words, LABEL_VALUED)
+    const repo = parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}
+    // A clone copies the labels of another repository, any of them.
+    if (verb === 'clone') return { name, ...repo, labels: [], opaque: true }
+    return { name, ...repo, labels: [...parsed.positionals.slice(0, 1), ...values(parsed, '-n', '--name')] }
+  }
+  if (noun !== 'pr' && noun !== 'issue') return undefined
+  const parsed = parseWords(words, VALUED[verb] ?? [])
+  const labels = verb === 'edit' ? splitLabels(values(parsed, '--add-label', '--remove-label'))
+    : verb === 'create' ? splitLabels(values(parsed, '-l', '--label')) : []
+  if (labels.length === 0) return undefined
+  return { name, ...(parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}), labels }
+}
+
+// What one gh api command does to labels: a write on a pull request's labels, on the pull request
+// itself naming labels, on a label of the repository, or a GraphQL label mutation.
+function apiLabelling(argv: string[]): Labelling | undefined {
+  const parsed = parseWords(argv.slice(2), API_VALUED)
+  const endpoint = parsed.positionals[0]
+  if (endpoint === undefined) return undefined
+  const fields = apiFields(parsed)
+  const input = has(parsed, '--input')
+  const explicit = values(parsed, '-X', '--method')[0]
+  const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
+  if (GRAPHQL.test(endpoint)) {
+    const query = inlineQuery(parsed, fields)
+    return query === undefined || LABEL_MUTATION.test(query) ? { name: 'gh api graphql', labels: [], opaque: true } : undefined
+  }
+  if (method === 'GET' || method === 'HEAD') return undefined
+  const path = endpoint.replace(API_HOST, '')
+  const at = (match: RegExpExecArray, labels: string[], opaque = false): Labelling =>
+    ({ name: 'gh api', repo: match[1] + '/' + match[2], labels, ...(opaque ? { opaque } : {}) })
+  const naming = (prefix: string) => fields.filter((field) => field.name.startsWith(prefix))
+  const named = (prefix: string) => naming(prefix).flatMap((field) => labelsIn(field.value))
+  // A -F value `@file` is read from the file: its labels are not on the line.
+  const unread = (...prefixes: string[]) => input || prefixes.some((prefix) => naming(prefix).some((field) => field.typed && field.value.startsWith('@')))
+  const one = ONE_LABEL_PATH.exec(path) ?? REPO_LABEL_PATH.exec(path)
+  if (one) return at(one, [decoded(one[3]), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
+  const all = LABELS_PATH.exec(path)
+  if (all) return at(all, named('labels'), unread('labels') || method === 'DELETE')
+  const issue = ISSUE_PATH.exec(path)
+  if (issue && method === 'PATCH' && (input || named('labels').length > 0)) return at(issue, named('labels'), unread('labels'))
+  return undefined
+}
+
+// The engine's own label commands run from Bash.
+function engineLabelling(call: EngineCall): Labelling | undefined {
+  if (call.command !== 'label-add' && call.command !== 'label-remove') return undefined
+  const rest = /^#?\d+$/.test(call.positionals[0] ?? '') ? call.positionals.slice(1) : call.positionals
+  return { name: 'gh.py ' + call.command, ...(call.repo ? { repo: repoOf(call.repo) ?? call.repo } : {}), labels: splitLabels(rest) }
+}
+
+// Every labelling of a Bash command line, read word by word as bashActs reads its acts.
+export function bashLabellings(line: string): Labelling[] {
+  const found: Labelling[] = []
+  for (const argv of simpleCommands(line)) {
+    const engine = engineCall(argv)
+    const labelling = engine ? engineLabelling(engine) : GH.test(argv[0] ?? '') ? ghLabelling(argv) : undefined
+    if (labelling) found.push(labelling)
+  }
+  return found
+}
+
+// The labelling of a call of the tool: label-add and label-remove.
+export function toolLabelling(command: string, args: Record<string, unknown>): Labelling | undefined {
+  if (command !== 'label-add' && command !== 'label-remove') return undefined
+  const named = [args.label, args.names, args.name].flatMap((v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]))
+  return { name: command, labels: splitLabels(named.map(String)) }
 }
 
 // ---- pushes ----
@@ -413,8 +526,9 @@ export function parseGate(text: string): Gate {
 
 const head7 = (sha: string) => sha.slice(0, 7)
 
-// The records of a head that parse and agree with it, by file name, and the names of those that do not.
-export function headRecordsRead(gate: Gate, files: RecordFile[]): { read: Map<string, PrRecord>; skipped: string[] } {
+// The records of the pull request at a head (its own, omitted) that parse and agree with it, by file name,
+// and the names of those that do not.
+export function headRecordsRead(gate: Gate, files: RecordFile[], head: string = gate.head): { read: Map<string, PrRecord>; skipped: string[] } {
   const read = new Map<string, PrRecord>()
   const skipped: string[] = []
   for (const file of files) {
@@ -424,7 +538,7 @@ export function headRecordsRead(gate: Gate, files: RecordFile[]): { read: Map<st
     } catch {
       record = undefined
     }
-    if (!record || record.head.toLowerCase() !== gate.head
+    if (!record || record.head.toLowerCase() !== head
       || record.repo.toLowerCase() !== gate.repo.toLowerCase()
       || record.pr !== Number(gate.pr)
       || !file.name.startsWith(record.kind + '.')) {
@@ -446,6 +560,13 @@ function latestByKind(read: Map<string, PrRecord>): Map<Kind, PrRecord> {
   return latest
 }
 
+/** The file of the latest review record of the head, when it is a failed one: the file an acceptance passes as `over`. */
+export function latestFailedReviewFile(read: Map<string, PrRecord>): string | undefined {
+  const latest = latestByKind(read).get(ACCEPTANCE.kind)
+  if (!latest || !answersAcceptance(latest)) return undefined
+  return [...read.entries()].find(([, record]) => record === latest)?.[0]
+}
+
 // The failed record an acceptance answers, when it is among the head's records: an acceptance counts
 // only beside it, so one is never carried to another head.
 function acceptedFile(record: PrRecord, read: Map<string, PrRecord>): string | undefined {
@@ -461,9 +582,66 @@ export function reviewAcceptedOver(gate: Gate, files: RecordFile[]): string | un
   return record && isAcceptance(record) ? acceptedFile(record, read) : undefined
 }
 
+// The files of a head's records that do not parse, each with the kinds it may hold: the one its name
+// (`<kind>.<at>.<producer>.json`) gives, or every kind when its name gives none.
+export function unreadableRecords(files: RecordFile[]): Array<{ name: string; kinds: Kind[] }> {
+  const unreadable: Array<{ name: string; kinds: Kind[] }> = []
+  for (const file of files) {
+    let record: PrRecord | undefined
+    try {
+      record = parsePrRecord(JSON.parse(file.text))
+    } catch {
+      record = undefined
+    }
+    if (record) continue
+    const named = KINDS.find((kind) => file.name.startsWith(kind + '.'))
+    unreadable.push({ name: file.name, kinds: named ? [named] : [...KINDS] })
+  }
+  return unreadable
+}
+
+// The pull requests a head's records name, whatever their head.
+export function recordPrs(files: RecordFile[]): number[] {
+  const prs = new Set<number>()
+  for (const file of files) {
+    try {
+      const record = parsePrRecord(JSON.parse(file.text))
+      if (record) prs.add(record.pr)
+    } catch {
+      // Names none.
+    }
+  }
+  return [...prs]
+}
+
+// A record of an earlier head of the pull request, counted at its head as their diffs are the same.
+export type Carried = { kind: Kind; from: string }
+
+// The kinds with no record of the pull request at its head: the ones an earlier head may carry. A
+// kind a file that does not parse may hold is none of them: that file may be its newest failure.
+export function unrecorded(gate: Gate, files: RecordFile[]): Kind[] {
+  const latest = latestByKind(headRecordsRead(gate, files).read)
+  const unread = new Set(unreadableRecords(files).flatMap((file) => file.kinds))
+  return KINDS.filter((kind) => !latest.has(kind) && !unread.has(kind))
+}
+
+// The latest record of each kind of the pull request at an earlier head, whatever its result.
+export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<Kind, PrRecord> {
+  return latestByKind(headRecordsRead(gate, files, head.toLowerCase()).read)
+}
+
+// A record an earlier head carries to a head of the same diff, when it is the latest of its kind
+// across the earlier heads of that diff: a clean review, a passed norms check, an E2E waiver.
+// An E2E pass is run again at the new head, and an acceptance counts only beside its failed record.
+export function carries(record: PrRecord): boolean {
+  return accepts(record) && !isAcceptance(record) && !(record.kind === 'e2e' && record.result === 'pass')
+}
+
 // What a pull request misses to be ready at its head: the four conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string): string[] {
+// e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
+// carried: the kinds with no record at the head that an earlier head of the same diff holds.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string, carried: Carried[] = []): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -473,6 +651,8 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
   for (const kind of KINDS) {
     const record = latest.get(kind)
     if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
+    if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
+    if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
     else if (isAcceptance(record)) {
@@ -520,14 +700,20 @@ export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' 
 
 // ---- the texts ----
 
-const tail = (missing: string[]) => 'Missing: ' + missing.join(', ')
+// The records counted at the head from an earlier head of the same diff, as the lines name them.
+export function carriedText(carried: Carried[]): string {
+  return carried.map((c) => c.kind + ' carried from ' + head7(c.from)).join(', ')
+}
+
+const tail = (missing: string[], carried: Carried[] = []) =>
+  'Missing: ' + missing.join(', ') + (carried.length > 0 ? '; ' + carriedText(carried) : '')
 
 // Why leaving draft is refused outside auto-merge, whatever the route.
 const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
   + ' by the gate once the four conditions hold'
 
-export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing)
+export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
     + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
     + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
 }
@@ -592,22 +778,32 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
 // accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string): string {
+// e2eExempt: the exemption that stood for its E2E, named.
+// carried: the kinds counted at the head from an earlier head of the same diff.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string,
+  carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, passed E2E and green CI hold at its head.'
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, '
+    + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head'
+    + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }
 
 export function reviewAcceptedLine(file: string): string {
   return 'review accepted by the orchestrator over ' + file
 }
 
-export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing)
+export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing, carried)
 }
 
-export function gateMissingLine(repo: string, pr: number, head: string, missing: string[], accepted?: string): string {
+export function gateMissingLine(repo: string, pr: number, head: string, missing: string[], accepted?: string, carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. '
-    + (accepted ? reviewAcceptedLine(accepted) + '. ' : '') + tail(missing)
+    + (accepted ? reviewAcceptedLine(accepted) + '. ' : '') + tail(missing, carried)
+}
+
+// The kinds no earlier head carries (every kind, omitted), for the reason given.
+export function uncarriedLine(repo: string, pr: number, head: string, reason: string, kinds?: Kind[]): string {
+  return 'github: ' + repo + '#' + pr + ': no ' + (kinds ? kinds.join(', ') + ' ' : '') + 'record carried to ' + head7(head) + ': ' + reason
 }
 
 // The gate read nothing it can trust (the pull request, its records): the label stays.
@@ -666,6 +862,13 @@ export function acceptanceOriginRefusal(origin: string): string {
 export function acceptanceOverRefusal(over: string, head: string, why: string): string {
   return 'github: ' + (over || 'no record') + ' ' + why + ' at ' + head7(head) + ', the pull request\'s head: an acceptance answers'
     + ' the latest failed ' + ACCEPTANCE.kind + ' of the head it is written at.'
+}
+
+// What an acceptance refused for an `over` that names no failed record is told: the file to pass, or that none exists.
+export function acceptanceNamesRefusal(head: string, file: string | undefined): string {
+  return file
+    ? ' The latest failed ' + ACCEPTANCE.kind + ' at ' + head7(head) + ' is ' + file + ': pass it as over.'
+    : ' There is no failed ' + ACCEPTANCE.kind + ' to accept at ' + head7(head) + ': no ' + ACCEPTANCE.kind + ' record, or the latest is not a failed one.'
 }
 
 // A plugin's name as a producer slug.

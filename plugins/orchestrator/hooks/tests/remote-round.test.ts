@@ -7,7 +7,7 @@
 // readable rest returned whole, refused whole the same way; its acknowledgment by id and since.
 import { expect, test } from 'claude-code/testing'
 import {
-  ASK_MARKER, ACK_MARKER, ASK_LINE_CAP, askLine, parseAsk, ackLine, parseAck,
+  ASK_MARKER, ACK_MARKER, ASK_LINE_CAP, CONSENT_REPO_CAP, askLine, parseAsk, ackLine, parseAck,
   ANSWER_MARKER, ANSWER_ACK_MARKER, ANSWER_LINE_CAP, answerLine, parseAnswer, answerAckLine, parseAnswerAck,
 } from '../remote-round.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
@@ -40,6 +40,17 @@ test('an entry round-trips: the entry whole, and the machine it was asked on', (
     expect(parseAsk(`  ${line}\n`)).toEqual({ entry, machine: 'far' })
   }
   expect(parseAsk(askLine(asked(), 'far'))!.entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
+})
+
+const WAIVER = { kind: 'e2e-waiver' as const, repo: 'acme/thing', pr: 12 }
+
+test('the subject a question asks consent on round-trips with its entry, at the longest repository the line holds', () => {
+  for (const consent of [WAIVER, { kind: 'auto-merge' as const, repo: 'acme/thing' }, { kind: 'e2e-waiver' as const, repo: `${'o'.repeat(39)}/${'n'.repeat(100)}`, pr: Number.MAX_SAFE_INTEGER }]) {
+    const entry = { ...asked({ urgent: true }), consent }
+    const line = askLine(entry, 'far')
+    expect(line.length).toBeLessThanOrEqual(ASK_LINE_CAP)
+    expect(parseAsk(line)).toEqual({ entry, machine: 'far' })
+  }
 })
 
 test('a long question is cut at the cap known to cross, and the cut said', () => {
@@ -83,6 +94,10 @@ const refusals: [string, string][] = [
   ['a machine of other letters', edited(o => { o.machine = 'far/../x' })],
   ['an urgent mark other than true', edited(o => { o.urgent = false })],
   ['choices of a wrong type', edited(o => { o.choices = 'A' })],
+  ['a consent of no subject', edited(o => { o.consent = { kind: 'merge', repo: 'acme/thing' } })],
+  ['a consent waiver naming no pull request', edited(o => { o.consent = { kind: 'e2e-waiver', repo: 'acme/thing' } })],
+  ['a consent on a done entry', edited(o => { o.consent = WAIVER }, asked({ kind: 'done' }))],
+  ['a consent repository past its cap', edited(o => { o.consent = { kind: 'auto-merge', repo: `acme/${'x'.repeat(CONSENT_REPO_CAP)}` } })],
 ]
 for (const [label, line] of refusals) {
   test(`an ask with ${label} is refused whole`, () => {
