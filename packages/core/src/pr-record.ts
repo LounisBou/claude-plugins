@@ -6,8 +6,11 @@
 export const PR_RECORD_CONTRACT = {
   version: 1,
   kinds: ['review', 'norms', 'e2e'],
-  results: ['pass', 'fail', 'waived'],
+  results: ['pass', 'fail', 'waived', 'not-applicable'],
   waivable: 'e2e',
+  // The kind a pull request may need none of, with the reason in its detail: one whose files hold
+  // no runtime, the writer checks which.
+  not_applicable: 'e2e',
   // The plugin, by the name its host gives it, that alone writes each kind through
   // mcp__github__record, and the tool it writes it with; a kind with no producer here is written by
   // any caller (`open`).
@@ -28,7 +31,7 @@ export const PR_RECORD_CONTRACT = {
 const contract = PR_RECORD_CONTRACT
 
 export type Kind = 'review' | 'norms' | 'e2e'
-export type Result = 'pass' | 'fail' | 'waived'
+export type Result = 'pass' | 'fail' | 'waived' | 'not-applicable'
 
 export interface PrRecord {
   readonly v: number
@@ -92,7 +95,8 @@ export function parsePrRecord(raw: unknown): PrRecord | undefined {
   return { v, repo, pr, head, kind, result, producer, detail, session, at }
 }
 
-/** Whether a record lets its kind pass the ready gate: a pass, or a waiver where one is allowed. */
+/** Whether a record lets its kind pass the ready gate: a pass, or a waiver or a not applicable where one is allowed. */
 export function accepts(record: PrRecord): boolean {
   return record.result === 'pass' || (record.result === 'waived' && record.kind === contract.waivable)
+    || (record.result === 'not-applicable' && record.kind === contract.not_applicable)
 }

@@ -52,6 +52,16 @@ describe('consent records', () => {
     const merge = parseConsentRecord({ ...RECORD, subject: { kind: 'auto-merge', repo: 'owner/name' }, answer: 'auto-merge name, yes' })!
     assert.ok(quotesConsent(merge, { kind: 'auto-merge', repo: 'OWNER/name' }, 'auto-merge name, yes'))
   })
+
+  it('reads an E2E exemption of a repository, which names no pull request and carries no other subject', () => {
+    assert.deepEqual(parseConsentSubject({ kind: 'e2e-exemption', repo: 'o/n' }), { kind: 'e2e-exemption', repo: 'o/n' })
+    assert.equal(parseConsentSubject({ kind: 'e2e-exemption', repo: 'o/n', pr: 3 }), undefined)
+    const words = 'no E2E on this repository, 2026-11-13'
+    const exemption = parseConsentRecord({ ...RECORD, subject: { kind: 'e2e-exemption', repo: 'owner/name' }, answer: words })!
+    assert.ok(quotesConsent(exemption, { kind: 'e2e-exemption', repo: 'OWNER/name' }, words))
+    assert.ok(!quotesConsent(exemption, { kind: 'auto-merge', repo: 'owner/name' }, words))
+    assert.ok(!quotesConsent(exemption, { kind: 'e2e-waiver', repo: 'owner/name', pr: 7 }, words))
+  })
 })
 
 describe('a consent record of a round answer', () => {

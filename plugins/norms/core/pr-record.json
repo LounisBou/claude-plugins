@@ -9,9 +9,11 @@
   "results": [
     "pass",
     "fail",
-    "waived"
+    "waived",
+    "not-applicable"
   ],
   "waivable": "e2e",
+  "not_applicable": "e2e",
   "producers": {
     "review": {
       "plugin": "pr-review",
