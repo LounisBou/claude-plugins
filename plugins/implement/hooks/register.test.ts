@@ -195,6 +195,18 @@ test('a phase dispatches Explore only', async ($, on) => {
   expect((await $.tool.call({ tool: 'Agent', subagent_type: 'Explore', prompt: 'find it', description: 'x' } as any)).result).toBe('ran')
 })
 
+test('an allowed subagent call reaches the host with its input unchanged', async ($, on) => {
+  const { ran } = await world(on)
+  await start($)
+  await skill($, 'phase')
+  const input = { tool: 'Agent', subagent_type: 'Explore', prompt: 'find it', description: 'x', run_in_background: true }
+  expect((await $.tool.call({ ...input } as any)).result).toBe('ran')
+  // The host stamps the call's id; every other field is the emitted input, nothing added or changed.
+  const { tool_use_id, ...reached } = ran[0]
+  expect(tool_use_id).toBeDefined()
+  expect(reached).toEqual(input)
+})
+
 test('the guard stays armed across turns; words grant nothing, the user\'s Allow when asked does', async ($, on) => {
   const replies: string[] = ['Deny', 'Allow']
   const asked: string[] = []

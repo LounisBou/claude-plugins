@@ -1,7 +1,7 @@
 // hooks/tests/module.test.ts
 // The tools, the Stop gate, the commands and the preflight, wired to the engine.
 import { expect, test } from 'claude-code/testing'
-import { act, LOOP_SCHEMA, verdict } from '../loop.ts'
+import { act, isTransient, LOOP_SCHEMA, verdict } from '../loop.ts'
 import { loop } from '../state.ts'
 import { REPORT_REQUEST, reportOf } from '../report.ts'
 import { INSTALL_TIMEOUT_MS, PASSED_NOTE } from '../commands.ts'
@@ -271,7 +271,7 @@ test('the Stop gate refuses a stop mid-loop once, naming the pass', async ($, on
   await $.skill.prompt({ skill: 'pr-review:auto-fix-loop', text: '' })
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
-  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' } as any)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' + REPORT_REQUEST } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'findings', keys: ['a::b', 'c::d'] } as any)
   const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(held.block).toContain('pass 1/5')
@@ -285,7 +285,7 @@ test('the Stop gate lets a clean loop stop', async ($, on) => {
   on('tool.call', { tool: 'Agent' }, () => ({ result: '```json\n{"findings": []}\n```' }))
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
-  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' } as any)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' + REPORT_REQUEST } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'findings', keys: [] } as any)
   const out: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(out.block).toBeUndefined()
@@ -316,14 +316,14 @@ test('an interrupted turn releases the loop', async ($, on) => {
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { records: any[]; prCalls: number; head?: string; remote?: string; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
   'The review.\n' + (findings === undefined ? '' : '```json\n' + JSON.stringify({ findings: findings.map((f, i) => ({ file: 'f' + i, summary: 's', ...f })) }) + '\n```\n')
 
 const review = ($: any, findings?: { severity: string }[]): Promise<any> =>
-  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', answer: agentAnswer(findings) } as any)
+  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, answer: agentAnswer(findings) } as any)
 
 function wireRecord(on: any, stubs: Stubs) {
   on('tool.call', { tool: 'Agent' }, (_$: any, e: any) => {
@@ -332,10 +332,11 @@ function wireRecord(on: any, stubs: Stubs) {
   })
   on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
   on('process.run', (_$: any, e: any) => {
+    if (e.argv[0] === 'sleep') stubs.sleeps?.push(e.argv[1])
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
-    if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
+    if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:' + (stubs.remote ?? 'LounisBou/claude-review') + '.git\n' } }
     if (e.argv.join(' ') === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: (stubs.branch ?? 'feature') + '\n' } }
-    if (e.argv.join(' ') === 'git rev-parse HEAD') return { value: { ...ok, stdout: REVIEWED_HEAD + '\n' } }
+    if (e.argv.join(' ') === 'git rev-parse HEAD') return { value: { ...ok, stdout: (stubs.head ?? REVIEWED_HEAD) + '\n' } }
     return { value: ok }
   })
   // pr-get answers the branch's pull request number; pr-list, the open pull requests as JSON.
@@ -343,10 +344,13 @@ function wireRecord(on: any, stubs: Stubs) {
     stubs.prCalls += 1
     stubs.ghCalls?.push({ command: e.command, args: e.args, repo: e.repo })
     if (e.command === 'pr-list') return typeof stubs.pulls === 'string' || stubs.pulls === undefined ? { result: stubs.pulls ?? '[]' } : stubs.pulls
-    return { result: stubs.pr ?? '12\n' }
+    return stubs.prFirst?.shift() ?? { result: stubs.pr ?? '12\n' }
   })
   on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
     if (stubs.recordThrows) throw new Error('boom')
+    stubs.recordCalls = (stubs.recordCalls ?? 0) + 1
+    const first = stubs.recordFirst?.shift()
+    if (first !== undefined) return first
     stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail })
     return stubs.recordAnswer ?? { result: WRITTEN }
   })
@@ -417,16 +421,23 @@ test('the model\'s own count is not read: an agent without its block leaves the 
   expect(stubs.records[0].detail).toBe('1 findings left after 5 passes, severity unknown: no findings block from code-reviewer')
 })
 
-test('a review agent is asked for its block during a pass only', async ($, on) => {
-  const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
+test('outside a pass, no reader prompt is refused or modified, and none is in a pass', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prompts: [], launches: [] }
+  stubs.agent = (e: any) => {
+    stubs.launches?.push(e.run_in_background)
+    return { result: e.answer }
+  }
   wireRecord(on, stubs)
-  await review($, [])
+  const outside = { tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', run_in_background: true, answer: agentAnswer([]) }
+  const before: any = await $.tool.call(outside as any)
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
-  await review($, [{ severity: 'important' }])
+  await $.tool.call({ ...outside, prompt: 'review the diff' + REPORT_REQUEST, answer: agentAnswer([{ severity: 'important' }]) } as any)
   await loopCall($, { action: 'findings', keys: ['a::b'] })
-  await review($, [])
+  const after: any = await $.tool.call(outside as any)
+  expect([before.deny, after.deny]).toEqual([undefined, undefined])
   expect(stubs.prompts).toEqual(['review the diff', 'review the diff' + REPORT_REQUEST, 'review the diff'])
+  expect(stubs.launches).toEqual([true, true, true])
 })
 
 test('max_passes without a blocking count writes fail, severity unknown', async ($, on) => {
@@ -544,7 +555,7 @@ test('a review agent that fails runs once, and its pass cannot end clean', async
   })
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
-  const out: any = await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' } as any)
+  const out: any = await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' + REPORT_REQUEST } as any)
   expect(out.isError).toBe(true)
   expect(runs).toBe(1)
   const answer = await loopCall($, { action: 'findings', keys: [] })
@@ -601,19 +612,7 @@ function wireBackground(on: any, stubs: Stubs, findings?: { severity: string }[]
 }
 
 const backgroundReview = ($: any): Promise<any> =>
-  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', run_in_background: true } as any)
-
-test('a review agent launched in the background still reports its block and the pass is clean', async ($, on) => {
-  const stubs: Stubs = { records: [], prCalls: 0, launches: [] }
-  wireBackground(on, stubs, [])
-  await loopCall($, { action: 'start' })
-  await loopCall($, { action: 'begin_pass' })
-  await backgroundReview($)
-  const out = await loopCall($, { action: 'findings', keys: [] })
-  expect(String(out.result)).toContain('"exit": "clean"')
-  expect(stubs.launches).toEqual([false])
-  expect(stubs.records.map((r) => r.result)).toEqual(['pass'])
-})
+  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true } as any)
 
 test('a background review agent that ends without its block still counts as silent', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
@@ -829,20 +828,62 @@ test('a call the classifier refused because the hook rewrote it did not run: the
   expect(stubs.records[0].detail).toBe('clean at pass 1, 1 review agents reporting no finding')
 })
 
-test('the hook rewrites a review call once: the reissued input comes back unchanged', async ($, on) => {
-  const stubs: Stubs = { records: [], prCalls: 0, prompts: [], launches: [] }
-  stubs.agent = (e: any) => {
-    stubs.launches?.push(e.run_in_background)
-    return { result: e.answer }
-  }
+test('a review call issued twice with the same input reaches the agent unchanged both times', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
   wireRecord(on, stubs)
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
   await review($, [])
-  const once = String(stubs.prompts?.[0])
-  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: once, run_in_background: false, answer: agentAnswer([]) } as any)
-  expect(stubs.prompts?.[1]).toBe(once)
-  expect(once.split(REPORT_REQUEST).length).toBe(2)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: false, answer: agentAnswer([]) } as any)
+  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST, 'review the diff' + REPORT_REQUEST])
+})
+
+// ── the hook never changes a reader's input: auto mode refuses a call a hook rewrote ──
+
+const READER_FIELDS = ['subagent_type', 'description', 'prompt', 'run_in_background'] as const
+const fieldsOf = (e: any) => Object.fromEntries(READER_FIELDS.map((k) => [k, e[k]]))
+
+test('a reader call that carries the request goes through with its input unchanged', async ($, on) => {
+  const seen: any[] = []
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = (e: any) => {
+    seen.push(fieldsOf(e))
+    return e.run_in_background ? coreLaunch('a0000000000000041') : { result: agentAnswer([]) }
+  }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  const issued = [
+    { subagent_type: 'code-reviewer', description: 'Review', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true },
+    { subagent_type: 'orchestrator:lens', description: 'Lens', prompt: 'lens' + REPORT_REQUEST.replace(/\s+/g, ' '), run_in_background: false },
+  ]
+  for (const call of issued) {
+    const out: any = await $.tool.call({ tool: 'Agent', ...call } as any)
+    expect(out.deny).toBeUndefined()
+  }
+  expect(seen).toEqual(issued)
+})
+
+test('a reader call without the request is denied unrun, its message naming the text to end the prompt with', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  const refused: any = await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', answer: agentAnswer([]) } as any)
+  expect(String(refused.deny)).toContain('Issue the same call again, its prompt ending with this text, verbatim:' + REPORT_REQUEST)
+  expect(stubs.prompts).toEqual([])
+  const none = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(none.result)).toContain('no review agent ran in this pass')
+  await review($, [])
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST])
+})
+
+test('begin_pass hands the session the request its readers\' prompts end with', async () => {
+  act({ action: 'start' })
+  const pass = act({ action: 'begin_pass' })
+  expect(pass.report_request).toBe(REPORT_REQUEST.trim())
 })
 
 // ── the answers core gives to an Agent call ──
@@ -1210,6 +1251,141 @@ test('a branch with no pull request does not take the one at its head: that look
   expect(stubs.ghCalls?.map((c) => c.command)).toEqual(['pr-get'])
 })
 
+// ── a transient github failure keeps the record owed ──
+
+const UNAVAILABLE = { result: 'Service Unavailable (HTTP 503)', isError: true }
+
+async function reviewedLoop($: any): Promise<any> {
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'important' }])
+  return loopCall($, { action: 'findings', keys: ['a::b'] })
+}
+
+test('a 503 on the record write, then a success, writes the record in the same call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(2)
+  expect(stubs.sleeps).toEqual(['0.5'])
+  expect(stubs.records.length).toBe(1)
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+  expect(String(out.result)).not.toContain('record: none')
+})
+
+test('a 503 on the pull request read, then a success, writes the record in the same call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prFirst: [UNAVAILABLE, { deny: 'github: connection reset by peer' }], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.sleeps).toEqual(['0.5', '1'])
+  expect(stubs.records.map((r) => r.pr)).toEqual([12])
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+})
+
+test('a persistent 503 settles no record: the answer says it is owed, and a later findings writes it', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(4)
+  expect(stubs.sleeps).toEqual(['0.5', '1', '2'])
+  expect(stubs.records).toEqual([])
+  expect(String(out.result)).toContain('record: none — Service Unavailable (HTTP 503); the record is still owed, the verdict is kept: call findings or status again to write it')
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  // GitHub is back: the same verdict is written, nothing is read again.
+  const later = await loopCall($, { action: 'findings', keys: ['other::finding'] })
+  expect(stubs.records).toEqual([{ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'fail', detail: 'reviewed: 1 findings, 1 Critical or Important: a::b' }])
+  expect(String(later.result)).toContain('record: ' + WRITTEN)
+  expect(String(later.result)).toContain('"exit": "reviewed"')
+  expect(String(later.result)).toContain('"seen": [\n    "a::b"\n  ]')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: [] })
+  expect(stubs.records.length).toBe(1)
+})
+
+test('a status call also writes the record owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  const status = await loopCall($, { action: 'status' })
+  expect(stubs.records.length).toBe(1)
+  expect(String(status.result)).toContain('"exit": "reviewed"')
+  expect(String(status.result)).toContain('record: ' + WRITTEN)
+})
+
+test('a record still owed that GitHub keeps refusing stays owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: Array(8).fill(UNAVAILABLE), sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  const again = await loopCall($, { action: 'status' })
+  expect(String(again.result)).toContain('the record is still owed')
+  expect(stubs.records).toEqual([])
+})
+
+test('a 4xx is no transient failure: asked once, the record is none, and not owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [{ result: 'Not Found (HTTP 404)', isError: true }], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(1)
+  expect(stubs.sleeps).toEqual([])
+  expect(String(out.result)).toContain('record: none — Not Found (HTTP 404)')
+  expect(String(out.result)).not.toContain('owed')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: ['x::y'] })
+  expect(stubs.recordCalls).toBe(1)
+})
+
+test('a repository whose name says timeout is recorded once, and never owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, remote: 'LounisBou/timeout-tools', recordAnswer: { result: '/data/records/LounisBou/timeout-tools/review.json' }, sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(String(out.result)).toContain('record: /data/records/LounisBou/timeout-tools/review.json')
+  expect(String(out.result)).not.toContain('owed')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: ['x::y'] })
+  expect(stubs.recordCalls).toBe(1)
+  expect(stubs.sleeps).toEqual([])
+})
+
+test('a record owed is not written at another head than the one reviewed, and is no longer owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  stubs.head = 'b'.repeat(40)
+  const moved = await loopCall($, { action: 'status' })
+  expect(stubs.records).toEqual([])
+  expect(stubs.recordCalls).toBe(4)
+  expect(String(moved.result)).toContain(`record: none — the checkout is at ${'b'.repeat(12)}, the review read ${'a'.repeat(12)}`)
+  expect(String(moved.result)).not.toContain('owed')
+  // Not owed any more: even at the reviewed head again, nothing is written.
+  stubs.head = undefined
+  await loopCall($, { action: 'status' })
+  expect(stubs.recordCalls).toBe(4)
+  expect(stubs.records).toEqual([])
+})
+
+test('a record write that never answers is still owed at the next call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [new Promise<never>(() => {})], sleeps: [] }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'important' }])
+  void loopCall($, { action: 'findings', keys: ['a::b'] })
+  for (let i = 0; i < 100 && stubs.recordCalls !== 1; i++) await new Promise((r) => setTimeout(r, 5))
+  expect(stubs.recordCalls).toBe(1)
+  const later = await loopCall($, { action: 'status' })
+  expect(stubs.records.length).toBe(1)
+  expect(String(later.result)).toContain('record: ' + WRITTEN)
+})
+
+test('what GitHub says is transient or not', () => {
+  for (const text of ['Service Unavailable (HTTP 503)', 'Bad Gateway (HTTP 502)', '504 Gateway Time-out', 'request timed out', '<urlopen error [Errno 54] Connection reset by peer>', 'connect ETIMEDOUT', 'Internal Server Error (HTTP 500)']) {
+    expect([text, isTransient(text)]).toEqual([text, true])
+  }
+  for (const text of ['Not Found (HTTP 404)', 'Bad credentials (HTTP 401)', 'gh is not signed in', 'github: the checkout is at abc1234, the pull request\'s head is def5678', 'record.py: bad head 5031234']) {
+    expect([text, isTransient(text)]).toEqual([text, false])
+  }
+})
+
 // ── a pass's verdict needs its readers ──
 
 test('a fix loop\'s findings with no reader in the pass ask for the readers, and its exit records nothing', async ($, on) => {
@@ -1285,7 +1461,8 @@ for (const reason of ['error', 'aborted']) {
 // ── a reviewer's pass as the transcripts of 2026-11-12 hold it ──
 
 // The sequence of a reviewer's loop at owner/api#44 and owner/plugins#23 (pr-review 0.9.14): each
-// reader's Agent call refused once for the hook's rewrite, reissued and launched in the background
+// reader's Agent call issued first without the findings-block request and denied by the hook, reissued
+// with it and launched in the background
 // (core's `async_launched` record, its `agentId`), then each reader's own SubagentHandback call,
 // `{agentId, message}`, answered `{success: true}`; `findings` comes after the last hand-back.
 // Every hand-back reached the session, and one reader's carried no ```json block: that reader,
@@ -1300,18 +1477,10 @@ const PROSE_NONE = 'No findings\n\nI read the whole diff `aaaa111..bbbb222` (src
 const PROSE_LINES = '[important] engine/fmt.py:54 — key (name, app.id) merges distinct checks — verified — add the suite id to the key.\n'
   + '[suggestion] engine/fmt.py:54 — a string id compared to an int raises TypeError — coerce via int().'
 
-// One reviewer's pass up to its first `findings`: each reader refused once, then launched with its
+// One reviewer's pass up to its first `findings`: each reader denied once, then launched with its
 // id, then its hand-back, delivered the first time only; the held readers' hand-backs never come.
 async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, string, string][], keys: string[], held: string[] = []): Promise<any> {
-  const refused = new Set<string>()
-  stubs.agent = (e: any) => {
-    const id = readers.find(([type]) => type === e.subagent_type)?.[1] ?? ''
-    if (!refused.has(id)) {
-      refused.add(id)
-      return coreRefusal
-    }
-    return coreLaunch(id)
-  }
+  stubs.agent = (e: any) => coreLaunch(readers.find(([type]) => type === e.subagent_type)?.[1] ?? '')
   wireRecord(on, stubs)
   const handed = new Set<string>()
   on('tool.call', { tool: 'SubagentHandback' }, (_$: any, e: any) => {
@@ -1400,7 +1569,7 @@ test('a fix loop\'s clean exit refused for a reader without its block names that
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
   await review($, [])
-  await $.tool.call({ tool: 'Agent', subagent_type: HUNTER, prompt: 'hunt', answer: PROSE_NONE } as any)
+  await $.tool.call({ tool: 'Agent', subagent_type: HUNTER, prompt: 'hunt' + REPORT_REQUEST, answer: PROSE_NONE } as any)
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(out.isError).toBe(true)
   expect(String(out.result)).toContain(`1 of 2 review agents ended without their findings block (${HUNTER})`)
@@ -1417,12 +1586,12 @@ test('a norms agent launched during an open pass is neither counted nor awaited,
   wireRecord(on, stubs)
   await loopCall($, { action: 'start', review_only: true })
   await loopCall($, { action: 'begin_pass' })
-  await review($, [{ severity: 'suggestion' }])
+  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true, answer: agentAnswer([{ severity: 'suggestion' }]) } as any)
   await $.tool.call({ tool: 'Agent', subagent_type: 'norms:norms-diff-scope', prompt: 'norms', run_in_background: true } as any)
   const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
   expect(String(out.result)).toContain('"exit": "reviewed"')
   expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST, 'norms'])
-  expect(stubs.launches).toEqual([false, true])
+  expect(stubs.launches).toEqual([true, true])
   expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['pass', 'reviewed: 1 findings, none Critical or Important']])
 })
 
@@ -1431,8 +1600,8 @@ test('every agent of a pass is a reader but a norms one: a lens and a call with 
   wireRecord(on, stubs)
   await loopCall($, { action: 'start', review_only: true })
   await loopCall($, { action: 'begin_pass' })
-  await $.tool.call({ tool: 'Agent', subagent_type: 'orchestrator:lens', prompt: 'lens', answer: agentAnswer([{ severity: 'important' }]) } as any)
-  await $.tool.call({ tool: 'Agent', prompt: 'plain', answer: 'prose' } as any)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'orchestrator:lens', prompt: 'lens' + REPORT_REQUEST, answer: agentAnswer([{ severity: 'important' }]) } as any)
+  await $.tool.call({ tool: 'Agent', prompt: 'plain' + REPORT_REQUEST, answer: 'prose' } as any)
   await $.tool.call({ tool: 'Agent', subagent_type: 'norms:norms-variable-naming', prompt: 'norms', answer: 'prose' } as any)
   await loopCall($, { action: 'findings', keys: ['f0::s'] })
   expect(stubs.prompts).toEqual(['lens' + REPORT_REQUEST, 'plain' + REPORT_REQUEST, 'norms'])
