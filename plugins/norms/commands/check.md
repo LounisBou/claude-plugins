@@ -45,7 +45,7 @@ In automatic mode nobody types in this session, so nothing waits for an answer:
 1. Run Steps 0 to 5 as usual.
 2. Ask no question (no `AskUserQuestion`), wait for no one, edit no code, make no commit. Skip Steps 6 to 8.
 3. Report every finding in one table: severity, agent, `file:line`, issue, proposed fix.
-4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking).
+4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking). An ERROR the brief sets aside as not critical, with its reason, is counted in `setAside` with that `reason`, not in `open`.
 5. Print the line it answers (`record: …`), verbatim, as the last line of the report, before any status line. When the tool is not in the tool list, print nothing.
 
 ### Step 0: Precomputed Scope
@@ -287,32 +287,7 @@ Any other input → Treat as discussion (7.6).
 2. If they suggest an alternative approach, evaluate it:
    - If valid: adopt THEIR version as the new proposed fix
    - If problematic: explain why and suggest a compromise
-3. After the discussion, **always re-present the updated fix proposal** with the same selector format:
-
-```markdown
-### Updated Fix Proposal
-
-**File:** `path/to/file.ext:line`
-
-**Before:**
-\`\`\`<lang>
-<current code>
-\`\`\`
-
-**After:**
-\`\`\`<lang>
-<revised proposed code incorporating discussion feedback>
-\`\`\`
-
-**What changed from original proposal:** <1 sentence explaining what was adjusted based on discussion>
-
----
-> **1. Fix** — Apply this change, run tests, and commit
-> **2. Pass** — Skip this finding, no changes made
-> **3. Discuss** — Continue the discussion
->
-> Reply with **1**, **2**, or **3** (or **fix**, **pass**, **discuss**)
-```
+3. After the discussion, **always re-present the updated fix proposal** (Before, After, what changed from the original) with the same three-option selector.
 
 Wait for user response again. This loop continues until the user picks Fix or Pass.
 
@@ -384,7 +359,7 @@ After all findings are processed, present the final summary:
 | 3 | `api.ts:12` | Extract to `TIMEOUT_MS` | User preferred `API_TIMEOUT_MS` for clarity | Fixed with user's naming |
 ```
 
-Then call `mcp__norms__check_done` with `{open, fixed, passed}`: the counts of findings left neither fixed nor passed (0 when every finding was processed), fixed and passed. Print the `record:` line it answers, verbatim, under the tables. When the tool is not in the tool list, print nothing.
+Then call `mcp__norms__check_done` with `{open, fixed, passed}`: the counts of findings left neither fixed nor passed (0 when every finding was processed), fixed and passed. A finding the user or the orchestrator's brief judges not critical is set aside, not left open: add `setAside` and its `reason`, and the record passes. Print the `record:` line it answers, verbatim, under the tables. When the tool is not in the tool list, print nothing.
 
 If any fixes were committed, remind: "Remember to push your commits when ready."
 
