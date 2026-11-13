@@ -45,10 +45,28 @@ findings=0
 say() { printf '%s:%s: %s\n' "$brief" "$1" "$2"; findings=$((findings + 1)); }
 
 # 1. A placeholder that survived instantiation is a hole the agent reads as literal text.
+#    The one name a brief may quote is the succession template's mode, written inside an
+#    inline code span (`Mode: {{MODE}}`): a brief that describes how succession fills that
+#    line holds it as a mention, not as a hole. A span is closed on the same line: an opening
+#    backtick before the name and a closing one after it, by parity on each side. The same
+#    name outside a closed span, or any other name anywhere, is still a finding: the
+#    template's own `Mode: {{MODE}}` line is one.
 while IFS=: read -r n text; do
     [ -n "${n:-}" ] || continue
     say "$n" "unfilled placeholder $text"
-done < <(grep -noE '\{\{[A-Za-z0-9_]+\}\}' "$brief" 2>/dev/null || true)
+done < <(LC_ALL=C awk '{
+    line = $0; offset = 0
+    while (match(line, /\{\{[A-Za-z0-9_]+\}\}/)) {
+        before = substr($0, 1, offset + RSTART - 1)
+        after = substr($0, offset + RSTART + RLENGTH)
+        opened = gsub(/`/, "", before)
+        closed = gsub(/`/, "", after)
+        name = substr(line, RSTART, RLENGTH)
+        if (!(name == "{{MODE}}" && opened % 2 == 1 && closed % 2 == 1)) print NR ":" name
+        offset += RSTART + RLENGTH - 1
+        line = substr(line, RSTART + RLENGTH)
+    }
+}' "$brief" 2>/dev/null || true)
 
 # 2. An upper-case variable reference does not expand in the shell of the session that
 #    opens this file: it carries none of the environment the writer had. The brief must
@@ -105,7 +123,11 @@ if is_class implementer; then
     grep -q 'STOP and ask' "$brief" 2>/dev/null || say 1 "no STOP-and-ask clause closing the non-goals"
     grep -qi 'non-goals' "$brief" 2>/dev/null || say 1 "no non-goals list"
 fi
-[ "$nrefs" -le 1 ] || say 1 "more than one session reference ($refs): one address, no example beside it"
+# A succession brief lists the agents running with their references (its Live state), each a
+# real address beside the predecessor's: the bound is the other briefs'.
+if ! head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
+    [ "$nrefs" -le 1 ] || say 1 "more than one session reference ($refs): one address, no example beside it"
+fi
 
 # 6. A review brief that never asks for the norms check to be REPORTED leaves the
 #    orchestrator with nothing to record, and its readiness gate then refuses a head whose
