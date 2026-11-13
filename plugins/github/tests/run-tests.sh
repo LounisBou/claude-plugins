@@ -1976,6 +1976,14 @@ check "pr-gate makes four reads, the check runs and the Actions runs a full page
   "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100|GET /repos/acme/thing/actions/runs?head_sha=$GATEHEAD&per_page=100" \
   "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
 
+check "pr-status answers a few lines by default: state, mergeable, head, labels, checks" \
+  "pr 12: open|mergeable: unknown|head: $GATEHEAD|labels: Not Ready, bug|checks: SUCCESS (2 total, 0 running, failed: none)" \
+  "$(gh8 pr-status 12 | paste -sd'|' -)"
+check "pr-status --json answers the full pull request" "12 3" \
+  "$(gh8 pr-status 12 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["number"], d["commits"])')"
+check "pr-status under a --format answers the full pull request to that format" "open" \
+  "$(gh8 pr-status 12 --format pr-merge-status)"
+
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
 check "pr-gate reads no check at all as green, total 0" "SUCCESS   0" "$(ci8)"
 
