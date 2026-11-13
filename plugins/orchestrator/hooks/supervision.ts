@@ -2992,6 +2992,12 @@ export function withdrawnText(entry: RoundEntry, evidence: string): string {
   return `[module] The coordinator withdrew your question since ${entry.since}, settled meanwhile: ${evidence} (blocks: ${entry.blocks})`
 }
 
+// Whether the session is an orchestrator: the name its row holds, else the name its walk reads.
+export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null) === 'orchestrator'
+}
+
 // The message for an entry the coordinator closed: a withdrawal when its answer carries the
 // evidence of one, the operator's answer otherwise.
 function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): string {
@@ -3004,8 +3010,7 @@ function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): s
 // that is no orchestrator.
 export async function answerByMessage($: any, author: string, only: string | null): Promise<string[] | null> {
   const sessionId = await $.session.id()
-  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  if (roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null) !== 'orchestrator') return null
+  if (!(await isOrchestratorSession($, sessionId))) return null
   await tellSettled($, await withdrawStale($, sessionId, null, `answered by a message from ${author}`,
     entry => entry.kind !== 'operator' || (only !== null && entry.id !== only), { author }))
   return (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open').map(({ entry }) => entry.id)

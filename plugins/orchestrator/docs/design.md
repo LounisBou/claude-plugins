@@ -138,6 +138,7 @@ hooks/tab-state.ts                   the state a window shows in its home sessio
 hooks/one-question.ts                the stop gate's question rules, pure: refuses a message with two numbered question blocks or more, and an operator wait that asks no question, both counting the blocks with the round module's parser outside code fences
 hooks/unanswered-question.ts         the stop gate's rule on a question still on the operator, pure: an orchestrator's open operator entry in the round, or a wait relayed to a coordinator elsewhere, refuses the turn that does not show the question in full; his answer settles it, typed in the tab included, which withdraws it at once (the operator's ruling of 2026-11-03: every question in the orchestrator's own chat too, until he answers it)
 hooks/answered.ts                    the orchestrator's tool for an answer that reached it by a message: marks its open question answered, by message, with the message's author
+hooks/accept.ts                      the orchestrator's tool for a failed review it accepts: from an orchestrator session only, it writes the acceptance through github's record tool
 hooks/module-log.ts                  the module's log line, pure: the argv each domain hands its own process run, the log path and its cap
 hooks/log-append.sh                  appends one line to the module's log, shared by every session, and rotates it to one .1 generation past the cap
 hooks/tests/scaffold.test.ts         proves the module chain loads, run by the host's plugin test
@@ -151,6 +152,7 @@ hooks/tests/kill-guard.test.ts       the kill guard: the kills by name or patter
 hooks/tests/stop-gate.test.ts        the stop gate's decision shapes and refusal texts, the once-per-tell CI record, and the wiring over a faked $: the classic.Stop fields pinned, the quiet scope, the degraded read passing
 hooks/tests/one-question.test.ts     the question rules: two numbered blocks refused, an operator wait with none refused, one block passed, fenced examples ignored, in either language
 hooks/tests/question-by-message.test.ts  a question sent to the coordinator by message refused, registered or learnt; a plain message and a question to another peer passed
+hooks/tests/accept.test.ts           the acceptance written through github's record tool from an orchestrator session, refused from any other or with an input that lacks the pull request, the file or the decision
 hooks/tests/unanswered-question.test.ts  the question still on the operator: open, withdrawn by his prompt, reopened, or only in the wait file; shown in full, cut short, or fenced
 hooks/tests/supervision.test.ts      the store's per-session keys and merges, the stale and truncated rows read as no row, and the wiring over a faked $: the composed register carrying the second measure's figure, the name from the walk, the repository from the origin read
 hooks/tests/short-commands.test.ts  the short commands' sync at start: run from an installed plugin or the override's directory, never from a checkout, bounded, a failure logged and the start let through

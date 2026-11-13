@@ -7,13 +7,13 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { KINDS } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptanceDetail, answersAcceptance, KINDS } from '../core/pr-record.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
 } from './guards.ts'
 import {
-  NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
+  acceptanceOriginRefusal, acceptanceOverRefusal, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
@@ -884,9 +884,12 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean }
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
+  let accepted: string | undefined
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
-    missing = missingItems(gate, await headRecords($, gate))
+    const files = await headRecords($, gate)
+    missing = missingItems(gate, files)
+    accepted = reviewAcceptedOver(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -894,7 +897,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing) }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted) }
     return {}
   }
   let now: Gate
@@ -917,7 +920,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted), labels, draft }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
 }
 
@@ -1510,6 +1513,7 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+  if (String(e.result ?? '') === ACCEPTANCE.result) return await writeAcceptance($, e, origin)
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
@@ -1567,6 +1571,52 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   // The record may complete the four: the gate reads them at the head it just checked.
+  const { line } = await followGate($, repo, pr, gate, true)
+  return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
+}
+
+/*
+ * The orchestrator's acceptance of a failed review (core's ACCEPTANCE): written by its tool alone, at
+ * the pull request's head, over the latest review record there, a failed one. It reads no checkout:
+ * the decision is over the records of the head GitHub names, never over the code.
+ */
+async function writeAcceptance($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  if (origin !== ACCEPTANCE.plugin) return { deny: acceptanceOriginRefusal(origin) }
+  const kind = e.kind === undefined || e.kind === null || e.kind === '' ? ACCEPTANCE.kind : String(e.kind)
+  if (kind !== ACCEPTANCE.kind) return { deny: kindRefusal(kind, origin, ACCEPTANCE.kind) }
+  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
+  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
+  const over = typeof e.over === 'string' ? e.over.trim() : ''
+  const decision = typeof e.detail === 'string' ? e.detail.trim() : ''
+  if (decision === '') return { deny: 'github: an acceptance says its decision in one sentence: {"detail": "<decision>"}' }
+  let gate: Gate
+  try {
+    gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+  } catch (err: any) {
+    return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
+  }
+  const { read } = headRecordsRead(gate, await headRecords($, gate))
+  const failed = over.includes('/') ? undefined : read.get(over)
+  if (!failed || !answersAcceptance(failed)) return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') }
+  const later = [...read.entries()].find(([name, r]) => name !== over && r.kind === failed.kind && r.at >= failed.at)
+  if (later) return { deny: acceptanceOverRefusal(over, gate.head, 'is followed by ' + later[0]) }
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  if (selfReview) return { deny: selfReview }
+  let session = ''
+  try {
+    session = String(await $.session.id() ?? '')
+  } catch {
+    // Written without it.
+  }
+  const argv = [
+    'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
+    '--kind', kind, '--result', ACCEPTANCE.result, '--producer', producerSlug(origin), '--detail', acceptanceDetail(over, decision),
+    '--session', session,
+  ]
+  const run = await $.process.run(argv, { timeoutMs: 30_000 })
+  if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
@@ -1646,8 +1696,9 @@ export function register(on: any): void {
           properties: {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
-            result: { type: 'string', enum: ['pass', 'fail', 'waived'] },
+            result: { type: 'string', enum: ['pass', 'fail', 'waived', ACCEPTANCE.result] },
             detail: { type: 'string', description: 'what ran, or the operator\'s waiver with its date' },
+            over: { type: 'string', description: ACCEPTANCE.result + ': the failed record\'s file name, written by ' + ACCEPTANCE.tool + ' only' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
             dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },

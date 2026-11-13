@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { accepts, KINDS, parsePrRecord } from './pr-record.ts'
+import { acceptanceDetail, acceptedOver, accepts, answersAcceptance, DETAIL_MAX, KINDS, parsePrRecord } from './pr-record.ts'
 
 const RECORD = {
   v: 1, repo: 'owner/name', pr: 7, head: 'a'.repeat(40), kind: 'review', result: 'pass',
@@ -31,5 +31,25 @@ describe('pull request records', () => {
     assert.ok(reviewWaived && !accepts(reviewWaived))
     const failed = read({ result: 'fail' })
     assert.ok(failed && !accepts(failed))
+  })
+
+  it('lets an acceptance of a failed review through, and of no other kind', () => {
+    const read = (change: Record<string, unknown>) => parsePrRecord({ ...RECORD, ...change })
+    const accepted = read({ result: 'accepted', producer: 'orchestrator', detail: acceptanceDetail('review.x.json', 'nits only') })
+    assert.ok(accepted && accepts(accepted))
+    const norms = read({ kind: 'norms', result: 'accepted' })
+    assert.ok(norms && !accepts(norms))
+    const failed = read({ result: 'fail' })
+    assert.ok(failed && answersAcceptance(failed))
+    const passed = read({})
+    assert.ok(passed && !answersAcceptance(passed))
+  })
+
+  it('names the failed record an acceptance answers in its detail, cut to the contract\'s length', () => {
+    const detail = acceptanceDetail('review.20261113T190000Z.pr-review.json', '  two Important findings judged out of scope ')
+    assert.equal(detail, 'over review.20261113T190000Z.pr-review.json: two Important findings judged out of scope')
+    assert.equal(acceptedOver(detail), 'review.20261113T190000Z.pr-review.json')
+    assert.equal(acceptedOver('clean at pass 2'), undefined)
+    assert.equal(acceptanceDetail('r.json', 'x'.repeat(600)).length, DETAIL_MAX)
   })
 })
