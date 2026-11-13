@@ -7,18 +7,21 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { ACCEPTANCE, acceptanceDetail, answersAcceptance, KINDS } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptanceDetail, answersAcceptance, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
+import {
+  covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+} from './e2e-scope.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
 } from './guards.ts'
 import {
-  acceptanceOriginRefusal, acceptanceOverRefusal, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
+  acceptanceNamesRefusal, acceptanceOriginRefusal, acceptanceOverRefusal, latestFailedReviewFile, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
-  kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
-  type Act, type Gate, type Phase, type RecordFile,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
+  kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
+  type Act, type Carried, type Gate, type Labelling, type Phase, type RecordFile,
 } from './ready.ts'
 
 export const PANE_ID = 'github-prs'
@@ -27,7 +30,7 @@ export const PANE_ID = 'github-prs'
 // (--stdin-json), and the mod's own (MOD_COMMANDS), answered here.
 // tests/run-tests.sh fails when this list and the two sources disagree.
 export const COMMANDS = [
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files',
   'pr-commits', 'file-at-ref', 'pr-create', 'pr-merge', 'pr-threads',
   'pr-comments', 'pr-issue-comments', 'pr-reviews', 'thread-reply',
   'pr-comment', 'comment-edit', 'comment-delete', 'thread-resolve',
@@ -48,7 +51,7 @@ export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list'])
 // command missing here is treated as a write, so the safe side is the default. After
 // pr-gate and pr-checks the gate may write the Ready label itself: its act, not the session's.
 export const READS = new Set([
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files', 'pr-commits',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files', 'pr-commits',
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
@@ -368,6 +371,11 @@ export const AUTO_MERGE_FILE = 'auto-merge.json'
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
+// The E2E exemptions, one file per repository below this directory of the data directory.
+const EXEMPT_PATH = new RegExp('/' + EXEMPT_DIR + '(/|$)')
+const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + EXEMPT_DIR + '/')
+export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}.'
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
 // from the call alone (no state can be read once the hook has thrown); the rest goes through.
@@ -378,16 +386,17 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create-draft', 'redraft'])
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE)) return NET_REFUSAL
+    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(EXEMPT_DIR + '/')) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    return /\b(gh|git)\b|pr-records|auto-merge/.test(command) ? NET_REFUSAL : null
+    return /\b(gh|git)\b|pr-records|auto-merge|e2e-exempt/.test(command) ? NET_REFUSAL : null
   }
 }
 
 export function writeNetRefusal(path: string): string | null {
-  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) ? NET_REFUSAL : null
+  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) || EXEMPT_PATH.test(path)
+    ? NET_REFUSAL : null
 }
 export const AUTO_MERGE_REFUSAL = 'github: the auto-merge list changes only through mcp__github__gh auto-merge-set,'
   + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."});'
@@ -763,10 +772,10 @@ class RecordsUnread extends Error {}
 // The records of a pull request's head, as files. A directory that is not there
 // holds none; one that cannot be listed throws RecordsUnread, never read as none.
 // A file that cannot be read is one that does not parse.
-async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
+async function headRecords($: any, gate: Gate, head = gate.head): Promise<RecordFile[]> {
   const root = await recordsRoot($)
   if (!root) return []
-  const dir = root + '/' + gate.repo.toLowerCase() + '/' + gate.head
+  const dir = root + '/' + gate.repo.toLowerCase() + '/' + head
   let entries: any[]
   try {
     entries = await $.fs.list(dir)
@@ -778,7 +787,7 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
       // Unknown: not read as absent.
     }
     if (absent) return []
-    throw new RecordsUnread('the records of ' + gate.head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
+    throw new RecordsUnread('the records of ' + head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
   }
   const files: RecordFile[] = []
   for (const entry of entries) {
@@ -793,6 +802,180 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
     files.push({ name, text })
   }
   return files
+}
+
+/*
+ * A rebase that leaves a pull request's own commits unchanged keeps its review, its norms check and
+ * its E2E waiver: a kind with no record at the head counts as present when an earlier head of the
+ * same pull request holds one, clean, passed or waived, and that head's fingerprint is the head's
+ * (the engine's pr-fingerprint: the diffs of the pull request's k commits along first parents, so a
+ * parent branch rewritten below them changes nothing). An E2E pass is run again at the new head, and
+ * CI is always read at it. An earlier head carries only when it held as many commits of the pull
+ * request as the head: the count each gate read finds at its head is kept in the data directory, with
+ * the fingerprint once computed over that count (version 3: the files of version 1 and 2, whose count
+ * may be another head's, are never read).
+ */
+const SHA = /^[0-9a-f]{40}$/
+const FINGERPRINT = /^[0-9a-f]{64}$/
+const FINGERPRINT_VERSION = 3
+export const FINGERPRINT_PREFIX = 'fingerprint.'
+
+type Fingerprint = { fingerprint: string; commits: number }
+// What the data directory keeps of a head: its commit count, and the fingerprint over it once computed.
+type Kept = { commits: number; fingerprint?: string }
+
+async function fingerprintPath($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+  const dir = await dataDir($)
+  return dir ? dir + '/' + FINGERPRINT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
+}
+
+const countOf = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0
+
+async function keptOf($: any, path: string | undefined): Promise<Kept | undefined> {
+  try {
+    if (!path || !(await $.fs.exists(path))) return undefined
+    const kept = JSON.parse(String(await $.fs.read(path)))
+    if (kept?.v !== FINGERPRINT_VERSION || !countOf(kept.commits)) return undefined
+    return { commits: kept.commits, ...(FINGERPRINT.test(String(kept.fingerprint)) ? { fingerprint: kept.fingerprint } : {}) }
+  } catch {
+    return undefined
+  }
+}
+
+async function writeKept($: any, path: string, repo: string, pr: number, head: string, kept: Kept): Promise<void> {
+  await $.fs.write(path, JSON.stringify({ v: FINGERPRINT_VERSION, repo: repo.toLowerCase(), pr, head, ...kept }) + '\n').catch(() => undefined)
+}
+
+// The commit count the gate read at its head, kept for when that head is an earlier one; a count
+// that changed at the same head (a base merged into it) drops the fingerprint taken over the other.
+async function keepCount($: any, gate: Gate): Promise<void> {
+  if (gate.state !== 'open' || !countOf(gate.commits)) return
+  const path = await fingerprintPath($, gate.repo, gate.pr, gate.head)
+  if (path && (await keptOf($, path))?.commits !== gate.commits) await writeKept($, path, gate.repo, gate.pr, gate.head, { commits: gate.commits })
+}
+
+// The fingerprint of the pull request's own commits at a head, over `count` commits (by default the
+// pull request's), or a throw naming why there is none.
+async function headFingerprint($: any, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
+  const path = await fingerprintPath($, repo, pr, head)
+  const kept = await keptOf($, path)
+  if (kept?.fingerprint && (count === undefined || kept.commits === count)) return { fingerprint: kept.fingerprint, commits: kept.commits }
+  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
+  if (!FINGERPRINT.test(String(computed?.fingerprint)) || !countOf(computed.commits)) throw new Error('pr-fingerprint answered no fingerprint')
+  if (path) await writeKept($, path, repo, pr, head, { commits: computed.commits, fingerprint: computed.fingerprint })
+  return { fingerprint: computed.fingerprint, commits: computed.commits }
+}
+
+// The pull requests each head directory's records name, by path, as of the directory's mtime: a
+// directory whose records name other pull requests only is not read again until a record lands in it.
+const headPrs = new Map<string, { mtimeMs: number; prs: number[] }>()
+
+// The records of the gate's pull request at its earlier heads, read once each, by head, and the
+// first head whose records cannot be listed, by why.
+async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found: Map<string, RecordFile[]>; unread?: string }> {
+  const dir = root + '/' + gate.repo.toLowerCase()
+  const found = new Map<string, RecordFile[]>()
+  let unread: string | undefined
+  let heads: string[]
+  try {
+    heads = (await $.fs.list(dir))
+      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .map((x: any) => String(x.name))
+  } catch {
+    return { found }
+  }
+  for (const head of heads) {
+    const path = dir + '/' + head
+    let mtimeMs = NaN
+    try {
+      mtimeMs = Number((await $.fs.stat(path)).mtimeMs)
+    } catch {
+      // Read as changed.
+    }
+    const known = headPrs.get(path)
+    if (known && known.mtimeMs === mtimeMs && !known.prs.includes(Number(gate.pr))) continue
+    let files: RecordFile[]
+    try {
+      files = await headRecords($, gate, head)
+    } catch (err: any) {
+      // Unread, it may hold any kind of the pull request: no earlier head carries.
+      unread ??= String(err?.message ?? err).trim()
+      continue
+    }
+    // A file that does not parse may be the pull request's: such a directory is read every time.
+    if (Number.isFinite(mtimeMs) && unreadableRecords(files).length === 0) headPrs.set(path, { mtimeMs, prs: recordPrs(files) })
+    found.set(head, files)
+  }
+  return { found, unread }
+}
+
+/*
+ * The records the earlier heads of the same commits carry to the gate's head, for the kinds it has
+ * none of: per kind, the latest record by its time across every earlier head of the same commit count
+ * and fingerprint, so a newer failure at one of them is never hidden by an older pass at another. An
+ * earlier head that cannot be fingerprinted may hold that newer failure: the kinds it has records of
+ * are carried from no head, and every kind when the records of a head cannot be listed. A record file
+ * of a head of the same diff that does not parse may be that failure too: its kind is carried from no head.
+ */
+async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
+  await keepCount($, gate)
+  const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
+  const root = wanted.length > 0 ? await recordsRoot($) : undefined
+  if (!root) return []
+  const { found, unread } = await earlierRecords($, gate, root)
+  const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
+  for (const [head, records] of found) {
+    const at = headLatest(gate, head, records)
+    const latest = wanted.flatMap((kind) => at.get(kind) ?? [])
+    const unreadable = unreadableRecords(records)
+      .map((file) => ({ name: file.name, kinds: file.kinds.filter((kind) => wanted.includes(kind)) }))
+      .filter((file) => file.kinds.length > 0)
+    if (latest.length > 0 || unreadable.length > 0) candidates.push({ head, latest, unreadable })
+  }
+  if (!candidates.some((c) => c.latest.some(carries))) return []
+  if (unread) {
+    note($, uncarriedLine(gate.repo, gate.pr, gate.head, unread))
+    return []
+  }
+  let current: Fingerprint
+  try {
+    current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
+  } catch (err: any) {
+    note($, uncarriedLine(gate.repo, gate.pr, gate.head, gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim()))
+    return []
+  }
+  const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
+  const blocked = new Set<PrRecord['kind']>()
+  for (const { head, latest, unreadable } of candidates) {
+    const unreadKinds = wanted.filter((kind) => unreadable.some((file) => file.kinds.includes(kind)))
+    let earlier: Fingerprint
+    try {
+      const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
+      if (!kept) throw new Error('the pull request was never read at that head, its commit count is not known')
+      if (kept.commits !== current.commits) continue
+      earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits)
+    } catch (err: any) {
+      const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
+      for (const kind of kinds) blocked.add(kind)
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds))
+      continue
+    }
+    if (earlier.fingerprint !== current.fingerprint) continue
+    if (unreadKinds.length > 0) {
+      for (const kind of unreadKinds) blocked.add(kind)
+      const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, files, unreadKinds))
+    }
+    for (const record of latest) {
+      const before = newest.get(record.kind)?.record
+      // At the same time, the record that carries nothing wins.
+      if (!before || record.at > before.at || (record.at === before.at && !carries(record))) newest.set(record.kind, { record, from: head })
+    }
+  }
+  return wanted.flatMap((kind) => {
+    const kept = newest.get(kind)
+    return kept && carries(kept.record) && !blocked.has(kind) ? [{ kind, from: kept.from }] : []
+  })
 }
 
 /*
@@ -850,7 +1033,65 @@ async function noteCiUndraft($: any, repo: string, pr: number, head: string | un
   }
 }
 
-type Readiness = { gate?: Gate; missing: string[]; error?: string }
+// ---- E2E a pull request does not need (e2e-scope.ts) ----
+
+// The files of a pull request, or a throw: never read as none.
+async function prFiles($: any, repo: string, pr: number): Promise<PrFile[]> {
+  return parsePrFiles(await runGh($, 'pr-files', { pr }, repo))
+}
+
+// The repository's exemption file as it stands, or undefined when there is none or it cannot be read.
+async function readExemption($: any, repo: string): Promise<Exemption | undefined> {
+  try {
+    const dir = await dataDir($)
+    if (!dir) return undefined
+    const path = exemptionPath(dir, repo)
+    if (!(await $.fs.exists(path))) return undefined
+    return parseExemption(JSON.parse(String(await $.fs.read(path))))
+  } catch {
+    return undefined
+  }
+}
+
+// Why a labelling is refused: it puts or takes off a label the repository's exemption names, which
+// would cover or uncover pull requests without the operator. A labelling that may move any label
+// (opaque) is refused when the exemption names one. A repository that cannot be named has no
+// exemption file to read, as an exemption that cannot be read covers nothing.
+const REPO_PLACEHOLDER = /\{owner\}|\{repo\}|:owner\b|:repo\b/g
+
+/*
+ * The repository a Bash labelling targets: the one it names, its {owner}, {repo}, :owner and :repo
+ * placeholders filled from the checkout's repository as gh api fills them, or the checkout's own
+ * when it names none.
+ */
+async function labellingRepo($: any, named: string | undefined): Promise<string | undefined> {
+  if (named && !named.match(REPO_PLACEHOLDER)) return named
+  const checkout = await targetRepo($, {}).catch(() => undefined)
+  if (!named || !checkout) return checkout
+  const [owner, name] = checkout.split('/')
+  return named.replace(REPO_PLACEHOLDER, (part) => (part.includes('owner') ? owner : name))
+}
+
+async function exemptLabelRefusal($: any, labelling: Labelling, repo: string | undefined): Promise<string | undefined> {
+  if (!repo) return undefined
+  const exemption = await readExemption($, repo)
+  const named = labelling.opaque && exemption?.exempt ? [...exemption.labels] : exemptingLabels(exemption, labelling.labels)
+  if (named.length === 0) return undefined
+  return 'github: ' + labelling.name + ' refused: ' + named.join(', ') + ' exempts pull requests of ' + repo
+    + ' from E2E; only the operator puts it on or takes it off.'
+}
+
+// The line of the operator's exemption that covers this pull request, or undefined. Any doubt (a
+// file or a list of files that cannot be read) covers nothing: the E2E record is asked as before.
+async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
+  const exemption = await readExemption($, gate.repo)
+  if (!exemption?.exempt) return undefined
+  let files: PrFile[] | undefined
+  if (exemption.paths.length > 0) files = await prFiles($, gate.repo, Number(gate.pr)).catch(() => undefined)
+  return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
+}
+
+type Readiness = { gate?: Gate; missing: string[]; carried?: Carried[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
 async function readiness($: any, repo: string, pr: number, sha?: string): Promise<Readiness> {
@@ -867,7 +1108,8 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
     throw err
   }
-  return { gate, missing: missingItems(gate, files, sha) }
+  const carried = await carriedRecords($, gate, files)
+  return { gate, missing: missingItems(gate, files, sha, await e2eExemptionOf($, gate), carried), carried }
 }
 
 /*
@@ -884,11 +1126,15 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean }
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
+  let exempt: string | undefined
   let accepted: string | undefined
+  let carried: Carried[]
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
+    exempt = await e2eExemptionOf($, gate)
     const files = await headRecords($, gate)
-    missing = missingItems(gate, files)
+    carried = await carriedRecords($, gate, files)
+    missing = missingItems(gate, files, undefined, exempt, carried)
     accepted = reviewAcceptedOver(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
@@ -897,7 +1143,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted) }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried) }
     return {}
   }
   let now: Gate
@@ -920,8 +1166,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted), labels, draft }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, exempt, carried), labels, draft }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft }
 }
 
 // The reads after which the gate puts the label.
@@ -1012,7 +1258,7 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
     }
   }
-  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing)
+  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
 }
 
 // The Bash ready guard failed on its own: under warn the command goes on with
@@ -1314,6 +1560,8 @@ type Quoting = {
   names: (span: string) => boolean
   // A span that is the whole message needs not name it.
   wholeBare: boolean
+  // What the person's words, all together, must say: the text whole, or its quoted spans.
+  carries?: (words: string) => boolean
 }
 
 // True when a text is the person's words: the text whole found in a prompt they typed; else, when
@@ -1323,9 +1571,9 @@ type Quoting = {
 function typedWords(text: string, quoting: Quoting): boolean {
   const whole = spaced(text)
   if (whole === '') return false
-  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return true
+  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return !quoting.carries || quoting.carries(whole)
   const spans = [...text.matchAll(QUOTED_SPAN)].map((m) => spaced(m[1] ?? m[2] ?? m[3] ?? '')).filter((s) => s !== '')
-  if (spans.length === 0) return false
+  if (spans.length === 0 || (quoting.carries && !quoting.carries(spans.join(' ')))) return false
   const days = text.match(ISO_DAY) ?? []
   return typedPrompts.some((p) => {
     const sent = spaced(p.text)
@@ -1347,9 +1595,10 @@ function waiverQuoting(pr: number): Quoting {
 const CONSENT_READ = 200
 
 // True when some consent record of the subject, written for the operator's answer to the
-// question that asked it, is quoted whole in the text, its whitespace normalised. A directory or
-// a file that cannot be read matches nothing.
-async function consentAnswered($: any, quote: string, subject: ConsentSubject): Promise<boolean> {
+// question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
+// itself says what `carries` asks of the operator's words. A directory or a file that cannot be
+// read matches nothing.
+async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
   try {
     const dir = await configDir($)
     if (!dir) return false
@@ -1368,7 +1617,7 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject): 
     for (const { path } of dated.slice(0, CONSENT_READ)) {
       try {
         const record = parseConsentRecord(JSON.parse(String(await $.fs.read(path))))
-        if (record && quotesConsent(record, subject, quote)) return true
+        if (record && quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer)))) return true
       } catch {
         // Not a match.
       }
@@ -1390,7 +1639,12 @@ async function touchesAutoMerge($: any, line: string): Promise<boolean> {
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
 
-const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+// Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
+async function touchesExemptions($: any, line: string): Promise<boolean> {
+  if (!line.includes(EXEMPT_DIR)) return false
+  const dir = await dataDir($)
+  return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
+}
 
 // The list, one repository per line as written.
 async function listAutoMerge($: any): Promise<string> {
@@ -1484,7 +1738,7 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   const args = e.args ?? {}
   const repo = String(args.repo ?? '').trim()
-  if (!REPO_NAME.test(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
+  if (!isRepoName(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
   if (typeof args.on !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
   const words = typeof args.words === 'string' ? args.words : ''
   const unproven = await unprovenWord($, words, repo)
@@ -1508,7 +1762,119 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
   })
 }
 
+// ---- E2E not applicable, and the standing exemption ----
+
+// An E2E not applicable refused when the session writing it pushed the head: another session says so.
+export function selfNoneRefusal(result: string, head: string, pushed: ReadonlySet<string>): string | null {
+  if (result !== 'not-applicable' || !pushed.has(head)) return null
+  return 'github: this session pushed ' + head.slice(0, 7) + ': whether a pull request needs no E2E, a reviewer says so from another session.'
+}
+
+// Why the pull request at `head` is no pull request without runtime, or undefined: its files, read
+// at that head (read again after them, so files of another head are never vouched for), all hold none.
+async function runtimeRefusal($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+  let files: PrFile[]
+  let after: Gate
+  try {
+    files = await prFiles($, repo, pr)
+    after = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+  } catch (err: any) {
+    return 'github: the files of ' + repo + '#' + pr + ' cannot be read: ' + String(err?.message ?? err).trim()
+  }
+  if (after.head !== head) return 'github: the head moved from ' + head.slice(0, 7) + ' to ' + after.head.slice(0, 7) + ' while its files were read: record again.'
+  const held = runtimeFiles(files)
+  if (held.length === 0) return undefined
+  return 'github: E2E is not applicable only to a pull request whose files hold no runtime; ' + repo + '#' + pr + ' changes '
+    + held.slice(0, 5).join(', ') + (held.length > 5 ? ' and ' + (held.length - 5) + ' more' : '') + '.'
+}
+
+// The words that grant an exemption, French or English: « test » alone grants none.
+const EXEMPTING = /exempt|exon[èée]r|dispens|d[ée]rogation|waiv/i
+
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
+
+// An exemption of a repository: each quoted span names E2E, the exemption or the repository, and
+// the words together name the repository (owner/name or its name), grant the exemption (not to
+// revoke it) and give each rule as it is written.
+function exemptionQuoting(repo: string, exempt: boolean, rules: readonly string[]): Quoting {
+  const name = escaped(repo.split('/')[1])
+  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|d[ée]rogation|waiv|exempt|exon[ée]r|' + name, 'i')
+  const repository = new RegExp('(?<![A-Za-z0-9_.-])(' + escaped(repo) + '|' + name + ')(?![A-Za-z0-9_-])', 'i')
+  const carries = (words: string) =>
+    repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => ruleNamed(rule).test(words))
+  return { dated: true, names: (span) => names.test(span), wholeBare: true, carries }
+}
+
+// A rule written whole in the words, as given: no letter, digit or path character joins it on either side, so
+// `docs/` is not in `src/docs/` nor `e2e` in `no-e2e`. A final dot ends a sentence, not the rule.
+const RULE_JOINED = '-A-Za-z0-9À-ÿ_/*?'
+function ruleNamed(rule: string): RegExp {
+  return new RegExp('(?<![' + RULE_JOINED + '.])' + escaped(rule) + '(?![' + RULE_JOINED + ']|\\.[' + RULE_JOINED + '])')
+}
+
+const RULES_MAX = 50
+const isRule = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
+
+// The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
+// requests from E2E (all, or those a rule names), or revokes it, in their words with their date.
+async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  if (typeof e.exempt !== 'boolean') return { deny: 'github: an E2E exemption says in or out: {"exempt": true} or {"exempt": false}' }
+  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  if (!repo || !isRepoName(repo)) return { deny: 'github: an E2E exemption names its repository: {"repo": "owner/name"}' }
+  const paths = e.paths ?? []
+  const labels = e.labels ?? []
+  if (!isRule(paths) || !isRule(labels)) {
+    return { deny: 'github: "paths" and "labels" are lists of at most ' + RULES_MAX + ' globs and label names.' }
+  }
+  if (detail.length > DETAIL_MAX || !/\b\d{4}-\d{2}-\d{2}\b/.test(detail)) {
+    return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters, with their date (YYYY-MM-DD).' }
+  }
+  const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
+  // Typed or answered, the operator's own words carry the same: the consent's answer is checked as the prompt is.
+  const quoting = exemptionQuoting(repo, e.exempt, given)
+  if (!typedWords(detail, quoting) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, quoting.carries))) {
+    return {
+      deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session, naming '
+        + repo + (e.exempt ? ', the exemption and each rule as given' : '') + ', or their answer in a consent record ('
+        + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', with their date.',
+    }
+  }
+  const dir = await dataDir($)
+  if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
+  let session = ''
+  try {
+    session = String(await $.session.id() ?? '')
+  } catch {
+    // Written without it.
+  }
+  const exempt: boolean = e.exempt
+  const kept = exempt ? { paths: paths.map((p: string) => p.trim()), labels: labels.map((l: string) => l.trim()) } : { paths: [], labels: [] }
+  const body = { v: 1, repo: repo.toLowerCase(), exempt, ...kept, detail, session, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }
+  const path = exemptionPath(dir, repo)
+  await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(body, null, 2) + '\n'))
+  if (!exempt) return { result: 'github: ' + repo + ' no longer exempt from E2E' }
+  const rules = [
+    ...(kept.labels.length > 0 ? ['carrying ' + kept.labels.join(' or ')] : []),
+    ...(kept.paths.length > 0 ? ['whose files all match ' + kept.paths.join(' or ')] : []),
+  ]
+  return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
+}
+
 // ---- records ----
+
+// Why a path is no directory, or undefined when it is one. The host's `$.fs.stat` says `dir`; a
+// spawn in a path that is none fails with a raw ENOENT, so the refusal comes first.
+async function notDirectory($: any, path: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.stat(path)).kind === 'dir' ? undefined : 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
+  } catch (err: any) {
+    const why = String(err?.message ?? err).trim()
+    return /ENOENT|no such file|not found/i.test(why)
+      ? 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
+      : 'cannot stat dir ' + path + ': ' + why
+  }
+}
 
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
@@ -1517,6 +1883,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
+  const notDir = dir === undefined ? undefined : await notDirectory($, dir)
+  if (notDir) return { deny: 'github: ' + notDir }
   const inDir = dir ? { cwd: dir } : {}
   const owned = recordKindFor(origin)
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
@@ -1525,12 +1893,22 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
       deny: kindRefusal(kind, origin, owned),
     }
   }
-  const result = String(e.result ?? '')
   const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
+  if (e.exempt !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
+  const result = String(e.result ?? '')
+  if (result === 'not-applicable' && detail.trim() === '') {
+    return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
+  }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} }, dir)
-  if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
+  if (!repo) {
+    return {
+      deny: dir
+        ? 'github: ' + dir + ' has no GitHub origin remote, so the repository is unknown: name it: {"repo": "owner/name"}'
+        : 'github: name the repository: {"repo": "owner/name"}',
+    }
+  }
   if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
       deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
@@ -1548,16 +1926,23 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (dir && !local) return { deny: 'github: ' + dir + ' has no commit to read: ' + (String(head.stderr ?? '').trim() || 'git rev-parse HEAD exited ' + head.exitCode) }
   if (local !== gate.head) {
     return {
-      deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ': a record is written at the head it read. '
+      deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ' (' + repo + '#' + pr + '): a record is written at the head it read. '
         + (dir ? 'Checkout read: ' + dir + '.' : 'Name the checkout the tests ran in: {"dir": "<absolute path>"}.'),
     }
   }
   const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000, ...inDir })
-  if (status.exitCode !== 0 || String(status.stdout).trim() !== '') {
+  if (status.exitCode !== 0) {
+    return { deny: 'github: git status failed' + (dir ? ' in ' + dir : '') + ': ' + (String(status.stderr ?? '').trim() || 'exit ' + status.exitCode) }
+  }
+  if (String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
-  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads) ?? selfNoneRefusal(result, gate.head, pushedHeads)
   if (selfReview) return { deny: selfReview }
+  if (result === 'not-applicable') {
+    const refused = await runtimeRefusal($, repo, pr, gate.head)
+    if (refused) return { deny: refused }
+  }
   let session = ''
   try {
     session = String(await $.session.id() ?? '')
@@ -1599,7 +1984,9 @@ async function writeAcceptance($: any, e: any, origin: string): Promise<{ result
   }
   const { read } = headRecordsRead(gate, await headRecords($, gate))
   const failed = over.includes('/') ? undefined : read.get(over)
-  if (!failed || !answersAcceptance(failed)) return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') }
+  if (!failed || !answersAcceptance(failed)) {
+    return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') + acceptanceNamesRefusal(gate.head, latestFailedReviewFile(read)) }
+  }
   const later = [...read.entries()].find(([name, r]) => name !== over && r.kind === failed.kind && r.at >= failed.at)
   if (later) return { deny: acceptanceOverRefusal(over, gate.head, 'is followed by ' + later[0]) }
   const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
@@ -1622,7 +2009,7 @@ async function writeAcceptance($: any, e: any, origin: string): Promise<{ result
 }
 
 // At most once a day, the head directories whose newest record is older than
-// PRUNE_DAYS go: their pull request merged or moved on long ago.
+// PRUNE_DAYS go, their pull request merged or moved on long ago, and the fingerprints kept as long.
 async function pruneRecords($: any): Promise<void> {
   const root = await recordsRoot($)
   if (!root || !(await $.fs.exists(root))) return
@@ -1646,6 +2033,15 @@ async function pruneRecords($: any): Promise<void> {
         }
         if (newest < cut) stale.push(head)
       }
+    }
+  }
+  // The fingerprints kept for the heads, by the same cut-off.
+  const data = await dataDir($)
+  if (data) {
+    for (const file of await $.fs.list(data).catch(() => [])) {
+      const name = String(file?.name ?? '')
+      if (!name.startsWith(FINGERPRINT_PREFIX) || !name.endsWith('.json')) continue
+      if (Number((await $.fs.stat(data + '/' + name)).mtimeMs) < cut) stale.push(data + '/' + name)
     }
   }
   if (stale.length > 0) await $.process.run(['rm', '-rf', '--', ...stale], { timeoutMs: 60_000 })
@@ -1686,23 +2082,26 @@ export function register(on: any): void {
         name: 'record',
         isDeferred: false,
         description:
-          'Record the end-to-end tests of a pull request at its head commit: pass, fail, or waived by '
-          + 'the operator in their own words. Run from a clean checkout at the pull request\'s head, after '
-          + 'the tests ran there. A waiver\'s detail quotes words they typed in this session, or their answer '
-          + 'in a consent record of an E2E waiver of that pull request, with their date (YYYY-MM-DD). Reviews and norms checks are recorded by their own tools. See '
+          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived. '
+          + 'A waiver, and {repo, exempt, paths?, labels?} that exempts a repository\'s pull requests for good (false revokes), '
+          + 'quote the operator\'s dated words, typed here or in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
           properties: {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
-            result: { type: 'string', enum: ['pass', 'fail', 'waived', ACCEPTANCE.result] },
-            detail: { type: 'string', description: 'what ran, or the operator\'s waiver with its date' },
+            result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
+            detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words with their date' },
             over: { type: 'string', description: ACCEPTANCE.result + ': the failed record\'s file name, written by ' + ACCEPTANCE.tool + ' only' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
+            exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
+            paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
+            labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
             dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },
-          required: ['pr', 'result'],
+          required: [],
         },
       })
     } catch (err: any) {
@@ -1749,6 +2148,7 @@ export function register(on: any): void {
     try {
       if (touchesRecords(String(e.command), await recordsRoot($))) return { deny: RECORDS_REFUSAL }
       if (await touchesAutoMerge($, String(e.command))) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesExemptions($, String(e.command))) return { deny: EXEMPT_REFUSAL }
     } catch {
       // A command that is no text names no record either.
     }
@@ -1761,6 +2161,16 @@ export function register(on: any): void {
     }
     const unread = await writingUnread($, command, e.agentId)
     if (unread) return { deny: unread }
+    let labellings: Labelling[] = []
+    try {
+      labellings = bashLabellings(String(e.command))
+    } catch {
+      // A line that cannot be read moves no label it shows.
+    }
+    for (const labelling of labellings) {
+      const refused = await exemptLabelRefusal($, labelling, await labellingRepo($, labelling.repo))
+      if (refused) return { deny: refused }
+    }
     const after: Array<(result: any) => Promise<void>> = []
     let current: Act | undefined
     try {
@@ -1812,6 +2222,9 @@ export function register(on: any): void {
       const data = await dataDir($)
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
         return { deny: AUTO_MERGE_REFUSAL }
+      }
+      if ((data && path.startsWith(normalise(data + '/' + EXEMPT_DIR) + '/')) || ANY_EXEMPT_PATH.test(path)) {
+        return { deny: EXEMPT_REFUSAL }
       }
       return next(e)
     }).catch(async (_$: any, e: any, next: any) => {
@@ -1872,6 +2285,9 @@ export function register(on: any): void {
       }
     }
     const e = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
+    const labelling = toolLabelling(e.command, e.args)
+    const unlabelled = labelling ? await exemptLabelRefusal($, labelling, await targetRepo($, e).catch(() => undefined)) : undefined
+    if (unlabelled) return { deny: unlabelled }
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
     const refused = await permit($, e, ready?.beforeAsk, ready?.ciUndraft)

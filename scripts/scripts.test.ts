@@ -5,8 +5,9 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
-import { matrixOf, parseBlocking, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
+import { matrixOf, NO_SUITE, parseBlocking, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
 import { breaches, isPromptPath, measure } from './prompts.ts'
+import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
 const MANIFEST = { name: 'alpha', version: '1.2.3', description: 'An alpha plugin.', author: { name: 'A', email: 'a@example.com' } }
@@ -103,6 +104,24 @@ describe('plugin matrix', () => {
   it('runs a pull request on Linux only', () => {
     const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['macos-latest'], beta: [] } }, ['alpha', 'beta']))
     assert.deepEqual(pullRequestCells(matrix, ['alpha']), [{ plugin: 'alpha', os: 'ubuntu-latest', blocking: false }])
+  })
+
+  it('runs one cell without a suite for a pull request that touches no plugin, so that it passes', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: [] } }, ['alpha']))
+    assert.deepEqual(pullRequestCells(matrix, []), [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }])
+  })
+})
+
+describe('release plan', () => {
+  it('raises a version by its level', () => {
+    assert.deepEqual([raise('1.2.3', 'patch'), raise('1.2.3', 'minor'), raise('1.2.3', 'major')], ['1.2.4', '1.3.0', '2.0.0'])
+  })
+
+  it('bumps the plugins whose shipped files changed since their release, patch unless told', () => {
+    const versions = new Map([['alpha', '1.0.0'], ['beta', '1.0.0'], ['gamma', '1.0.0']])
+    const changed: Record<string, string[]> = { alpha: ['plugins/alpha/skill.md'], beta: ['plugins/beta/tests/a.sh'], gamma: ['plugins/gamma/hooks/h.ts'] }
+    const plan = releasePlan(versions, dir => changed[dir] ?? [], new Map([['gamma', 'minor' as const]]))
+    assert.deepEqual(plan, [{ dir: 'alpha', from: '1.0.0', to: '1.0.1' }, { dir: 'gamma', from: '1.0.0', to: '1.1.0' }])
   })
 })
 

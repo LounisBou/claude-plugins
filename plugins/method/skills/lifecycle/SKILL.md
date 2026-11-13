@@ -52,8 +52,8 @@ A unit of work ends with a report in the shape of `references/report.md`. Its la
 
 ## Questions to the operator
 
-One question per message, in the shape of `references/questions.md`. Never ask what the spec,
-the plan or the code already answers.
+One question per message, in the shape of `references/questions.md`, never on what the spec,
+the plan or the code answers. Asked once, it blocks only the work that needs its answer.
 
 ## The formats
 

@@ -73,7 +73,7 @@ function killOf(command: ShellCommand, depth: number, seen: (reason: string) => 
   const text = depth < STRING_DEPTH ? innerLine(argv) : undefined
   if (text !== undefined) { killsIn(text, depth + 1, seen, filled); return }
   const fed = depth < STRING_DEPTH ? stdinLines(command) : []
-  if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen); return }
+  if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen, filled); return }
   fill(command, filled, loop)
   if (program !== 'kill' || argv[1] === '-0') return
   if (substitutions.some(held => !isRecordedPid(held))) seen('kill of a command substitution')

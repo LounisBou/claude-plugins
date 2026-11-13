@@ -137,7 +137,10 @@ and every skill keeps its own route.
   written by the session that pushed the head. It leaves none when the loop was
   released by the user, when the branch has no pull request, when tracked files have
   uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
-  loop's answer then says `record: none — <why>`.
+  loop's answer then says `record: none — <why>`. A github call that fails with a 5xx, a
+  timeout or a dropped connection is asked again up to three times after a short pause;
+  if GitHub still fails, the verdict is kept and the answer says the record is still owed:
+  the next `findings` or `status` writes it.
 - **The band.** A line above the prompt while a skill holds the session: which one,
   the comments kept, the prepared commits waiting for `commit` or `drop`, the pass.
 - **`/pr-review:doctor` and `/pr-review:install`** answer with `install.sh`'s output

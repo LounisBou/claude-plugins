@@ -48,9 +48,6 @@ jobs:
         run: npm run core -- --check
       - name: catalogue matches the manifests
         run: npm run marketplace -- --check
-      - name: a shipped change raises its plugin's version
-        if: github.event_name == 'pull_request'
-        run: npm run version-bump -- origin/${{ github.base_ref }}
       - id: matrix
         name: plugin matrix
         # A pull request runs Linux, for the plugins it changes; main runs every cell.
@@ -59,7 +56,6 @@ jobs:
   plugin:
     name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
-    if: needs.repository.outputs.matrix != '{"include":[]}'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.repository.outputs.matrix) }}
@@ -73,7 +69,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      # A pull request that touches no plugin runs one cell without a suite: a skipped job proves
+      # nothing to the gate, a job that passes does.
       - name: tools the suites call
+        if: matrix.plugin != 'no plugin suite'
         run: |
           # Bun from the npm registry: its GitHub release downloads fail on a forge outage.
           npm install --global --silent @anthropic-ai/claude-code@2.1.319 bun@1.4.4
@@ -125,6 +124,7 @@ jobs:
             done
           fi
       - name: suite
+        if: matrix.plugin != 'no plugin suite'
         env:
           CLAUDE_GITHUB_ROOT: ${{ github.workspace }}/plugins/github
           LC_ALL: en_US.UTF-8
