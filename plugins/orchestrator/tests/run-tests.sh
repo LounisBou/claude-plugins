@@ -5407,8 +5407,8 @@ check "a relayed ruling is dated by a command, pasted, never from memory" "yes|n
 # inside it; the relays and the work come at its end, and a second wave is chained at once.
 # Topic 6.3 of the rules review, the operator's ruling of 2026-10-31: each ruling is relayed at
 # once, nothing is shown between two questions, and the wave launches and reports at its end.
-check "a decision round asks its questions back to back, relays each ruling at once, and launches only when the wave ends" "yes|yes|yes|yes|no|no" \
-  "$(spells "$ROOT/commands/decide.md" 'in this same message, right under the')|$(spells "$ROOT/commands/decide.md" 'nothing launched or reported inside a wave, each ruling relayed at once')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
+check "a decision round asks its questions back to back, relays each ruling at once, and never stops the work its questions do not block" "yes|yes|yes|yes|no|no" \
+  "$(spells "$ROOT/commands/decide.md" 'A question blocks only the work that depends on its answer')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
 check "a decision round shows nothing between a ruling and the next question" "no" \
   "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
 # Topic 6.3: the coordinator's module relays a ruling as soon as round-close returns.
