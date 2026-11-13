@@ -215,6 +215,9 @@ otherwise, and this skill never says it for them.
 | The user has not answered the one question | wait; nothing is derived from a value they did not confirm |
 | The design has no heading to derive a title from | ask for the title in one line, then wait |
 
+In an orchestrated build (`ORCHESTRATOR_SPAWNED` set) the orchestrator answers a stop,
+not the operator.
+
 ---
 
 ## Report

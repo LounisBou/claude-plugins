@@ -227,6 +227,25 @@ test('the guard stays armed across turns; words grant nothing, the user\'s Allow
   expect(asked[0]).toContain('Let a general-purpose subagent run?')
 })
 
+test('in a session the orchestrator spawned, a subagent is refused without a dialog and the refusal names the orchestrator', async ($, on) => {
+  const asked: string[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
+    asked.push(e.questions[0].question)
+    return { result: { questions: e.questions, answers: { [e.questions[0].question]: 'Allow' } } }
+  })
+  on('env.get', (_$: any, e: any) => ({ value: e.name === 'ORCHESTRATOR_SPAWNED' ? '1' : undefined }))
+  await world(on)
+  await start($)
+  await skill($, 'phase')
+  const out: any = await agent($, 'general-purpose')
+  expect(refused(out)).toBe(true)
+  expect(JSON.stringify(out)).toContain('your orchestrator decides, not the operator')
+  expect(asked).toEqual([])
+  // Its answer is the guard released.
+  await $.command.run({ command: 'implement:release-guard', args: '' })
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
+})
+
 test('an aborted turn releases the guard', async ($, on) => {
   await world(on)
   await start($)
