@@ -293,7 +293,7 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           const kind = reading?.idle === true ? reading.wait?.kind : undefined
           if (reading !== null && (kind === 'done' || kind === 'operator')) {
             if (previous === reading.signature) {
-              if (kind === 'operator') askedOperator = reading.wait?.blocks ?? ''
+              if (kind === 'operator') askedOperator = reading.wait?.question ?? reading.wait?.blocks ?? ''
               break
             }
             previous = reading.signature

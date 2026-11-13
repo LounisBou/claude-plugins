@@ -3158,7 +3158,7 @@ async function registeredSession($: any, name: string, recordText: string, optio
 
 // A send to the coordinator. A name the host refuses as several sessions' is sent once more to
 // the one the refusal places on this machine, by its reference, when it names exactly one.
-async function sendToCoordinator($: any, to: CoordinatorTo, text: string): Promise<any> {
+export async function sendToCoordinator($: any, to: CoordinatorTo, text: string): Promise<any> {
   const sent = await $.session.send({ to, text })
   if (sent?.isDelivered || typeof to !== 'string') return sent
   const here = String(sent?.reason ?? '').split('\n').map(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1]).filter(Boolean)

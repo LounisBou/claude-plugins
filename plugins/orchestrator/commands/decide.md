@@ -47,8 +47,8 @@ taken in order; the count in the header moves with it.
 
 ## 2. Present ONE question
 
-Re-verify the item and its premise on the artifact in the same turn, immediately before
-presenting it: the collection may be an hour old. Found settled, it is written back as
+Re-verify the item and its premise on the artifact in the same turn, just before
+presenting it: the collection may be old. Found settled, it is written back as
 « already done: <evidence> », dropped from the count (N in the header drops with it),
 reported in one line, and the next question is presented instead: a settled item is never asked.
 
@@ -56,9 +56,8 @@ The shape is the method's question (`method:lifecycle`, « Questions to the oper
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
 « or your own words ». Then call
-`declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
-that message but the « Recorded » line of the answer just given: no status, no other
-question, no agent report.
+`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. That message holds only
+the « Recorded » line of the answer just given: no status, no agent report.
 
 ## 3. Wait for the answer
 

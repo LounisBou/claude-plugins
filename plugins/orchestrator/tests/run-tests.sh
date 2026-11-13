@@ -5400,7 +5400,7 @@ check "no text offers only the wait on the operator and done" "" "$(two_lines_on
 # The question of a decision round ends on a declared wait on the operator: the stop gate refuses
 # a turn that ends on a bare question.
 check "a decision round's question ends on a declared operator wait" "yes" \
-  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<the question>"})`')"
+  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 # The operator's time: a round is a wave of questions back to back, nothing relayed or launched

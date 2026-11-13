@@ -25,6 +25,14 @@ describe('outcome evals: the orchestrator transcript', () => {
     assert.deepEqual(asked.wait, { kind: 'operator', blocks: 'which name?' })
   })
 
+  it("reads the question an operator wait carries, and none on another kind", () => {
+    const block = '**Question 1 of 1**\n_Subject_ : name'
+    const asked = readTranscript(jsonl([prompt(), called(WAIT_TOOL, { kind: 'operator', blocks: 'the name', question: block }), result('t1'), said('Over.')]))
+    assert.deepEqual(asked.wait, { kind: 'operator', blocks: 'the name', question: block })
+    const other = readTranscript(jsonl([prompt(), called(WAIT_TOOL, { kind: 'tool', blocks: 'a watch', question: block }), result('t1'), said('Over.')]))
+    assert.deepEqual(other.wait, { kind: 'tool', blocks: 'a watch' })
+  })
+
   it('reads a turn that is still working as not idle', () => {
     assert.equal(readTranscript(jsonl([prompt(), said('working', 'tool_use')])).idle, false)
     assert.equal(readTranscript(jsonl([prompt(), declare('done')])).idle, false)

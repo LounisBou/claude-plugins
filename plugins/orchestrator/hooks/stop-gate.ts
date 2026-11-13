@@ -78,7 +78,8 @@ export type WaitKind = typeof WAIT_KINDS[number]
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
 // consent: the subject an operator question asks his consent on (core's consent-record.ts); his
 // answer to it in the round is then written as that subject's consent record.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject }
+// question: the full `**Question i of N**` block an operator wait puts him, carried by the call itself.
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string }
 
 // The one machine line a declaration spells: the gate decides on it as on the line it replaces,
 // so a declared wait and a written one are held by the same checks.
@@ -92,7 +93,7 @@ export function waitLine(wait: DeclaredWait): string {
 }
 
 // The sentence every refusal about the ending carries: the call that declares the wait.
-const DECLARE = 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.'
+const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.'
 
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
