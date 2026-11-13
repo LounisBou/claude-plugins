@@ -243,6 +243,7 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
         tool: RECORD_TOOL, pr, repo, kind: 'norms',
         result: open === 0 ? 'pass' : 'fail',
         detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}, ${open} open`,
+        ...(dir ? { dir } : {}),
       }))
     } catch {
       return { result: none(NO_GITHUB) }

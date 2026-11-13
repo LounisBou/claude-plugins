@@ -49,7 +49,7 @@ export function register(on: On<Held>): void {
           properties: {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name; omitted, the checkout\'s origin' },
-            over: { type: 'string', description: 'the failed review record\'s file name at the head, as the gate names it' },
+            over: { type: 'string', description: 'the failed review record\'s file name at the head; any other value is refused with the file to pass' },
             decision: { type: 'string', description: 'the decision, in one sentence' },
           },
           required: ['pr', 'over', 'decision'],
