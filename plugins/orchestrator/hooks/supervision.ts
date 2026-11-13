@@ -29,7 +29,7 @@ import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, 
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { configDirOf, gateThresholds } from '../core/env.ts'
-import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer } from '../core/consent-record.ts'
+import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
@@ -1611,11 +1611,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // rather than at classic.Stop: a stop the gate refuses goes on in the same turn, so
   // the message a stop carries is not always the turn's last word, and the gate's own
   // deadline is not this report's to spend; turn.complete fires once the turn is over,
-  // with its final answer. Bounded, and never holds the turn's end.
+  // with its final answer. Bounded, and never holds the turn's end. The consent the turn declared is
+  // read before the first await: a message queued for the session starts its next turn as this one
+  // ends, and that start makes the declaration stale while the relay still reads its files.
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
+    const consent = e.agentId ? null : declaredConsent()
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -2347,7 +2350,9 @@ async function dropMark($: any): Promise<void> {
 // other open entries as answered there.
 // A turn that ends on an operator wait whose text asks nothing is entered as its own entry and
 // never withdraws its session's open question with choices.
-export async function relayTurnEnd($: any, answer: string, turnId?: unknown): Promise<void> {
+// `consent` is the subject the turn's operator question declared it asks consent on, read when the
+// turn ended.
+export async function relayTurnEnd($: any, answer: string, turnId?: unknown, consent: ConsentSubject | null = null): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2422,8 +2427,8 @@ export async function relayTurnEnd($: any, answer: string, turnId?: unknown): Pr
   // A coordinator on this machine reads its round: the wait is entered there, and its model
   // is not woken for it. The fingerprint is kept once the entry is in place, as a delivery's.
   if (coordinator?.local && wait && patch) {
-    const consent = role === 'orchestrator' && wait.kind === 'operator' ? declaredConsent() : null
-    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), consent)
+    const asked = role === 'orchestrator' && wait.kind === 'operator' ? consent : null
+    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), asked)
     const kept = entry.kind === 'operator' && entry.choices.length === 0 ? await keptChoices($, entry) : null
     if (kept) {
       // The same wait, its text now a note: the entry keeps its choices and takes the urgent mark

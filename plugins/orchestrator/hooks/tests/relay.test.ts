@@ -2492,6 +2492,33 @@ async function askedConsent(declared: typeof CONSENT | null = CONSENT) {
   return { chains, fx, asked }
 }
 
+test('the next turn starting while the turn\'s end is relayed leaves the declared consent on the entry, and the pane\'s answer records it', async () => {
+  const chains = mounted()
+  const fx = fake()
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', consent: CONSENT })
+  // A message queued for the session starts its next turn as soon as this one ends, while the relay reads its row.
+  let started = false
+  const read = fx.dollar.fs.read
+  const racing = { ...fx.dollar, fs: { ...fx.dollar.fs, read: async (p: string) => {
+    if (!started) {
+      started = true
+      DECLARATIONS.turnStarted()
+    }
+    return read(p)
+  } } }
+  await drive(chains, 'turn.complete', racing, turnEnd(CONSENT_QUESTION))
+  expect(started).toBe(true)
+  const [asked] = entries(fx)
+  expect(asked.consent).toEqual(CONSENT)
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[0])
+  expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${asked.id}.json`])
+  const record = parseConsentRecord(JSON.parse(fx.files.get(consentFiles(fx)[0])!))
+  expect(record && { ...record, at: 'x' }).toEqual({ v: 1, subject: CONSENT, entry: asked.id, question: asked.question, answer: 'waive it, docs only', by: 'pane', at: 'x' })
+  expect(quotesConsent(record!, CONSENT, 'waive it, docs only')).toBe(true)
+})
+
 for (const [label, words, answer] of [
   ['a choice letter alone', 'A', 'waive it, docs only'],
   ['a choice letter set apart from its text', 'a : WAIVE it,  docs only', 'waive it, docs only'],
