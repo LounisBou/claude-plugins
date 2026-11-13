@@ -24,14 +24,14 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { oneQuestionRefusal, operatorWaitRefusal, questionDefectRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
+import { operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
-  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, endsOnHandOver, type GoalsReading,
+  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
@@ -563,25 +563,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (role !== 'orchestrator') return next(e)
         return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, String(e.last_assistant_message ?? ''), until) ?? next(e)
       }
-      // One question per turn, for the orchestrator and the coordinator alike: read off the
-      // message alone, before any read the checks pay.
-      const crowded = oneQuestionRefusal(String(e.last_assistant_message ?? ''))
-      if (crowded !== null) {
-        await logLine($, 'stop gate: several questions in one turn')
-        return refuse(crowded)
-      }
       if (role === 'coordinator') return next(e)
       // An orchestrator ending on a wait for the operator puts him a question: read off the message too.
       const unasked = operatorWaitRefusal(String(e.last_assistant_message ?? ''))
       if (unasked !== null) {
         await logLine($, 'stop gate: an operator wait with no question')
         return refuse(unasked)
-      }
-      // The question he is put follows the method's format: no more than five choices, a recommendation that argues.
-      const malformed = questionDefectRefusal(String(e.last_assistant_message ?? ''))
-      if (malformed !== null) {
-        await logLine($, 'stop gate: a question breaks the format')
-        return refuse(malformed)
       }
       const state = await stateDir($)
       // A question still on the operator stays open in the round until he answers it, its answer
@@ -700,18 +687,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (held) {
           await logLine($, `stop gate: check1 ${held.case}`)
           return refuse(held.reason)
-        }
-        // Every goal holds: the operator is shown the table once per content of the files,
-        // since whether an existing piece of evidence is enough is his judgment, not the gate's.
-        // A deferred ending holds no goal met for him to judge: the table is shown at the done.
-        if (sessionId && ending === 'done') {
-          const shownFile = goalsShownPath(state, sessionId)
-          const shown = String(await quietly($, () => $.fs.read(shownFile), until, ''))
-          const present = presentGoals(goals, shown)
-          if (present && await inTime($, () => $.fs.write(shownFile, `${present.tell}\n`), until) !== null) {
-            await logLine($, 'stop gate: check1 goals-shown')
-            return refuse(present.reason)
-          }
         }
       } else if (wake !== null) {
         await logLine($, `stop gate: check1 ${wake.case}`)

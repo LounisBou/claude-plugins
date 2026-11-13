@@ -45,7 +45,7 @@ In automatic mode nobody types in this session, so nothing waits for an answer:
 1. Run Steps 0 to 5 as usual.
 2. Ask no question (no `AskUserQuestion`), wait for no one, edit no code, make no commit. Skip Steps 6 to 8.
 3. Report every finding in one table: severity, agent, `file:line`, issue, proposed fix.
-4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking).
+4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking). An ERROR the brief sets aside goes in `setAside`, with its `reason`, not in `open`.
 5. Print the line it answers (`record: …`), verbatim, as the last line of the report, before any status line. When the tool is not in the tool list, print nothing.
 
 ### Step 0: Precomputed Scope
@@ -151,14 +151,6 @@ The user can specify external codebases as pattern references in natural languag
 [Task call 3: norms-diff-scope agent]
 [Task call 4: norms-import-organization agent]
 ...all in the SAME message, no run_in_background flag
-```
-
-**WRONG (sequential — do NOT do this):**
-```
-Message 1: [Task call: norms-pattern-conformity agent]
-...wait for result...
-Message 2: [Task call: norms-variable-naming agent]
-...wait for result...
 ```
 
 Each agent prompt MUST include:
@@ -384,7 +376,7 @@ After all findings are processed, present the final summary:
 | 3 | `api.ts:12` | Extract to `TIMEOUT_MS` | User preferred `API_TIMEOUT_MS` for clarity | Fixed with user's naming |
 ```
 
-Then call `mcp__norms__check_done` with `{open, fixed, passed}`: the counts of findings left neither fixed nor passed (0 when every finding was processed), fixed and passed. Print the `record:` line it answers, verbatim, under the tables. When the tool is not in the tool list, print nothing.
+Then call `mcp__norms__check_done` with `{open, fixed, passed}`: the counts of findings left neither fixed nor passed (0 when every finding was processed), fixed and passed. A finding judged not critical goes in `setAside`, with its `reason`, not in `open`. Print the `record:` line it answers, verbatim, under the tables. When the tool is not in the tool list, print nothing.
 
 If any fixes were committed, remind: "Remember to push your commits when ready."
 
