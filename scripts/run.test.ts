@@ -12,6 +12,7 @@ import { compareVersions, isEntry, parseManifest } from './lib/plugins.ts'
 import { render, run as marketplace } from './marketplace.ts'
 import { run as matrix } from './plugin-matrix.ts'
 import { parseCeilings, run as prompts } from './prompts.ts'
+import { run as release } from './release.ts'
 import { run as versionBump } from './version-bump.ts'
 import { copyOf, MARK, run as core } from './core.ts'
 import { dependenciesOf, escapingImports, run as deps, satisfies, undeclaredVariables } from './deps.ts'
@@ -109,6 +110,44 @@ describe('version-bump run', () => {
   })
 })
 
+describe('release run', () => {
+  function released(): string {
+    const root = repo({ alpha: '1.0.0', beta: '2.0.0' })
+    git(root, 'init', '-q', '-b', 'main')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'release 1')
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed.\n')
+    git(root, 'commit', '-q', '-am', 'change alpha')
+    return root
+  }
+
+  it('prints the plan and writes nothing on a dry run', () => {
+    const root = released()
+    const io = recorder()
+    assert.equal(release(root, ['--dry-run'], io), 0)
+    assert.deepEqual(io.lines.out, ['alpha: 1.0.0 -> 1.0.1'])
+    assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0')
+  })
+
+  it('raises each changed plugin in one commit with the catalogue, and a second run finds nothing', () => {
+    const root = released()
+    assert.equal(release(root, ['--minor', 'alpha'], recorder()), 0)
+    assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.1.0')
+    assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'beta', '.claude-plugin', 'plugin.json'), 'utf8')).version, '2.0.0')
+    assert.equal(marketplace(root, ['--check'], recorder()), 0)
+    assert.equal(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: root, encoding: 'utf8' }).trim(), 'chore(release): alpha 1.1.0')
+    const again = recorder()
+    assert.equal(release(root, [], again), 0)
+    assert.deepEqual(again.lines.out, ['no plugin changed since its last release'])
+  })
+
+  it('refuses a level for a plugin that does not exist, or without a list', () => {
+    const root = released()
+    assert.throws(() => release(root, ['--minor', 'ghost'], recorder()), /not a plugin/)
+    assert.throws(() => release(root, ['--major'], recorder()), /needs a comma-separated list/)
+  })
+})
+
 describe('plugin-matrix run', () => {
   it('prints the matrix and appends it to the GitHub output file', () => {
     const root = repo({ alpha: '1.0.0' })
@@ -143,6 +182,12 @@ describe('plugin-matrix run', () => {
     assert.equal(matrix(root, ['--pull-request', 'main~1'], io), 0)
     assert.deepEqual(io.lines.out, ['{"include":[{"plugin":"alpha","os":"ubuntu-latest","blocking":true}]}'])
     assert.throws(() => matrix(root, ['--pull-request'], recorder()), /needs the base ref/)
+    writeFileSync(join(root, 'README.md'), 'Docs.\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'docs')
+    const docs = recorder()
+    assert.equal(matrix(root, ['--pull-request', 'main~1'], docs), 0)
+    assert.deepEqual(docs.lines.out, ['{"include":[{"plugin":"no plugin suite","os":"ubuntu-latest","blocking":true}]}'])
   })
 
   function repoWithTable(text: string): string {
