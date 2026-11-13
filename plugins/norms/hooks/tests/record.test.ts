@@ -79,8 +79,25 @@ test('no open finding records a pass with its detail', async () => {
   const out = await m.done($, { open: 0, fixed: 3, passed: 2 })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls)).toEqual([
-    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '3 fixed, 2 passed, 0 open' },
+    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '3 fixed, 2 passed, 0 open', dir: '/repo' },
   ])
+})
+
+test('the record names the checkout the check read, whatever the session\'s directory is by then', async () => {
+  resetCache()
+  const checked = setup()
+  const m = mounted()
+  await m.scope(checked.$)
+  const mark = checked.state.get('norms/scopeMark') as any
+  const calls: any[] = []
+  const { $ } = fakeDollar({
+    cwd: '/other',
+    state: { 'norms/scopeMark': mark },
+    runs: { ...runsIn('/repo'), 'git remote get-url origin': { stdout: 'git@github.com:Owner/Other.git\n' } },
+    tool: recordTool(calls),
+  })
+  await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(recordCalls(calls).map(c => c.dir)).toEqual(['/repo'])
 })
 
 test('open findings record a fail', async () => {
@@ -281,7 +298,7 @@ test('an automatic check records that its findings were passed automatically as 
   const out = await m.done($, { open: 0, fixed: 0, passed: 3, auto: true })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls)).toEqual([
-    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '0 fixed, 3 passed (non-blocking, automatic), 0 open' },
+    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '0 fixed, 3 passed (non-blocking, automatic), 0 open', dir: '/repo' },
   ])
 })
 

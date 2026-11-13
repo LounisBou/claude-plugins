@@ -35,6 +35,10 @@ export type Loop = {
   isActive: boolean
   pass: number
   testCommand: string
+  // The checkout the loop started in, as its top directory: the record is written for it, wherever the session's directory moves.
+  dir?: string
+  // Why no checkout was read at the start, when there is none: the record then says so.
+  dirWhy?: string
   seen: string[]
   lastFindings: number
   // The Critical and Important findings of the last pass, or undefined when the
@@ -73,8 +77,10 @@ export const MAX_PASSES = 5
 
 export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 
-export function resetLoop(testCommand: string, isReviewOnly = false): void {
+export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string): void {
   loop.isActive = true
+  loop.dir = dir
+  loop.dirWhy = dirWhy
   loop.pass = 0
   loop.testCommand = testCommand
   loop.seen = []
