@@ -1378,6 +1378,10 @@ check "the review brief replays the test or judges the reason, and flags silence
   "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
+# The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
+# question, once, in the host's question tool, his choice the consent.
+check "review.md asks one E2E waiver question in the question tool" "yes|yes" \
+  "$(spells "$RV" 'now unneeded: ONE question, once, with `AskUserQuestion`')|$(spells "$RV" 'choices « Accorder » / « Refuser »')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
