@@ -415,7 +415,8 @@ const head7 = (sha: string) => sha.slice(0, 7)
 
 // What a pull request misses to be ready at its head: the four conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string): string[] {
+// e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -442,6 +443,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
   for (const kind of KINDS) {
     const record = latest.get(kind)
     if (record && accepts(record)) continue
+    if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
     else {
@@ -557,9 +559,11 @@ export function ciUndraftLine(repo: string, pr: number): string {
 
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false): string {
+// e2eExempt: the exemption that stood for its E2E, named.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, e2eExempt?: string): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': a clean review, a passed norms check, passed E2E and green CI hold at its head.'
+    + ': a clean review, a passed norms check, ' + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E')
+    + ' and green CI hold at its head.'
 }
 
 export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {

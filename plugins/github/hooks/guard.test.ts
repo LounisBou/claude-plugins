@@ -12,6 +12,7 @@ const RECORDS = '/cfg/pr-records'
 const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 const WARN_LOG = '/data/guard-warn.log'
 const AUTO_MERGE = '/data/auto-merge.json'
+const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
 const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
 
 let sessions = 0
@@ -58,6 +59,11 @@ type World = {
   branch?: string
   // Every git run fails in the host itself, with this error.
   gitThrows?: string
+  // pr-files' answer: the pull request's files, or a failing exit with this stderr.
+  files?: Array<Record<string, unknown>>
+  filesFails?: string
+  // The repository's E2E exemption file, as written (an object) or as raw text.
+  exemption?: unknown
 }
 
 type Seen = {
@@ -95,6 +101,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
   const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
+  if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
   const session = 'guard-session-' + ++sessions
   const records: Record<string, string> = { ...(w.records ?? FOUR) }
   const pull: Pull = { labels: [...(w.labels ?? ['Not Ready'])], draft: w.draft ?? true, reads: 0 }
@@ -208,6 +215,8 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       const gate = gateOf(w, pull)
       return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: w.readStderr ?? '' } }
     }
+    if (stdin.command === 'pr-files' && w.filesFails) return { value: { exitCode: 3, stdout: '', stderr: w.filesFails } }
+    if (stdin.command === 'pr-files' && w.files) return { value: { exitCode: 0, stdout: JSON.stringify(w.files), stderr: '' } }
     if (stdin.command === 'pr-checks' && w.readStderr) return { value: { exitCode: 0, stdout: 'ok', stderr: w.readStderr } }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
     if (stdin.command === 'pr-readiness') pull.labels = [stdin.args.state === 'ready' ? 'Ready' : 'Not Ready']
@@ -2133,4 +2142,185 @@ test('a pr-gate answer that does not parse is given back as it is, with no secon
   expect(await $.tool.call(gh('pr-gate', { pr: 12 }))).toEqual({ result: 'not json' })
   expect(gates(seen)).toBe(1)
   expect(readinessRuns(seen)).toEqual([])
+})
+
+// ---- E2E a pull request does not need ----
+
+const TWO = Object.fromEntries([record('review', 'pass'), record('norms', 'pass')])
+const EXEMPT = {
+  v: 1, repo: 'acme/thing', exempt: true, paths: [], labels: [], detail: 'no E2E on thing, 2026-11-13', session: 's', at: '2026-11-13T10:00:00Z',
+}
+const EXEMPT_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, a passed norms check, no E2E needed'
+  + ' (E2E exemption of acme/thing, 2026-11-13: no E2E on thing, 2026-11-13) and green CI hold at its head.'
+
+test('a pull request of a repository the operator exempted is Ready with no E2E record, its line naming the exemption', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: EXEMPT })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual([EXEMPT_LINE])
+})
+
+for (const [label, exemption] of [
+  ['no exemption', undefined], ['a revoked exemption', { ...EXEMPT, exempt: false }], ['an exemption file that does not parse', '{'],
+  ['an exemption of another shape', { ...EXEMPT, v: 2 }],
+] as const) {
+  test('with ' + label + ' a pull request with no E2E record stays Not Ready, as before', async ($, on) => {
+    const seen = await world($, on, { records: TWO, exemption, autoMerge: ['acme/thing'] })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(readinessRuns(seen)).toEqual([])
+    let merge: any
+    await inPhase('enforce', async () => {
+      merge = await $.tool.call(gh('pr-merge', { pr: 12 }))
+    })
+    expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
+  })
+}
+
+test('an exemption by label or by paths does not cover a pull request without the label and with a file outside the paths', async ($, on) => {
+  const ruled = { ...EXEMPT, labels: ['no-e2e'], paths: ['docs/'] }
+  const seen = await world($, on, { records: TWO, exemption: ruled, files: [{ filename: 'docs/a.md' }, { filename: 'src/a.ts' }] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('an exemption by paths covers a pull request whose files all match, and none whose files cannot be read', async ($, on) => {
+  const ruled = { ...EXEMPT, paths: ['docs/'] }
+  const seen = await world($, on, { records: TWO, exemption: ruled, files: [{ filename: 'docs/a.md' }, { filename: 'docs/b.svg' }] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('an exemption by paths covers nothing when the files cannot be read', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, paths: ['docs/'] }, filesFails: 'error: rate limited' })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('an exemption by label covers a pull request carrying it', async ($, on) => {
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, labels: ['no-e2e'] }, labels: ['Not Ready', 'No-E2E'] })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a failed E2E record holds a pull request of an exempted repository', async ($, on) => {
+  const seen = await world($, on, { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, exemption: EXEMPT })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+const exemptCall = (exempt: boolean, detail: string, over: Record<string, unknown> = {}) =>
+  ({ tool: 'mcp__github__record', repo: 'acme/thing', exempt, detail, ...over }) as any
+const exemptionOf = (seen: Seen) => JSON.parse(seen.files[EXEMPTION])
+const HIS_EXEMPTION = 'plus de dérogation E2E sur ce dépôt, 2026-11-13'
+
+test('the operator\'s typed words exempt a repository through the record tool, with its rules, and revoke it', async ($, on) => {
+  const seen = await world($, on)
+  const before: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
+  expect(before.deny).toContain('an E2E exemption quotes the operator')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  await typed($, HIS_EXEMPTION)
+  const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
+  expect(set.deny).toBeUndefined()
+  expect(set.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/')
+  expect(exemptionOf(seen)).toMatchObject({ v: 1, repo: 'acme/thing', exempt: true, paths: ['docs/'], labels: ['no-e2e'], detail: HIS_EXEMPTION })
+  const revoke: any = await $.tool.call(exemptCall(false, HIS_EXEMPTION))
+  expect(revoke.result).toBe('github: acme/thing no longer exempt from E2E')
+  expect(exemptionOf(seen)).toMatchObject({ exempt: false, paths: [], labels: [] })
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an exemption with no rule covers every pull request of the repository', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, HIS_EXEMPTION)
+  const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
+  expect(set.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('an exemption may quote the operator\'s answer in a consent record of the repository\'s exemption, not of a waiver', async ($, on) => {
+  const words = 'exempt thing from E2E, 2026-11-13'
+  const exemptionConsent = consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer: words })
+  const seen = await world($, on, consentWorld({ a: exemptionConsent }))
+  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + words))
+  expect(out.deny).toBeUndefined()
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('a consent record of a waiver of one pull request does not exempt the repository', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent() }))
+  const out: any = await $.tool.call(exemptCall(true, CONSENT_WORDS))
+  expect(out.deny).toContain('an E2E exemption quotes the operator')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
+test('an exemption is refused undated, without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, 'plus de dérogation E2E sur ce dépôt')
+  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur ce dépôt'))
+  expect(undated.deny).toContain('with their date (YYYY-MM-DD)')
+  await typed($, HIS_EXEMPTION)
+  const unnamed: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { repo: 'thing' }))
+  expect(unnamed.deny).toContain('{"repo": "owner/name"}')
+  const ruled: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: 'docs/' }))
+  expect(ruled.deny).toContain('"paths" and "labels" are lists')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
+test('the exemption files are refused to Write, Edit and Bash', async ($, on) => {
+  const seen = await world($, on)
+  for (const call of [
+    { tool: 'Write', file_path: EXEMPTION, content: '{}' },
+    { tool: 'Edit', file_path: '/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json', old_string: 'a', new_string: 'b' },
+    bash('echo {} > /data/e2e-exempt/acme/thing.json'),
+    bash('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"'),
+  ]) {
+    const out: any = await $.tool.call(call as any)
+    expect(out.deny, JSON.stringify(call)).toContain('github: an E2E exemption changes only through mcp__github__record')
+  }
+  const mention: any = await $.tool.call(bash('git commit -m "docs: explain e2e-exempt/ files"'))
+  expect(mention.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['git commit -m "docs: explain e2e-exempt/ files"'])
+})
+
+const noneCall = (detail?: string) =>
+  ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'not-applicable', ...(detail === undefined ? {} : { detail }) }) as any
+const DOCS_ONLY = [{ filename: 'README.md' }, { filename: 'plugins/github/tests/run-tests.sh' }, { filename: '.github/workflows/ci.yml' }]
+
+test('E2E not applicable on a pull request whose files hold no runtime is recorded without the operator', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, records: TWO, files: DOCS_ONLY })
+  const out: any = await $.tool.call(noneCall('documentation and tests only'))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('not-applicable')
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('E2E not applicable on a pull request that changes code is refused, naming the files', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: [...DOCS_ONLY, { filename: 'hooks/register.ts' }, { filename: 'package.json' }] })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toBe('github: E2E is not applicable only to a pull request whose files hold no runtime;'
+    + ' acme/thing#12 changes hooks/register.ts, package.json.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused without its reason', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: DOCS_ONLY })
+  for (const detail of [undefined, '  ']) {
+    const bare: any = await $.tool.call(noneCall(detail))
+    expect(bare.deny).toContain('its reason in "detail"')
+  }
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused when the files of the pull request cannot be read', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, filesFails: 'error: rate limited' })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toContain('the files of acme/thing#12 cannot be read: error: rate limited')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('E2E not applicable is refused when the head moves while the files are read', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, files: DOCS_ONLY, heads: [HEAD, MOVED] })
+  const out: any = await $.tool.call(noneCall('documentation only'))
+  expect(out.deny).toContain('the head moved from 0123456 to fedcba9')
+  expect(recordRun(seen)).toBeUndefined()
 })

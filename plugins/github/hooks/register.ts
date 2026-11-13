@@ -7,7 +7,8 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { KINDS } from '../core/pr-record.ts'
+import { DETAIL_MAX, KINDS } from '../core/pr-record.ts'
+import { covers, EXEMPT_DIR, exemptionLine, exemptionPath, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile } from './e2e-scope.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
@@ -368,6 +369,11 @@ export const AUTO_MERGE_FILE = 'auto-merge.json'
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
+// The E2E exemptions, one file per repository below this directory of the data directory.
+const EXEMPT_PATH = new RegExp('/' + EXEMPT_DIR + '(/|$)')
+const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + EXEMPT_DIR + '/')
+export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}.'
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
 // from the call alone (no state can be read once the hook has thrown); the rest goes through.
@@ -378,16 +384,17 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create-draft', 'redraft'])
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE)) return NET_REFUSAL
+    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(EXEMPT_DIR + '/')) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    return /\b(gh|git)\b|pr-records|auto-merge/.test(command) ? NET_REFUSAL : null
+    return /\b(gh|git)\b|pr-records|auto-merge|e2e-exempt/.test(command) ? NET_REFUSAL : null
   }
 }
 
 export function writeNetRefusal(path: string): string | null {
-  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) ? NET_REFUSAL : null
+  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) || EXEMPT_PATH.test(path)
+    ? NET_REFUSAL : null
 }
 export const AUTO_MERGE_REFUSAL = 'github: the auto-merge list changes only through mcp__github__gh auto-merge-set,'
   + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."});'
@@ -849,6 +856,36 @@ async function noteCiUndraft($: any, repo: string, pr: number, head: string | un
   }
 }
 
+// ---- E2E a pull request does not need (e2e-scope.ts) ----
+
+// The files of a pull request, or a throw: never read as none.
+async function prFiles($: any, repo: string, pr: number): Promise<PrFile[]> {
+  return parsePrFiles(await runGh($, 'pr-files', { pr }, repo))
+}
+
+// The repository's exemption file as it stands, or undefined when there is none or it cannot be read.
+async function readExemption($: any, repo: string): Promise<Exemption | undefined> {
+  try {
+    const dir = await dataDir($)
+    if (!dir) return undefined
+    const path = exemptionPath(dir, repo)
+    if (!(await $.fs.exists(path))) return undefined
+    return parseExemption(JSON.parse(String(await $.fs.read(path))))
+  } catch {
+    return undefined
+  }
+}
+
+// The line of the operator's exemption that covers this pull request, or undefined. Any doubt (a
+// file or a list of files that cannot be read) covers nothing: the E2E record is asked as before.
+async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
+  const exemption = await readExemption($, gate.repo)
+  if (!exemption?.exempt) return undefined
+  let files: PrFile[] | undefined
+  if (exemption.paths.length > 0) files = await prFiles($, gate.repo, Number(gate.pr)).catch(() => undefined)
+  return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
+}
+
 type Readiness = { gate?: Gate; missing: string[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
@@ -866,7 +903,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
     throw err
   }
-  return { gate, missing: missingItems(gate, files, sha) }
+  return { gate, missing: missingItems(gate, files, sha, await e2eExemptionOf($, gate)) }
 }
 
 /*
@@ -883,9 +920,11 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean }
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
+  let exempt: string | undefined
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
-    missing = missingItems(gate, await headRecords($, gate))
+    exempt = await e2eExemptionOf($, gate)
+    missing = missingItems(gate, await headRecords($, gate), undefined, exempt)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -916,7 +955,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, exempt), labels, draft }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
 }
 
@@ -1388,6 +1427,13 @@ async function touchesAutoMerge($: any, line: string): Promise<boolean> {
 
 const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
+// Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
+async function touchesExemptions($: any, line: string): Promise<boolean> {
+  if (!line.includes(EXEMPT_DIR)) return false
+  const dir = await dataDir($)
+  return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
+}
+
 // The list, one repository per line as written.
 async function listAutoMerge($: any): Promise<string> {
   const { listed } = await readAutoMerge($)
@@ -1504,6 +1550,84 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
   })
 }
 
+// ---- E2E not applicable, and the standing exemption ----
+
+// An E2E not applicable refused when the session writing it pushed the head: another session says so.
+export function selfNoneRefusal(result: string, head: string, pushed: ReadonlySet<string>): string | null {
+  if (result !== 'not-applicable' || !pushed.has(head)) return null
+  return 'github: this session pushed ' + head.slice(0, 7) + ': whether a pull request needs no E2E, a reviewer says so from another session.'
+}
+
+// Why the pull request at `head` is no pull request without runtime, or undefined: its files, read
+// at that head (read again after them, so files of another head are never vouched for), all hold none.
+async function runtimeRefusal($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+  let files: PrFile[]
+  let after: Gate
+  try {
+    files = await prFiles($, repo, pr)
+    after = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+  } catch (err: any) {
+    return 'github: the files of ' + repo + '#' + pr + ' cannot be read: ' + String(err?.message ?? err).trim()
+  }
+  if (after.head !== head) return 'github: the head moved from ' + head.slice(0, 7) + ' to ' + after.head.slice(0, 7) + ' while its files were read: record again.'
+  const held = runtimeFiles(files)
+  if (held.length === 0) return undefined
+  return 'github: E2E is not applicable only to a pull request whose files hold no runtime; ' + repo + '#' + pr + ' changes '
+    + held.slice(0, 5).join(', ') + (held.length > 5 ? ' and ' + (held.length - 5) + ' more' : '') + '.'
+}
+
+// An exemption of a repository: each quoted span names E2E, the exemption or the repository.
+function exemptionQuoting(repo: string): Quoting {
+  const name = repo.split('/')[1].replace(/[.+^${}()|[\]\\-]/g, '\\$&')
+  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|d[ée]rogation|waiv|exempt|exon[ée]r|' + name, 'i')
+  return { dated: true, names: (span) => names.test(span), wholeBare: true }
+}
+
+const RULES_MAX = 50
+const isRule = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
+
+// The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
+// requests from E2E (all, or those a rule names), or revokes it, in their words with their date.
+async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  if (typeof e.exempt !== 'boolean') return { deny: 'github: an E2E exemption says in or out: {"exempt": true} or {"exempt": false}' }
+  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  if (!repo || !REPO_NAME.test(repo)) return { deny: 'github: an E2E exemption names its repository: {"repo": "owner/name"}' }
+  const paths = e.paths ?? []
+  const labels = e.labels ?? []
+  if (!isRule(paths) || !isRule(labels)) {
+    return { deny: 'github: "paths" and "labels" are lists of at most ' + RULES_MAX + ' globs and label names.' }
+  }
+  if (detail.length > DETAIL_MAX || !/\b\d{4}-\d{2}-\d{2}\b/.test(detail)) {
+    return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters, with their date (YYYY-MM-DD).' }
+  }
+  if (!typedWords(detail, exemptionQuoting(repo)) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }))) {
+    return {
+      deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session,'
+        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', with their date.',
+    }
+  }
+  const dir = await dataDir($)
+  if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
+  let session = ''
+  try {
+    session = String(await $.session.id() ?? '')
+  } catch {
+    // Written without it.
+  }
+  const exempt: boolean = e.exempt
+  const kept = exempt ? { paths: paths.map((p: string) => p.trim()), labels: labels.map((l: string) => l.trim()) } : { paths: [], labels: [] }
+  const body = { v: 1, repo: repo.toLowerCase(), exempt, ...kept, detail, session, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }
+  const path = exemptionPath(dir, repo)
+  await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(body, null, 2) + '\n'))
+  if (!exempt) return { result: 'github: ' + repo + ' no longer exempt from E2E' }
+  const rules = [
+    ...(kept.labels.length > 0 ? ['carrying ' + kept.labels.join(' or ')] : []),
+    ...(kept.paths.length > 0 ? ['whose files all match ' + kept.paths.join(' or ')] : []),
+  ]
+  return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
+}
+
 // ---- records ----
 
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
@@ -1516,8 +1640,12 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
       deny: kindRefusal(kind, origin, owned),
     }
   }
-  const result = String(e.result ?? '')
   const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
+  if (e.exempt !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
+  const result = String(e.result ?? '')
+  if (result === 'not-applicable' && detail.trim() === '') {
+    return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
+  }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} })
@@ -1543,8 +1671,12 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (status.exitCode !== 0 || String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
-  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads) ?? selfNoneRefusal(result, gate.head, pushedHeads)
   if (selfReview) return { deny: selfReview }
+  if (result === 'not-applicable') {
+    const refused = await runtimeRefusal($, repo, pr, gate.head)
+    if (refused) return { deny: refused }
+  }
   let session = ''
   try {
     session = String(await $.session.id() ?? '')
@@ -1627,21 +1759,24 @@ export function register(on: any): void {
         name: 'record',
         isDeferred: false,
         description:
-          'Record the end-to-end tests of a pull request at its head commit: pass, fail, or waived by '
-          + 'the operator in their own words. Run from a clean checkout at the pull request\'s head, after '
-          + 'the tests ran there. A waiver\'s detail quotes words they typed in this session, or their answer '
-          + 'in a consent record of an E2E waiver of that pull request, with their date (YYYY-MM-DD). Reviews and norms checks are recorded by their own tools. See '
+          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived. '
+          + 'A waiver, and {repo, exempt, paths?, labels?} that exempts a repository\'s pull requests for good (false revokes), '
+          + 'quote the operator\'s dated words, typed here or in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
           properties: {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
-            result: { type: 'string', enum: ['pass', 'fail', 'waived'] },
-            detail: { type: 'string', description: 'what ran, or the operator\'s waiver with its date' },
+            result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable'] },
+            detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words with their date' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
+            exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
+            paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
+            labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
           },
-          required: ['pr', 'result'],
+          required: [],
         },
       })
     } catch (err: any) {
@@ -1688,6 +1823,7 @@ export function register(on: any): void {
     try {
       if (touchesRecords(String(e.command), await recordsRoot($))) return { deny: RECORDS_REFUSAL }
       if (await touchesAutoMerge($, String(e.command))) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesExemptions($, String(e.command))) return { deny: EXEMPT_REFUSAL }
     } catch {
       // A command that is no text names no record either.
     }
@@ -1751,6 +1887,9 @@ export function register(on: any): void {
       const data = await dataDir($)
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
         return { deny: AUTO_MERGE_REFUSAL }
+      }
+      if ((data && path.startsWith(normalise(data + '/' + EXEMPT_DIR) + '/')) || ANY_EXEMPT_PATH.test(path)) {
+        return { deny: EXEMPT_REFUSAL }
       }
       return next(e)
     }).catch(async (_$: any, e: any, next: any) => {
