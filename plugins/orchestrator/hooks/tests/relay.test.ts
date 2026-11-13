@@ -2612,3 +2612,113 @@ for (const declared of [CONSENT, null]) {
     expect(lines).toEqual(declared ? [`round: the words typed for Orch: belt since ${wait.waiting_since} went to a coordinator on another machine, no consent recorded`] : [])
   })
 }
+
+// --- a declared consent that no coordinator on this machine can enter ---------------------------
+
+const consentLogs = (fx: ReturnType<typeof fake>, needle: string) => fx.logged.filter(l => l.includes(needle)).map(l => l.replace(/^.*\| supervision \| /, ''))
+
+test('a question that asks consent, asked of a coordinator on another machine, carries the subject on its ask line, and the entry there keeps it', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent: CONSENT })
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(asks(sender).map(s => parseAsk(s.text)?.entry.consent)).toEqual([CONSENT])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
+  expect(entries(coordinator).map(e => e.consent)).toEqual([CONSENT])
+  expect(consentLogs(sender, 'no consent can be recorded')).toEqual([])
+})
+
+test('a question that asks no consent carries none on its ask line', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(asks(sender).map(s => Object.keys(JSON.parse(s.text.slice(ASK_MARKER.length))).includes('consent'))).toEqual([false])
+})
+
+test('a subject whose repository is longer than the ask line holds goes without it, and one line in the log names it', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const long = { kind: 'e2e-waiver' as const, repo: `acme/${'x'.repeat(200)}`, pr: 12 }
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent: long })
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(asks(sender).map(s => parseAsk(s.text)?.entry.consent)).toEqual([undefined])
+  expect(consentLogs(sender, 'no consent can be recorded')).toEqual([`relay: the consent asked by Orch: belt (e2e-waiver ${long.repo}#12) is too long for the line to the coordinator, no consent can be recorded`])
+})
+
+for (const declared of [CONSENT, null]) {
+  test(`a question ${declared ? 'that asks' : 'that asks no'} consent, with no coordinator at all: ${declared ? 'one line names the subject' : 'no line'} in the log`, async () => {
+    const chains = mounted()
+    const fx = fake({ coordinator: null })
+    DECLARATIONS.turnStarted()
+    DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', ...(declared ? { consent: declared } : {}) })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    expect(fx.sent).toEqual([])
+    expect(consentLogs(fx, 'no consent can be recorded')).toEqual(declared
+      ? ['relay: no coordinator to enter the question of Orch: belt that asks consent (e2e-waiver Acme/Thing#12), no consent can be recorded']
+      : [])
+  })
+}
+
+// --- the consent of a question asked again ------------------------------------------------------
+
+test('a note under a question with choices, urgent and declared with a consent, gives the stored question that consent; a plain note that declares none leaves it', async () => {
+  const chains = mounted()
+  const fx = fake()
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(STAGING_QUESTION, STAGING_LINE)))
+  const [asked] = entries(fx)
+  expect(asked.choices.length).toBe(3)
+  expect(asked.consent).toBeUndefined()
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  DECLARATIONS.declare({ kind: 'operator', blocks: asked.blocks!, urgent: true, consent: CONSENT })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Still waiting on the lot.', STAGING_LINE)))
+  expect(entries(fx)).toEqual([{ ...asked, urgent: true, consent: CONSENT }])
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Still waiting.', STAGING_LINE)))
+  expect(entries(fx)).toEqual([{ ...asked, consent: CONSENT }])
+})
+
+test('a remote question asked again with a consent gives the stored entry that consent', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
+  expect(entries(coordinator).map(e => e.consent)).toEqual([undefined])
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent: CONSENT })
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender).at(-1)!.text))
+  expect(entries(coordinator).map(e => e.consent)).toEqual([CONSENT])
+})
+
+// --- the consent read when the turn ended, kept through the withdrawal's awaits -----------------
+
+test('the next turn starting while the typed words are sent to a coordinator elsewhere leaves the log line of the consent', async () => {
+  const chains = mounted()
+  const fx = fake({ remote: true })
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent: CONSENT })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const wait = JSON.parse(fx.files.get(WAIT)!)
+  await drive(chains, 'session.receive', fx.dollar, {
+    text: `<cross-session-message from="bridge:session_coord" from-name="Coord: ops [abc]">\n${ackLine(wait.pending, wait.waiting_since)}\n</cross-session-message>`,
+    origin: { kind: 'peer' },
+  })
+  // The turn the typed prompt starts begins as the withdrawal is sent.
+  const send = fx.dollar.session.send
+  fx.dollar.session.send = async args => {
+    if (args.text.startsWith('[module]')) DECLARATIONS.turnStarted()
+    return send(args)
+  }
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
+  expect(fx.sent.some(m => m.text.startsWith('[module]'))).toBe(true)
+  expect(consentLogs(fx, 'went to a coordinator on another machine')).toEqual([`round: the words typed for Orch: belt since ${wait.waiting_since} went to a coordinator on another machine, no consent recorded`])
+})

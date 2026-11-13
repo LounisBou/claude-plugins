@@ -44,7 +44,7 @@ import {
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import {
-  askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
+  CONSENT_REPO_CAP, askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
@@ -2351,8 +2351,9 @@ async function dropMark($: any): Promise<void> {
 // A turn that ends on an operator wait whose text asks nothing is entered as its own entry and
 // never withdraws its session's open question with choices.
 // `consent` is the subject the turn's operator question declared it asks consent on, read when the
-// turn ended.
-export async function relayTurnEnd($: any, answer: string, turnId?: unknown, consent: ConsentSubject | null = null): Promise<void> {
+// turn ended. It rides with the entry wherever the entry goes: into the round on this machine, on
+// the ask line to a coordinator elsewhere; with no coordinator at all, one log line names it.
+export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2384,7 +2385,7 @@ export async function relayTurnEnd($: any, answer: string, turnId?: unknown, con
     heldKey = (await readWait($, sessionId))?.relayed ?? null
     if (!sameWait) {
       // Withdrawn already at prompt.submit, unless that withdrawal failed: tried again here.
-      forgotten = typed.withdrawn ? false : await withdrawHeld($, sessionId, name, typed) !== null
+      forgotten = typed.withdrawn ? false : await withdrawHeld($, sessionId, name, typed, consent) !== null
       // He answered in this tab: a turn ending on another machine line, a wait or done, leaves
       // none of the session's other open entries waiting either.
       // A deferred ending is no wait, but it leaves none of them standing either.
@@ -2450,13 +2451,19 @@ export async function relayTurnEnd($: any, answer: string, turnId?: unknown, con
     : await orchestratorOn($, tty, name, 'relay')
   if (!to) {
     if (role === 'agent') await logLine($, `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    else if (consent && wait?.kind === 'operator') await logLine($, `relay: no coordinator to enter the question of ${name} that asks consent (${subjectLabel(consent)}), no consent can be recorded`)
     return
   }
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
   // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
   // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
   if (role === 'orchestrator' && wait && patch) {
-    const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
+    // The consent rides on the ask line, unless its repository is longer than the line holds: then
+    // the ask goes without it, and the log names it.
+    const asked = wait.kind === 'operator' ? consent : null
+    const carried = asked && asked.repo.length <= CONSENT_REPO_CAP ? asked : null
+    if (asked && !carried) await logLine($, `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
+    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
     const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
     if (sent?.isDelivered) return
@@ -2491,6 +2498,8 @@ export async function relayTurnEnd($: any, answer: string, turnId?: unknown, con
 // before it is written back, a turn's start may have written it.
 export async function withdrawOnTyped($: any, kind: string, text: string): Promise<void> {
   if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return
+  // Read before the first await: the turn this prompt starts makes the declaration stale.
+  const consent = declaredConsent()
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2508,7 +2517,7 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
   const said = typedWords(text)
   const mark = { ...held, ...(said ? { said } : {}) }
   if (prior) await writeWait($, sessionId, { ...prior, typed: { ...mark, withdrawn: false } })
-  const told = await withdrawHeld($, sessionId, name, mark)
+  const told = await withdrawHeld($, sessionId, name, mark, consent)
   const now = await readWait($, sessionId)
   if (!now?.typed) return
   // The fingerprint is forgotten with the withdrawal, as the turn's end did: the same question
@@ -2532,8 +2541,9 @@ async function openQuestion($: any, sessionId: string): Promise<{ blocks: string
 // coordinator on this machine is marked, a coordinator elsewhere is sent the withdrawal. Null
 // when it is not done, a send refused being one log line and the fingerprint kept; else the ids
 // of the entries the coordinator on this machine was told closed, so the question asked again is
-// relayed again, and the coordinator told when it is open again (tellReopened).
-async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }): Promise<string[] | null> {
+// relayed again, and the coordinator told when it is open again (tellReopened). `consent` is the
+// subject the caller read before its own awaits: the declaration is stale once the next turn starts.
+async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }, consent: ConsentSubject | null): Promise<string[] | null> {
   const coordinator = await coordinatorAddress($)
   if (!coordinator) return null
   try {
@@ -2546,7 +2556,7 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
     if (sent?.isDelivered) {
       // The round of a coordinator elsewhere is not this machine's: no consent record is written
       // here for the words typed, and the log keeps a trace of it.
-      if (declaredConsent()) await logLine($, `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
+      if (consent) await logLine($, `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
       return []
     }
     await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
@@ -2594,13 +2604,16 @@ async function keptChoices($: any, entry: RoundEntry): Promise<{ path: string; e
 }
 
 // The stored entry of a wait asked again takes the urgent mark of the new one, or its absence, and
-// nothing else of it: written only when the mark changes.
+// the consent subject the new one asks, when it asks one (a note that declares none leaves the
+// stored question's own), and nothing else of it: written only when one of them changes.
 async function takeUrgent($: any, kept: { path: string; entry: RoundEntry }, entry: RoundEntry): Promise<void> {
-  if (Boolean(kept.entry.urgent) === Boolean(entry.urgent)) return
+  const differs = (current: RoundEntry) => Boolean(current.urgent) !== Boolean(entry.urgent)
+    || (!!entry.consent && JSON.stringify(current.consent) !== JSON.stringify(entry.consent))
+  if (!differs(kept.entry)) return
   await changeEntry($, kept.path, current => {
-    if (!current || Boolean(current.urgent) === Boolean(entry.urgent)) return null
+    if (!current || !differs(current)) return null
     const { urgent: _, ...plain } = current
-    return entry.urgent ? { ...plain, urgent: true } : plain
+    return withConsent(entry.urgent ? { ...plain, urgent: true } : plain, entry.consent ?? null)
   })
 }
 
@@ -3163,6 +3176,11 @@ async function sendToCoordinator($: any, to: CoordinatorTo, text: string): Promi
   if (sent?.isDelivered || typeof to !== 'string') return sent
   const here = String(sent?.reason ?? '').split('\n').map(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1]).filter(Boolean)
   return here.length === 1 && here[0] !== to ? $.session.send({ to: here[0], text }) : sent
+}
+
+// A consent subject as a log line names it: the pull request of a waiver, the repository of auto-merge.
+function subjectLabel(consent: ConsentSubject): string {
+  return consent.kind === 'e2e-waiver' ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
 }
 
 // A recipient as a log line names it.
