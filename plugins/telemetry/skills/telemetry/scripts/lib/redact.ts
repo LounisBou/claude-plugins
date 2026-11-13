@@ -97,7 +97,8 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('authorization', /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)(?!\[REDACTED:[a-z-]+\]\s*(?:["'\r\n]|$))[^\s"'][^"'\r\n]*/gi, (_m, key, sep) => `${key}${sep}`),
   byRegex('bearer', /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, (_m, scheme) => `${scheme} `),
   byRegex('user-password', /(^|[\s;&|(])(-u\s*|--user(?:\s+|=))(?!\[REDACTED)("[^"]*:[^"]*"|'[^']*:[^']*'|[^\s"'-][^\s"']*:[^\s"']*)/g, (_m, before, flag) => `${before}${flag}`),
-  byRegex('password-flag', new RegExp(String.raw`${PASSWORD_FLAG}(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"';&|]+)`, 'g'), (_m, before) => before),
+  // The value is one whole shell word: quoted and bare parts run together (`-phun"ter"2x`) are one secret.
+  byRegex('password-flag', new RegExp(String.raw`${PASSWORD_FLAG}(?!\[REDACTED)(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s"'\\;&|])+`, 'g'), (_m, before) => before),
   byRegex('url-credentials', /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, (_m, scheme) => scheme),
   byRegex('url-secret', /([?&](?:access_token|token|key|api_key|apikey|secret|password|sig|signature|auth)=)[^&#\s"']+/gi, (_m, key) => key),
   byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),
@@ -183,8 +184,11 @@ export function parseEnvFile(text: string): Map<string, string> {
     const key = match[1] ?? ''
     const value = (match[2] ?? '').trim()
     // A quoted value is what its quotes hold, a comment after them dropped: `KEY="v" # note` is `v`.
-    const quoted = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/.exec(value) ?? /^'([^']*)'\s*(?:#.*)?$/.exec(value)
-    secrets.set(key, quoted === null ? value.replace(/\s+#.*$/, '') : quoted[1] ?? '')
+    const double = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/.exec(value)
+    const single = double === null ? /^'([^']*)'\s*(?:#.*)?$/.exec(value) : null
+    // In double quotes the shell's escapes are resolved, so the value matched is the one used: `\"`, `\\`, `\$`.
+    if (double !== null) secrets.set(key, (double[1] ?? '').replace(/\\(["\\$])/g, '$1'))
+    else secrets.set(key, single === null ? value.replace(/\s+#.*$/, '') : single[1] ?? '')
   }
   return secrets
 }

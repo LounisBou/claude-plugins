@@ -38,6 +38,9 @@ const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string
   ['password-flag', join('mysql -h db -', 'p', HUNTER, ' app'), HUNTER],
   ['password-flag', join('sshpass -', 'p ', HUNTER, ' ssh me@host'), HUNTER],
   ['password-flag', join('docker login -u me -', 'p ', HUNTER, ' registry.example'), HUNTER],
+  ['password-flag', join('mysql -h db -', 'p', 'hun"ter"2x app'), 'ter'],
+  ['password-flag', join('sshpass -', 'p ', "hun'ter'2x", ' ssh me@host'), '2x'],
+  ['password-flag', join('docker login -u me -', 'p ', 'hun\\ ter2x registry.example'), 'ter2x'],
   ['secret-assignment', join('DB_', 'PASS=', HUNTER, ' make'), HUNTER],
   ['secret-assignment', join('MYSQL_', 'PWD=', HUNTER, ' mysql'), HUNTER],
   ['authorization', join('curl -H "Authorization: Digest ', HUNTER, ' and more" https://api.example.com'), 'and more'],
@@ -75,6 +78,12 @@ test('env: a quoted value followed by a comment is read whole, then redacted in 
   const event = { v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69', bash: { line: 'echo zq9-env-value-1 zq9-env-value-2' } }
   const { value } = redactValue(event, secrets)
   assert.deepEqual(value, { ...event, bash: { line: 'echo [REDACTED:env] [REDACTED:env]' } })
+})
+
+test('env: a double-quoted value has its escapes resolved, so the value matched is the one used', () => {
+  const secrets = parseEnvFile('ESCAPED_KEY="zq9\\"env\\\\value\\$1" # note\nRAW_KEY=\'zq9\\"raw\\$2\'\n')
+  assert.deepEqual([...secrets], [['ESCAPED_KEY', 'zq9"env\\value$1'], ['RAW_KEY', 'zq9\\"raw\\$2']])
+  assert.equal(redactText('echo zq9"env\\value$1 done', secrets).text, 'echo [REDACTED:env] done')
 })
 
 test('entropy: words, model ids, paths, branches and uuids are kept', () => {
