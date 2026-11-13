@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 
-export const USAGE = 'usage: ci-watch.sh <pr> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base]'
+export const USAGE = 'usage: ci-watch.sh <pr | owner/name#pr | pull request url> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base] (outside a clone of the repository: name it, by --repo or in the target)'
 
 /** A line said and the exit code that goes with it: the watch is over. */
 export class Said {
@@ -38,13 +38,24 @@ export interface Options {
 }
 
 const DIGITS = /^[0-9]+$/
+const NAME = '[A-Za-z0-9_.-]+'
+const SHORT_TARGET = new RegExp(`^(${NAME}/${NAME})#([0-9]+)$`)
+const URL_TARGET = new RegExp(`^https://github\\.com/(${NAME}/${NAME})/pull/([0-9]+)(?:[/?#].*)?$`)
+
+/** The pull request a target names, and the repository when the target names one: `7`, `owner/name#7` or its URL. */
+export function parseTarget(target: string): { readonly pr: string; readonly repo: string | undefined } | undefined {
+  if (DIGITS.test(target)) return { pr: target, repo: undefined }
+  const named = SHORT_TARGET.exec(target) ?? URL_TARGET.exec(target)
+  return named?.[1] === undefined || named[2] === undefined ? undefined : { pr: named[2], repo: named[1] }
+}
 
 /** The watch the command line and the environment ask for; throws `Said` on a bad call. */
 export function parseArgs(argv: readonly string[], env: Env): Options {
   const [first = '', ...rest] = argv
-  if (!DIGITS.test(first)) throw unread('', USAGE)
-  const pr = first
-  let repo: string | undefined
+  const target = parseTarget(first)
+  if (target === undefined) throw unread('', USAGE)
+  const pr = target.pr
+  let repo = target.repo
   let interval = '10'
   let base = true
   let workflows: string[] = []
@@ -56,7 +67,11 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
     }
     const value = rest[k + 1]
     if (value === undefined) throw unread(pr, `${flag} needs a value`)
-    if (flag === '--repo') repo = value
+    if (flag === '--repo') {
+      // A repository named twice is one repository: the watch never reads another one's number.
+      if (repo !== undefined && repo.toLowerCase() !== value.toLowerCase()) throw unread(pr, `the target names ${repo} and --repo names ${value}`)
+      repo = value
+    }
     else if (flag === '--interval') interval = value
     else if (flag === '--base-workflow') workflows.push(value)
     else throw unread(pr, `unknown argument: ${flag} (${USAGE})`)
@@ -164,11 +179,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   }
 
   const draftGuard = async (...args: string[]): Promise<string> => {
-    let name = options.repo
-    if (name === undefined) {
-      name = chomp((await deps.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])).stdout)
-      if (name === '') throw unread(pr, 'gh repo view failed: no repository read')
-    }
+    const name = resolved
+    if (name === undefined || name === '') throw unread(pr, 'gh repo view failed: no repository read')
     const ran = await deps.run(['python3', deps.draftGuard, name, pr, ...args], { stderr: 'pipe' })
     if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft_guard.py failed')
     return chomp(ran.stdout)
@@ -277,6 +289,15 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     if (current.state !== 'OPEN') throw await ended(current)
     if (current.head !== first) throw new Said(`moved ${pr} ${first} ${current.head}`, 3)
     return current
+  }
+
+  // No repository named: gh reads the one the directory is a clone of, and outside any clone it
+  // would fail, or, inside another project's, watch that project's pull request of the same number.
+  let resolved = options.repo
+  if (resolved === undefined) {
+    const here = await deps.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { stderr: 'pipe' })
+    if (here.status !== 0) throw unread(pr, 'this directory is not a clone of the repository: pass --repo <owner/repo>')
+    resolved = chomp(here.stdout)
   }
 
   let current = await readPr()
