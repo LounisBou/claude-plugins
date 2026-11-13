@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --experimental-strip-types --no-warnings --test --experimental-test-coverage --test-coverage-exclude='**/*.test.ts' --test-coverage-exclude='**/*.spec.ts' --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=85 'scripts/**/*.test.ts' 'packages/*/src/**/*.test.ts' 'plugins/*/skills/*/scripts/**/*.spec.ts'",
     "marketplace": "node --experimental-strip-types --no-warnings scripts/marketplace.ts",
+    "release": "node --experimental-strip-types --no-warnings scripts/release.ts",
     "version-bump": "node --experimental-strip-types --no-warnings scripts/version-bump.ts",
     "plugin-matrix": "node --experimental-strip-types --no-warnings scripts/plugin-matrix.ts",
     "prompts": "node --experimental-strip-types --no-warnings scripts/prompts.ts",

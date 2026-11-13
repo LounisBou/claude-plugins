@@ -53,7 +53,7 @@ Generated from the state by `succession.sh live`: the open rows, pull requests, 
 
 ## Standing context
 
-- Standing rulings: `{{RULINGS_FILE}}`.
+- Standing rulings: `{{RULINGS_FILE}}`. The `-archive.md` files beside it and the state file are never read at takeover.
 - Predecessor's home server: {{PREDECESSOR_SERVER}} (`none` on tabs).
 - Read by section (`grep -n` the heading, `sed -n <from>,<to>p`), never whole at takeover, never several in one `cat`; the state file by `grep -n` on the item a task names, never by heading: its « Open » section is the journal. Absent: `none`, never an invented path: state file `{{STATE_FILE}}`, spec `{{SPEC}}`, plan `{{PLAN}}`, runbook `{{RUNBOOK}}`, briefs `{{BRIEFS_DIR}}`, goals `{{GOALS}}`, worktree `{{WORKTREE}}`.
 - User rules that bind you: the rulings file, then {{USER_RULES}}. Deadlines: {{DEADLINES}}.
