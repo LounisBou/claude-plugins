@@ -133,8 +133,10 @@ and every skill keeps its own route.
   A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
   the last review's agents reported nothing Critical or Important, and `fail`
   otherwise, or when the severity is unknown. A reviewer's loop (`review_only`) ends
-  after its one pass and records its findings' verdict. github refuses a review record
-  written by the session that pushed the head. It leaves none when the loop was
+  after its one pass and records its findings' verdict. A `fail` is judged by the
+  orchestrator, through its review tool, which can accept it at the same head; the loop
+  lifts nothing itself. github refuses a review record written by the session that pushed
+  the head. It leaves none when the loop was
   released by the user, when the branch has no pull request, when tracked files have
   uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
   loop's answer then says `record: none — <why>`. A github call that fails with a 5xx, a
