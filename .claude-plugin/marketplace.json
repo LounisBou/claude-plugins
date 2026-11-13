@@ -49,7 +49,7 @@
       "name": "implement",
       "source": "./plugins/implement",
       "description": "The feature lifecycle as five commands: brainstorm and plan a feature, run its phases, check a delivery, close the branch, prepare the next one.",
-      "version": "0.6.12",
+      "version": "0.6.13",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.9.17",
+      "version": "0.9.18",
       "author": {
         "name": "Lounis Bou"
       }
