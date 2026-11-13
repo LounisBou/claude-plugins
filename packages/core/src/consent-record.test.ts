@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { answersChoice, consentAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
-import { kindFor, producerOf } from './pr-record.ts'
+import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
   v: 1, subject: { kind: 'e2e-waiver', repo: 'Owner/name', pr: 7 }, entry: 's1-abc',
@@ -119,8 +119,8 @@ describe('record producers', () => {
     assert.equal(kindFor('pr-review'), 'review')
     assert.equal(kindFor('norms'), 'norms')
     assert.equal(kindFor('engine'), 'e2e')
-    assert.equal(kindFor('orchestrator'), 'e2e')
-    assert.equal(producerOf('review')?.plugin, 'pr-review')
-    assert.equal(producerOf('e2e'), undefined)
+    assert.equal(kindFor('orchestrator'), 'review')
+    assert.deepEqual(producersOf('review').map(p => p.plugin), ['pr-review', 'orchestrator'])
+    assert.deepEqual(producersOf('e2e'), [])
   })
 })
