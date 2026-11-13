@@ -5364,6 +5364,16 @@ check "an owner file that cannot be written is unread, exit 5" "ci-watch: unread
   "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 rm -rf "$OWN"
 
+# Outside a clone of the repository: a target that names it is watched on it, the bare number is refused.
+check "a target naming the repository is watched there, whatever the directory: the gate call names it" "ci-watch: green 7 $HA $CWGATE on acme/thing|0" \
+  "$(cd "$WORK" && cw "OPEN $HA" "2" 0 "" acme/thing#7 --interval 1)"
+CWOUT="$WORK/ci-watch-outside"
+mkdir -p "$CWOUT/bin" "$CWOUT/dir"
+printf '#!/bin/bash\necho "$*" >> "%s/calls"\nexit 1\n' "$CWOUT" > "$CWOUT/bin/gh"
+chmod +x "$CWOUT/bin/gh"
+check "a bare number outside a clone is refused in one line, asking for --repo, and nothing is read" "ci-watch: unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5|repo view" \
+  "$(cd "$CWOUT/dir" && out=$(PATH="$CWOUT/bin:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" bash "$CWSCRIPT" 7 2>/dev/null); echo "$out|$?|$(cut -d' ' -f1,2 "$CWOUT/calls" | sort -u | tr '\n' ' ' | sed 's/ $//')")"
+
 echo "== stop gate: the prose and the pins that survive the module =="
 # The hook's own cases — the wake decision, the once-per-tell CI record, the deadline race,
 # the sweep it runs after a passing stop — moved module-side with the gate
