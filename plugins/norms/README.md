@@ -43,7 +43,8 @@ The record counts the ERROR findings as open and passes the WARNING and INFO
 ones as non-blocking: its detail reads like
 `0 fixed, 3 passed (non-blocking, automatic), 0 open`, so a reader can tell an
 automatic pass from an operator's. The result is `pass` when nothing is open,
-`fail` otherwise. Typing the command in your own session stays interactive.
+`fail` otherwise. A finding set aside as not critical, with its reason (`setAside`
+and `reason` of the tool), is not open: the detail keeps the reason. Typing the command in your own session stays interactive.
 
 ## Hooks module
 
