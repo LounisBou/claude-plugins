@@ -164,6 +164,9 @@ LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "Repor
 MOVE_TOOLS = ("mcp__orchestrator__move_send", "mcp__orchestrator__move_probe",
               "mcp__orchestrator__end_session")
 MOVE_ROLES = ("Orch", "Coord")
+# The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
+# its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
+ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
 # The host's own switches for what it adds to a session's context on its own. The first is
 # internal and undocumented, the second too: a probe proves each on the host version that
 # ships with a change to this list, and a launcher test keeps the keys passed.
@@ -4165,8 +4168,9 @@ def title_role(title):
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
-    orchestrator and the coordinator keep the three that move an orchestrator."""
-    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS)
+    orchestrator and the coordinator keep the three that move an orchestrator, and an
+    orchestrator also loses the servers it never calls."""
+    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS) + (ORCH_UNUSED if role == "Orch" else ())
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -5706,7 +5710,7 @@ def host_words(reading):
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
-    p.add_argument("--expect-title", dest="expect", default="")
+    p.add_argument("--expect-title", dest="expect", default=None)
     p.add_argument("--keep-checkout", dest="keep_checkout", action="store_true", default=False)
     p.add_argument("--bench", default="")
     p.add_argument("--socket", default="")
@@ -5716,6 +5720,12 @@ def cmd_close(argv):
         return
     if not args.tty:
         die("close: --tty is required")
+    # A title given empty, an unset variable's, would match every tab and close whatever
+    # holds the tty now.
+    if args.expect is not None and not args.expect.strip():
+        die("close: refused: --expect-title is empty: give the title `list` printed for %s"
+            % args.tty)
+    args.expect = args.expect or ""
     if DRY_RUN:
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return

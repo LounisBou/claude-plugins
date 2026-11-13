@@ -5606,8 +5606,8 @@ check "the template reads Instructions, then Source, then Expected result, each 
   "$(i=$(succ_at '^# Instructions$'); a=$(succ_at '^## Analysis$'); f=$(succ_at '^## Your first task'); s=$(succ_at '^# Source$'); l=$(succ_at '^## Live state'); e=$(succ_at '^# Expected result$')
      [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
-check "the template names its rulings file, read whole at step 1, and carries no rulings field" "1|1|0|0" \
-  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
+check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
+  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
 check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
   "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
 check "the template carries the predecessor's tty and home server, the launcher and the scripts" "yes|yes|yes|yes" \
@@ -7740,6 +7740,10 @@ reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
   "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
+reset_home
+out=$(home close --tty /dev/ttys901 --expect-title '' 2>&1)
+check "an empty title to expect is refused before anything is closed, a blank one too" "1|0|1|0" \
+  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[kill-window\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[kill-window\]')"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
@@ -12618,9 +12622,11 @@ leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+# The servers an orchestrator never calls: its agents run them.
+LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
 check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
   "$(leanl --title 'Agent: x' | leanset)"
-check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
+check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
   "$(leanl --title-free --title probe | leanset)"
@@ -12628,12 +12634,12 @@ check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
-check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
+check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
-check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
+check "a woken orchestrator and an opened one keep the three and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
   "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
   "$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent: x' | leanset | grep -c .)|$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
@@ -12650,10 +12656,12 @@ check "--drop-tool given the same name twice removes it once, on the launch line
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
-check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
+check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
+check "--drop-tool on a name the role keeps removes it" "$LEANBASE $LEANORCH mcp__orchestrator__end_session" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
@@ -12663,7 +12671,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
