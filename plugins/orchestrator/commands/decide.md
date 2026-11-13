@@ -9,11 +9,10 @@ owner or a proposed reading, when a review returned an arbitration, or when the 
 says « one question at a time ». The user arbitrates scope; you decide nothing of
 theirs and never ask two things in one message.
 
-**The operator's time is the scarce thing.** His words: ask every pending question one after
-the other, so that he loses as little time as possible; then draw the consequences and launch
-the work; and if a second wave of questions is needed, chain it. So a round is a WAVE: the questions follow one
-another, nothing shown between them; each ruling is relayed to its agent at once, and nothing
-is launched or reported until the wave is over.
+**The operator's time is the scarce thing, and a question never stops the rest of the work.**
+A round is a WAVE: the questions follow one another, each ruling relayed to its agent at once.
+A question blocks only the work that depends on its answer: everything else is launched,
+verified and merged meanwhile.
 
 **While a coordinator runs, the wave goes through it**, carried by the hooks module: each
 question ends its turn as step 2 says, and the module forwards it.
@@ -21,9 +20,8 @@ The first says in three to five sentences what you work on, for its round of its
 your questions come together.
 Its pane shows each one, the coordinator's tab when the pane is closed;
 declare it with `declare_wait` and `urgent: true` only for what step 1 calls urgent.
-Its answer, verbatim and dated, is his ruling, recorded as step 4 says. **And each question is
-written in full in your own chat too**: his ruling of 2026-11-03, « […] but also and at the
-same time in their own chat […], in both. »
+Its answer, verbatim and dated, is his ruling, recorded as step 4 says. Each question is
+written in full in your own chat too.
 
 ## 1. Collect first, then announce the count
 
@@ -55,20 +53,17 @@ reported in one line, and the next question is presented instead: a settled item
 The shape is the method's question (`method:lifecycle`, « Questions to the operator »), in the user's
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
-« or your own words ». Then call
-`declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
-that message but the « Recorded » line of the answer just given: no status, no other
-question, no agent report.
+« or your own words ». Launch first, in this turn, what the question does not block; the
+question ends the turn's last message, then `declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. One question per message.
 
-## 3. Wait for the answer
+## 3. While the answer is awaited
 
-Do not proceed on silence; do not assume; do not pick for them, not even the « obvious »
-one. A partial or ambiguous
-answer gets ONE clarifying line, not a new question. Messages and idle notices from agents
-that arrive meanwhile are read and held, never shown and never acted on: nothing stands
-between a question and its answer, nor between an answer and the next question. Only a
-fact that settles or changes a question still to come is acted on, by updating that
-question before it is presented.
+What the question blocks does not proceed on silence; do not pick for them, not even the
+« obvious » one. A partial or ambiguous answer gets ONE clarifying line, not a new question.
+Everything else goes on: agents' reports and idle notices are acted on as they arrive, and
+such a turn ends on `kind: "tool"`, or no wait, the open question waking you with its answer.
+The question stays open in the round, not repeated in later messages. A
+fact that changes a question still to come updates it before it is presented.
 
 ## 4. On the answer, in the same turn and in this order
 
@@ -85,36 +80,29 @@ question before it is presented.
 3. Relay it at once, showing nothing of it, to the agent whose STOP it answers, if any — `SendMessage`,
    the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator ruled » — and mark
    it « relayed » in `decision-round.md`.
-4. Present the next question IN FULL (step 2), in this same message, right under the
-   « Recorded » line. Nothing else: no launch, no status — they wait for the wave's end
-   (step 7), where they cost him nothing.
+4. Launch what the ruling unblocks, then present the next question IN FULL (step 2) at the
+   end of this same message.
 
-## 5. Re-present after any interruption
-
-If ANYTHING else was shown to the user between a question and its answer — a status line
-you had to write, a notice the host printed — re-present the question IN FULL, in step 2's whole shape, never « as above » or a pointer. A question the user must scroll back to find is a question answered
-wrong. Until he answers, every turn re-presents it so: the stop gate logs any turn without it.
-
-## 6. A ruling is not reopened
+## 5. A ruling is not reopened
 
 If later evidence contradicts a ruling, that is a NEW question, with the evidence as its
 context, appended to the round. Never re-argue a ruled question inside another one.
 
-## 7. End of the wave, then the next one
+## 6. End of the wave, then the next one
 
 « The wave is complete: N/N. » Then, in this same turn:
 
 1. Check every ruling is marked « relayed », and relay one that is not as step 4 says.
-2. Draw the consequences and launch the work that depended on the rulings: briefs amended,
-   directives corrected in the same move, agents relaunched, sessions spawned.
-3. Collect again (step 1): the questions the consequences raise, the STOPs the held agents'
-   messages carried, a premise a launch found false. If any is open and he is still there,
+2. Draw the consequences not yet drawn: briefs amended, directives corrected in the same
+   move, agents relaunched, sessions spawned.
+3. Collect again (step 1): the questions the consequences raise, the agents' STOPs, a
+   premise a launch found false. If any is open and he is still there,
    announce « Wave 2: M questions, back to back. » and present its first question in this
    same turn.
 4. When no question is left: in one short list, where each ruling was written (file, entry),
    which agent was told, what was launched — and the round ends.
 
-Rules that hold throughout: nothing launched or reported inside a wave, each ruling relayed at once; explanation
-before options; nothing decided on their behalf.
+Rules that hold throughout: each ruling relayed at once; explanation before options;
+nothing decided on their behalf.
 
 $ARGUMENTS
