@@ -58,7 +58,7 @@
       "name": "method",
       "source": "./plugins/method",
       "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "author": {
         "name": "Lounis Bou"
       }
@@ -76,7 +76,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.103.2",
+      "version": "0.104.0",
       "author": {
         "name": "Lounis Bou"
       }

@@ -1,17 +1,16 @@
 // hooks/unanswered-question.ts
-// The stop gate's rule on a question still on the operator, the operator's ruling of 2026-11-03:
-// an orchestrator asks the coordinator (its pane, or its session when the pane is closed) and,
-// at the same time, its own chat, where he must see the question too, at every turn's end until
-// he answers it. A question once asked and then lost from the chat left him unaware of what the
-// orchestrator waited on. Pure: the stop gate reads the round and the session's wait file, this
-// file decides on what they hold and on the turn's final message.
+// The stop gate's reading of a question still on the operator: it stays open in the round until
+// he answers it, wakes the session with its answer, and is not repeated in later messages; a turn
+// that leaves it out is logged, never refused. Pure: the stop gate reads the round and the
+// session's wait file, this file decides on what they hold and on the turn's final message.
 import { entryQuestions, questionParts, questionShape, parseChoices, plainText, numberLabel, type RoundEntry, type QuestionShape } from './round.ts'
 import { heldQuestion, type RelayedWait } from './relay.ts'
 import { outsideFences } from './one-question.ts'
 
 // The session's wait file as this rule reads it: the wait, the fingerprint the coordinator
-// holds, and a send not yet acknowledged by a coordinator on another machine.
-export type WaitRead = RelayedWait & { pending?: string | null }
+// holds, a send not yet acknowledged by a coordinator on another machine, and the mark of a
+// prompt the operator typed while it was held.
+export type WaitRead = RelayedWait & { pending?: string | null; typed?: object | null }
 
 // The question still on the operator: its round entry when this machine's round holds it, else
 // only what the wait file knows of it (its blocks and its start).
@@ -40,6 +39,19 @@ export function pendingQuestion(sessionId: string, entries: readonly RoundEntry[
   return { entry: null, blocks: held.blocks, since: held.since }
 }
 
+// With no coordinator on the machine, the session's own operator wait is its open question: the
+// wait file's last operator wait with its blocks, until he answers it. He answers in this tab, by a
+// prompt typed since the wait started (`typedAt`, or the mark such a prompt left), or the round
+// holds the same wait's entry settled.
+export function ownWaitOpen(sessionId: string, entries: readonly RoundEntry[], wait: WaitRead | null, typedAt: string | null): boolean {
+  const kind = wait?.waiting ?? wait?.last_waiting ?? null
+  if (!wait || kind !== 'operator' || typeof wait.blocks !== 'string' || wait.blocks === '' || wait.typed) return false
+  const since = wait.waiting_since ?? null
+  if (typedAt !== null && (since === null || typedAt >= since)) return false
+  return !entries.some(entry => entry.session === sessionId && entry.kind === 'operator' && entry.status !== 'open'
+    && entry.blocks === wait.blocks && entry.since === since)
+}
+
 // An operator wait sent to a coordinator on another machine and not acknowledged yet.
 function sentQuestion(wait: WaitRead): { blocks: string; since: string | null } | null {
   if (wait.waiting !== 'operator' || !wait.pending || typeof wait.blocks !== 'string') return null
@@ -59,8 +71,8 @@ function askedPart(entry: RoundEntry): { number: string; shape: QuestionShape; c
 // A text as compared: its emphasis dropped, its spacing collapsed, its case kept.
 const flat = (text: string) => plainText(text).replace(/\s+/g, ' ').trim()
 
-// The refusal for a turn that ends while the session's question is still on the operator and
-// does not show him that question in full; null otherwise.
+// The measure of a turn that ends while the session's question is still on the operator and does
+// not show him that question in full, which the stop gate logs and never refuses; null otherwise.
 // In full: a numbered block of the message, outside code fences, with the same numbering, the
 // entry's `Question` field with its text, and every choice with its letter and text. The other
 // fields may be worded anew: what he must recognise is the question and what he can answer. With
