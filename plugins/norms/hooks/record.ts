@@ -17,7 +17,7 @@ const GIT_TIMEOUT_MS = 30_000
 export const CHECK_DONE_DESCRIPTION =
   '/norms:check\'s last act: record its outcome at the pull request\'s head commit, for the github '
   + 'plugin\'s ready guard. open = findings neither fixed nor passed, fixed = findings fixed, passed = '
-  + 'findings passed; auto = true in automatic mode. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
+  + 'findings passed; setAside = findings set aside, with their reason (they no longer count as open); auto = true in automatic mode. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
   + 'Refused unless /norms:check computed its scope in this session.'
 
 export const CHECK_DONE_SCHEMA = {
@@ -26,6 +26,8 @@ export const CHECK_DONE_SCHEMA = {
     open: { type: 'integer', minimum: 0, description: 'findings left neither fixed nor passed' },
     fixed: { type: 'integer', minimum: 0, description: 'findings fixed' },
     passed: { type: 'integer', minimum: 0, description: 'findings passed' },
+    setAside: { type: 'integer', minimum: 0, description: 'findings set aside as not critical; reason is then required' },
+    reason: { type: 'string', description: 'why the findings were set aside, kept in the record' },
     auto: { type: 'boolean', description: 'automatic mode: the passed findings were passed automatically as non-blocking (default false)' },
   },
   required: ['open', 'fixed', 'passed'],
@@ -206,9 +208,13 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
   const open = count(input?.open)
   const fixed = count(input?.fixed)
   const passed = count(input?.passed)
-  if (open === undefined || fixed === undefined || passed === undefined) {
-    return { result: 'norms: open, fixed and passed are whole numbers, 0 or more', isError: true }
+  const setAside = input?.setAside === undefined ? 0 : count(input.setAside)
+  if (open === undefined || fixed === undefined || passed === undefined || setAside === undefined) {
+    return { result: 'norms: open, fixed, passed and setAside are whole numbers, 0 or more', isError: true }
   }
+  // A point set aside keeps its reason in the record, in one line.
+  const reason = typeof input?.reason === 'string' ? input.reason.replace(/\s+/g, ' ').trim() : ''
+  if (setAside > 0 && reason === '') return { result: 'norms: findings set aside need their reason', isError: true }
   try {
     // The repository the check read, not the one a later shell `cd` landed in.
     const dir = checked.dir ?? await repositoryDir($)
@@ -242,7 +248,7 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
       recorded = textOf(await $.tool.call({
         tool: RECORD_TOOL, pr, repo, kind: 'norms',
         result: open === 0 ? 'pass' : 'fail',
-        detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}, ${open} open`,
+        detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}${setAside > 0 ? `, ${setAside} set aside (${reason})` : ''}, ${open} open`,
         ...(dir ? { dir } : {}),
       }))
     } catch {
