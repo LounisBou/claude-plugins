@@ -7,16 +7,13 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { ACCEPTANCE, acceptanceDetail, answersAcceptance, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
+import { bashTexts, normalise } from './guards.ts'
 import {
-  type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
-  unreadRefusal,
-} from './guards.ts'
-import {
-  acceptanceNamesRefusal, acceptanceOriginRefusal, acceptanceOverRefusal, latestFailedReviewFile, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
+  acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
@@ -115,9 +112,6 @@ async function permit(
   if (verdict.decision === 'deny') return verdict.reason || 'refused by a permission rule'
   const args = e.args ?? {}
 
-  const unread = await writingUnread($, toolAuthoring(e.command, args), e.agentId)
-  if (unread) return unread
-
   // The ready guard, before any question: nobody is asked about a pull
   // request that is not ready.
   const notReady = beforeAsk ? await beforeAsk() : undefined
@@ -141,17 +135,12 @@ async function permit(
     return leaveDraftRefusal(e.command, repo ?? 'the origin repository', Number.isInteger(pr) && pr > 0 ? pr : undefined)
   }
 
+  // Refused once; the same text again is its author's call and goes as it is.
   const found = lint(e.command, args, lastTyped)
-  if (found.length > 0) {
-    const print = fingerprint(e)
-    if (!refusedOnce.has(print)) {
-      refusedOnce.add(print)
-      return refusal(e.command, found)
-    }
-    // The same text again: the person decides whether it goes as it is.
-    const rules = [...new Set(found.map((v) => v.rule.split(' (')[0]))].join(', ')
-    return ask($, describe(e) + ', which breaks the writing rules (' + rules + '). Send it as it is?',
-      ['Send as it is', 'Deny'], e.command)
+  const print = fingerprint(e)
+  if (found.length > 0 && !refusedOnce.has(print)) {
+    refusedOnce.add(print)
+    return refusal(e.command, found)
   }
 
   const reserved = reservedToPerson(e.command, autoMerge)
@@ -186,8 +175,7 @@ async function permit(
 /*
  * The writing rules on the Bash path: a gh pr create, edit, comment or review
  * whose title or body (inline, or the file --body-file names) breaks them is
- * refused once, as through the tool, and the same text again is put to the
- * person. A body the hook cannot see, from stdin or a command substitution, is
+ * refused once, as through the tool, and the same text again goes as it is. A body the hook cannot see, from stdin or a command substitution, is
  * left out, and so is a file it cannot read, logged: the command then runs as it is.
  */
 async function bashLint($: any, line: string): Promise<string | undefined> {
@@ -211,17 +199,10 @@ async function bashLint($: any, line: string): Promise<string | undefined> {
       }
     }
     const found = lint(text.command, args, lastTyped)
-    if (found.length === 0) continue
-    const command = text.name.startsWith('gh ') ? text.name.slice('gh '.length) : text.command
     const print = JSON.stringify(['Bash', text.argv, args])
-    if (!refusedOnce.has(print)) {
-      refusedOnce.add(print)
-      return refusal(command, found)
-    }
-    const rules = [...new Set(found.map((v) => v.rule.split(' (')[0]))].join(', ')
-    const refused = await ask($, 'Run ' + text.name + ' through Bash, which breaks the writing rules (' + rules
-      + '). Send it as it is?', ['Send as it is', 'Deny'], command)
-    if (refused) return refused
+    if (found.length === 0 || refusedOnce.has(print)) continue
+    refusedOnce.add(print)
+    return refusal(text.name.startsWith('gh ') ? text.name.slice('gh '.length) : text.command, found)
   }
   return undefined
 }
@@ -246,91 +227,9 @@ async function ask($: any, question: string, options: string[], command: string)
   return 'the user refused gh ' + command
 }
 
-// ---- the guard « writing rules read » ----
-
-/*
- * Every text engine/writing/ governs (a commit, a pull request, a comment, a
- * review) waits until its author read, whole and in the context that writes
- * it, the files that kind of text needs (writingFilesFor). A whole Read of one
- * of the loaded version's files marks it for the reader, the session and the
- * loop within it, and so does a Bash cat or sed -n '1,$p' of it, and, in a
- * checkout of this plugin, a Read of the checkout's copy. A compaction of that
- * loop clears its marks, as the text left its context, and a reload of the
- * module clears them all: both cost one more Read. A failure of the guard
- * itself never holds a text back: the writing rules still run.
- */
-
-// The files each reader holds in its context, by readerKey, and the readers
-// whose read could not be marked: a failure of the guard, which lets their
-// texts through rather than hold them back for ever.
-const readers = new Map<string, Set<WritingFile>>()
-const unmarked = new Set<string>()
-
-// The repository whose checkout carries the files as its own engine/writing/.
-export const PLUGIN_REPOSITORY = 'lounisbou/claude-github'
-
 function guardFailed($: any, err: any): undefined {
   $.ui.log('github: the writing rules guard failed and let the call through: ' + String(err?.message ?? err))
   return undefined
-}
-
-// The session's id, or a throw: an absent or empty one would make every
-// session without one the same reader.
-async function sessionId($: any): Promise<string> {
-  const id = await $.session.id()
-  if (typeof id !== 'string' || id === '') throw new Error('the session id is unreadable: ' + String(id))
-  return id
-}
-
-// The refusal for an authoring command whose reader has not read the files
-// its text needs, or undefined: no authoring, a reader who read them, or a
-// guard failure.
-async function writingUnread($: any, command: string | undefined, agentId?: string): Promise<string | undefined> {
-  if (!command) return undefined
-  try {
-    const key = readerKey(await sessionId($), agentId)
-    const read = readers.get(key)
-    const missing = writingFilesFor(command).filter((name) => !read?.has(name))
-    if (missing.length === 0) return undefined
-    if (unmarked.has(key)) return guardFailed($, 'a read of the writing rules could not be marked')
-    return unreadRefusal($.plugin.root, command, missing)
-  } catch (err) {
-    return guardFailed($, err)
-  }
-}
-
-// The writing file a path is, when this reader may read it for the rules: the
-// loaded version's, or the session's checkout's when it is this plugin. Any
-// other file costs one string comparison.
-async function writingFileOf($: any, path: unknown): Promise<WritingFile | undefined> {
-  if (typeof path !== 'string' || !path.includes('writing/')) return undefined
-  const dir = String(await $.session.cwd())
-  const file = normalise(path, dir)
-  const loaded = writingFileAt(file, $.plugin.root)
-  if (loaded) return loaded
-  const own = writingFileAt(file, dir)
-  if (!own) return undefined
-  const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000 })
-  const match = r.exitCode === 0 ? GITHUB_ORIGIN.exec(String(r.stdout).trim()) : null
-  return match !== null && (match[1] + '/' + match[2]).toLowerCase() === PLUGIN_REPOSITORY ? own : undefined
-}
-
-async function markReader($: any, name: WritingFile, agentId?: string): Promise<void> {
-  const key = readerKey(await sessionId($), agentId)
-  const read = readers.get(key) ?? new Set<WritingFile>()
-  read.add(name)
-  readers.set(key, read)
-}
-
-// A read that could not be marked: logged, and its reader let through until a
-// compaction for the files no earlier read marked.
-async function markFailed($: any, err: any, agentId?: string): Promise<void> {
-  guardFailed($, err)
-  try {
-    unmarked.add(readerKey(await sessionId($), agentId))
-  } catch {
-    // No reader to name: writingUnread fails on the same session id and lets the call through.
-  }
 }
 
 function failed(result: any): boolean {
@@ -570,7 +469,7 @@ export function selfReviewRefusal(kind: string, head: string, pushed: ReadonlySe
 // The last prompt the user typed (at the terminal or through the bridge): a
 // text found in it verbatim is the user's own words, never refused.
 let lastTyped = ''
-// The texts refused once: the same text sent again goes to the person.
+// The texts refused once: the same text sent again goes as it is.
 const refusedOnce = new Set<string>()
 // The grants « Allow for this session » gave, by session, command and repository.
 // Kept in the module: a reload or a restart drops them, which only asks again.
@@ -1135,7 +1034,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
     const files = await headRecords($, gate)
     carried = await carriedRecords($, gate, files)
     missing = missingItems(gate, files, undefined, exempt, carried)
-    accepted = reviewAcceptedOver(gate, files)
+    accepted = reviewAccepted(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -1263,7 +1162,6 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
 
 // The Bash ready guard failed on its own: under warn the command goes on with
 // a warn line, under enforce it is refused as a readiness that could not be read.
-// A Ready label is refused so in both phases: it is the gate's.
 // An undraft outside auto-merge is refused on the list first, in both phases: only a CI
 // undraft passes there, and the failed read cannot tell whether this is one.
 async function guardThrew($: any, act: Act | undefined, err: any): Promise<string | undefined> {
@@ -1272,7 +1170,7 @@ async function guardThrew($: any, act: Act | undefined, err: any): Promise<strin
   if (act?.kind === 'undraft' && act.repo && !(await autoMergeRepos($)).has(act.repo.toLowerCase())) {
     return autoMergeRefusal('undraft', act.repo, act.pr, engineName(act))
   }
-  if (act?.kind === 'ready-label' || await phaseOf($) === 'enforce') return unverifiedRefusal(act?.repo, act?.pr, error)
+  if (await phaseOf($) === 'enforce') return unverifiedRefusal(act?.repo, act?.pr, error)
   const named: Act = act ?? { kind: 'merge', name: 'the command' }
   await warnAct($, named, 'bash', act?.repo ?? '?', act?.pr ?? '?', '', ['readiness unverified: ' + error])
   return undefined
@@ -1312,13 +1210,12 @@ function toolReady($: any, e: any, act: Act) {
     if (read.error || read.missing.length > 0) return { repo, pr, r: read }
     return undefined
   }
-  const gated = act.kind === 'merge' || act.kind === 'undraft' || act.kind === 'ready-label'
+  const gated = act.kind === 'merge' || act.kind === 'undraft'
   return {
     async beforeAsk(): Promise<string | undefined> {
-      // A Ready label is the gate's in both phases; the other acts only under enforce.
       const enforce = await phaseOf($) === 'enforce'
       if (act.kind === 'create') return enforce ? draftRefusal(act.name) : undefined
-      if (!gated || (!enforce && act.kind !== 'ready-label')) return undefined
+      if (!gated || !enforce) return undefined
       const found = await evaluate()
       if (!found) return undefined
       if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
@@ -1364,8 +1261,7 @@ function engineName(act: Act): string | undefined {
 
 // The Bash act's refusal, or undefined; what must follow its success goes in after.
 async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>): Promise<string | undefined> {
-  // A Ready label is the gate's: refused in both phases when the four do not hold.
-  const readyPhase: Phase = act.kind === 'ready-label' ? 'enforce' : await phaseOf($)
+  const readyPhase: Phase = await phaseOf($)
   if (act.stdin) return STDIN_REFUSAL
   if (act.kind === 'create') {
     if (readyPhase === 'enforce') return draftRefusal(act.name)
@@ -1405,12 +1301,12 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   if (act.unnamed) return graphqlRefusal(act.kind)
   if (act.unreadable) return unreadablePrRefusal(act.name)
   if (!act.repo) {
-    // A merge, leaving draft and the Ready label are refused in both phases:
+    // A merge and leaving draft are refused in both phases:
     // the auto-merge split and the gate need the repository.
     return unnamedRepoRefusal(act.name)
   }
   const repo = act.repo
-  const listed = act.kind === 'ready-label' ? false : (await autoMergeRepos($)).has(repo.toLowerCase())
+  const listed = (await autoMergeRepos($)).has(repo.toLowerCase())
   if (act.kind === 'merge' && !listed) return autoMergeRefusal('merge', repo, act.pr, engineName(act))
   let pr = act.pr
   let lookup = ''
@@ -1583,12 +1479,6 @@ function typedWords(text: string, quoting: Quoting): boolean {
     })
     return quoted && (!quoting.dated || (days.length > 0 && days.every((d) => d === p.day)))
   })
-}
-
-// An E2E waiver of a pull request: each quoted span names the waiver or the pull request.
-function waiverQuoting(pr: number): Quoting {
-  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|waiv|(?<![\\d])' + pr + '(?![\\d])', 'i')
-  return { dated: true, names: (span) => names.test(span), wholeBare: true }
 }
 
 // The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
@@ -1764,12 +1654,6 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
 
 // ---- E2E not applicable, and the standing exemption ----
 
-// An E2E not applicable refused when the session writing it pushed the head: another session says so.
-export function selfNoneRefusal(result: string, head: string, pushed: ReadonlySet<string>): string | null {
-  if (result !== 'not-applicable' || !pushed.has(head)) return null
-  return 'github: this session pushed ' + head.slice(0, 7) + ': whether a pull request needs no E2E, a reviewer says so from another session.'
-}
-
 // Why the pull request at `head` is no pull request without runtime, or undefined: its files, read
 // at that head (read again after them, so files of another head are never vouched for), all hold none.
 async function runtimeRefusal($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
@@ -1879,7 +1763,6 @@ async function notDirectory($: any, path: string): Promise<string | undefined> {
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
-  if (String(e.result ?? '') === ACCEPTANCE.result) return await writeAcceptance($, e, origin)
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
@@ -1899,6 +1782,10 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
   }
+  if (result === ACCEPTANCE.result && origin !== ACCEPTANCE.plugin) return { deny: acceptanceOriginRefusal(origin) }
+  if (result === ACCEPTANCE.result && detail.trim() === '') {
+    return { deny: 'github: an acceptance names each point it sets aside with its reason in "detail".' }
+  }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} }, dir)
@@ -1907,12 +1794,6 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
       deny: dir
         ? 'github: ' + dir + ' has no GitHub origin remote, so the repository is unknown: name it: {"repo": "owner/name"}'
         : 'github: name the repository: {"repo": "owner/name"}',
-    }
-  }
-  if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
-    return {
-      deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
-        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
     }
   }
   let gate: Gate
@@ -1937,8 +1818,12 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
-  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads) ?? selfNoneRefusal(result, gate.head, pushedHeads)
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
   if (selfReview) return { deny: selfReview }
+  // The orchestrator's pass does not override a failed review at its head: it sets the points aside.
+  if (origin === ACCEPTANCE.plugin && result === 'pass' && latestReview(gate, await headRecords($, gate))?.result === 'fail') {
+    return { deny: passOverFailRefusal(gate.head) }
+  }
   if (result === 'not-applicable') {
     const refused = await runtimeRefusal($, repo, pr, gate.head)
     if (refused) return { deny: refused }
@@ -1956,54 +1841,6 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   // The record may complete the four: the gate reads them at the head it just checked.
-  const { line } = await followGate($, repo, pr, gate, true)
-  return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
-}
-
-/*
- * The orchestrator's acceptance of a failed review (core's ACCEPTANCE): written by its tool alone, at
- * the pull request's head, over the latest review record there, a failed one. It reads no checkout:
- * the decision is over the records of the head GitHub names, never over the code.
- */
-async function writeAcceptance($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  if (origin !== ACCEPTANCE.plugin) return { deny: acceptanceOriginRefusal(origin) }
-  const kind = e.kind === undefined || e.kind === null || e.kind === '' ? ACCEPTANCE.kind : String(e.kind)
-  if (kind !== ACCEPTANCE.kind) return { deny: kindRefusal(kind, origin, ACCEPTANCE.kind) }
-  const pr = Number(String(e.pr ?? '').replace('#', ''))
-  if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} })
-  if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
-  const over = typeof e.over === 'string' ? e.over.trim() : ''
-  const decision = typeof e.detail === 'string' ? e.detail.trim() : ''
-  if (decision === '') return { deny: 'github: an acceptance says its decision in one sentence: {"detail": "<decision>"}' }
-  let gate: Gate
-  try {
-    gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
-  } catch (err: any) {
-    return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
-  }
-  const { read } = headRecordsRead(gate, await headRecords($, gate))
-  const failed = over.includes('/') ? undefined : read.get(over)
-  if (!failed || !answersAcceptance(failed)) {
-    return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') + acceptanceNamesRefusal(gate.head, latestFailedReviewFile(read)) }
-  }
-  const later = [...read.entries()].find(([name, r]) => name !== over && r.kind === failed.kind && r.at >= failed.at)
-  if (later) return { deny: acceptanceOverRefusal(over, gate.head, 'is followed by ' + later[0]) }
-  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
-  if (selfReview) return { deny: selfReview }
-  let session = ''
-  try {
-    session = String(await $.session.id() ?? '')
-  } catch {
-    // Written without it.
-  }
-  const argv = [
-    'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
-    '--kind', kind, '--result', ACCEPTANCE.result, '--producer', producerSlug(origin), '--detail', acceptanceDetail(over, decision),
-    '--session', session,
-  ]
-  const run = await $.process.run(argv, { timeoutMs: 30_000 })
-  if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
@@ -2083,9 +1920,9 @@ export function register(on: any): void {
         isDeferred: false,
         description:
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
-          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived. '
-          + 'A waiver, and {repo, exempt, paths?, labels?} that exempts a repository\'s pull requests for good (false revokes), '
-          + 'quote the operator\'s dated words, typed here or in a consent record. See '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived with its dated reason. '
+          + '{repo, exempt, paths?, labels?} exempts a repository\'s pull requests for good (false revokes) and '
+          + 'quotes the operator\'s dated words, typed here or in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
@@ -2093,8 +1930,7 @@ export function register(on: any): void {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
             result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
-            detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words with their date' },
-            over: { type: 'string', description: ACCEPTANCE.result + ': the failed record\'s file name, written by ' + ACCEPTANCE.tool + ' only' },
+            detail: { type: 'string', description: 'what ran, the reason with its date, or the operator\'s words with their date' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
@@ -2152,15 +1988,6 @@ export function register(on: any): void {
     } catch {
       // A command that is no text names no record either.
     }
-    let command: string | undefined
-    try {
-      command = bashAuthoring(e.command)
-    } catch (err) {
-      guardFailed($, err)
-      return next(e)
-    }
-    const unread = await writingUnread($, command, e.agentId)
-    if (unread) return { deny: unread }
     let labellings: Labelling[] = []
     try {
       labellings = bashLabellings(String(e.command))
@@ -2187,13 +2014,6 @@ export function register(on: any): void {
     const unfit = await bashLint($, String(e.command))
     if (unfit) return { deny: unfit }
     const result = await next(e)
-    try {
-      const printed = printsWhole(e.command)
-      const name = printed && !failed(result) ? await writingFileOf($, printed) : undefined
-      if (name) await markReader($, name, e.agentId)
-    } catch (err) {
-      await markFailed($, err, e.agentId)
-    }
     if (!failed(result)) {
       for (const then of after) {
         try {
@@ -2240,38 +2060,6 @@ export function register(on: any): void {
       return { result: String(err?.message ?? err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the record hook itself failed' }))
-
-  on('tool.call', { tool: 'Read' }, async ($: any, e: any, next: any) => {
-    const result = await next(e)
-    try {
-      const name = !failed(result) && !result.result?.file?.truncatedByTokenCap
-        ? await writingFileOf($, e.file_path) : undefined
-      if (name) {
-        // The file's length as the Read counted it, else read from the file,
-        // and only when a limit makes it matter.
-        let total = result.result?.file?.totalLines
-        if (typeof total !== 'number' && e.limit !== undefined && e.limit !== null) {
-          total = lineCount(String(await $.fs.read(normalise(e.file_path))))
-        }
-        if (readsWhole(e.offset, e.limit, () => Number(total))) await markReader($, name, e.agentId)
-      }
-    } catch (err) {
-      await markFailed($, err, e.agentId)
-    }
-    return result
-  }).catch(async (_$: any, e: any, next: any) => next(e))
-
-  // Cleared as the compaction starts: one that is vetoed costs one more Read.
-  on('session.compact', async ($: any, e: any, next: any) => {
-    try {
-      const key = readerKey(await sessionId($), e.agentId)
-      readers.delete(key)
-      unmarked.delete(key)
-    } catch (err) {
-      guardFailed($, err)
-    }
-    return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: TOOL }, async ($: any, raw: any) => {
     if (MOD_COMMANDS.has(raw.command)) {

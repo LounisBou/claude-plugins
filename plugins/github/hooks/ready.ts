@@ -4,7 +4,7 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { ACCEPTANCE, acceptedOver, accepts, answersAcceptance, isAcceptance, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, accepts, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
@@ -12,10 +12,10 @@ import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } fr
 // refused with what it misses.
 export type Phase = 'warn' | 'enforce'
 
-// merge: a merge or an auto-merge armed. undraft: out of draft. ready-label:
-// the Ready label put on. create: a pull request opened out of draft.
-// create-draft: one opened as a draft. redraft: one put back to draft.
-export type ActKind = 'merge' | 'undraft' | 'ready-label' | 'create' | 'create-draft' | 'redraft'
+// merge: a merge or an auto-merge armed. undraft: out of draft. create: a pull
+// request opened out of draft. create-draft: one opened as a draft. redraft: one
+// put back to draft.
+export type ActKind = 'merge' | 'undraft' | 'create' | 'create-draft' | 'redraft'
 
 export type Act = {
   kind: ActKind
@@ -137,10 +137,6 @@ function values(parsed: Parsed, ...flags: string[]): string[] {
   return parsed.opts.filter(([flag, value]) => flags.includes(flag) && value !== undefined).map(([, value]) => value as string)
 }
 
-function namesReady(list: string[]): boolean {
-  return list.some((value) => value.split(',').some((label) => label.trim().toLowerCase() === READY))
-}
-
 // The pull request a gh pr command names by its first positional: a number,
 // a URL (which also names the repository) or a branch.
 function target(act: Act, positional: string | undefined): Act {
@@ -162,19 +158,13 @@ function prAct(argv: string[]): Act | undefined {
     if (word.startsWith('-')) { k++; continue }
     named.push(k++)
   }
-  if (named.length < 2 || argv[named[0]] !== 'pr' && argv[named[0]] !== 'issue') return undefined
+  if (named.length < 2 || argv[named[0]] !== 'pr') return undefined
   const noun = argv[named[0]]
   const verb = argv[named[1]]
   const words = argv.filter((_w, i) => i > 0 && i !== named[0] && i !== named[1])
   const parsed = parseWords(words, VALUED[verb] ?? [])
   const repo = parsed.repo
   const base: Act = { kind: 'merge', name: 'gh ' + noun + ' ' + verb, ...(repo ? { repo: repoOf(repo) ?? repo } : {}) }
-  if (noun === 'issue') {
-    if (verb === 'edit' && namesReady(values(parsed, '--add-label'))) {
-      return target({ ...base, kind: 'ready-label' }, parsed.positionals[0])
-    }
-    return undefined
-  }
   if (verb === 'merge') {
     if (has(parsed, '--disable-auto')) return undefined
     const sha = values(parsed, '--match-head-commit')[0]
@@ -183,13 +173,8 @@ function prAct(argv: string[]): Act | undefined {
   if (verb === 'ready') {
     return target({ ...base, kind: flagSet(parsed, '--undo') ? 'redraft' : 'undraft' }, parsed.positionals[0])
   }
-  if (verb === 'edit' && namesReady(values(parsed, '--add-label'))) {
-    return target({ ...base, kind: 'ready-label' }, parsed.positionals[0])
-  }
   if (verb === 'create') {
-    // A pull request opened with the Ready label is opened as ready.
-    const draft = flagSet(parsed, '-d', '--draft') && !namesReady(values(parsed, '-l', '--label'))
-    return { ...base, kind: draft ? 'create-draft' : 'create' }
+    return { ...base, kind: flagSet(parsed, '-d', '--draft') ? 'create-draft' : 'create' }
   }
   return undefined
 }
@@ -230,10 +215,6 @@ function labelsIn(value: string): string[] {
   return value.split(',').map((name) => name.trim().replace(/^["'[]+|["'\]]+$/g, ''))
 }
 
-function fieldsNameReady(fields: Array<{ value: string }>): boolean {
-  return fields.some((field) => labelsIn(field.value).some((name) => name.trim().toLowerCase() === READY))
-}
-
 // The GraphQL query the command line shows, or undefined when it does not: read from a file or
 // stdin (`-F query=@…`, `--input`), absent or empty (a command substitution reads as nothing), or
 // holding a shell expansion the hook cannot see. A `$name` the query declares (`$name:`) is a
@@ -250,8 +231,7 @@ function inlineQuery(parsed: Parsed, fields: Array<{ name: string; value: string
   return text
 }
 
-// The act of one gh api command: a merge or a label put through the REST API,
-// or a GraphQL mutation that merges, leaves draft, arms auto-merge or puts back to draft.
+// The act of one gh api command: a merge through the REST API, or a GraphQL mutation that merges, leaves draft, arms auto-merge or puts back to draft.
 function apiAct(argv: string[]): Act | undefined {
   const parsed = parseWords(argv.slice(2), API_VALUED)
   const endpoint = parsed.positionals[0]
@@ -270,19 +250,9 @@ function apiAct(argv: string[]): Act | undefined {
     return undefined
   }
   const path = endpoint.replace(API_HOST, '')
-  const at = (match: RegExpExecArray, kind: ActKind): Act => ({ kind, name: 'gh api', repo: match[1] + '/' + match[2], pr: Number(match[3]) })
-  if (method === 'PATCH') {
-    // A body the hook cannot read may set the labels.
-    const issue = ISSUE_PATH.exec(path)
-    if (issue && (input || fieldsNameReady(fields.filter((field) => field.name.startsWith('labels'))))) return at(issue, 'ready-label')
-    return undefined
-  }
   if (method !== 'PUT' && method !== 'POST') return undefined
   const merge = MERGE_PATH.exec(path)
-  if (merge) return at(merge, 'merge')
-  const labels = LABELS_PATH.exec(path)
-  if (labels && (input || fieldsNameReady(fields))) return at(labels, 'ready-label')
-  return undefined
+  return merge ? { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) } : undefined
 }
 
 // The act of one run of the plugin's engine, engine/gh.py, from Bash. A draft
@@ -290,15 +260,12 @@ function apiAct(argv: string[]): Act | undefined {
 function engineAct(call: EngineCall): Act | undefined {
   const repo = call.repo ? repoOf(call.repo) ?? call.repo : undefined
   const number = /^#?\d+$/.test(call.positionals[0] ?? '') ? Number(call.positionals[0].replace('#', '')) : undefined
-  const rest = number !== undefined ? call.positionals.slice(1) : call.positionals
   const at = (kind: ActKind, extra: Partial<Act> = {}): Act => ({
     kind, name: 'gh.py ' + call.command, ...(repo ? { repo } : {}), ...(number !== undefined ? { pr: number } : { unreadable: true }), ...extra,
   })
   const sha = engineOption(call, '--sha')
   if (call.command === 'pr-merge') return at('merge', sha ? { sha } : {})
   if (call.command === 'pr-ready') return at('undraft', { forCi: engineFlag(call, '--for-ci') })
-  if (call.command === 'pr-readiness' && rest.some((word) => word.toLowerCase() === READY)) return at('ready-label')
-  if (call.command === 'label-add' && namesReady(rest)) return at('ready-label')
   if (call.command === 'pr-create' && !engineFlag(call, '--draft')) return { kind: 'create', name: 'gh.py pr-create', ...(repo ? { repo } : {}) }
   return undefined
 }
@@ -328,11 +295,6 @@ export function toolAct(command: string, args: Record<string, unknown>): Act | u
   if (command === 'pr-ready') return at('undraft')
   if (command === 'pr-draft') return at('redraft')
   if (command === 'pr-merge') return at('merge', typeof args.sha === 'string' ? { sha: args.sha } : {})
-  if (command === 'pr-readiness' && String(args.state ?? '').toLowerCase() === 'ready') return at('ready-label')
-  if (command === 'label-add') {
-    const named = [args.label, args.names, args.name].flatMap((v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]))
-    if (namesReady(named.map(String))) return at('ready-label')
-  }
   if (command === 'pr-create') return { kind: args.draft === false ? 'create' : 'create-draft', name: command }
   return undefined
 }
@@ -560,26 +522,15 @@ function latestByKind(read: Map<string, PrRecord>): Map<Kind, PrRecord> {
   return latest
 }
 
-/** The file of the latest review record of the head, when it is a failed one: the file an acceptance passes as `over`. */
-export function latestFailedReviewFile(read: Map<string, PrRecord>): string | undefined {
-  const latest = latestByKind(read).get(ACCEPTANCE.kind)
-  if (!latest || !answersAcceptance(latest)) return undefined
-  return [...read.entries()].find(([, record]) => record === latest)?.[0]
+/** The latest review record of the head, whatever its result. */
+export function latestReview(gate: Gate, files: RecordFile[]): PrRecord | undefined {
+  return latestByKind(headRecordsRead(gate, files).read).get(ACCEPTANCE.kind)
 }
 
-// The failed record an acceptance answers, when it is among the head's records: an acceptance counts
-// only beside it, so one is never carried to another head.
-function acceptedFile(record: PrRecord, read: Map<string, PrRecord>): string | undefined {
-  const over = acceptedOver(record.detail)
-  const failed = over === undefined ? undefined : read.get(over)
-  return over !== undefined && failed && answersAcceptance(failed) ? over : undefined
-}
-
-/** The failed review's file the orchestrator accepted at the head, when that acceptance is what lets the review pass. */
-export function reviewAcceptedOver(gate: Gate, files: RecordFile[]): string | undefined {
-  const { read } = headRecordsRead(gate, files)
-  const record = latestByKind(read).get('review')
-  return record && isAcceptance(record) ? acceptedFile(record, read) : undefined
+/** The detail of the orchestrator's acceptance, when it is what lets the review pass at the head. */
+export function reviewAccepted(gate: Gate, files: RecordFile[]): string | undefined {
+  const record = latestReview(gate, files)
+  return record && isAcceptance(record) ? record.detail : undefined
 }
 
 // The files of a head's records that do not parse, each with the kinds it may hold: the one its name
@@ -631,10 +582,9 @@ export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<K
 }
 
 // A record an earlier head carries to a head of the same diff, when it is the latest of its kind
-// across the earlier heads of that diff: a clean review, a passed norms check, an E2E waiver.
-// An E2E pass is run again at the new head, and an acceptance counts only beside its failed record.
+// across the earlier heads of that diff: any record that lets its kind pass.
 export function carries(record: PrRecord): boolean {
-  return accepts(record) && !isAcceptance(record) && !(record.kind === 'e2e' && record.result === 'pass')
+  return accepts(record)
 }
 
 // What a pull request misses to be ready at its head: the four conditions,
@@ -650,15 +600,12 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eE
   let kindMissing = false
   for (const kind of KINDS) {
     const record = latest.get(kind)
-    if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
+    if (record && accepts(record)) continue
     if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
     if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
-    else if (isAcceptance(record)) {
-      missing.push(kind + ': accepted at ' + head7(gate.head) + ' by ' + record.producer
-        + ' over a record that is no failed ' + kind + ' at this head: ' + record.detail)
-    } else {
+    else {
       missing.push(kind + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer
         + (record.detail ? ', ' + record.detail : ''))
     }
@@ -777,7 +724,7 @@ export function ciUndraftLine(repo: string, pr: number): string {
 
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
-// accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
+// accepted: the points the orchestrator's acceptance set aside at the head, named in place of a clean review.
 // e2eExempt: the exemption that stood for its E2E, named.
 // carried: the kinds counted at the head from an earlier head of the same diff.
 export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string,
@@ -788,8 +735,8 @@ export function gateReadyLine(repo: string, pr: number, head: string, redrafted 
     + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }
 
-export function reviewAcceptedLine(file: string): string {
-  return 'review accepted by the orchestrator over ' + file
+export function reviewAcceptedLine(detail: string): string {
+  return 'review accepted by the orchestrator (' + detail + ')'
 }
 
 export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
@@ -847,28 +794,22 @@ export function recordKindFor(origin: string): string {
 
 // The refusal of a record of a kind its caller does not write, naming the producer the contract declares.
 export function kindRefusal(kind: string, origin: string, owned: string): string {
-  const producer = producerOf(kind)
-  const by = producer ? ' (' + producer.plugin + ', ' + producer.tool + ')' : ''
+  const producers = producersOf(kind)
+  const by = producers.length > 0 ? ' (' + producers.map((p) => p.plugin + ', ' + p.tool).join('; ') + ')' : ''
   return 'github: ' + kind + ' records are written by their producer' + by + ': '
     + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.'
 }
 
-// The refusals of an acceptance of a failed record (core's ACCEPTANCE): its writer, and the record it answers.
+// The refusal of an acceptance (core's ACCEPTANCE) from any writer but its own.
 export function acceptanceOriginRefusal(origin: string): string {
   return 'github: an ' + ACCEPTANCE.result + ' ' + ACCEPTANCE.kind + ' is the ' + ACCEPTANCE.plugin + '\'s decision, written by '
     + ACCEPTANCE.tool + ' in an ' + ACCEPTANCE.plugin + ' session; ' + (origin === 'engine' ? 'this tool' : origin) + ' writes none.'
 }
 
-export function acceptanceOverRefusal(over: string, head: string, why: string): string {
-  return 'github: ' + (over || 'no record') + ' ' + why + ' at ' + head7(head) + ', the pull request\'s head: an acceptance answers'
-    + ' the latest failed ' + ACCEPTANCE.kind + ' of the head it is written at.'
-}
-
-// What an acceptance refused for an `over` that names no failed record is told: the file to pass, or that none exists.
-export function acceptanceNamesRefusal(head: string, file: string | undefined): string {
-  return file
-    ? ' The latest failed ' + ACCEPTANCE.kind + ' at ' + head7(head) + ' is ' + file + ': pass it as over.'
-    : ' There is no failed ' + ACCEPTANCE.kind + ' to accept at ' + head7(head) + ': no ' + ACCEPTANCE.kind + ' record, or the latest is not a failed one.'
+// The refusal of a pass over a failed review at the same head: the orchestrator accepts it, with its set-asides.
+export function passOverFailRefusal(head: string): string {
+  return 'github: the latest review at ' + head7(head) + ' failed: a pass does not override it. Set its points aside with'
+    + ' their reasons ({"verdict": "' + ACCEPTANCE.result + '", "set_asides": [...]}), or fix them and review the new head.'
 }
 
 // A plugin's name as a producer slug.
