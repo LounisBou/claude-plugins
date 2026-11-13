@@ -1268,6 +1268,28 @@ test('an acceptance with no failed review at the head is refused', accepting('or
   expect(recordRun(seen)).toBeUndefined()
 })
 
+test('a refused acceptance over a wrong file names the latest failed review to pass as over', accepting('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD })
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('The latest failed review at 0123456 is ' + FAILED[0] + ': pass it as over.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a refused acceptance says there is no failed review to accept when the head has no review record', accepting('orchestrator'), async ($, on) => {
+  await world($, on)
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
+  expect(deny).not.toContain('pass it as over')
+})
+
+test('a refused acceptance says there is no failed review to accept when the latest review passed', accepting('orchestrator'), async ($, on) => {
+  const later = record('review', 'pass', '2026-11-01T12:00:00Z')
+  await world($, on, { records: { ...FAILED_AT_HEAD, [later[0]]: later[1] } })
+  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
+  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
+  expect(deny).not.toContain('pass it as over')
+})
+
 test('an acceptance of a failed review of another head is refused', accepting('orchestrator'), async ($, on) => {
   // The failed review lies at the head before a push; the pull request's head holds only passes.
   const before = RECORDS + '/acme/thing/' + MOVED
