@@ -24,6 +24,8 @@ export interface RunOptions {
    */
   readonly log?: { readonly path: string; readonly append: boolean }
   readonly cwd?: string
+  /** Variables added to this process's own environment for the command. */
+  readonly env?: Readonly<Record<string, string>>
 }
 
 export type Run = (argv: readonly [string, ...string[]], options?: RunOptions) => Promise<Ran>
@@ -45,6 +47,7 @@ export const run: Run = (argv, options = {}) =>
       stdio: fd === undefined ? ['ignore', 'pipe', options.stderr ?? 'ignore'] : ['ignore', fd, fd],
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
     })
     if (fd !== undefined) closeSync(fd)
     const out: Buffer[] = []

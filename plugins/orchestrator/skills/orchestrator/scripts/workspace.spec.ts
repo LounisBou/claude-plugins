@@ -335,6 +335,45 @@ test('create --base <branch> starts from the origin, said on stderr, and from th
   assert.ok(!existsSync(join(dir, 'root', 'based', 'gone')))
 })
 
+test('create --base: origin/<branch> works for a branch only the origin holds, a silent probe names its reason, and no credential is asked', async () => {
+  const src = pushed('probed')
+  const other = join(dir, 'elsewhere-probed')
+  execFileSync('git', ['clone', '-q', '-b', 'main', join(dir, 'probed.git'), other])
+  g(other, 'checkout', '-q', '-b', 'feat/remote-only')
+  writeFileSync(join(other, 'remote.txt'), 'remote\n')
+  g(other, 'add', '-A')
+  g(other, 'commit', '-q', '-m', 'Remote')
+  g(other, 'push', '-q', 'origin', 'feat/remote-only')
+  const w = world()
+
+  // The source never fetched that branch, so `origin/<branch>` is no ref of its own: the origin is asked for the bare name.
+  const named = await ws(w, 'create', src, 'named', '--base', 'origin/feat/remote-only')
+  assert.equal(named.code, 0, named.err)
+  assert.equal(readFileSync(join(named.out.trim(), 'remote.txt'), 'utf8'), 'remote\n')
+  assert.match(named.err, new RegExp(`workspace: base: origin/feat/remote-only at ${g(other, 'rev-parse', 'feat/remote-only')}\n`))
+
+  // The probe never prompts for a credential, and one that gets no answer says so, with or without a local branch.
+  const probes: (RunOptions | undefined)[] = []
+  const real = w.deps.run
+  const silent: Run = async (argv, options) => {
+    if (argv.includes('ls-remote')) {
+      probes.push(options)
+      return { status: null, stdout: '', stderr: '' }
+    }
+    return real(argv, options)
+  }
+  const mute = { ...w, deps: { ...w.deps, run: silent } }
+  g(src, 'branch', 'feat/local-only')
+  const offline = await ws(mute, 'create', src, 'offline', '--base', 'feat/local-only')
+  assert.equal(offline.code, 0, offline.err)
+  assert.match(offline.err, /workspace: base: local branch feat\/local-only at [0-9a-f]+, origin unreadable \(no answer within 30 s\)\n/)
+  const refused = await ws(mute, 'create', src, 'refused', '--base', 'feat/remote-only')
+  assert.equal(refused.code, 1)
+  assert.equal(refused.err, 'workspace: create: cannot read origin to resolve feat/remote-only: no answer within 30 s\n')
+  assert.equal(probes.length, 2)
+  for (const options of probes) assert.equal(options?.env?.['GIT_TERMINAL_PROMPT'], '0')
+})
+
 test('create: a nested worktree or repository in the source is skipped from the copy, and a failed copy names its path', async () => {
   const src = repo(join(dir, 'src', 'nested'))
   mkdirSync(join(src, '.claude', 'worktrees'), { recursive: true })

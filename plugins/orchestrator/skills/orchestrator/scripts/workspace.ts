@@ -100,9 +100,9 @@ function chomp(text: string): string {
   return text.replace(/\n+$/, '')
 }
 
-async function git(ctx: Context, dir: string, args: readonly string[], signal?: AbortSignal): Promise<Ran> {
+async function git(ctx: Context, dir: string, args: readonly string[], signal?: AbortSignal, env?: Readonly<Record<string, string>>): Promise<Ran> {
   const s = signal ?? ctx.signal
-  return ctx.deps.run(['git', '-C', dir, ...args], { stderr: 'pipe', ...(s === undefined ? {} : { signal: s }) })
+  return ctx.deps.run(['git', '-C', dir, ...args], { stderr: 'pipe', ...(s === undefined ? {} : { signal: s }), ...(env === undefined ? {} : { env }) })
 }
 
 /** The output of a git read that succeeded, else undefined. */
@@ -531,14 +531,19 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   if (!local && base.startsWith('origin/') && (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/remotes/${base}`])).status === 0) {
     remoteBranch = base.slice('origin/'.length)
   } else if (explicit && origin !== '') {
-    const probe = await git(ctx, src, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${base}`], AbortSignal.timeout(PROBE_MS))
-    if (probe.status === 0) remoteBranch = base
+    // `origin/<b>` names the origin's branch <b> when the source holds no such local branch, even
+    // as a remote-tracking ref it never fetched; the probe asks for the bare name. It never
+    // prompts for a credential: an origin that wants one is unreadable.
+    const asked = !local && base.startsWith('origin/') ? base.slice('origin/'.length) : base
+    const probe = await git(ctx, src, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${asked}`], AbortSignal.timeout(PROBE_MS), { GIT_TERMINAL_PROMPT: '0' })
+    const why = probe.status === null ? `no answer within ${PROBE_MS / 1000} s` : probe.stderr.trim() || `git exited ${probe.status}`
+    if (probe.status === 0) remoteBranch = asked
     else if (probe.status === 2) {
       if (!local) throw unknown
     } else if (local) {
-      unreadable = probe.stderr.trim().split('\n')[0] ?? ''
+      unreadable = why.split('\n')[0] ?? ''
     } else {
-      throw new Refused(`create: cannot read origin to resolve ${base}: ${probe.stderr.trim()}`)
+      throw new Refused(`create: cannot read origin to resolve ${base}: ${why}`)
     }
   } else if (!local) {
     throw unknown
