@@ -542,8 +542,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // or ends on its last word `handed over`: its successor holds the questions. Read off the round
       // and the wait file, within the deadline.
       const message = String(e.last_assistant_message ?? '')
+      let pending: Awaited<ReturnType<typeof pendingQuestion>> = null
       if (sessionId !== '' && handedOverIn !== sessionId && !isEnding() && !endsOnHandOver(message)) {
-        const pending = await quietly($, async () => pendingQuestion(sessionId, await roundEntries($, state), await waitRead($, sessionId)), until, null)
+        pending = await quietly($, async () => pendingQuestion(sessionId, await roundEntries($, state), await waitRead($, sessionId)), until, null)
         const unshown = unansweredRefusal(message, pending)
         if (unshown !== null) {
           // Measured, not refused: a refusal made the turn rewrite the whole block each time. The pane
@@ -604,6 +605,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
+        questionOpen: pending !== null,
       })
       if (wake !== null && typeof wake === 'object' && 'blocks' in wake) {
         // The release the machine line grants, logged as the shell gate logged it — the

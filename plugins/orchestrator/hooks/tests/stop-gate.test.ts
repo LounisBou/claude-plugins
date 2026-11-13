@@ -1758,6 +1758,28 @@ test('a plain ending passes with a subscription not yet fired, or after the hand
   expect(after.answer).toBe(after.passed)
 })
 
+// A question still open in the round blocks only the work that depends on its answer: the turns that
+// advance the rest end on their tool line or on none, the answer waking the session, never asked again.
+test('a tool line or a plain ending passes while the session\'s question is open in the round, the host listing nothing', async () => {
+  const { handlers } = mounted()
+  for (const ending of [TOOL_WAIT, PLAIN]) {
+    const open = fakeDollar({ ps: NOTHING_PS, round: roundOf(openEntry()) })
+    const waiting = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
+    expect(waiting.answer).toBe(waiting.passed)
+    const answered = fakeDollar({ ps: NOTHING_PS, round: roundOf(openEntry({ status: 'answered', answer: { text: 'A', by: 'pane', at: OPEN_SINCE } })) })
+    const held = await stop(handlers['classic.Stop'], answered.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
+    expect(held.passed).toBe(null)
+  }
+})
+
+test('an open question wakes a tool line or a plain ending, never a malformed line', () => {
+  const base = { agents: [], resident: false, delivered: [], tasks: [] as string[], questionOpen: true }
+  expect(checkWake({ ...base, message: TOOL_WAIT.last_assistant_message })).toEqual({ tool: 'the deploy run' })
+  expect(checkWake({ ...base, message: PLAIN.last_assistant_message })).toBe(null)
+  expect((checkWake({ ...base, questionOpen: false, message: PLAIN.last_assistant_message }) as any).case).toBe('nothing-will-wake')
+  expect((checkWake({ ...base, message: 'Done.\nwaiting: operatr blocks the order' }) as any).case).toBe('malformed-machine-line')
+})
+
 test('nothing will wake, decided over the facts with the host list', () => {
   const base = { agents: [], resident: false, delivered: [], message: 'stopped.' }
   expect((checkWake({ ...base, tasks: [] }) as any).case).toBe('nothing-will-wake')
