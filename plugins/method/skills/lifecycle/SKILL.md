@@ -24,16 +24,16 @@ sessions.
 
 ## Done means ready
 
-A pull request is done, at its head, when:
+A pull request is done at its head when:
 
 - a review by another session left no Critical or Important finding (the orchestrator's review
-  may write it; a point it sets aside is accepted);
+  may write it; a point it sets aside, with its reason, is accepted);
 - the norms check passed;
-- the checks its plan owes passed, E2E unless waived durably on it by the operator;
+- the checks its plan owes passed, E2E unless the operator waived it durably;
 - CI is green.
 
 The github plugin's ready gate computes it. A content change voids it until
-the four hold again.
+the four hold.
 
 ## Consent
 
