@@ -62,7 +62,7 @@ test('live writes every open item of the state into the brief, and nothing of an
   // The rest of the template stands.
   assert.ok(brief.includes('# Expected result'))
   assert.ok(brief.includes('## Standing context'))
-  assert.match(w.out.join(''), /^generation=1 chars=\d+ rows=2 prs=2 agents=1 questions=1 notes=0\n$/)
+  assert.match(w.out.join(''), /^generation=1 chars=\d+ rows=2 prs=2 agents=1 questions=1 notes=0 pruned=rulings:0,state:0 takeover_chars=(\d+)->\1\n$/)
   assert.equal(w.run('check'), 0)
 })
 
@@ -168,4 +168,47 @@ test('the name and the dispatch record are read from the brief when not given', 
   writeFileSync(w.brief, readFileSync(TEMPLATE, 'utf8').replaceAll('{{PREDECESSOR_NAME_PATTERN}}', NAME))
   assert.equal(main(['check', w.brief], env, io), 2)
   assert.match(w.err.at(-1) ?? '', /Dispatch record/)
+})
+
+test('live prunes the rulings and state files the brief names, archives beside them, and measures the takeover', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  const state = join(dir, 'state.md')
+  writeFileSync(rulings, [
+    '# Standing rulings — Orch: belt', '',
+    '- 2026-11-08T00:00:00Z « Réponds-moi en français. » — the operator in French. [standing]',
+    '- 2026-11-09T10:00:00Z « Merge #12 » → merge acme/app#12. [done: acme/app#12]',
+    '- 2026-11-10T06:41:14Z « A » → port into next. [superseded: 2026-11-10T06:55:24Z]',
+    '- 2026-11-10T06:55:24Z « A » → rebuild on home instead.', '',
+  ].join('\n'))
+  writeFileSync(state, [
+    '# State — Orch: belt', '', '## Live',
+    '- 2026-11-13T09:00:00Z [aa] morning journal, finished.',
+    '- 2026-11-13T21:08:23Z LIVE SUMMARY [bb] what is live.',
+    '- Merged: #141.', '',
+  ].join('\n'))
+  writeFileSync(w.brief, w.read().replace('{{RULINGS_FILE}}', rulings).replace('{{STATE_FILE}}', state))
+  const before = readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length
+  // check reads, it never prunes: the Live state is not generated yet, so it refuses.
+  assert.equal(w.run('check'), 1)
+  assert.equal(readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length, before)
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  const after = readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length
+  const brief = w.read().length
+  assert.match(w.out.at(-1) ?? '', new RegExp(`^generation=1 chars=${brief} .* pruned=rulings:2,state:1 takeover_chars=${brief + before}->${brief + after}\\n$`))
+  assert.ok(!readFileSync(rulings, 'utf8').includes('Merge #12') && readFileSync(rulings, 'utf8').includes('[standing]'))
+  assert.match(readFileSync(join(dir, 'rulings-archive.md'), 'utf8'), /Merge #12[\s\S]*port into next/)
+  assert.match(readFileSync(join(dir, 'state-archive.md'), 'utf8'), /morning journal/)
+  assert.ok(!readFileSync(state, 'utf8').includes('morning journal'))
+})
+
+test('live prunes nothing the brief does not name, and says a supersession it keeps', () => {
+  const w = world()
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.at(-1) ?? '', / pruned=rulings:0,state:0 takeover_chars=\d+->\d+\n$/)
+  const rulings = join(dir, 'r.md')
+  writeFileSync(rulings, '- 2026-11-12T16:00:00Z « C » → x. [superseded: 2026-12-01T00:00:00Z]\n')
+  writeFileSync(w.brief, w.read().replace('{{RULINGS_FILE}}', rulings))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.ok(w.err.includes(`succession: ${rulings}: ruling 2026-11-12T16:00:00Z kept: superseded by 2026-12-01T00:00:00Z, which no ruling of the file or its archive opens on\n`))
 })
