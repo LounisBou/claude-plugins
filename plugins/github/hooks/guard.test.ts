@@ -1117,11 +1117,22 @@ test('a record is refused on a checkout whose tracked files changed', async ($, 
   expect(recordRun(seen)).toBeUndefined()
 })
 
-test('an E2E waiver is written with its dated reason alone, no operator words asked', async ($, on) => {
+test('an E2E waiver quotes words the operator typed in this session', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const words = 'no E2E for this docs change, 2026-11-02'
+  const before: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: words } as any)
+  expect(before.deny).toContain('an E2E waiver quotes the operator')
+  await ($ as any).prompt.submit({ text: 'ok: ' + words, origin: { kind: 'composer' }, wait: false })
+  const after: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: words } as any)
+  expect(after.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
+})
+
+test('a waiver with a dated reason but no consent record is refused', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
   const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: 'docs only, no runtime path to run, 2026-11-14' } as any)
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 const CONSENTS = '/cfg/consents/acme/thing'
@@ -1137,6 +1148,64 @@ const consent = (over: Record<string, unknown> = {}) => ({
   v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, entry: 'a', question: 'E2E for thing#12: waive it?',
   answer: CONSENT_WORDS, by: 'pane', at: '2026-11-03T10:00:00Z', ...over,
 })
+
+const waiveCall = (detail: string) =>
+  ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail }) as any
+
+test('an E2E waiver may quote the operator\'s answer in a consent record of that pull request', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent() }))
+  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
+})
+
+test('an E2E waiver may quote the operator\'s answer typed in the asking session\'s own tab', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ by: 'tab' }) }))
+  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
+})
+
+for (const [label, over] of [
+  ['another pull request', { subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }],
+  ['auto-merge', { subject: { kind: 'auto-merge', repo: 'acme/thing' } }],
+  ['another repository', { subject: { kind: 'e2e-waiver', repo: 'acme/other', pr: 12 } }],
+  ['an answer of 3 characters', { answer: 'oui' }],
+  ['another contract version', { v: 2 }],
+  ['an unknown answerer', { by: 'someone' }],
+] as const) {
+  test('a consent record of ' + label + ' does not carry a waiver', async ($, on) => {
+    const seen = await world($, on, consentWorld({ a: consent(over) }))
+    const out: any = await $.tool.call(waiveCall(label === 'an answer of 3 characters' ? 'operator said oui, 2026-11-03' : CONSENT_WORDS))
+    expect(out.deny).toContain('an E2E waiver quotes the operator')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('an answer the orchestrator\'s round holds is no consent: github never reads round/', async ($, on) => {
+  const round = '/cfg/claude-orchestrator/round'
+  const entry = { question: 'E2E for thing#12: waive it?', blocks: null, status: 'answered', answer: { text: CONSENT_WORDS, by: 'pane', at: 'x' } }
+  const seen = await world($, on, { git: CLEAN, tree: { [round]: { kind: 'directory', mtimeMs: 1 }, [round + '/a.json']: { kind: 'file', mtimeMs: 2, text: JSON.stringify(entry) } } })
+  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a waiver that quotes no consent is refused, and says both ways to give one', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent(), b: 'not json' }))
+  const out: any = await $.tool.call(waiveCall('some words nobody said, 2026-11-03'))
+  expect(out.deny).toContain('typed in this session')
+  expect(out.deny).toContain('consent record (orchestrator)')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('no consent records carry no waiver and do not crash', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
 
 for (const [plugin, kind, allowed] of [
   ['pr-review', 'review', true], ['pr-review', 'norms', false], ['norms', 'norms', true], ['norms', 'review', false],
@@ -1565,6 +1634,71 @@ test('a typed prompt that does not speak of auto-merge adds no line', async ($, 
 // everywhere the tests run.
 const RECEIVED = Date.UTC(2026, 10, 2, 12, 0, 0)
 const RECEIVED_DAY = '2026-11-02'
+const SENTENCE = 'front-office#1660 est dispensé de tests de bout en bout sur la base de la relecture et des captures !'
+
+test('a quote the operator typed counts inside the wrapping « … » — operator, date', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { git: CLEAN })
+  await typed($, SENTENCE)
+  for (const detail of [
+    '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY,
+    'Operator waived E2E on ' + RECEIVED_DAY + ': "' + SENTENCE + '"',
+    'Operator waived E2E on ' + RECEIVED_DAY + ': “' + SENTENCE + '”',
+  ]) {
+    const out: any = await $.tool.call(waiveCall(detail))
+    expect(out.deny).toBeUndefined()
+  }
+  expect(recordRun(seen)).toContain('waived')
+})
+
+test('two quoted spans of one message count, each naming the waiver or the pull request', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  await world($, on, { git: CLEAN })
+  await typed($, 'Pas de tests de bout en bout ici, ok. Et la pull request 12 reste telle quelle, merci.')
+  const both = '« Pas de tests de bout en bout ici, ok. » and « la pull request 12 reste telle quelle » — operator, ' + RECEIVED_DAY
+  expect(((await $.tool.call(waiveCall(both))) as any).deny).toBeUndefined()
+})
+
+test('a one-word answer counts in a quote only when it is the whole prompt', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  await world($, on, { git: CLEAN })
+  const detail = 'Operator waived E2E on ' + RECEIVED_DAY + ' with « B », answering the E2E question'
+  await typed($, 'Bonjour, voyons la suite')
+  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toContain('an E2E waiver quotes the operator')
+  await typed($, 'B')
+  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
+})
+
+test('a waiver quote is refused when it was not typed, names no waiver, or is dated otherwise', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { git: CLEAN })
+  await typed($, SENTENCE + ' Et aussi : je valide la suite des travaux sans réserve.')
+  for (const detail of [
+    '« ' + SENTENCE.replace('dispensé', 'privé') + ' » — operator, ' + RECEIVED_DAY,
+    '« ' + SENTENCE + ' » — operator, 2001-01-01',
+    '« ' + SENTENCE + ' » — operator',
+    '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY + ' and 2001-01-01',
+    'B — ' + RECEIVED_DAY,
+    '« ' + SENTENCE + ' » and « no E2E at all, ever, anywhere » — operator, ' + RECEIVED_DAY,
+    // Free words outside the quote, a quote that says nothing of the waiver.
+    'waived E2E for acme/thing#12 on ' + RECEIVED_DAY + ': « je valide la suite des travaux sans réserve »',
+  ]) {
+    const out: any = await $.tool.call(waiveCall(detail))
+    expect(out.deny).toContain('an E2E waiver quotes the operator')
+  }
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('the date of a waiver is the day its quote was received', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  await world($, on, { git: CLEAN })
+  await typed($, SENTENCE)
+  await clock.advance(72 * 3600 * 1000)
+  const later = '« ' + SENTENCE + ' » — operator, 2026-11-05'
+  expect(((await $.tool.call(waiveCall(later))) as any).deny).toContain('an E2E waiver quotes the operator')
+  const received = '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY
+  expect(((await $.tool.call(waiveCall(received))) as any).deny).toBeUndefined()
+})
 
 test('auto-merge-set accepts a quote of the operator\'s typed words that names auto-merge in itself', async ($, on) => {
   const seen = await world($, on)
@@ -1586,6 +1720,25 @@ test('auto-merge-set refuses spans that name auto-merge only together or in the 
     expect(out.deny).toContain('github: auto-merge-set')
   }
   expect(seen.files).toEqual({})
+})
+
+test('a prompt typed while the session works, over a running turn, counts as typed', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { git: CLEAN })
+  const detail = '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY
+  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toContain('an E2E waiver quotes the operator')
+  await ($ as any).prompt.submit({ text: SENTENCE, origin: { kind: 'composer' }, wait: false, turnId: 'turn-1' })
+  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
+})
+
+test('a peer\'s message delivered into a running turn is not the operator\'s word', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { git: CLEAN })
+  await ($ as any).prompt.submit({ text: SENTENCE, origin: { kind: 'peer' }, wait: false, turnId: 'turn-1' })
+  const out: any = await $.tool.call(waiveCall('« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY))
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 // ---- leaving draft is the operator's outside auto-merge ----

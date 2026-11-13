@@ -1481,6 +1481,12 @@ function typedWords(text: string, quoting: Quoting): boolean {
   })
 }
 
+// An E2E waiver of a pull request: each quoted span names the waiver or the pull request.
+function waiverQuoting(pr: number): Quoting {
+  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|waiv|(?<![\\d])' + pr + '(?![\\d])', 'i')
+  return { dated: true, names: (span) => names.test(span), wholeBare: true }
+}
+
 // The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
 const CONSENT_READ = 200
 
@@ -1796,6 +1802,12 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
         : 'github: name the repository: {"repo": "owner/name"}',
     }
   }
+  if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
+    return {
+      deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
+        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
+    }
+  }
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
@@ -1920,7 +1932,7 @@ export function register(on: any): void {
         isDeferred: false,
         description:
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
-          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived with its dated reason. '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived. '
           + '{repo, exempt, paths?, labels?} exempts a repository\'s pull requests for good (false revokes) and '
           + 'quotes the operator\'s dated words, typed here or in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',

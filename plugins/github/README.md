@@ -239,7 +239,7 @@ The command is read as text and word by word with the shell's quotes removed (so
 a record with the Read tool passes. `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
-producer. A waiver gives its dated reason. Once a
+producer. The waiver's rule is in `engine/REFERENCE.md`, « Records ». Once a
 day at most, the start of a session prunes the head directories whose newest
 record is older than 90 days.
 
