@@ -65,8 +65,23 @@ const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|pass|pwd|api[_-]?ke
 /** A command-line option that takes a secret: `--password`, `--db-password`, `--token`, `--api-key`... */
 const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)`
 
+/** A blank between two words of one command, or an escaped newline that continues it. */
+const BLANK = String.raw`(?:[^\S\n]|\\\r?\n)`
+
+/**
+ * Where a command word starts: a word of its own (`docker exec db mysql`), or a path to it at the
+ * start of a command (`/usr/bin/mysql`); never the end of a path argument (`find /var/lib/mysql`).
+ */
+const COMMAND_START = String.raw`(?:(?<![^\s;&|(\x60"'])|(?<=(?:^|[;&|(\x60"'\n])[^\S\n]*(?:sudo[^\S\n]+)?[\w.~/-]*/))`
+
+/*
+ * The words between a command and its `-p`: escaped newlines included, never the end of the
+ * command, nor a `-p` already redacted, so a second pass finds nothing more to change.
+ */
+const OPTIONS = String.raw`(?:[^\s;&|\\]|\\[^\r\n]|${BLANK}(?!${BLANK}*-p\s*\[REDACTED))*?${BLANK}+-p`
+
 /** The short password options of the common clients: `mysql -pX` (attached), `sshpass -p X`, `docker login -p X`. */
-const PASSWORD_FLAG = String.raw`(\b(?:mysql\w*|mariadb[\w-]*)\b[^\n;&|]*?\s-p|\bsshpass\b[^\n;&|]*?\s-p\s*|\b(?:docker|podman)\s+login\b[^\n;&|]*?\s-p\s*)`
+const PASSWORD_FLAG = String.raw`(${COMMAND_START}(?:(?:mysql\w*|mariadb[\w-]*)(?![^\s;&|])${OPTIONS}|sshpass(?![^\s;&|])${OPTIONS}\s*|(?:docker|podman)${BLANK}+login(?![^\s;&|])${OPTIONS}\s*))`
 
 /** A mark this redaction left, alone in its quotes: a quoted value already redacted. */
 const MARK_ONLY = /^\[REDACTED:[a-z-]+\]$/

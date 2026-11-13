@@ -79,8 +79,8 @@ for, in order:
 3. `Authorization:` headers on their whole value, and `Bearer` / `Basic` credentials;
 4. credentials in a URL (`scheme://user:pass@`, `scheme://token@`) and secret query parameters;
 5. `curl -u user:pass`; `--password X`, `--token=X` and the like; `mysql -pX`, `sshpass -p X`,
-   `docker login -p X`; `KEY=value`, `KEY="a b"` or `key: value` where the key names a secret
-   (`token`, `secret`, `pass`, `pwd`, `api_key`, …);
+   `docker login -p X` (on the command word, across escaped newlines); `KEY=value`, `KEY="a b"`
+   or `key: value` where the key names a secret (`token`, `secret`, `pass`, `pwd`, `api_key`, …);
 6. high entropy: a run of `[A-Za-z0-9+=_-]` whose longest part between `-`, `_` and `.` is 20
    characters or more, with a letter and a digit and 3.5 bits per character, or both cases and
    4.1 bits. A canonical UUID is kept: it is how sessions are joined.

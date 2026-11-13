@@ -41,6 +41,11 @@ const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string
   ['password-flag', join('mysql -h db -', 'p', 'hun"ter"2x app'), 'ter'],
   ['password-flag', join('sshpass -', 'p ', "hun'ter'2x", ' ssh me@host'), '2x'],
   ['password-flag', join('docker login -u me -', 'p ', 'hun\\ ter2x registry.example'), 'ter2x'],
+  ['password-flag', join('mysql -u me \\\n  -', 'p', HUNTER, ' app'), HUNTER],
+  ['password-flag', join('sshpass \\\r\n  -', 'p ', HUNTER, ' ssh me@host'), HUNTER],
+  ['password-flag', join('docker login -u me \\\n  -', 'p ', HUNTER, ' registry.example'), HUNTER],
+  ['password-flag', join('mysql -', 'p', HUNTER, ' -e "select 1" -prompt x'), HUNTER],
+  ['password-flag', join('sshpass -', 'p ', HUNTER, ' ssh me@host -p 22'), HUNTER],
   ['secret-assignment', join('DB_', 'PASS=', HUNTER, ' make'), HUNTER],
   ['secret-assignment', join('MYSQL_', 'PWD=', HUNTER, ' mysql'), HUNTER],
   ['authorization', join('curl -H "Authorization: Digest ', HUNTER, ' and more" https://api.example.com'), 'and more'],
@@ -107,6 +112,18 @@ test('redaction is idempotent: a redacted text scans clean', () => {
     const once = redactText(text, secrets).text
     assert.deepEqual(redactText(once, secrets).hits, [], once)
   }
+})
+
+test('password-flag: a second pass changes nothing, so the export is never blocked by it', () => {
+  for (const [pattern, text] of SAMPLES.filter(([name]) => name === 'password-flag')) {
+    const once = redactText(text).text
+    assert.equal(redactText(once).text, once, `${pattern}: ${once}`)
+  }
+})
+
+test('password-flag: bound to the command word, not to a path ending in it', () => {
+  const line = 'find /var/lib/mysql -perm 600 -print -prune'
+  assert.equal(redactText(line).text, line)
 })
 
 test('the option forms keep what holds no secret', () => {

@@ -111,6 +111,21 @@ test('append: a secret assignment whose mark the cut drops is redacted again, so
   })
 })
 
+test('append: a password option after a line continuation is redacted, and the stored day passes check', () => {
+  withDir(dir => {
+    const secret = ['zq9', 'cont', 'value'].join('-')
+    const lines = [
+      event('2026-11-13T10:00:00Z', { bash: { line: `mysql -u me \\\n  -p${secret} app` } }),
+      event('2026-11-13T10:00:01Z', { bash: { line: 'find /var/lib/mysql -perm 600 -print -prune' } }),
+    ]
+    assert.deepEqual(append(dir, lines.join('\n'), new Map()).refused, [])
+    const stored = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8')
+    assert.ok(!stored.includes('zq9'), stored)
+    assert.ok(stored.includes('-print -prune'), stored)
+    assert.deepEqual(check(dir, new Map()), [])
+  })
+})
+
 test('check: a token planted in a nested identifier field, or a top-level one, is found', () => {
   withDir(dir => {
     append(dir, event('2026-11-13T10:00:00Z'), new Map())
