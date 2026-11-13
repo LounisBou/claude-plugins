@@ -72,19 +72,21 @@ are also held to their shape, replaced whole when they do not fit, and spared on
 guess; a nested field of the same name is plain text. Every string, at any depth, is scanned
 for, in order:
 
-1. the values of `~/.env` (8 characters or more) and any `KEY=value` of its keys;
+1. the values of `~/.env` (8 characters or more; a quoted value is what its quotes hold, a
+   comment after them dropped) and any `KEY=value` of its keys;
 2. private key blocks, and token shapes: GitHub, Anthropic, OpenAI, AWS, Slack, Google,
    Stripe, Telegram bot, npm, JWT;
-3. `Authorization:` headers and `Bearer` / `Basic` credentials;
+3. `Authorization:` headers on their whole value, and `Bearer` / `Basic` credentials;
 4. credentials in a URL (`scheme://user:pass@`, `scheme://token@`) and secret query parameters;
-5. `curl -u user:pass`; `--password X`, `--token=X` and the like; `KEY=value`, `KEY="a b"`
-   or `key: value` where the key names a secret (`token`, `secret`, `password`, `api_key`, …);
+5. `curl -u user:pass`; `--password X`, `--token=X` and the like; `mysql -pX`, `sshpass -p X`,
+   `docker login -p X`; `KEY=value`, `KEY="a b"` or `key: value` where the key names a secret
+   (`token`, `secret`, `pass`, `pwd`, `api_key`, …);
 6. high entropy: a run of `[A-Za-z0-9+=_-]` whose longest part between `-`, `_` and `.` is 20
    characters or more, with a letter and a digit and 3.5 bits per character, or both cases and
    4.1 bits. A canonical UUID is kept: it is how sessions are joined.
 
 Each match becomes `[REDACTED:<pattern>]`; the value never reaches a log, the terminal or a
-model.
+model. A field that is exactly one such mark scans clean, so a stored line passes `check`.
 
 ## Export
 
@@ -95,5 +97,7 @@ nothing names it in this repository. Unset, the export pushes nothing and says s
 Otherwise it runs `check` over every day file and refuses, naming file, line and pattern (never
 the value), when one finding remains; then it clones the repository into
 `<config>/telemetry/export/` (once, its `origin` set again to the variable's value at each run), copies the day files to `machines/<machine>/`, commits
-them and pushes to `main`, which the first push creates. Git's own output is redacted, the
-repository's address included, before it is printed.
+them and pushes to `main`, which the first push creates; a commit a refused push left behind is
+pushed by the next export. Git's own output is redacted, the
+repository's address included in each form git prints (without its credentials, without `.git`,
+its path), before it is printed.
