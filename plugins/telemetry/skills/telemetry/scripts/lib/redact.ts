@@ -69,19 +69,103 @@ const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d
 const BLANK = String.raw`(?:[^\S\n]|\\\r?\n)`
 
 /**
- * Where a command word starts: a word of its own (`docker exec db mysql`), or a path to it at the
- * start of a command (`/usr/bin/mysql`); never the end of a path argument (`find /var/lib/mysql`).
+ * The command words whose short `-p` takes a password; group 1 is set when the value is attached
+ * (`mysql -pX`). A word of its own (`docker exec db mysql`), or one after a `/`, which `commandStart`
+ * then holds to a path at the start of a command (`/usr/bin/mysql`, never `find /var/lib/mysql`).
  */
-const COMMAND_START = String.raw`(?:(?<![^\s;&|(\x60"'])|(?<=(?:^|[;&|(\x60"'\n])[^\S\n]*(?:sudo[^\S\n]+)?[\w.~/-]*/))`
+const PASSWORD_COMMAND = new RegExp(String.raw`(?<![^\s;&|(\x60"'/])(?:(mysql\w*|mariadb[\w-]*)|sshpass|(?:docker|podman)${BLANK}+login)(?![^\s;&|])`, 'g')
 
-/*
- * The words between a command and its `-p`: escaped newlines included, never the end of the
- * command, nor a `-p` already redacted, so a second pass finds nothing more to change.
+/** What may stand before a path that is the command itself: the start of a command, a `sudo`. */
+const COMMAND_HEAD = /(?<=(?:^|[;&|(\x60"'\n])[^\S\n]*(?:sudo[^\S\n]+)?)/y
+const PATH_CHAR = /[\w.~/-]/
+
+const BLANK_RUN = new RegExp(String.raw`${BLANK}+`, 'y')
+const REDACTED_FLAG = /-p\s*\[REDACTED/y
+const SPACES = /\s*/y
+// The value is one whole shell word: quoted and bare parts run together (`-phun"ter"2x`) are one secret.
+const FLAG_VALUE = /(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s"'\\;&|])+/y
+
+/**
+ * `mysql -pX`, `sshpass -p X`, `docker login -p X`: from the command word, the words of its command
+ * are read one by one, a quoted one whole, to the first `-p` that holds a value; never past the end
+ * of the command, nor past a `-p` already redacted, so a second pass finds nothing more to change.
+ * Linear: a word reached from a state where an earlier read found nothing is not read again.
  */
-const OPTIONS = String.raw`(?:[^\s;&|\\]|\\[^\r\n]|${BLANK}(?!${BLANK}*-p\s*\[REDACTED))*?${BLANK}+-p`
-
-/** The short password options of the common clients: `mysql -pX` (attached), `sshpass -p X`, `docker login -p X`. */
-const PASSWORD_FLAG = String.raw`(${COMMAND_START}(?:(?:mysql\w*|mariadb[\w-]*)(?![^\s;&|])${OPTIONS}|sshpass(?![^\s;&|])${OPTIONS}\s*|(?:docker|podman)${BLANK}+login(?![^\s;&|])${OPTIONS}\s*))`
+const passwordFlag: Pattern = {
+  name: 'password-flag',
+  apply: (text, mark) => {
+    PASSWORD_COMMAND.lastIndex = 0
+    let command = PASSWORD_COMMAND.exec(text)
+    if (command === null) return text
+    const n = text.length
+    // Linear: a candidate ends its path, so each path is read back once.
+    const commandStart = (index: number): boolean => {
+      if (text[index - 1] !== '/') return true
+      let from = index
+      while (from > 0 && PATH_CHAR.test(text[from - 1] ?? '')) from--
+      COMMAND_HEAD.lastIndex = from
+      return COMMAND_HEAD.test(text)
+    }
+    // One cell per position, word start or not and value attached or not: whether reading on from there finds nothing.
+    const dead = new Uint8Array(4 * (n + 1))
+    let closing: Int32Array | undefined
+    // Where the double quote opened just before `from` closes, an escaped character skipped; -1 when it never does.
+    const close = (from: number): number => {
+      if (closing === undefined) {
+        closing = new Int32Array(n + 2).fill(-1)
+        for (let i = n - 1; i >= 0; i--) closing[i] = text[i] === '"' ? i : text[i] === '\\' ? closing[i + 2] ?? -1 : closing[i + 1] ?? -1
+      }
+      return closing[from] ?? -1
+    }
+    const read = (from: number, attached: boolean): [number, number] | undefined => {
+      const seen: number[] = []
+      let pos = from
+      let wordStart = false
+      while (pos < n) {
+        const cell = 4 * pos + (wordStart ? 2 : 0) + (attached ? 1 : 0)
+        if (dead[cell] === 1) break
+        seen.push(cell)
+        const ch = text[pos]
+        if (ch === '\n' || ch === ';' || ch === '&' || ch === '|') break
+        BLANK_RUN.lastIndex = pos
+        if (BLANK_RUN.test(text)) {
+          pos = BLANK_RUN.lastIndex
+          wordStart = true
+          continue
+        }
+        if (wordStart && text.startsWith('-p', pos)) {
+          REDACTED_FLAG.lastIndex = pos
+          if (REDACTED_FLAG.test(text)) break
+          SPACES.lastIndex = pos + 2
+          const start = attached ? pos + 2 : (SPACES.test(text), SPACES.lastIndex)
+          FLAG_VALUE.lastIndex = start
+          if (FLAG_VALUE.test(text)) return [start, FLAG_VALUE.lastIndex]
+        }
+        wordStart = false
+        if (ch === '"' && close(pos + 1) !== -1) pos = close(pos + 1) + 1
+        else if (ch === "'" && text.indexOf("'", pos + 1) !== -1) pos = text.indexOf("'", pos + 1) + 1
+        else if (ch === '\\') {
+          if (pos + 1 >= n || text[pos + 1] === '\r' || text[pos + 1] === '\n') break
+          pos += 2
+        } else pos += 1
+      }
+      for (const cell of seen) dead[cell] = 1
+      return undefined
+    }
+    let out = ''
+    let kept = 0
+    while (command !== null) {
+      const found = commandStart(command.index) ? read(command.index + command[0].length, command[1] !== undefined) : undefined
+      if (found !== undefined) {
+        out += text.slice(kept, found[0]) + mark
+        kept = found[1]
+        PASSWORD_COMMAND.lastIndex = found[1]
+      }
+      command = PASSWORD_COMMAND.exec(text)
+    }
+    return out + text.slice(kept)
+  },
+}
 
 /** A mark this redaction left, alone in its quotes: a quoted value already redacted. */
 const MARK_ONLY = /^\[REDACTED:[a-z-]+\]$/
@@ -112,8 +196,7 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('authorization', /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)(?!\[REDACTED:[a-z-]+\]\s*(?:["'\r\n]|$))[^\s"'][^"'\r\n]*/gi, (_m, key, sep) => `${key}${sep}`),
   byRegex('bearer', /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, (_m, scheme) => `${scheme} `),
   byRegex('user-password', /(^|[\s;&|(])(-u\s*|--user(?:\s+|=))(?!\[REDACTED)("[^"]*:[^"]*"|'[^']*:[^']*'|[^\s"'-][^\s"']*:[^\s"']*)/g, (_m, before, flag) => `${before}${flag}`),
-  // The value is one whole shell word: quoted and bare parts run together (`-phun"ter"2x`) are one secret.
-  byRegex('password-flag', new RegExp(String.raw`${PASSWORD_FLAG}(?!\[REDACTED)(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s"'\\;&|])+`, 'g'), (_m, before) => before),
+  passwordFlag,
   byRegex('url-credentials', /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, (_m, scheme) => scheme),
   byRegex('url-secret', /([?&](?:access_token|token|key|api_key|apikey|secret|password|sig|signature|auth)=)[^&#\s"']+/gi, (_m, key) => key),
   byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),

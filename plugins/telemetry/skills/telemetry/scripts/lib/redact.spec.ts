@@ -46,6 +46,11 @@ const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string
   ['password-flag', join('docker login -u me \\\n  -', 'p ', HUNTER, ' registry.example'), HUNTER],
   ['password-flag', join('mysql -', 'p', HUNTER, ' -e "select 1" -prompt x'), HUNTER],
   ['password-flag', join('sshpass -', 'p ', HUNTER, ' ssh me@host -p 22'), HUNTER],
+  ['password-flag', join('mysql -e "select 1; select 2" -', 'p', HUNTER), HUNTER],
+  ['password-flag', join("mysql -e 'a|b' -", 'p', HUNTER), HUNTER],
+  ['password-flag', join('mysql -e "x \\" ; y" -', 'p', HUNTER), HUNTER],
+  ['password-flag', join('/usr/bin/mysql -', 'p', HUNTER), HUNTER],
+  ['password-flag', join('cd /tmp && sudo /usr/local/bin/mysql -', 'p', HUNTER), HUNTER],
   ['secret-assignment', join('DB_', 'PASS=', HUNTER, ' make'), HUNTER],
   ['secret-assignment', join('MYSQL_', 'PWD=', HUNTER, ' mysql'), HUNTER],
   ['authorization', join('curl -H "Authorization: Digest ', HUNTER, ' and more" https://api.example.com'), 'and more'],
@@ -122,8 +127,32 @@ test('password-flag: a second pass changes nothing, so the export is never block
 })
 
 test('password-flag: bound to the command word, not to a path ending in it', () => {
-  const line = 'find /var/lib/mysql -perm 600 -print -prune'
+  for (const line of ['find /var/lib/mysql -perm 600 -print -prune', 'ls x/y/mysql -print', 'echo /mysql/mysql -pfoo']) {
+    assert.equal(redactText(line).text, line)
+  }
+})
+
+test('password-flag: a separator outside quotes still ends the command', () => {
+  const line = 'mysql -e x; echo -pfoo'
   assert.equal(redactText(line).text, line)
+})
+
+test('password-flag: linear time, so no input stalls the hook', () => {
+  const inputs = [
+    'mysql '.repeat(20000),
+    join('mysql -u me ', '\\\n'.repeat(50000)),
+    join('mysql -u me ', '\\\n'.repeat(50000), '-', 'p', HUNTER),
+    join('sshpass ', '\\\n'.repeat(50000)),
+    'mysql "a" '.repeat(20000),
+    '/mysql'.repeat(20000),
+  ]
+  for (const input of inputs) {
+    const start = performance.now()
+    const out = redactText(input).text
+    const elapsed = performance.now() - start
+    assert.ok(elapsed < 200, `${input.slice(0, 20)}: ${Math.round(elapsed)} ms`)
+    assert.ok(!out.includes(HUNTER), input.slice(0, 20))
+  }
 })
 
 test('the option forms keep what holds no secret', () => {
