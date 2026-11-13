@@ -97,15 +97,6 @@ const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question
 
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
-const MALFORMED = 'Your last line is not the machine line: end the message with the line '
-  + 'waiting: operator — blocks: <what it blocks>, or with waiting: done, '
-  + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <n> items, '
-  + "as the message's last line, no markup. "
-  + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background. '
-  + DECLARE
-const DEFERRED_MALFORMED = 'Your last line is not the machine line: a deferred ending names what is deferred. '
-  + "End the message with the line waiting: deferred — <n> items, <n> the deferred rows and goals together, "
-  + `as the message's last line, no markup. ${DECLARE}`
 // The lines that fit a turn, by what will wake it: what the two refusals below name.
 const BUSY_FITS = 'An agent of yours is busy: end on no machine line, its idle notice wakes you.'
 const OTHER_FITS = 'If a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>; '
@@ -149,9 +140,6 @@ const IDS_WRONG = 'waiting: deferred — <ids> must name every deferred item (ro
 const NOTHING_DEFERRED = 'Nothing is deferred: no open row or goal carries the operator\'s ruling. '
   + 'If everything is finished, end on waiting: done.'
 const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
-// The presentation pass: the first done over a goals file's content shows the operator the
-// table, because whether a piece of evidence that exists is enough is his to judge.
-export const GOALS_SHOW = 'Show the operator this table, each goal with its evidence, then end on waiting: done again.'
 
 // Where the rows and the goals were read: the record files and goals.md files that hold them,
 // said in the refusal so a session sees whose file it is being asked about. Nothing is said
@@ -181,8 +169,6 @@ export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:\(urgent\)\s*)?(?:—|
 // recorded on each row and goal (dispatch-record.sh defer, goals … defer) and the line lists
 // them. It asks him nothing, so the relay never enters it.
 const DEFERRED_LINE = /^waiting:\s*deferred\s*(?:—|–|--|-)\s*(.+)$/i
-// The deferred line's first words, with or without its ids: without them it is malformed.
-const DEFERRED_WORD = /^waiting:\s*deferred\b/i
 export function deferredIds(line: string): string | null {
   const matched = DEFERRED_LINE.exec(line)
   return matched ? matched[1].trim() : null
@@ -207,7 +193,6 @@ export function blocksNothing(line: string): boolean {
 }
 // The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
 const HANDED_OVER = /^handed over$/i
-const LOOKS_DECLARED = /\bblocks\b\W*\w/i
 const MARKUP = /^[`*_ \t]+/g
 const MARKUP_END = /[`*_ \t]+$/g
 
@@ -530,10 +515,6 @@ export function checkWake(facts: {
   if (facts.agents.length > 0) {
     return { warn: 'idle-agents', detail: facts.agents.map(a => a.label).join(', ') }
   }
-  if (DEFERRED_WORD.test(last)) return { case: 'malformed-machine-line', reason: DEFERRED_MALFORMED }
-  if (last.toLowerCase().startsWith('waiting') && LOOKS_DECLARED.test(last)) {
-    return { case: 'malformed-machine-line', reason: MALFORMED }
-  }
   if (last.toLowerCase().startsWith('waiting:') || last.endsWith('?')) {
     return { case: 'question-without-blocks', reason: QUESTION }
   }
@@ -675,8 +656,6 @@ export type GoalsReading = {
   deferred: readonly string[]
   faults: readonly string[]
   notes: readonly string[]
-  rows: number
-  table: string
 }
 
 // goals.py check --json's answer, or null when the text is none: a reading the gate cannot
@@ -688,7 +667,6 @@ export function parseGoalsCheck(path: string, text: string): GoalsReading | null
     const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
     return {
       path, ok: a.ok, open: strings(a.open), deferred: strings(a.deferred), faults: strings(a.faults), notes: strings(a.notes),
-      rows: typeof a.rows === 'number' ? a.rows : 0, table: typeof a.table === 'string' ? a.table : '',
     }
   } catch {
     return null
@@ -735,27 +713,6 @@ export function goalsPaths(records: readonly string[]): string[] {
     if (path) seen.add(`${dirname(path)}/goals.md`)
   }
   return [...seen]
-}
-
-// The presentation pass's memory: one hash per goals.md content it showed, kept per session.
-export function goalsShownPath(stateDir: string, sessionId: string): string {
-  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
-  return `${stateDir}/stop-gate/${safe}.goals`
-}
-
-// The tell of the goals the operator was shown: every reading's table, hashed together.
-export function goalsTell(readings: readonly GoalsReading[]): string {
-  return logTell(readings.map(r => `${r.path}\n${r.table}`).join('\n').replace(/\n/g, ' '))
-}
-
-// The presentation refusal: the tables of every goals file with at least one goal, when
-// their content was not shown yet. Null when there is nothing to show or it was shown.
-export function presentGoals(readings: readonly GoalsReading[], shown: string): { tell: string; reason: string } | null {
-  const withRows = readings.filter(r => r.rows > 0)
-  if (withRows.length === 0) return null
-  const tell = goalsTell(withRows)
-  if (shown.split('\n').map(l => l.trim()).includes(tell)) return null
-  return { tell, reason: [GOALS_SHOW, ...withRows.map(r => `${r.path}\n${r.table}`)].join('\n\n') }
 }
 
 // --- the heads record (stop_gate.py:397-435) ----------------------------------------------

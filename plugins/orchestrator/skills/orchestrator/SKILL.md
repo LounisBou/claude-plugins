@@ -49,8 +49,8 @@ words.
    an arbitration, one at a time, in the method's question shape, through
    `orchestrator:decide`.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
-   blockers, deliveries and gate crossings: act on each. An agent's question for the
-   operator goes to him verbatim, his answer back verbatim. An agent reporting « waiting »
+   blockers, deliveries and gate crossings: act on each. An agent's question or stop is
+   yours to answer; only the operator's own goes to him. An agent reporting « waiting »
    has stalled: read its tree. Real load on a shared machine is stopped at once.
 7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you
    dispatch. An agent past the gate gets no new phase: rotate it. Your own succession is
