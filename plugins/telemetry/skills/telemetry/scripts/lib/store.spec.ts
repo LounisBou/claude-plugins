@@ -1,0 +1,71 @@
+// The store: validated, redacted, appended per UTC day; the scan finds what slipped past.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { append, check, dayFiles, parseEvent, scan } from './store.ts'
+
+const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
+const event = (ts: string, extra: Record<string, unknown> = {}): string => JSON.stringify({ v: 1, ts, event: 'tool_call', session: S, ...extra })
+const SECRET = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
+
+function withDir(work: (dir: string) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), 'telemetry-store-'))
+  try {
+    work(join(dir, 'events'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test('parseEvent: refuses what is no version 1 event', () => {
+  assert.equal(parseEvent('nope'), 'not JSON')
+  assert.equal(parseEvent('[1]'), 'not an object')
+  assert.equal(parseEvent('{"v":2}'), 'not version 1')
+  assert.equal(parseEvent('{"v":1,"event":"other"}'), 'unknown event')
+  assert.equal(parseEvent('{"v":1,"event":"tool_call","ts":"yesterday"}'), 'bad ts')
+  assert.equal(parseEvent(`{"v":1,"event":"tool_call","ts":"2026-11-13T00:00:00Z","session":"s"}`), 'bad session')
+  assert.equal(typeof parseEvent(event('2026-11-13T00:00:00Z')), 'object')
+})
+
+test('append: one file per UTC day, redacted before it is written, invalid lines refused', () => {
+  withDir(dir => {
+    const lines = [
+      event('2026-11-13T23:59:59.999Z', { bash: { line: `git push https://${SECRET}@forge.example/x.git` } }),
+      event('2026-11-14T00:00:00.000Z', { bash: { line: 'echo $API_PASS' }, note: 'value-of-the-env-file' }),
+      'garbage',
+      '',
+    ].join('\n')
+    const result = append(dir, lines, new Map([['API_PASS', 'value-of-the-env-file']]))
+    assert.deepEqual(result, { written: 2, refused: ['not JSON'] })
+    assert.deepEqual(dayFiles(dir), ['2026-11-13.jsonl', '2026-11-14.jsonl'])
+    const first = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8')
+    assert.ok(!first.includes(SECRET))
+    assert.ok(first.includes('https://[REDACTED:url-credentials]forge.example'))
+    assert.ok(readFileSync(join(dir, '2026-11-14.jsonl'), 'utf8').includes('"note":"[REDACTED:env]"'))
+    append(dir, event('2026-11-13T10:00:00Z'), new Map())
+    assert.equal(readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8').split('\n').length, 3)
+    assert.ok(!existsSync(join(dir, '2026-11-13.jsonl.lock')))
+    assert.deepEqual(check(dir, new Map([['API_PASS', 'value-of-the-env-file']])), [])
+  })
+})
+
+test('check: a secret planted in a day file is found, named by file, line and pattern', () => {
+  withDir(dir => {
+    append(dir, event('2026-11-13T10:00:00Z'), new Map())
+    appendFileSync(join(dir, '2026-11-13.jsonl'), `${event('2026-11-13T10:00:01Z', { bash: { line: `curl -H 'Authorization: Bearer ${SECRET}'` } })}\nnot json\n`)
+    writeFileSync(join(dir, 'notes.txt'), SECRET)
+    assert.deepEqual(check(dir, new Map()), [
+      { file: '2026-11-13.jsonl', line: 2, pattern: 'github-token' },
+      { file: '2026-11-13.jsonl', line: 2, pattern: 'authorization' },
+      { file: '2026-11-13.jsonl', line: 3, pattern: 'invalid (not JSON)' },
+    ])
+  })
+})
+
+test('scan: an invalid line holding a secret names the secret\'s pattern; an identifier out of shape is found', () => {
+  assert.deepEqual(scan('f', `oops ${SECRET}`, new Map()), [{ file: 'f', line: 1, pattern: 'github-token' }])
+  assert.deepEqual(scan('f', event('2026-11-13T10:00:00Z', { tool_use_id: 'has spaces' }), new Map()), [{ file: 'f', line: 1, pattern: 'identifier' }])
+  assert.deepEqual(dayFiles('/nonexistent/telemetry'), [])
+})

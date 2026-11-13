@@ -1,0 +1,94 @@
+// Each redaction pattern on a sample of its own, named by the mark it leaves: removing a pattern
+// fails its case. The samples are assembled at run time so no token shape sits in the source.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { entropy, ENV_VALUE_MIN, envPatterns, isHighEntropy, parseEnvFile, redactText, redactValue } from './redact.ts'
+
+const join = (...parts: string[]): string => parts.join('')
+const RANDOM = 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj'
+
+const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string])[] = [
+  ['private-key', `key: ${join('-----BEGIN ', 'RSA PRIVATE KEY-----\nMIIE', RANDOM, '\n-----END RSA PRIVATE KEY-----')}`, `MIIE${RANDOM}`],
+  ['github-token', `push with ${join('gh', 'p_', RANDOM, 'abcd')}`, join('gh', 'p_', RANDOM, 'abcd')],
+  ['github-token', `pat ${join('github', '_pat_', RANDOM, '_', RANDOM)}`, RANDOM],
+  ['anthropic-key', `export it ${join('sk-', 'ant-', 'api03-', RANDOM)}`, RANDOM],
+  ['openai-key', `the key ${join('sk-', 'proj-', RANDOM)}`, RANDOM],
+  ['aws-key', `aws ${join('AK', 'IA', 'Q7LM2XP9RZ4KW8NV')} here`, join('AK', 'IA', 'Q7LM2XP9RZ4KW8NV')],
+  ['slack-token', `slack ${join('xo', 'xb-', '1234567890-', 'abcdefABCDEF')}`, join('xo', 'xb-', '1234567890-', 'abcdefABCDEF')],
+  ['google-key', `maps ${join('AI', 'za', RANDOM, 'abcdef')}`, RANDOM],
+  ['stripe-key', `pay ${join('sk', '_live_', RANDOM)}`, RANDOM],
+  ['telegram-token', `bot ${join('123456789', ':', 'AAH', RANDOM)} ok`, join('AAH', RANDOM)],
+  ['npm-token', `npm ${join('np', 'm_', RANDOM)}`, RANDOM],
+  ['jwt', `jwt ${join('ey', 'JhbGciOiJIUzI1NiJ9', '.', 'eyJzdWIiOiIxMjM0In0', '.', 'sig_nature_value')}`, 'eyJzdWIiOiIxMjM0In0'],
+  ['authorization', 'curl -H "Authorization: token s3cr3t-value" https://api.example.com', 's3cr3t-value'],
+  ['bearer', 'curl -H "X-Auth: Bearer abc.def.ghi-123456" x', 'abc.def.ghi-123456'],
+  ['url-credentials', 'git clone https://someone:hunter2hunter2@git.example.com/a.git', 'hunter2hunter2'],
+  ['url-credentials', 'git clone https://tokenvalue12345@git.example.com/a.git', 'tokenvalue12345'],
+  ['url-secret', 'fetch https://api.example.com/v1?access_token=opensesame99&page=2', 'opensesame99'],
+  ['secret-assignment', 'DB_PASSWORD=correcthorse psql', 'correcthorse'],
+  ['secret-assignment', '{"client_secret": "shhh-not-for-you"}', 'shhh-not-for-you'],
+  ['entropy', `the value ${RANDOM} stays out`, RANDOM],
+]
+
+for (const [pattern, text, secret] of SAMPLES) {
+  test(`${pattern}: ${text.slice(0, 40)}`, () => {
+    const out = redactText(text)
+    assert.ok(out.text.includes(`[REDACTED:${pattern}]`), `${pattern} left no mark: ${out.text}`)
+    assert.ok(!out.text.includes(secret), `the secret survived: ${out.text}`)
+  })
+}
+
+test('env: every value of the env file, and every assignment of its keys', () => {
+  const secrets = parseEnvFile('# comment\nexport API_HOST_PASS="pa ss word 1"\nSHORT=yes\nREPO=git@forge.example:me/logs.git\n')
+  const out = redactText('ssh git@forge.example:me/logs.git then API_HOST_PASS=other and "pa ss word 1"; SHORT=yes', secrets)
+  assert.equal(out.text, 'ssh [REDACTED:env] then [REDACTED:env] and "[REDACTED:env]"; SHORT=yes')
+  assert.deepEqual(out.hits, ['env', 'env'])
+})
+
+test('env: a value shorter than the floor is kept, so common words survive', () => {
+  assert.equal(ENV_VALUE_MIN, 8)
+  assert.equal(envPatterns(new Map([['FLAG', 'true']])).length, 0)
+  assert.equal(redactText('it is true', new Map([['FLAG', 'true']])).text, 'it is true')
+})
+
+test('parseEnvFile: quotes, export, inline comments and junk lines', () => {
+  const env = parseEnvFile("A=1\nexport B='two words'\nC=three # note\nnot a line\n=x\n")
+  assert.deepEqual([...env], [['A', '1'], ['B', 'two words'], ['C', 'three']])
+})
+
+test('entropy: words, model ids, paths, branches and uuids are kept', () => {
+  for (const kept of [
+    'claude-opus-5-5-20251101', 'ORCHESTRATOR_CONTEXT_GATE_TOKENS', 'isSpawnedSessionWithoutName', 'feat-telemetry-2026-11-13',
+    'experimentalStripTypesNoWarnings', '60ed5626-9879-4041-892a-5db0ff0bad69', 'test_coverage_lines_85_branches',
+  ]) assert.equal(isHighEntropy(kept), false, kept)
+  assert.equal(redactText('/Users/me/dev/workspaces/claude-plugins/telemetry').hits.length, 0)
+})
+
+test('entropy: random runs with digits, or with both cases, are caught', () => {
+  assert.equal(isHighEntropy(RANDOM), true)
+  assert.equal(isHighEntropy('xKmPqRvTwZnBcFaaGhJk'), true)
+  assert.equal(isHighEntropy('a3f9c2e1b7d4058e6f2a9c1b3e5d7f0a'), true)
+  assert.ok(entropy('aaaa') === 0)
+})
+
+test('redaction is idempotent: a redacted text scans clean', () => {
+  const secrets = parseEnvFile('TOKEN_X=abcdefgh12345678\n')
+  for (const [, text] of SAMPLES) {
+    const once = redactText(text, secrets).text
+    assert.deepEqual(redactText(once, secrets).hits, [], once)
+  }
+})
+
+test('redactValue: identifiers held to their shape, every other string scanned, other values kept', () => {
+  const event = {
+    v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69',
+    tool_use_id: 'toolu_01AbCdEfGhIjKlMnOpQrStUv', agent: 'not an id!', count: 3, ok: true, none: null,
+    bash: { line: `echo ${RANDOM}`, heads: ['echo', RANDOM] },
+  }
+  const { value, hits } = redactValue(event, new Map())
+  assert.deepEqual(value, {
+    ...event, agent: '[REDACTED:identifier]',
+    bash: { line: 'echo [REDACTED:entropy]', heads: ['echo', '[REDACTED:entropy]'] },
+  })
+  assert.deepEqual(hits, ['identifier', 'entropy', 'entropy'])
+})

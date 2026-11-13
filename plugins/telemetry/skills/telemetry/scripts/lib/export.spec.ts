@@ -1,0 +1,90 @@
+// The export against a real git repository made in a scratch directory: unset, it pushes nothing;
+// a planted secret refuses it; otherwise the first push creates main and the next adds to it.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { exportStore, logsRepo, machineName, safeOutput, type Git } from './export.ts'
+import { append, eventsDir } from './store.ts'
+
+const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
+const event = (ts: string, extra: Record<string, unknown> = {}): string => JSON.stringify({ v: 1, ts, event: 'turn_end', session: S, ...extra })
+const SECRET = ['sk-', 'ant-', 'api03-', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj'].join('')
+const ENV = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' }
+
+const git: Git = (args, cwd) => {
+  const r = spawnSync('git', [...args], { cwd, encoding: 'utf8', env: { ...process.env, ...ENV, HOME: cwd ?? tmpdir() } })
+  return { status: r.status ?? 1, stdout: r.stdout, stderr: r.stderr }
+}
+
+function scratch(work: (root: string, remote: string) => void): void {
+  const root = mkdtempSync(join(tmpdir(), 'telemetry-export-'))
+  try {
+    const remote = join(root, 'logs.git')
+    assert.equal(git(['init', '--quiet', '--bare', remote], root).status, 0)
+    work(root, remote)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+test('unset: the events stay local and the export says so in one line', () => {
+  scratch(root => {
+    const result = exportStore({ stateDir: join(root, 'state'), secrets: new Map(), repo: undefined, machine: 'm', git })
+    assert.equal(result.code, 0)
+    assert.equal(result.lines.length, 1)
+    assert.match(result.lines[0] ?? '', /CLAUDE_LOGS_REPO is not set; the events stay local in .*, nothing pushed/)
+  })
+})
+
+test('a planted secret refuses the export, naming file, line and pattern but never the value', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    appendFileSync(join(eventsDir(state), '2026-11-13.jsonl'), `${event('2026-11-13T10:00:01Z', { note: SECRET })}\n`)
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'm', git })
+    assert.equal(result.code, 1)
+    assert.deepEqual(result.lines, ['export refused: 1 secret(s) found in the store, nothing pushed', '  2026-11-13.jsonl:2: anthropic-key'])
+    assert.ok(!result.lines.join('\n').includes(SECRET))
+    assert.notEqual(git(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], remote).status, 0)
+  })
+})
+
+test('the first export creates main; a second adds the new day; a third has nothing to push', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git })
+    assert.deepEqual(run().lines, ['export: no event recorded yet, nothing pushed'])
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    assert.deepEqual(run(), { lines: ['export: 1 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-13.jsonl'], remote).stdout, `${event('2026-11-13T10:00:00Z')}\n`)
+    append(eventsDir(state), event('2026-11-14T10:00:00Z'), new Map())
+    assert.equal(run().code, 0)
+    assert.equal(git(['rev-list', '--count', 'main'], remote).stdout.trim(), '2')
+    assert.deepEqual(run().lines, ['export: the logs repository already holds every event, nothing pushed'])
+  })
+})
+
+test('a failing clone is reported with the repository\'s address hidden', () => {
+  scratch(root => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const missing = join(root, 'nowhere', 'logs.git')
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: missing, machine: 'm', git })
+    assert.equal(result.code, 1)
+    assert.match(result.lines[0] ?? '', /^export failed at clone \(git exit \d+\): /)
+    assert.ok(!result.lines.join('\n').includes(missing))
+  })
+})
+
+test('the repository is the environment\'s, else the env file\'s; machine names; safe output', () => {
+  assert.equal(logsRepo({ CLAUDE_LOGS_REPO: 'a' }, new Map([['CLAUDE_LOGS_REPO', 'b']])), 'a')
+  assert.equal(logsRepo({}, new Map([['CLAUDE_LOGS_REPO', 'b']])), 'b')
+  assert.equal(logsRepo({ CLAUDE_LOGS_REPO: '' }, new Map()), undefined)
+  assert.equal(machineName('Mac-Studio.local'), 'Mac-Studio')
+  assert.equal(machineName('my box'), 'my-box')
+  assert.equal(machineName('...'), 'machine')
+  assert.equal(safeOutput(`fatal: ${'https://forge.example/me/logs.git'} denied ${SECRET}`, 'https://forge.example/me/logs.git', new Map()), 'fatal: <logs repository> denied [REDACTED:anthropic-key]')
+})
