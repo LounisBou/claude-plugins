@@ -108,6 +108,8 @@ function parseWords(words: string[], valued: string[]): Parsed {
     }
     if (word.startsWith('-') && word !== '-') {
       if (valued.includes(word)) out.opts.push([word, words[++k]])
+      // A short valued flag joined to its value (`-Flabels[]=@f`, `-XPATCH`) is read as gh does.
+      else if (/^-[^-]./.test(word) && valued.includes(word.slice(0, 2))) out.opts.push([word.slice(0, 2), word.slice(2)])
       else out.opts.push([word, undefined])
       continue
     }
@@ -255,7 +257,6 @@ function apiAct(argv: string[]): Act | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const base = { name: 'gh api graphql', unnamed: true }
@@ -332,6 +333,116 @@ export function toolAct(command: string, args: Record<string, unknown>): Act | u
   }
   if (command === 'pr-create') return { kind: args.draft === false ? 'create' : 'create-draft', name: command }
   return undefined
+}
+
+// ---- labels put on or taken off ----
+
+// A label put on, taken off, renamed or deleted, as far as the command shows it: the names it
+// moves, or opaque when it may move any (a body read from a file, every label of a pull request
+// deleted, a GraphQL query). repo: owner/name as the command names it, when it does.
+export type Labelling = { name: string; repo?: string; labels: string[]; opaque?: boolean }
+
+const LABEL_VALUED = ['-n', '--name', '-c', '--color', '-d', '--description']
+const ONE_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/\d+\/labels\/([^/?]+)\/?$/
+const REPO_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/labels\/([^/?]+)\/?$/
+const LABEL_MUTATION = /\b(addLabelsToLabelable|removeLabelsFromLabelable|clearLabelsFromLabelable|updateLabel|deleteLabel)\b/
+
+const splitLabels = (list: string[]): string[] => list.flatMap((value) => value.split(',')).map((label) => label.trim()).filter((label) => label !== '')
+
+function decoded(part: string): string {
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    return part
+  }
+}
+
+// What one gh command does to labels: gh pr|issue edit and create, gh label, gh api.
+function ghLabelling(argv: string[]): Labelling | undefined {
+  if (argv[1] === 'api') return apiLabelling(argv)
+  let k = 1
+  const named: number[] = []
+  while (k < argv.length && named.length < 2) {
+    const word = argv[k]
+    if (word === '-R' || word === '--repo') { k += 2; continue }
+    if (word.startsWith('-')) { k++; continue }
+    named.push(k++)
+  }
+  if (named.length < 2) return undefined
+  const noun = argv[named[0]]
+  const verb = argv[named[1]]
+  const words = argv.filter((_w, i) => i > 0 && i !== named[0] && i !== named[1])
+  const name = 'gh ' + noun + ' ' + verb
+  if (noun === 'label') {
+    if (verb !== 'edit' && verb !== 'delete' && verb !== 'clone') return undefined
+    const parsed = parseWords(words, LABEL_VALUED)
+    const repo = parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}
+    // A clone copies the labels of another repository, any of them.
+    if (verb === 'clone') return { name, ...repo, labels: [], opaque: true }
+    return { name, ...repo, labels: [...parsed.positionals.slice(0, 1), ...values(parsed, '-n', '--name')] }
+  }
+  if (noun !== 'pr' && noun !== 'issue') return undefined
+  const parsed = parseWords(words, VALUED[verb] ?? [])
+  const labels = verb === 'edit' ? splitLabels(values(parsed, '--add-label', '--remove-label'))
+    : verb === 'create' ? splitLabels(values(parsed, '-l', '--label')) : []
+  if (labels.length === 0) return undefined
+  return { name, ...(parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}), labels }
+}
+
+// What one gh api command does to labels: a write on a pull request's labels, on the pull request
+// itself naming labels, on a label of the repository, or a GraphQL label mutation.
+function apiLabelling(argv: string[]): Labelling | undefined {
+  const parsed = parseWords(argv.slice(2), API_VALUED)
+  const endpoint = parsed.positionals[0]
+  if (endpoint === undefined) return undefined
+  const fields = apiFields(parsed)
+  const input = has(parsed, '--input')
+  const explicit = values(parsed, '-X', '--method')[0]
+  const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
+  if (GRAPHQL.test(endpoint)) {
+    const query = inlineQuery(parsed, fields)
+    return query === undefined || LABEL_MUTATION.test(query) ? { name: 'gh api graphql', labels: [], opaque: true } : undefined
+  }
+  if (method === 'GET' || method === 'HEAD') return undefined
+  const path = endpoint.replace(API_HOST, '')
+  const at = (match: RegExpExecArray, labels: string[], opaque = false): Labelling =>
+    ({ name: 'gh api', repo: match[1] + '/' + match[2], labels, ...(opaque ? { opaque } : {}) })
+  const naming = (prefix: string) => fields.filter((field) => field.name.startsWith(prefix))
+  const named = (prefix: string) => naming(prefix).flatMap((field) => labelsIn(field.value))
+  // A -F value `@file` is read from the file: its labels are not on the line.
+  const unread = (...prefixes: string[]) => input || prefixes.some((prefix) => naming(prefix).some((field) => field.typed && field.value.startsWith('@')))
+  const one = ONE_LABEL_PATH.exec(path) ?? REPO_LABEL_PATH.exec(path)
+  if (one) return at(one, [decoded(one[3]), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
+  const all = LABELS_PATH.exec(path)
+  if (all) return at(all, named('labels'), unread('labels') || method === 'DELETE')
+  const issue = ISSUE_PATH.exec(path)
+  if (issue && method === 'PATCH' && (input || named('labels').length > 0)) return at(issue, named('labels'), unread('labels'))
+  return undefined
+}
+
+// The engine's own label commands run from Bash.
+function engineLabelling(call: EngineCall): Labelling | undefined {
+  if (call.command !== 'label-add' && call.command !== 'label-remove') return undefined
+  const rest = /^#?\d+$/.test(call.positionals[0] ?? '') ? call.positionals.slice(1) : call.positionals
+  return { name: 'gh.py ' + call.command, ...(call.repo ? { repo: repoOf(call.repo) ?? call.repo } : {}), labels: splitLabels(rest) }
+}
+
+// Every labelling of a Bash command line, read word by word as bashActs reads its acts.
+export function bashLabellings(line: string): Labelling[] {
+  const found: Labelling[] = []
+  for (const argv of simpleCommands(line)) {
+    const engine = engineCall(argv)
+    const labelling = engine ? engineLabelling(engine) : GH.test(argv[0] ?? '') ? ghLabelling(argv) : undefined
+    if (labelling) found.push(labelling)
+  }
+  return found
+}
+
+// The labelling of a call of the tool: label-add and label-remove.
+export function toolLabelling(command: string, args: Record<string, unknown>): Labelling | undefined {
+  if (command !== 'label-add' && command !== 'label-remove') return undefined
+  const named = [args.label, args.names, args.name].flatMap((v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]))
+  return { name: command, labels: splitLabels(named.map(String)) }
 }
 
 // ---- pushes ----
@@ -463,7 +574,8 @@ export function reviewAcceptedOver(gate: Gate, files: RecordFile[]): string | un
 
 // What a pull request misses to be ready at its head: the four conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string): string[] {
+// e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -473,6 +585,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
   for (const kind of KINDS) {
     const record = latest.get(kind)
     if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
+    if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
     else if (isAcceptance(record)) {
@@ -592,9 +705,11 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
 // accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string): string {
+// e2eExempt: the exemption that stood for its E2E, named.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, passed E2E and green CI hold at its head.'
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, '
+    + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head.'
 }
 
 export function reviewAcceptedLine(file: string): string {

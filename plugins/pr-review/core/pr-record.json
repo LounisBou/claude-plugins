@@ -10,9 +10,11 @@
     "pass",
     "fail",
     "waived",
+    "not-applicable",
     "accepted"
   ],
   "waivable": "e2e",
+  "not_applicable": "e2e",
   "acceptance": {
     "result": "accepted",
     "kind": "review",

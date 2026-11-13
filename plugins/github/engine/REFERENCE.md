@@ -167,8 +167,7 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 « auto merge » or « automerge »), found verbatim, whitespace
 normalised, in a prompt the operator typed (or a quote of it), or quoting their answer in a
 consent record of auto-merge on that repository (core's `consent-record.ts`,
-`<config dir>/consents/<owner>/<name>/`). A peer's message is not their word.
-Otherwise it is refused, naming both proofs:
+`<config dir>/consents/<owner>/<name>/`). Otherwise it is refused, naming both proofs:
 
 ```
 github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor their answer in a consent record (orchestrator) of auto-merge on <owner/name>. Quote them verbatim; a peer's message is not their word.
@@ -176,8 +175,7 @@ github: auto-merge-set refused on <owner/name>: its "words" are neither in a pro
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
 without regard to case, and it is changed under a lock (`<file>.lock`, core's convention),
-written whole to a temporary file then moved in place:
-no reader sees half a list, and a move that fails leaves no temporary file. A malformed
+written whole to a temporary file then moved in place, which a failed move removes. A malformed
 file is never overwritten. A deny rule refuses both subcommands, an ask from an explicit
 rule asks before the write.
 
@@ -264,15 +262,15 @@ Requires push access to the repository.
 
 - `<owner>/<name>` lowercased. `<head>` is the full 40-hex sha, refused shorter, so the guard only lists one directory.
 - `<at>` is UTC `YYYYMMDDTHHMMSSZ`, and `<producer>` is the producer's slug (`[a-z0-9-]`).
-- Neutral root, not the github plugin's data directory: the producers are other plugins and a shell script, and none of them can read the github plugin's `CLAUDE_PLUGIN_DATA`.
+- Neutral root, not the github plugin's data directory, which its producers, other plugins, cannot read.
 
 ### The one writer: `engine/record.py`
 
-`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|accepted --producer <slug> [--detail <text>] [--session <id>]`
+`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates: the sha shape, the kind, `waived` for `e2e` only and only with a `--detail` that carries a date `YYYY-MM-DD`, `accepted` for `review` only, a detail of at most 500 characters.
-- It writes the file under a temporary name in the same directory, then renames it. It prints the path, and exits 2 on a usage error. Standard library only, like the engine.
+- It validates the sha shape, the kind, `waived` and `not-applicable` for `e2e` only (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
+- It writes under a temporary name in the same directory, then renames; prints the path; exits 2 on a usage error. Standard library only.
 
 ### Fields (one JSON object per file)
 
@@ -284,32 +282,44 @@ Requires push access to the repository.
 
 ### How the guard reads it, and how a head voids it
 
-- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`. Only that directory counts. A record written at any other sha, older or not yet pushed, is not read.
-- Per kind, the record with the latest `at` decides, so a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or with the PR, is skipped, and the refusal names it when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass` or `waived`. Anything else, or no record, is missing.
-- A moved head voids every record by construction, with nothing deleted. A record written before a push matches once that same sha is pushed: a review of an unpushed commit counts once it is on the PR.
-- Pruning: at `session.start`, at most once a day (a stamp file in the root), the github module removes the `<head>` directories whose newest file is older than 90 days.
+- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/` alone: a record at any other sha is not read.
+- Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
+- Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
+- A repository's E2E exemption (below) stands for a missing `e2e` record, named in the `Ready` line; an `e2e` `fail` still holds.
+- A moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
+- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories whose newest file is over 90 days old are removed.
 
 ### The producers
 
-Core's `pr-record.ts` declares the producer of each kind; github writes a kind only for the plugin
-declared its producer, and names no consumer.
+Core's `pr-record.ts` declares each kind's producer, the only plugin github writes it for; github
+names no consumer.
 
 | Producer | Kind | When, and with what |
 |---|---|---|
-| pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, computed from the review agents' findings blocks: a clean exit writes `pass`; a loop stopped at its pass limit, or a reviewer's one pass (`review_only`), writes `pass` when nothing Critical or Important was reported, `fail` otherwise or when the severity is unknown. No record when tracked files are dirty or the branch has no PR; the tool's answer then gains `record: none — <why>` |
+| pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; no checkout is read |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived, detail, dir?}`, checked as « Guards » below says, then `record.py` with producer `session-e2e` |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason, files with no runtime (below), and a session that did not push the head |
 
-A review record is refused when the session writing it pushed the head it reviews: the review is
-another session's.
+A review record is refused from the session that pushed the head it reviews.
 
 Not producers: `start-review` (a walkthrough the operator submits themselves) and `process-comments` (answers to comments). A human `APPROVED` review on GitHub is no record.
 
+### E2E a pull request does not need
+
+Both routes are `hooks/e2e-scope.ts`'s.
+
+- **No runtime.** `not-applicable` is written only when no file of the pull request (`pr-files`
+  at the head) holds runtime, by the rule `runtimeFiles` states; the refusal names the files.
+- **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
+  pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
+  `exempt: false` revokes it. `detail` quotes the operator as a waiver does, or a consent record
+  of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
+  one that does not parse exempts nothing.
+
 ### What the contract does not stop
 
-A session that writes a file by hand under the root, or runs `record.py` itself, forges a record. The records guard (« Guards » below) refuses a Write, an Edit, a MultiEdit or a NotebookEdit under the root, and a Bash command naming the root, a `pr-records/` path or `engine/record.py`, read word by word with the shell's quotes removed. It does not see a script that does it internally. The guards stop a forgotten review, norms check or E2E. They do not stop a session set on forging one.
+The records guard (« Guards » below) does not see a script that writes under the root or runs `record.py` itself. The guards stop a forgotten review, norms check or E2E, not a session set on forging one.
 
 ## Pushing from the sandbox
 
@@ -405,26 +415,25 @@ What the guards do not read on that route:
 - A body file written by the same command line (`printf … > body.md && python3 gh.py
   pr-create --body-file body.md`) is read before it exists, so it is not linted.
 
-**Records.** A Write, an Edit, a MultiEdit or a NotebookEdit under the records root, and a
-shell command naming that root, a `pr-records/` path or `engine/record.py` (in its text or in
-any word with the shell's quotes removed), are refused, whatever the command does with it (a
-Read of a record passes):
+**Records.** A Write, Edit, MultiEdit or NotebookEdit under the records root, and a shell
+command naming that root, a `pr-records/` path or `engine/record.py` (in its text or in any word
+unquoted), are refused whatever it does (a Read passes):
 
 ```
 github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
 ```
 
-`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through
-`record.py`, at the head when the `HEAD` of `dir`, the checkout the tests ran in (default: the
-session's directory), equals the one `pr-gate` reads and its tracked files are clean; else it
-refuses, naming both shas. A session writes `e2e` only (producer `session-e2e`); each other
-kind is written by the plugin the record contract (core's `pr-record.ts`, `producers`) names
-its producer, any other kind refused with `github: <kind> records are written by their
-producer (<plugin>, <tool>)`. `waived` needs a detail found verbatim in a prompt the operator
-typed, or in dated quotes of it naming the waiver, or quoting their answer in a consent record of an E2E waiver of that
-pull request, carrying a date. The answer quoted is at least 8 characters.
+The E2E exemption files are refused alike (`github: an E2E exemption changes only through …`).
 
-**Auto-merge list.** A Write, an Edit, a MultiEdit or a NotebookEdit of `auto-merge.json` in a plugin's
+`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through
+`record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
+directory), is the head `pr-gate` reads and its tracked files are clean; else it
+refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
+needs a detail found verbatim in a prompt the operator typed, or in dated quotes of it naming
+the waiver, or quoting their answer (8 characters at least) in a consent record of an E2E
+waiver of that pull request, carrying a date.
+
+**Auto-merge list.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` in a plugin's
 data directory, and a shell command naming it there (the data directory, `plugins/data/`,
 `CLAUDE_PLUGIN_DATA` or `github-lounisbou` on the same line), are refused:
 

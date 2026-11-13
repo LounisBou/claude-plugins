@@ -41,7 +41,7 @@ export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { err
   const consent = e.consent === undefined ? undefined : parseConsentSubject(e.consent)
   if (e.consent !== undefined && kind !== 'operator') return { error: 'only an operator question asks consent' }
   if (e.consent !== undefined && consent === undefined) {
-    return { error: 'consent is {"kind": "e2e-waiver", "repo": "owner/name", "pr": <n>} or {"kind": "auto-merge", "repo": "owner/name"}' }
+    return { error: 'consent is {"kind": "e2e-waiver", "repo": "owner/name", "pr": <n>}, or {"kind": "e2e-exemption" or "auto-merge", "repo": "owner/name"}' }
   }
   const blocks = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   if (kind === 'done') return { wait: { kind, blocks: '' } }
@@ -97,8 +97,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
-          + 'An operator question that asks his consent to waive E2E on a pull request, or to put a repository in or out of auto-merge, '
-          + 'names it in consent: {kind: "e2e-waiver", repo, pr} or {kind: "auto-merge", repo}; his answer is then recorded as that consent. '
+          + 'An operator question that asks his consent to waive E2E on a pull request, to exempt a repository from E2E, or to put it in or out of auto-merge, '
+          + 'names it in consent: {kind: "e2e-waiver", repo, pr}, {kind: "e2e-exemption", repo} or {kind: "auto-merge", repo}; his answer is then recorded as that consent. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
           type: 'object',
