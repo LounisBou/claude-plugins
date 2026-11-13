@@ -824,20 +824,14 @@ test('a call the classifier refused because the hook rewrote it did not run: the
   expect(stubs.records[0].detail).toBe('clean at pass 1, 1 review agents reporting no finding')
 })
 
-test('the hook rewrites a review call once: the reissued input comes back unchanged', async ($, on) => {
-  const stubs: Stubs = { records: [], prCalls: 0, prompts: [], launches: [] }
-  stubs.agent = (e: any) => {
-    stubs.launches?.push(e.run_in_background)
-    return { result: e.answer }
-  }
+test('a review call issued twice with the same input reaches the agent unchanged both times', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
   wireRecord(on, stubs)
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
   await review($, [])
-  const once = String(stubs.prompts?.[0])
-  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: once, run_in_background: false, answer: agentAnswer([]) } as any)
-  expect(stubs.prompts?.[1]).toBe(once)
-  expect(once.split(REPORT_REQUEST).length).toBe(2)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: false, answer: agentAnswer([]) } as any)
+  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST, 'review the diff' + REPORT_REQUEST])
 })
 
 // ── the hook never changes a reader's input: auto mode refuses a call a hook rewrote ──
