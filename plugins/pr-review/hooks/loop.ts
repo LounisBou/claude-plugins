@@ -255,6 +255,14 @@ export const LOOP_SCHEMA = {
 const RECORD_TOOL = 'mcp__github__record'
 const NO_GITHUB = 'the github plugin 0.12.0 or later is not available'
 
+// What GitHub's own answer says when the failure is its side's and passes: a 5xx, a timeout, a
+// connection that dropped. A 4xx (a permission, a missing pull request) is not one.
+const TRANSIENT = /\bHTTP 5\d\d\b|\b5\d\d (?:internal server error|bad gateway|service unavailable|gateway time-?out)\b|\b(?:internal server error|bad gateway|service unavailable|gateway time-?out)\b|timed? ?out|timeout|connection (?:reset|refused|aborted|closed)|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|EAI_AGAIN|temporarily unavailable/i
+export const isTransient = (text: string): boolean => TRANSIENT.test(text)
+
+// The pauses, in seconds, before each new attempt of a github call that failed transiently.
+const RETRY_PAUSES = ['0.5', '1', '2']
+
 // owner/name from an origin URL, ssh or https.
 function repoOf(url: string): string | undefined {
   const m = url.trim().match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/)
@@ -281,6 +289,30 @@ const textOf = (answer: any): string => String(answer?.result ?? answer?.text ??
 
 const git = ($: any, argv: string[]) => $.process.run(['git', ...argv], { timeoutMs: 10_000 })
 
+// A call to a github tool, asked again after a pause while it fails transiently; a refusal that is
+// not transient is the answer at once. The last answer, or the last error thrown, once the pauses
+// are spent.
+async function github($: any, call: Record<string, unknown>): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    let answer: any
+    let failure: string
+    let thrown: unknown
+    try {
+      answer = await $.tool.call(call)
+      if (!(answer?.deny || answer?.isError)) return answer
+      failure = textOf(answer)
+    } catch (err: any) {
+      thrown = err
+      failure = String(err?.message ?? err)
+    }
+    if (!isTransient(failure) || attempt >= RETRY_PAUSES.length) {
+      if (thrown !== undefined) throw thrown
+      return answer
+    }
+    await $.process.run(['sleep', RETRY_PAUSES[attempt]], { timeoutMs: 10_000 })
+  }
+}
+
 // The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
 // head (a review checkout) names no branch, and the open pull request whose head is its commit is
 // the one, never one of several. The number, or the line that says why there is none.
@@ -289,7 +321,7 @@ async function pullOf($: any, repo: string): Promise<number | string> {
   const branch = String(branchRun.stdout ?? '').trim()
   if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
   if (branch !== 'HEAD') {
-    const found = await $.tool.call({ tool: GH_TOOL, command: 'pr-get', args: { branch, format: 'pr-number' }, repo })
+    const found = await github($, { tool: GH_TOOL, command: 'pr-get', args: { branch, format: 'pr-number' }, repo })
     if (found?.deny || found?.isError) return 'record: none — ' + (textOf(found) || 'the pull request could not be read')
     const pr = Number(textOf(found))
     return Number.isInteger(pr) && pr >= 1 ? pr : 'record: none — the branch has no pull request'
@@ -297,7 +329,7 @@ async function pullOf($: any, repo: string): Promise<number | string> {
   const headRun = await git($, ['rev-parse', 'HEAD'])
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
-  const listed = await $.tool.call({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
+  const listed = await github($, { tool: GH_TOOL, command: 'pr-list', args: {}, repo })
   if (listed?.deny || listed?.isError) return 'record: none — ' + (textOf(listed) || 'the pull requests could not be read')
   let pulls: unknown
   try {
@@ -311,6 +343,9 @@ async function pullOf($: any, repo: string): Promise<number | string> {
   const pr = Number(at[0]?.number)
   return Number.isInteger(pr) && pr >= 1 ? pr : `record: none — no open pull request has the head ${head.slice(0, 12)}`
 }
+
+// What a record line says when GitHub kept failing: the verdict is kept and the write is owed.
+const PENDING_NOTE = '; the record is still owed, the verdict is kept: call findings or status again to write it'
 
 // Writes the review record through the github tool, once the loop has ended.
 // Always answers the line the loop's answer carries; never throws.
@@ -329,7 +364,7 @@ async function recordReview($: any, exit: string): Promise<string | null> {
     if (!repo) return 'record: none — the origin remote is not a GitHub repository'
     const pr = await pullOf($, repo)
     if (typeof pr === 'string') return pr
-    const written = await $.tool.call({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
+    const written = await github($, { tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
     if (written?.deny || written?.isError) return 'record: none — ' + (textOf(written) || 'refused')
     return 'record: ' + textOf(written)
   } catch (err: any) {
@@ -422,14 +457,18 @@ export function register(on: any): void {
 
   on('tool.call', { tool: 'mcp__pr-review__loop' }, async ($: any, e: any) => {
     const before = loop.exit
-    const answer = act(e)
+    // A record still owed after a transient github failure is written again at the next
+    // `findings` or `status`: the verdict the loop kept stands, nothing is computed again.
+    const isOwed = loop.isRecordPending && (e?.action === 'findings' || e?.action === 'status')
+    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
-    // The record is written once, at the call that ends the loop.
-    if (before === undefined && loop.exit !== undefined && !loop.isRecorded) {
+    // The record is first written at the call that ends the loop.
+    if (isOwed || (before === undefined && loop.exit !== undefined && !loop.isRecorded)) {
       loop.isRecorded = true
-      const line = await recordReview($, loop.exit)
-      if (line) return { result: text + '\n' + line }
+      const line = await recordReview($, String(loop.exit))
+      loop.isRecordPending = line !== null && isTransient(line)
+      if (line) return { result: text + '\n' + (loop.isRecordPending ? line + PENDING_NOTE : line) }
     }
     return { result: text, ...(answer.error ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))

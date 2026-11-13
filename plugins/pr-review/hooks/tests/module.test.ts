@@ -1,7 +1,7 @@
 // hooks/tests/module.test.ts
 // The tools, the Stop gate, the commands and the preflight, wired to the engine.
 import { expect, test } from 'claude-code/testing'
-import { act, LOOP_SCHEMA, verdict } from '../loop.ts'
+import { act, isTransient, LOOP_SCHEMA, verdict } from '../loop.ts'
 import { loop } from '../state.ts'
 import { REPORT_REQUEST, reportOf } from '../report.ts'
 import { INSTALL_TIMEOUT_MS, PASSED_NOTE } from '../commands.ts'
@@ -316,7 +316,7 @@ test('an interrupted turn releases the loop', async ($, on) => {
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -332,6 +332,7 @@ function wireRecord(on: any, stubs: Stubs) {
   })
   on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
   on('process.run', (_$: any, e: any) => {
+    if (e.argv[0] === 'sleep') stubs.sleeps?.push(e.argv[1])
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
     if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
     if (e.argv.join(' ') === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: (stubs.branch ?? 'feature') + '\n' } }
@@ -343,10 +344,13 @@ function wireRecord(on: any, stubs: Stubs) {
     stubs.prCalls += 1
     stubs.ghCalls?.push({ command: e.command, args: e.args, repo: e.repo })
     if (e.command === 'pr-list') return typeof stubs.pulls === 'string' || stubs.pulls === undefined ? { result: stubs.pulls ?? '[]' } : stubs.pulls
-    return { result: stubs.pr ?? '12\n' }
+    return stubs.prFirst?.shift() ?? { result: stubs.pr ?? '12\n' }
   })
   on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
     if (stubs.recordThrows) throw new Error('boom')
+    stubs.recordCalls = (stubs.recordCalls ?? 0) + 1
+    const first = stubs.recordFirst?.shift()
+    if (first !== undefined) return first
     stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail })
     return stubs.recordAnswer ?? { result: WRITTEN }
   })
@@ -1208,6 +1212,98 @@ test('a branch with no pull request does not take the one at its head: that look
   const out = await cleanLoop($)
   expect(String(out.result)).toContain('record: none — the branch has no pull request')
   expect(stubs.ghCalls?.map((c) => c.command)).toEqual(['pr-get'])
+})
+
+// ── a transient github failure keeps the record owed ──
+
+const UNAVAILABLE = { result: 'Service Unavailable (HTTP 503)', isError: true }
+
+async function reviewedLoop($: any): Promise<any> {
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'important' }])
+  return loopCall($, { action: 'findings', keys: ['a::b'] })
+}
+
+test('a 503 on the record write, then a success, writes the record in the same call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(2)
+  expect(stubs.sleeps).toEqual(['0.5'])
+  expect(stubs.records.length).toBe(1)
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+  expect(String(out.result)).not.toContain('record: none')
+})
+
+test('a 503 on the pull request read, then a success, writes the record in the same call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prFirst: [UNAVAILABLE, { deny: 'github: connection reset by peer' }], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.sleeps).toEqual(['0.5', '1'])
+  expect(stubs.records.map((r) => r.pr)).toEqual([12])
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+})
+
+test('a persistent 503 settles no record: the answer says it is owed, and a later findings writes it', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(4)
+  expect(stubs.sleeps).toEqual(['0.5', '1', '2'])
+  expect(stubs.records).toEqual([])
+  expect(String(out.result)).toContain('record: none — Service Unavailable (HTTP 503); the record is still owed, the verdict is kept: call findings or status again to write it')
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  // GitHub is back: the same verdict is written, nothing is read again.
+  const later = await loopCall($, { action: 'findings', keys: ['other::finding'] })
+  expect(stubs.records).toEqual([{ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'fail', detail: 'reviewed: 1 findings, 1 Critical or Important: a::b' }])
+  expect(String(later.result)).toContain('record: ' + WRITTEN)
+  expect(String(later.result)).toContain('"exit": "reviewed"')
+  expect(String(later.result)).toContain('"seen": [\n    "a::b"\n  ]')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: [] })
+  expect(stubs.records.length).toBe(1)
+})
+
+test('a status call also writes the record owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  const status = await loopCall($, { action: 'status' })
+  expect(stubs.records.length).toBe(1)
+  expect(String(status.result)).toContain('"exit": "reviewed"')
+  expect(String(status.result)).toContain('record: ' + WRITTEN)
+})
+
+test('a record still owed that GitHub keeps refusing stays owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: Array(8).fill(UNAVAILABLE), sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  const again = await loopCall($, { action: 'status' })
+  expect(String(again.result)).toContain('the record is still owed')
+  expect(stubs.records).toEqual([])
+})
+
+test('a 4xx is no transient failure: asked once, the record is none, and not owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [{ result: 'Not Found (HTTP 404)', isError: true }], sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(stubs.recordCalls).toBe(1)
+  expect(stubs.sleeps).toEqual([])
+  expect(String(out.result)).toContain('record: none — Not Found (HTTP 404)')
+  expect(String(out.result)).not.toContain('owed')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: ['x::y'] })
+  expect(stubs.recordCalls).toBe(1)
+})
+
+test('what GitHub says is transient or not', () => {
+  for (const text of ['Service Unavailable (HTTP 503)', 'Bad Gateway (HTTP 502)', '504 Gateway Time-out', 'request timed out', '<urlopen error [Errno 54] Connection reset by peer>', 'connect ETIMEDOUT', 'Internal Server Error (HTTP 500)']) {
+    expect([text, isTransient(text)]).toEqual([text, true])
+  }
+  for (const text of ['Not Found (HTTP 404)', 'Bad credentials (HTTP 401)', 'gh is not signed in', 'github: the checkout is at abc1234, the pull request\'s head is def5678', 'record.py: bad head 5031234']) {
+    expect([text, isTransient(text)]).toEqual([text, false])
+  }
 })
 
 // ── a pass's verdict needs its readers ──
