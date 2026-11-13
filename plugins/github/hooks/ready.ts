@@ -4,7 +4,7 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { accepts, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptedOver, accepts, answersAcceptance, isAcceptance, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
@@ -413,13 +413,9 @@ export function parseGate(text: string): Gate {
 
 const head7 = (sha: string) => sha.slice(0, 7)
 
-// What a pull request misses to be ready at its head: the four conditions,
-// and before them an act that cannot be ready at all (closed, moved head).
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string): string[] {
-  const missing: string[] = []
-  if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
-  if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
-  const latest = new Map<Kind, PrRecord>()
+// The records of a head that parse and agree with it, by file name, and the names of those that do not.
+export function headRecordsRead(gate: Gate, files: RecordFile[]): { read: Map<string, PrRecord>; skipped: string[] } {
+  const read = new Map<string, PrRecord>()
   const skipped: string[] = []
   for (const file of files) {
     let record: PrRecord | undefined
@@ -435,16 +431,54 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
       skipped.push(file.name)
       continue
     }
+    read.set(file.name, record)
+  }
+  return { read, skipped }
+}
+
+// Per kind, the record with the latest `at`: it decides.
+function latestByKind(read: Map<string, PrRecord>): Map<Kind, PrRecord> {
+  const latest = new Map<Kind, PrRecord>()
+  for (const record of read.values()) {
     const before = latest.get(record.kind)
     if (!before || record.at >= before.at) latest.set(record.kind, record)
   }
+  return latest
+}
+
+// The failed record an acceptance answers, when it is among the head's records: an acceptance counts
+// only beside it, so one is never carried to another head.
+function acceptedFile(record: PrRecord, read: Map<string, PrRecord>): string | undefined {
+  const over = acceptedOver(record.detail)
+  const failed = over === undefined ? undefined : read.get(over)
+  return over !== undefined && failed && answersAcceptance(failed) ? over : undefined
+}
+
+/** The failed review's file the orchestrator accepted at the head, when that acceptance is what lets the review pass. */
+export function reviewAcceptedOver(gate: Gate, files: RecordFile[]): string | undefined {
+  const { read } = headRecordsRead(gate, files)
+  const record = latestByKind(read).get('review')
+  return record && isAcceptance(record) ? acceptedFile(record, read) : undefined
+}
+
+// What a pull request misses to be ready at its head: the four conditions,
+// and before them an act that cannot be ready at all (closed, moved head).
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string): string[] {
+  const missing: string[] = []
+  if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
+  if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
+  const { read, skipped } = headRecordsRead(gate, files)
+  const latest = latestByKind(read)
   let kindMissing = false
   for (const kind of KINDS) {
     const record = latest.get(kind)
-    if (record && accepts(record)) continue
+    if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
-    else {
+    else if (isAcceptance(record)) {
+      missing.push(kind + ': accepted at ' + head7(gate.head) + ' by ' + record.producer
+        + ' over a record that is no failed ' + kind + ' at this head: ' + record.detail)
+    } else {
       missing.push(kind + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer
         + (record.detail ? ', ' + record.detail : ''))
     }
@@ -557,17 +591,23 @@ export function ciUndraftLine(repo: string, pr: number): string {
 
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false): string {
+// accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': a clean review, a passed norms check, passed E2E and green CI hold at its head.'
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, passed E2E and green CI hold at its head.'
+}
+
+export function reviewAcceptedLine(file: string): string {
+  return 'review accepted by the orchestrator over ' + file
 }
 
 export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {
   return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing)
 }
 
-export function gateMissingLine(repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. ' + tail(missing)
+export function gateMissingLine(repo: string, pr: number, head: string, missing: string[], accepted?: string): string {
+  return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. '
+    + (accepted ? reviewAcceptedLine(accepted) + '. ' : '') + tail(missing)
 }
 
 // The gate read nothing it can trust (the pull request, its records): the label stays.
@@ -615,6 +655,17 @@ export function kindRefusal(kind: string, origin: string, owned: string): string
   const by = producer ? ' (' + producer.plugin + ', ' + producer.tool + ')' : ''
   return 'github: ' + kind + ' records are written by their producer' + by + ': '
     + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.'
+}
+
+// The refusals of an acceptance of a failed record (core's ACCEPTANCE): its writer, and the record it answers.
+export function acceptanceOriginRefusal(origin: string): string {
+  return 'github: an ' + ACCEPTANCE.result + ' ' + ACCEPTANCE.kind + ' is the ' + ACCEPTANCE.plugin + '\'s decision, written by '
+    + ACCEPTANCE.tool + ' in an ' + ACCEPTANCE.plugin + ' session; ' + (origin === 'engine' ? 'this tool' : origin) + ' writes none.'
+}
+
+export function acceptanceOverRefusal(over: string, head: string, why: string): string {
+  return 'github: ' + (over || 'no record') + ' ' + why + ' at ' + head7(head) + ', the pull request\'s head: an acceptance answers'
+    + ' the latest failed ' + ACCEPTANCE.kind + ' of the head it is written at.'
 }
 
 // A plugin's name as a producer slug.

@@ -6,8 +6,12 @@
 export const PR_RECORD_CONTRACT = {
   version: 1,
   kinds: ['review', 'norms', 'e2e'],
-  results: ['pass', 'fail', 'waived'],
+  results: ['pass', 'fail', 'waived', 'accepted'],
   waivable: 'e2e',
+  // The decision that lets a kind pass over a failed record of it, at that record's head only: the
+  // result it writes, the kind and the result it answers, and the plugin that alone writes it, with
+  // its tool. Its detail is `over <file>: <decision>`, the file being the failed record's name.
+  acceptance: { result: 'accepted', kind: 'review', answers: 'fail', plugin: 'orchestrator', tool: 'mcp__orchestrator__accept' },
   // The plugin, by the name its host gives it, that alone writes each kind through
   // mcp__github__record, and the tool it writes it with; a kind with no producer here is written by
   // any caller (`open`).
@@ -28,7 +32,7 @@ export const PR_RECORD_CONTRACT = {
 const contract = PR_RECORD_CONTRACT
 
 export type Kind = 'review' | 'norms' | 'e2e'
-export type Result = 'pass' | 'fail' | 'waived'
+export type Result = 'pass' | 'fail' | 'waived' | 'accepted'
 
 export interface PrRecord {
   readonly v: number
@@ -46,6 +50,7 @@ export interface PrRecord {
 export const KINDS: readonly Kind[] = contract.kinds.filter(isKind)
 export const RECORD_VERSION = contract.version
 export const DETAIL_MAX = contract.detail_max
+export const ACCEPTANCE = contract.acceptance
 
 /** The kind a caller of mcp__github__record writes: the one its plugin produces, the open kind otherwise. */
 export function kindFor(origin: string): Kind {
@@ -92,7 +97,34 @@ export function parsePrRecord(raw: unknown): PrRecord | undefined {
   return { v, repo, pr, head, kind, result, producer, detail, session, at }
 }
 
-/** Whether a record lets its kind pass the ready gate: a pass, or a waiver where one is allowed. */
+/**
+ * Whether a record lets its kind pass the ready gate: a pass, a waiver where one is allowed, or an
+ * acceptance of the kind it answers. An acceptance counts only beside the failed record it names, at
+ * the same head: `acceptedOver` names it, the reader of the head's records checks it is there.
+ */
 export function accepts(record: PrRecord): boolean {
   return record.result === 'pass' || (record.result === 'waived' && record.kind === contract.waivable)
+    || isAcceptance(record)
+}
+
+/** Whether a record is the acceptance of a failed record of its kind. */
+export function isAcceptance(record: PrRecord): boolean {
+  return record.result === ACCEPTANCE.result && record.kind === ACCEPTANCE.kind
+}
+
+/** Whether a record is one an acceptance may answer: a failed record of the accepted kind. */
+export function answersAcceptance(record: PrRecord): boolean {
+  return record.kind === ACCEPTANCE.kind && record.result === ACCEPTANCE.answers
+}
+
+const OVER = /^over (\S+\.json): /
+
+/** The detail of an acceptance: the failed record's file name, then the decision, cut to DETAIL_MAX. */
+export function acceptanceDetail(file: string, decision: string): string {
+  return ('over ' + file + ': ' + decision.trim()).slice(0, DETAIL_MAX)
+}
+
+/** The file name of the failed record an acceptance's detail names, or undefined. */
+export function acceptedOver(detail: string): string | undefined {
+  return OVER.exec(detail)?.[1]
 }

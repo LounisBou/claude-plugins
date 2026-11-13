@@ -1,7 +1,7 @@
 {
   "name": "drift",
   "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte, their pages captured and compared pixel by pixel, their changed SVG files rendered and compared alike.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"
