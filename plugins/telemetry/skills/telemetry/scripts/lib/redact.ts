@@ -14,7 +14,7 @@ export type EnvSecrets = ReadonlyMap<string, string>
 /** A value shorter than this is no secret worth hiding, and hiding it would erase common words. */
 export const ENV_VALUE_MIN = 8
 
-/** The identifier fields of an event, held to their shape instead of scanned. */
+/** The identifier fields of an event's top level, held to their shape (and scanned, but for entropy). */
 export const IDENTIFIERS: Readonly<Record<string, RegExp>> = {
   v: /^1$/,
   ts: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/,
@@ -61,6 +61,21 @@ export function isHighEntropy(run: string): boolean {
 
 const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|passw(?:or)?d|passwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*`
 
+/** A command-line option that takes a secret: `--password`, `--db-password`, `--token`, `--api-key`... */
+const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)`
+
+/** A mark this redaction left, alone in its quotes: a quoted value already redacted. */
+const MARK_ONLY = /^\[REDACTED:[a-z-]+\]$/
+
+/** `KEY="a b c"`, `"client_secret": "x"`: the whole quoted value, its quotes kept. */
+const quotedAssignment: Pattern = {
+  name: 'secret-assignment',
+  apply: (text, mark) => text.replace(
+    new RegExp(String.raw`\b(${SECRET_KEY})(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)+"|'[^']+')`, 'gi'),
+    (match: string, key: string, sep: string, quoted: string) => (MARK_ONLY.test(quoted.slice(1, -1)) ? match : `${key}${sep}${quoted[0]}${mark}${quoted[0]}`),
+  ),
+}
+
 /** The patterns that need no knowledge of the machine, in the order they run. */
 export const PATTERNS: readonly Pattern[] = [
   byRegex('private-key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g),
@@ -76,8 +91,11 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('jwt', /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g),
   byRegex('authorization', /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)[^\s"',}]+(?:\s+[^\s"',}]+)?/gi, (_m, key, sep) => `${key}${sep}`),
   byRegex('bearer', /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, (_m, scheme) => `${scheme} `),
+  byRegex('user-password', /(^|[\s;&|(])(-u\s*|--user(?:\s+|=))(?!\[REDACTED)("[^"]*:[^"]*"|'[^']*:[^']*'|[^\s"'-][^\s"']*:[^\s"']*)/g, (_m, before, flag) => `${before}${flag}`),
   byRegex('url-credentials', /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, (_m, scheme) => scheme),
   byRegex('url-secret', /([?&](?:access_token|token|key|api_key|apikey|secret|password|sig|signature|auth)=)[^&#\s"']+/gi, (_m, key) => key),
+  byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),
+  quotedAssignment,
   byRegex('secret-assignment', new RegExp(String.raw`\b(${SECRET_KEY})(["']?\s*[:=]\s*["']?)(?!\[REDACTED)[^\s"',;&|)}]+`, 'gi'), (_m, key, sep) => `${key}${sep}`),
   { name: 'entropy', apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, run => (isHighEntropy(run) ? mark : run)) },
 ]
@@ -92,11 +110,16 @@ export function envPatterns(secrets: EnvSecrets): Pattern[] {
   return patterns
 }
 
-/** `text` with every secret replaced by `[REDACTED:<pattern>]`, and the names of the patterns that matched. */
-export function redactText(text: string, secrets: EnvSecrets = new Map()): { text: string; hits: string[] } {
+/**
+ * `text` with every secret replaced by `[REDACTED:<pattern>]`, and the names of the patterns that
+ * matched. `entropy: false` skips the entropy guess only, for an identifier already held to its
+ * shape: a tool call's id is random by nature, a known token shape or an env value still is not.
+ */
+export function redactText(text: string, secrets: EnvSecrets = new Map(), options: { entropy?: boolean } = {}): { text: string; hits: string[] } {
   const hits: string[] = []
   let out = text
-  for (const pattern of [...envPatterns(secrets), ...PATTERNS]) {
+  const patterns = options.entropy === false ? PATTERNS.filter(p => p.name !== 'entropy') : PATTERNS
+  for (const pattern of [...envPatterns(secrets), ...patterns]) {
     const next = pattern.apply(out, `[REDACTED:${pattern.name}]`)
     if (next !== out) hits.push(pattern.name)
     out = next
@@ -104,18 +127,26 @@ export function redactText(text: string, secrets: EnvSecrets = new Map()): { tex
   return { text: out, hits }
 }
 
-/** A value of an event with every string redacted, identifiers held to their shape; with what matched. */
-export function redactValue(value: unknown, secrets: EnvSecrets, key?: string): { value: unknown; hits: string[] } {
+/**
+ * An event with every string redacted, at any depth, and what matched. The identifier fields of
+ * the event itself (its top level only) are held to their shape as well; a nested field of the
+ * same name is plain text.
+ */
+export function redactValue(value: unknown, secrets: EnvSecrets): { value: unknown; hits: string[] } {
+  return walk(value, secrets, undefined, 0)
+}
+
+function walk(value: unknown, secrets: EnvSecrets, key: string | undefined, depth: number): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
-    const shape = key === undefined ? undefined : IDENTIFIERS[key]
-    if (shape !== undefined) return shape.test(value) ? { value, hits: [] } : { value: '[REDACTED:identifier]', hits: ['identifier'] }
-    const { text, hits } = redactText(value, secrets)
+    const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
+    if (shape !== undefined && !shape.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }
+    const { text, hits } = redactText(value, secrets, { entropy: shape === undefined })
     return { value: text, hits }
   }
   if (Array.isArray(value)) {
     const hits: string[] = []
     const out = value.map(item => {
-      const r = redactValue(item, secrets)
+      const r = walk(item, secrets, undefined, depth + 1)
       hits.push(...r.hits)
       return r.value
     })
@@ -125,7 +156,7 @@ export function redactValue(value: unknown, secrets: EnvSecrets, key?: string): 
     const hits: string[] = []
     const out: Record<string, unknown> = {}
     for (const [k, item] of Object.entries(value)) {
-      const r = redactValue(item, secrets, k)
+      const r = walk(item, secrets, k, depth + 1)
       hits.push(...r.hits)
       out[k] = r.value
     }

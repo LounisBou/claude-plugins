@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, roleOf,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, roleOf,
   sessionEnd, sessionStart, toolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 
@@ -56,7 +56,17 @@ test('tool_call: a Bash call keeps its command names and its line, never its out
     bash: { head: 'cd', heads: ['cd', 'npm', 'tail'], line: "cd /tmp/x && npm test -- --grep 'a b' | tail -5" },
   })
   assert.deepEqual(rest, [])
-  assert.equal(bashOf('x'.repeat(LINE_MAX + 10)).line.length, LINE_MAX + 1)
+  assert.equal(bashOf('x'.repeat(LINE_MAX + 10)).line.length, LINE_MAX + 10)
+})
+
+test('cuts: by field at any depth, after the redaction, never inside a mark', () => {
+  assert.equal(cutText('abcdef', 6), 'abcdef')
+  assert.equal(cutText('abcdef', 3), 'abc…')
+  assert.equal(cutText('ab [REDACTED:env] cd', 8), 'ab …')
+  assert.equal(cutText('[REDACTED:env] cd', 15), '[REDACTED:env] …')
+  assert.deepEqual(cutFields({ bash: { line: 'x'.repeat(LINE_MAX + 1) }, headers: ['a'.repeat(20)], note: 'n'.repeat(500), n: 1 }), {
+    bash: { line: `${'x'.repeat(LINE_MAX)}…` }, headers: [`${'a'.repeat(12)}…`], note: 'n'.repeat(500), n: 1,
+  })
 })
 
 test('tool_call: an MCP call names its server, tool and command; refused by a plugin', () => {

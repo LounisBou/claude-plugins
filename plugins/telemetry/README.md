@@ -26,7 +26,9 @@ dispatch record's writes. No prompt, answer, message or tool output is kept.
 
 Applied to every line before it is written, and run again by the export: the values of
 `~/.env`, token shapes, `Authorization` and `Bearer` credentials, credentials in URLs, secret
-assignments, and high-entropy runs. A match becomes `[REDACTED:<pattern>]`.
+options and assignments, and high-entropy runs, at any depth, each whole value before it is cut.
+A match becomes `[REDACTED:<pattern>]`. An `~/.env` that exists but cannot be read refuses every
+write and export.
 
 ## Tests
 

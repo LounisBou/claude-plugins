@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { agentSpawned, LINE_MAX, TEXT_MAX, toolEvents } from '../../../../hooks/collect.ts'
 import { append, check, dayFiles, parseEvent, scan } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -60,6 +61,39 @@ test('check: a secret planted in a day file is found, named by file, line and pa
       { file: '2026-11-13.jsonl', line: 2, pattern: 'github-token' },
       { file: '2026-11-13.jsonl', line: 2, pattern: 'authorization' },
       { file: '2026-11-13.jsonl', line: 3, pattern: 'invalid (not JSON)' },
+    ])
+  })
+})
+
+test('append: a secret straddling a length limit is redacted whole before the cut, nothing of it left', () => {
+  withDir(dir => {
+    const value = 'zq9-env-secret-value'
+    const secrets = new Map([['SERVICE_PASS', value]])
+    const at = Date.parse('2026-11-13T10:00:00Z')
+    const bash = (command: string) => toolEvents(at, S, { tool: 'Bash', command, tool_use_id: 'toolu_01A' }, {}, undefined, 1)
+    const events = [
+      ...bash(`echo ${'x'.repeat(LINE_MAX - 16)} ${value}`),
+      ...bash(`echo ${'x'.repeat(LINE_MAX - 16)} ${SECRET}`),
+      ...bash(`dispatch-record.ts close /r/record.jsonl 68 --verdict '${'v'.repeat(TEXT_MAX - 12)} ${value}'`),
+      agentSpawned(at, S, { description: `${'d'.repeat(TEXT_MAX - 12)} ${SECRET}` }, { agentId: 'a1' }),
+    ]
+    assert.deepEqual(append(dir, events.map(e => JSON.stringify(e)).join('\n'), secrets).refused, [])
+    const stored = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8')
+    // Each secret starts ten characters before its limit: a cut first would keep that much of it.
+    assert.ok(!stored.includes(value.slice(0, 4)), stored)
+    assert.ok(!stored.includes(SECRET.slice(0, 4)), stored)
+    assert.ok(stored.includes('"verdict":"vvvv'))
+    assert.deepEqual(check(dir, secrets), [])
+  })
+})
+
+test('check: a token planted in a nested identifier field, or a top-level one, is found', () => {
+  withDir(dir => {
+    append(dir, event('2026-11-13T10:00:00Z'), new Map())
+    appendFileSync(join(dir, '2026-11-13.jsonl'), `${event('2026-11-13T10:00:01Z', { bash: { agent: SECRET, tool_use_id: SECRET } })}\n${event('2026-11-13T10:00:02Z', { tool_use_id: SECRET })}\n`)
+    assert.deepEqual(check(dir, new Map()), [
+      { file: '2026-11-13.jsonl', line: 2, pattern: 'github-token' },
+      { file: '2026-11-13.jsonl', line: 3, pattern: 'github-token' },
     ])
   })
 })

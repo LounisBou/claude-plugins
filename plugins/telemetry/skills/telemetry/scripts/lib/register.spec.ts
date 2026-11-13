@@ -112,3 +112,12 @@ test('the export command flushes, runs the export and answers its output without
   const failing = { ...$, process: { run: async () => { throw new Error('no node') } } }
   assert.deepEqual(await hook('command.run:telemetry:export')(failing, {}, through(undefined)), { text: 'telemetry: the export did not run: no node' })
 })
+
+test('an export whose flush failed says so, and neither runs nor reports a push', async () => {
+  const { $, runs } = host({ exitCode: 1 })
+  const { hook } = hooks()
+  await hook('tool.call')($, F('tool.call.skill'), through(F('result.ok')))
+  const answer = await hook('command.run:telemetry:export')($, { command: 'telemetry:export', args: '' }, through(undefined)) as { text: string }
+  assert.match(answer.text, /^telemetry: export not run, the buffered events could not be written: append exited 1/)
+  assert.deepEqual(runs.map(r => r.argv[4]), ['append'])
+})

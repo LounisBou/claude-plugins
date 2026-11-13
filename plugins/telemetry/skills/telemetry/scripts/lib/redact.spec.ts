@@ -27,6 +27,13 @@ const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string
   ['url-secret', 'fetch https://api.example.com/v1?access_token=opensesame99&page=2', 'opensesame99'],
   ['secret-assignment', 'DB_PASSWORD=correcthorse psql', 'correcthorse'],
   ['secret-assignment', '{"client_secret": "shhh-not-for-you"}', 'shhh-not-for-you'],
+  ['secret-assignment', 'PASSWORD="hush a b" make', ' a b'],
+  ['secret-assignment', "PASSWORD='hush a b' make", ' a b'],
+  ['secret-flag', 'mysql --password hunter2x -h db', 'hunter2x'],
+  ['secret-flag', 'mysql --password=hunter2x -h db', 'hunter2x'],
+  ['secret-flag', 'cli --token t0ken-value list', 't0ken-value'],
+  ['secret-flag', 'cli --token=t0ken-value list', 't0ken-value'],
+  ['user-password', 'curl -u me:s3cretpass https://api.example.com', 's3cretpass'],
   ['entropy', `the value ${RANDOM} stays out`, RANDOM],
 ]
 
@@ -77,6 +84,23 @@ test('redaction is idempotent: a redacted text scans clean', () => {
     const once = redactText(text, secrets).text
     assert.deepEqual(redactText(once, secrets).hits, [], once)
   }
+})
+
+test('the option forms keep what holds no secret', () => {
+  for (const kept of ['claude -p --max-tokens 100', 'git push -u origin main', 'tool --token-file ./path --pass-through x']) {
+    assert.deepEqual(redactText(kept).hits, [], kept)
+  }
+})
+
+test('redactValue: a token in an identifier field, nested or at the top level, is redacted', () => {
+  const token = join('gh', 'p_', RANDOM, 'abcd')
+  const event = {
+    v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69',
+    tool_use_id: token, nested: { agent: token, tool_use_id: token }, list: [{ agent: token }],
+  }
+  const { value, hits } = redactValue(event, new Map())
+  assert.ok(!JSON.stringify(value).includes(token), JSON.stringify(value))
+  assert.deepEqual(hits, ['github-token', 'github-token', 'github-token', 'github-token'])
 })
 
 test('redactValue: identifiers held to their shape, every other string scanned, other values kept', () => {

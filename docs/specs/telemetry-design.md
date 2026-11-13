@@ -50,7 +50,9 @@ by `backfill`.
 No prompt, answer, message, tool output, file content, question text or option label: the
 least revealing default, until the operator rules otherwise. A Bash command line is kept
 redacted and cut to 400 characters; other tools keep their name and the enumerated arguments
-named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80.
+named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80. The
+events carry these fields whole: the writer redacts each whole value, then cuts it (never inside
+a mark), so a secret straddling a limit leaves nothing of itself.
 
 ## Local store
 
@@ -63,17 +65,20 @@ beyond its own bookkeeping.
 ## Redaction
 
 `telemetry.ts append` redacts every line before it is written; `check` runs the same scan over
-the stored files. Identifiers (`v`, `ts`, `event`, `session`, `agent`, `child`, `turn`,
-`tool_use_id`) are held to their shape instead, and replaced whole when they do not fit. Every
-other string is scanned for, in order:
+the stored files. When `~/.env` exists but cannot be read, every subcommand refuses, nothing
+written or pushed, its reason on stderr; only a missing file means no env secret. The identifiers
+of an event's top level (`v`, `ts`, `event`, `session`, `agent`, `child`, `turn`, `tool_use_id`)
+are also held to their shape, replaced whole when they do not fit, and spared only the entropy
+guess; a nested field of the same name is plain text. Every string, at any depth, is scanned
+for, in order:
 
 1. the values of `~/.env` (8 characters or more) and any `KEY=value` of its keys;
 2. private key blocks, and token shapes: GitHub, Anthropic, OpenAI, AWS, Slack, Google,
    Stripe, Telegram bot, npm, JWT;
 3. `Authorization:` headers and `Bearer` / `Basic` credentials;
 4. credentials in a URL (`scheme://user:pass@`, `scheme://token@`) and secret query parameters;
-5. `KEY=value` or `key: value` where the key names a secret (`token`, `secret`, `password`,
-   `api_key`, …);
+5. `curl -u user:pass`; `--password X`, `--token=X` and the like; `KEY=value`, `KEY="a b"`
+   or `key: value` where the key names a secret (`token`, `secret`, `password`, `api_key`, …);
 6. high entropy: a run of `[A-Za-z0-9+=_-]` whose longest part between `-`, `_` and `.` is 20
    characters or more, with a letter and a digit and 3.5 bits per character, or both cases and
    4.1 bits. A canonical UUID is kept: it is how sessions are joined.
@@ -83,11 +88,12 @@ model.
 
 ## Export
 
-`/telemetry:export` (answered by the module, no model turn) runs `telemetry.ts export`. The
+`/telemetry:export` (answered by the module, no model turn) writes the buffered events, then runs
+`telemetry.ts export`; when that write fails it says so and exports nothing. The
 repository is read at run time from `CLAUDE_LOGS_REPO`, in the environment or in `~/.env`;
 nothing names it in this repository. Unset, the export pushes nothing and says so in one line.
 Otherwise it runs `check` over every day file and refuses, naming file, line and pattern (never
 the value), when one finding remains; then it clones the repository into
-`<config>/telemetry/export/` (once), copies the day files to `machines/<machine>/`, commits
+`<config>/telemetry/export/` (once, its `origin` set again to the variable's value at each run), copies the day files to `machines/<machine>/`, commits
 them and pushes to `main`, which the first push creates. Git's own output is redacted, the
 repository's address included, before it is printed.

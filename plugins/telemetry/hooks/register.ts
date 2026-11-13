@@ -156,7 +156,11 @@ export function mount(on: On, collector: Collector): void {
 
   on('command.run', { command: 'telemetry:export' }, async ($) => {
     try {
-      await quietly($, 'export flush', () => flush($, collector))
+      try {
+        await flush($, collector)
+      } catch (error) {
+        return { text: `telemetry: export not run, the buffered events could not be written: ${error instanceof Error ? error.message : String(error)}` }
+      }
       const run = await $.process.run(scriptArgv($.plugin.root, 'export', await configDir($)), { timeoutMs: EXPORT_TIMEOUT_MS })
       return { text: `${run.stdout}${run.stderr}`.trim() || `export exited ${run.exitCode}` }
     } catch (error) {

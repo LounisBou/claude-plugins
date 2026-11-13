@@ -16,10 +16,19 @@ export type EventName = (typeof EVENTS)[number]
 
 export type Event = { readonly v: 1; readonly ts: string; readonly event: EventName; readonly session: string } & Readonly<Record<string, unknown>>
 
-/** A Bash command line is kept to this many characters, redacted by the writer. */
+/** A Bash command line is kept to this many characters, once redacted. */
 export const LINE_MAX = 400
-/** Free text kept (a description, a verdict) is cut to this. */
+/** Free text kept (a description, a verdict) is cut to this, once redacted. */
 export const TEXT_MAX = 80
+/** A question's header is cut to this, once redacted. */
+export const HEADER_MAX = 12
+
+/**
+ * The fields cut to a length, by key at any depth. The events carry them whole: the writer
+ * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
+ * never left half-matched and half-kept.
+ */
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -29,7 +38,26 @@ const record = (value: unknown): Fields => (typeof value === 'object' && value !
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 const num = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 const bool = (value: unknown): boolean | undefined => (typeof value === 'boolean' ? value : undefined)
-const cut = (value: string | undefined, max: number): string | undefined => (value === undefined ? undefined : value.length > max ? `${value.slice(0, max)}…` : value)
+
+/** `value` cut to `max` characters, never inside a redaction mark: a mark the limit would split goes whole. */
+export function cutText(value: string, max: number): string {
+  if (value.length <= max) return value
+  let end = max
+  const open = value.lastIndexOf('[REDACTED:', end - 1)
+  if (open >= 0 && value.indexOf(']', open) >= end) end = open
+  return `${value.slice(0, end)}…`
+}
+
+/** `value` with each field of `CUTS` cut, at any depth; an array's strings take their field's limit. */
+export function cutFields(value: unknown, key?: string): unknown {
+  if (typeof value === 'string') {
+    const max = key === undefined ? undefined : CUTS[key]
+    return max === undefined ? value : cutText(value, max)
+  }
+  if (Array.isArray(value)) return value.map(item => cutFields(item, key))
+  if (typeof value === 'object' && value !== null) return Object.fromEntries(Object.entries(value).map(([k, item]) => [k, cutFields(item, k)]))
+  return value
+}
 
 /** `fields` without the keys whose value is undefined. */
 export function compact(fields: Fields): Fields {
@@ -171,7 +199,7 @@ export function outcomeOf(result: unknown, check: Check | undefined): { outcome:
 
 const BASENAME = (word: string): string => word.replace(/^.*\//, '')
 
-/** A Bash command line: its first command's name, every command's name, and the line itself. */
+/** A Bash command line: its first command's name, every command's name, and the whole line (cut by the writer). */
 export function bashOf(command: string): { head?: string; heads: string[]; line: string } {
   let commands: string[][]
   try {
@@ -180,7 +208,7 @@ export function bashOf(command: string): { head?: string; heads: string[]; line:
     commands = []
   }
   const heads = [...new Set(commands.map(argv => argv[0]).filter((w): w is string => w !== undefined).map(BASENAME))].slice(0, 20)
-  return compact({ head: heads[0], heads, line: cut(command, LINE_MAX) }) as { head?: string; heads: string[]; line: string }
+  return compact({ head: heads[0], heads, line: command }) as { head?: string; heads: string[]; line: string }
 }
 
 /** An MCP tool's server and tool, from `mcp__<server>__<tool>`. */
@@ -205,7 +233,7 @@ export function questionOf(input: Fields, result: unknown): Fields {
   return {
     source: 'ask_user',
     count: questions.length,
-    headers: questions.map(q => cut(text(q['header']), 12) ?? ''),
+    headers: questions.map(q => text(q['header']) ?? ''),
     options: questions.map(q => (Array.isArray(q['options']) ? q['options'].length : 0)),
     multi: questions.map(q => q['multiSelect'] === true),
     chosen,
@@ -253,7 +281,7 @@ export function orchestrationOf(command: string): { event: 'agent_spawned' | 'ag
           model: flag(argv, '--model'),
           effort: flag(argv, '--effort'),
           head: flag(argv, '--head'),
-          verdict: cut(flag(argv, '--verdict'), TEXT_MAX),
+          verdict: flag(argv, '--verdict'),
         },
       })
     }
@@ -310,7 +338,7 @@ export function agentSpawned(at: number, session: string, input: unknown, result
     requested_model: text(e['model']),
     background: bool(e['background']),
     provider: text(provider['plugin']),
-    description: cut(text(e['description']), TEXT_MAX),
+    description: text(e['description']),
   })
 }
 

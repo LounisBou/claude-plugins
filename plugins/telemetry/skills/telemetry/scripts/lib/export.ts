@@ -64,6 +64,10 @@ export function exportStore(options: ExportOptions): { lines: string[]; code: nu
   if (!existsSync(join(clone, '.git'))) {
     const cloned = git(['clone', '--quiet', repo, clone])
     if (cloned.status !== 0) return fail('clone', cloned)
+  } else {
+    // A clone made for an earlier value of the variable pushes to the repository named now.
+    const pointed = git(['remote', 'set-url', 'origin', repo], clone)
+    if (pointed.status !== 0) return fail('remote set-url', pointed)
   }
   const fetched = git(['fetch', '--quiet', 'origin'], clone)
   if (fetched.status !== 0) return fail('fetch', fetched)

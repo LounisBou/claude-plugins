@@ -3,7 +3,7 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withLock } from '../../../../core/store.ts'
-import { EVENTS, type Event } from '../../../../hooks/collect.ts'
+import { cutFields, EVENTS, type Event } from '../../../../hooks/collect.ts'
 import { IDENTIFIERS, redactText, redactValue, type EnvSecrets } from './redact.ts'
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
@@ -29,7 +29,7 @@ export function parseEvent(line: string): Event | string {
   return fields as Event
 }
 
-/** Appends `lines` (JSON lines) to their day files, redacted; answers how many were written and refused. */
+/** Appends `lines` (JSON lines) to their day files, redacted then cut; answers how many were written and refused. */
 export function append(dir: string, lines: string, secrets: EnvSecrets): { written: number; refused: string[] } {
   const byDay = new Map<string, string[]>()
   const refused: string[] = []
@@ -40,7 +40,9 @@ export function append(dir: string, lines: string, secrets: EnvSecrets): { writt
       refused.push(event)
       continue
     }
-    const { value } = redactValue(event, secrets)
+    // Each whole value redacted, then cut; the second pass redacts what a cut could expose (a
+    // `PASSWORD=` left before the ellipsis), so the stored line scans clean.
+    const { value } = redactValue(cutFields(redactValue(event, secrets).value), secrets)
     const day = event.ts.slice(0, 10)
     byDay.set(day, [...(byDay.get(day) ?? []), JSON.stringify(value)])
   }

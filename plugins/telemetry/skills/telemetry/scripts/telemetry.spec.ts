@@ -2,7 +2,7 @@
 // the repository is unset, backfill, and the usage.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -84,6 +84,21 @@ test('usage: no subcommand, no config, an unknown subcommand', () => {
 test('enrich leaves other events and unknown sessions as they came; secrets of a missing file are none', () => {
   assert.equal(enrich('bad', '/nowhere'), 'bad')
   assert.equal(enrich(end, '/nowhere'), end)
-  assert.equal(readSecrets({ TELEMETRY_ENV_FILE: '/nowhere/.env' }).size, 0)
+  assert.deepEqual(readSecrets({ TELEMETRY_ENV_FILE: '/nowhere/.env' }), { secrets: new Map() })
   assert.equal(backfillEvent('/x/notes.jsonl', 0), undefined)
+})
+
+test('an env file that exists but cannot be read refuses to write and to export, with its reason', () => {
+  harness((config, deps, setStdin) => {
+    const unreadable = join(config, 'env-dir')
+    mkdirSync(unreadable, { recursive: true })
+    const env = { ...deps.env, TELEMETRY_ENV_FILE: unreadable, CLAUDE_LOGS_REPO: join(config, 'logs.git') }
+    setStdin(`${end}\n`)
+    for (const sub of ['append', 'export']) {
+      assert.equal(run([sub, '--config', config], { ...deps, env }), 1)
+      assert.match(deps.errs.at(-1) ?? '', new RegExp(`^telemetry: ${sub} refused, nothing written or pushed: .*env-dir cannot be read \\(EISDIR\\)$`))
+    }
+    assert.deepEqual(deps.outs, [])
+    assert.ok(!existsSync(join(config, 'telemetry')))
+  })
 })

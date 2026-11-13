@@ -32,13 +32,17 @@ export interface Deps {
   readonly now: () => number
 }
 
-/** The operator's secrets: the env file's keys and values, none when it cannot be read. */
-export function readSecrets(env: Deps['env']): EnvSecrets {
+/**
+ * The operator's secrets: the env file's keys and values; none when the file does not exist. Any
+ * other failure to read it is an error: without its values the redaction cannot hide them.
+ */
+export function readSecrets(env: Deps['env']): { secrets: EnvSecrets } | { error: string } {
   const file = env['TELEMETRY_ENV_FILE'] || join(env['HOME'] || homedir(), '.env')
   try {
-    return parseEnvFile(readFileSync(file, 'utf8'))
-  } catch {
-    return new Map()
+    return { secrets: parseEnvFile(readFileSync(file, 'utf8')) }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { secrets: new Map() }
+    return { error: `${file} cannot be read (${(error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : String(error))})` }
   }
 }
 
@@ -75,7 +79,12 @@ export function run(args: readonly string[], deps: Deps): number {
   }
   const operands = rest.filter((_, i) => i !== at && i !== at + 1)
   const stateDir = join(config, 'telemetry')
-  const secrets = readSecrets(deps.env)
+  const read = readSecrets(deps.env)
+  if ('error' in read) {
+    deps.err(`telemetry: ${sub} refused, nothing written or pushed: ${read.error}`)
+    return 1
+  }
+  const { secrets } = read
   switch (sub) {
     case 'append': {
       const lines = deps.stdin().split('\n').filter(line => line.trim() !== '').map(line => enrich(line, config)).join('\n')

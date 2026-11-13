@@ -67,6 +67,20 @@ test('the first export creates main; a second adds the new day; a third has noth
   })
 })
 
+test('a reused clone pushes to the repository named now', () => {
+  scratch((root, first) => {
+    const state = join(root, 'state')
+    const second = join(root, 'second.git')
+    assert.equal(git(['init', '--quiet', '--bare', second], root).status, 0)
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: first, machine: 'box', git }).code, 0)
+    append(eventsDir(state), event('2026-11-14T10:00:00Z'), new Map())
+    assert.deepEqual(exportStore({ stateDir: state, secrets: new Map(), repo: second, machine: 'box', git }).code, 0)
+    assert.equal(git(['show', 'main:machines/box/2026-11-14.jsonl'], second).stdout, `${event('2026-11-14T10:00:00Z')}\n`)
+    assert.equal(git(['rev-list', '--count', 'main'], first).stdout.trim(), '1')
+  })
+})
+
 test('a failing clone is reported with the repository\'s address hidden', () => {
   scratch(root => {
     const state = join(root, 'state')
