@@ -16,7 +16,7 @@ import {
   NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unrecorded,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
   type Act, type Carried, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
@@ -892,7 +892,8 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
       unread ??= String(err?.message ?? err).trim()
       continue
     }
-    if (Number.isFinite(mtimeMs)) headPrs.set(path, { mtimeMs, prs: recordPrs(files) })
+    // A file that does not parse may be the pull request's: such a directory is read every time.
+    if (Number.isFinite(mtimeMs) && unreadableRecords(files).length === 0) headPrs.set(path, { mtimeMs, prs: recordPrs(files) })
     found.set(head, files)
   }
   return { found, unread }
@@ -903,7 +904,8 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
  * none of: per kind, the latest record by its time across every earlier head of the same commit count
  * and fingerprint, so a newer failure at one of them is never hidden by an older pass at another. An
  * earlier head that cannot be fingerprinted may hold that newer failure: the kinds it has records of
- * are carried from no head, and every kind when the records of a head cannot be listed.
+ * are carried from no head, and every kind when the records of a head cannot be listed. A record file
+ * of a head of the same diff that does not parse may be that failure too: its kind is carried from no head.
  */
 async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
   await keepCount($, gate)
@@ -911,11 +913,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
   const { found, unread } = await earlierRecords($, gate, root)
-  const candidates: Array<{ head: string; latest: PrRecord[] }> = []
+  const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
   for (const [head, records] of found) {
     const at = headLatest(gate, head, records)
     const latest = wanted.flatMap((kind) => at.get(kind) ?? [])
-    if (latest.length > 0) candidates.push({ head, latest })
+    const unreadable = unreadableRecords(records)
+      .map((file) => ({ name: file.name, kinds: file.kinds.filter((kind) => wanted.includes(kind)) }))
+      .filter((file) => file.kinds.length > 0)
+    if (latest.length > 0 || unreadable.length > 0) candidates.push({ head, latest, unreadable })
   }
   if (!candidates.some((c) => c.latest.some(carries))) return []
   if (unread) {
@@ -931,7 +936,8 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
   const blocked = new Set<PrRecord['kind']>()
-  for (const { head, latest } of candidates) {
+  for (const { head, latest, unreadable } of candidates) {
+    const unreadKinds = wanted.filter((kind) => unreadable.some((file) => file.kinds.includes(kind)))
     let earlier: Fingerprint
     try {
       const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
@@ -939,12 +945,17 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
       if (kept.commits !== current.commits) continue
       earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits)
     } catch (err: any) {
-      const kinds = latest.map((record) => record.kind)
+      const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
       note($, uncarriedLine(gate.repo, gate.pr, gate.head, head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds))
       continue
     }
     if (earlier.fingerprint !== current.fingerprint) continue
+    if (unreadKinds.length > 0) {
+      for (const kind of unreadKinds) blocked.add(kind)
+      const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, files, unreadKinds))
+    }
     for (const record of latest) {
       const before = newest.get(record.kind)?.record
       // At the same time, the record that carries nothing wins.

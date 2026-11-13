@@ -2334,6 +2334,36 @@ test('an earlier head whose records cannot be listed lets no earlier head carry,
   expect(fingerprintRuns(seen)).toEqual([])
 })
 
+test('a review record that does not parse at the head is not carried over from an earlier head, and is named', async ($, on) => {
+  const seen = await world($, on, { records: { 'review.20261102T100000Z.p-review.json': '{"v": 1, "kind": "rev' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456, unreadable record review.20261102T100000Z.p-review.json;'
+    + ' norms carried from abcdef0, e2e carried from abcdef0.')
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('a record that does not parse at the head and whose name gives no kind lets no kind be carried', async ($, on) => {
+  const seen = await world($, on, { records: { 'stray.json': 'not json' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456, unreadable record stray.json.')
+  expect(fingerprintRuns(seen)).toEqual([])
+})
+
+test('a review record that does not parse at a later head of the same diff is not carried over from an earlier head, read after read', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([['review.20261101T110000Z.p-review.json', '']], RECORDS + '/acme/thing/' + LATER),
+  }
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  for (const read of [1, 2]) {
+    const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+    expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+    expect(seen.logs[read - 1]).toBe('github: acme/thing#12: no review record carried to 0123456:'
+      + ' 1111111\'s record review.20261101T110000Z.p-review.json does not parse')
+  }
+})
+
 test('an earlier head whose records name only other pull requests is read once, until a record lands in it', async ($, on) => {
   const tree = earlier([at('review', 'pass', { pr: 13 })])
   const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })

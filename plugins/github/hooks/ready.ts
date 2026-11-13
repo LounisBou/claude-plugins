@@ -439,6 +439,24 @@ function latestRecords(gate: Gate, head: string, files: RecordFile[]): { latest:
   return { latest, skipped }
 }
 
+// The files of a head's records that do not parse, each with the kinds it may hold: the one its name
+// (`<kind>.<at>.<producer>.json`) gives, or every kind when its name gives none.
+export function unreadableRecords(files: RecordFile[]): Array<{ name: string; kinds: Kind[] }> {
+  const unreadable: Array<{ name: string; kinds: Kind[] }> = []
+  for (const file of files) {
+    let record: PrRecord | undefined
+    try {
+      record = parsePrRecord(JSON.parse(file.text))
+    } catch {
+      record = undefined
+    }
+    if (record) continue
+    const named = KINDS.find((kind) => file.name.startsWith(kind + '.'))
+    unreadable.push({ name: file.name, kinds: named ? [named] : [...KINDS] })
+  }
+  return unreadable
+}
+
 // The pull requests a head's records name, whatever their head.
 export function recordPrs(files: RecordFile[]): number[] {
   const prs = new Set<number>()
@@ -456,10 +474,12 @@ export function recordPrs(files: RecordFile[]): number[] {
 // A record of an earlier head of the pull request, counted at its head as their diffs are the same.
 export type Carried = { kind: Kind; from: string }
 
-// The kinds with no record of the pull request at its head: the ones an earlier head may carry.
+// The kinds with no record of the pull request at its head: the ones an earlier head may carry. A
+// kind a file that does not parse may hold is none of them: that file may be its newest failure.
 export function unrecorded(gate: Gate, files: RecordFile[]): Kind[] {
   const { latest } = latestRecords(gate, gate.head, files)
-  return KINDS.filter((kind) => !latest.has(kind))
+  const unread = new Set(unreadableRecords(files).flatMap((file) => file.kinds))
+  return KINDS.filter((kind) => !latest.has(kind) && !unread.has(kind))
 }
 
 // The latest record of each kind of the pull request at an earlier head, whatever its result.
