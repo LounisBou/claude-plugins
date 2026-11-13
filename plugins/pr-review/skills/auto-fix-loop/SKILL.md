@@ -38,7 +38,7 @@ long run that way. Call it at each of these points, with `action` and its fields
 The answer that carries an `exit` ends with one more line, `record: <path>` or
 `record: none — <why>`: the review record the loop left for the github plugin's
 ready guard, or the reason it left none. It never changes the exit. Step 7 prints it.
-The orchestrator judges a `fail`, through its review tool.
+The orchestrator judges a `fail`.
 
 Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
 answer carries `exit`, go to Step 7 with that reason and render the summary from
