@@ -108,6 +108,8 @@ function parseWords(words: string[], valued: string[]): Parsed {
     }
     if (word.startsWith('-') && word !== '-') {
       if (valued.includes(word)) out.opts.push([word, words[++k]])
+      // A short valued flag joined to its value (`-Flabels[]=@f`, `-XPATCH`) is read as gh does.
+      else if (/^-[^-]./.test(word) && valued.includes(word.slice(0, 2))) out.opts.push([word.slice(0, 2), word.slice(2)])
       else out.opts.push([word, undefined])
       continue
     }
@@ -255,7 +257,6 @@ function apiAct(argv: string[]): Act | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const base = { name: 'gh api graphql', unnamed: true }
@@ -397,7 +398,6 @@ function apiLabelling(argv: string[]): Labelling | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const query = inlineQuery(parsed, fields)
@@ -407,13 +407,16 @@ function apiLabelling(argv: string[]): Labelling | undefined {
   const path = endpoint.replace(API_HOST, '')
   const at = (match: RegExpExecArray, labels: string[], opaque = false): Labelling =>
     ({ name: 'gh api', repo: match[1] + '/' + match[2], labels, ...(opaque ? { opaque } : {}) })
-  const named = (prefix: string) => fields.filter((field) => field.name.startsWith(prefix)).flatMap((field) => labelsIn(field.value))
+  const naming = (prefix: string) => fields.filter((field) => field.name.startsWith(prefix))
+  const named = (prefix: string) => naming(prefix).flatMap((field) => labelsIn(field.value))
+  // A -F value `@file` is read from the file: its labels are not on the line.
+  const unread = (...prefixes: string[]) => input || prefixes.some((prefix) => naming(prefix).some((field) => field.typed && field.value.startsWith('@')))
   const one = ONE_LABEL_PATH.exec(path) ?? REPO_LABEL_PATH.exec(path)
-  if (one) return at(one, [decoded(one[3]), ...named('new_name'), ...named('name')], input)
+  if (one) return at(one, [decoded(one[3]), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
   const all = LABELS_PATH.exec(path)
-  if (all) return at(all, named('labels'), input || method === 'DELETE')
+  if (all) return at(all, named('labels'), unread('labels') || method === 'DELETE')
   const issue = ISSUE_PATH.exec(path)
-  if (issue && method === 'PATCH' && (input || named('labels').length > 0)) return at(issue, named('labels'), input)
+  if (issue && method === 'PATCH' && (input || named('labels').length > 0)) return at(issue, named('labels'), unread('labels'))
   return undefined
 }
 

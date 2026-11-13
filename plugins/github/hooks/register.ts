@@ -882,6 +882,21 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
 // would cover or uncover pull requests without the operator. A labelling that may move any label
 // (opaque) is refused when the exemption names one. A repository that cannot be named has no
 // exemption file to read, as an exemption that cannot be read covers nothing.
+const REPO_PLACEHOLDER = /\{owner\}|\{repo\}|:owner\b|:repo\b/g
+
+/*
+ * The repository a Bash labelling targets: the one it names, its {owner}, {repo}, :owner and :repo
+ * placeholders filled from the checkout's repository as gh api fills them, or the checkout's own
+ * when it names none.
+ */
+async function labellingRepo($: any, named: string | undefined): Promise<string | undefined> {
+  if (named && !named.match(REPO_PLACEHOLDER)) return named
+  const checkout = await targetRepo($, {}).catch(() => undefined)
+  if (!named || !checkout) return checkout
+  const [owner, name] = checkout.split('/')
+  return named.replace(REPO_PLACEHOLDER, (part) => (part.includes('owner') ? owner : name))
+}
+
 async function exemptLabelRefusal($: any, labelling: Labelling, repo: string | undefined): Promise<string | undefined> {
   if (!repo) return undefined
   const exemption = await readExemption($, repo)
@@ -1399,9 +1414,10 @@ function waiverQuoting(pr: number): Quoting {
 const CONSENT_READ = 200
 
 // True when some consent record of the subject, written for the operator's answer to the
-// question that asked it, is quoted whole in the text, its whitespace normalised. A directory or
-// a file that cannot be read matches nothing.
-async function consentAnswered($: any, quote: string, subject: ConsentSubject): Promise<boolean> {
+// question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
+// itself says what `carries` asks of the operator's words. A directory or a file that cannot be
+// read matches nothing.
+async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
   try {
     const dir = await configDir($)
     if (!dir) return false
@@ -1420,7 +1436,7 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject): 
     for (const { path } of dated.slice(0, CONSENT_READ)) {
       try {
         const record = parseConsentRecord(JSON.parse(String(await $.fs.read(path))))
-        if (record && quotesConsent(record, subject, quote)) return true
+        if (record && quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer)))) return true
       } catch {
         // Not a match.
       }
@@ -1604,8 +1620,15 @@ function exemptionQuoting(repo: string, exempt: boolean, rules: readonly string[
   const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|d[ée]rogation|waiv|exempt|exon[ée]r|' + name, 'i')
   const repository = new RegExp('(?<![A-Za-z0-9_.-])(' + escaped(repo) + '|' + name + ')(?![A-Za-z0-9_-])', 'i')
   const carries = (words: string) =>
-    repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => words.includes(rule))
+    repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => ruleNamed(rule).test(words))
   return { dated: true, names: (span) => names.test(span), wholeBare: true, carries }
+}
+
+// A rule written whole in the words, as given: no letter, digit or path character joins it on either side, so
+// `docs/` is not in `src/docs/` nor `e2e` in `no-e2e`. A final dot ends a sentence, not the rule.
+const RULE_JOINED = '-A-Za-z0-9À-ÿ_/*?'
+function ruleNamed(rule: string): RegExp {
+  return new RegExp('(?<![' + RULE_JOINED + '.])' + escaped(rule) + '(?![' + RULE_JOINED + ']|\\.[' + RULE_JOINED + '])')
 }
 
 const RULES_MAX = 50
@@ -1627,7 +1650,9 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters, with their date (YYYY-MM-DD).' }
   }
   const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  if (!typedWords(detail, exemptionQuoting(repo, e.exempt, given)) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }))) {
+  // Typed or answered, the operator's own words carry the same: the consent's answer is checked as the prompt is.
+  const quoting = exemptionQuoting(repo, e.exempt, given)
+  if (!typedWords(detail, quoting) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, quoting.carries))) {
     return {
       deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session, naming '
         + repo + (e.exempt ? ', the exemption and each rule as given' : '') + ', or their answer in a consent record ('
@@ -1870,7 +1895,7 @@ export function register(on: any): void {
       // A line that cannot be read moves no label it shows.
     }
     for (const labelling of labellings) {
-      const refused = await exemptLabelRefusal($, labelling, labelling.repo ?? await targetRepo($, {}).catch(() => undefined))
+      const refused = await exemptLabelRefusal($, labelling, await labellingRepo($, labelling.repo))
       if (refused) return { deny: refused }
     }
     const after: Array<(result: any) => Promise<void>> = []

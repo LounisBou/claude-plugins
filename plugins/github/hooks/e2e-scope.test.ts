@@ -57,6 +57,17 @@ test('a glob takes * within a directory, ** across them and a trailing / for a w
   expect(globMatches('a+b.md', 'aab.md')).toBe(false)
 })
 
+test('** crosses directories only as a whole segment: a rule covers no file it does not name', () => {
+  expect(globMatches('docs/**/README.md', 'docs/README.md')).toBe(true)
+  expect(globMatches('docs/**/README.md', 'docs/a/b/README.md')).toBe(true)
+  expect(globMatches('docs/**/README.md', 'docs/notREADME.md')).toBe(false)
+  expect(globMatches('docs/**/README.md', 'docs/a/src-README.md')).toBe(false)
+  expect(globMatches('**/*.md', 'a.md')).toBe(true)
+  expect(globMatches('docs**/a.md', 'docs/x/a.md')).toBe(false)
+  expect(globMatches('docs**/a.md', 'docs-old/a.md')).toBe(true)
+  expect(globMatches('src/a**', 'src/a/b.ts')).toBe(false)
+})
+
 const EXEMPTION: Exemption = {
   v: 1, repo: 'acme/thing', exempt: true, paths: [], labels: [], detail: 'no E2E on thing, 2026-11-13', session: 's', at: '2026-11-13T10:00:00Z',
 }
