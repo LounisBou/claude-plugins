@@ -2157,6 +2157,30 @@ ok_brief "$B/twoaddr.md"; printf 'For example `other-12 [9f9f9f]`.\n' >> "$B/two
 check_status "a second session reference is a finding" 1 bash "$LINT" "$B/twoaddr.md"
 check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | grep -c 'more than one session reference')"
 
+# A succession brief lists its running agents with their references beside the predecessor's:
+# each is a real address, not an example. The bound of one reference is the other briefs'.
+printf '# Orchestrator succession brief — scratch\n\nMode: build\n\n- Agents running: `Agent: a [a1b2c3]`, `Agent: b [d4e5f6]`; predecessor `Orch: x [0a1b2c]`.\n' > "$B/succaddr.md"
+check "a succession brief naming several agents with their references raises no second-address finding" "0" \
+  "$(bash "$LINT" "$B/succaddr.md" 2>&1 | grep -c 'more than one session reference')"
+check "the same references in an implementer brief are still refused" "1" \
+  "$(ok_brief "$B/succaddr-impl.md"; printf 'Peers `Agent: a [a1b2c3]` and `Agent: b [d4e5f6]`.\n' >> "$B/succaddr-impl.md"; bash "$LINT" "$B/succaddr-impl.md" 2>&1 | grep -c 'more than one session reference')"
+
+# The succession template's mode line, quoted in a brief that describes it, is a mention: a
+# placeholder inside an inline code span, only that name. The line itself, any other name, and
+# the name outside a span are holes still.
+ok_brief "$B/modemention.md"; printf 'Succession fills `Mode: {{MODE}}` from the predecessor, and `{{MODE}}` is never left.\n' >> "$B/modemention.md"
+check_status "the mode placeholder quoted in a code span is a mention, not a hole" 0 bash "$LINT" "$B/modemention.md"
+ok_brief "$B/modeline.md"; printf 'Mode: {{MODE}}\n' >> "$B/modeline.md"
+check "the mode placeholder left as a line is still a finding" "1" "$(bash "$LINT" "$B/modeline.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
+ok_brief "$B/modeprose.md"; printf 'Your mode is {{MODE}}, and `Mode: {{MODE}}` is the line.\n' >> "$B/modeprose.md"
+check "the mode placeholder in prose beside a quoted one is one finding" "1" "$(bash "$LINT" "$B/modeprose.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
+ok_brief "$B/modestray.md"; printf 'A stray ` before {{MODE}} and none after.\n' >> "$B/modestray.md"
+check "a backtick left open before the mode placeholder keeps it a finding" "1" "$(bash "$LINT" "$B/modestray.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
+ok_brief "$B/spanother.md"; printf 'The branch is `{{BRANCH}}`.\n' >> "$B/spanother.md"
+check "another placeholder in a code span is still a finding" "1" "$(bash "$LINT" "$B/spanother.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
+check "the succession template, unfilled, still fails on its mode line" "1" \
+  "$(bash "$LINT" "$ROOT/templates/orchestrator-succession-brief.md" 2>&1 | grep -c ':3: unfilled placeholder {{MODE}}')"
+
 printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
 check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
 check "the missing address is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no orchestrator address')"
@@ -5340,6 +5364,16 @@ check "an owner file that cannot be written is unread, exit 5" "ci-watch: unread
   "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 rm -rf "$OWN"
 
+# Outside a clone of the repository: a target that names it is watched on it, the bare number is refused.
+check "a target naming the repository is watched there, whatever the directory: the gate call names it" "ci-watch: green 7 $HA $CWGATE on acme/thing|0" \
+  "$(cd "$WORK" && cw "OPEN $HA" "2" 0 "" acme/thing#7 --interval 1)"
+CWOUT="$WORK/ci-watch-outside"
+mkdir -p "$CWOUT/bin" "$CWOUT/dir"
+printf '#!/bin/bash\necho "$*" >> "%s/calls"\nexit 1\n' "$CWOUT" > "$CWOUT/bin/gh"
+chmod +x "$CWOUT/bin/gh"
+check "a bare number outside a clone is refused in one line, asking for --repo, and nothing is read" "ci-watch: unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5|repo view" \
+  "$(cd "$CWOUT/dir" && out=$(PATH="$CWOUT/bin:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" bash "$CWSCRIPT" 7 2>/dev/null); echo "$out|$?|$(cut -d' ' -f1,2 "$CWOUT/calls" | sort -u | tr '\n' ' ' | sed 's/ $//')")"
+
 echo "== stop gate: the prose and the pins that survive the module =="
 # The hook's own cases — the wake decision, the once-per-tell CI record, the deadline race,
 # the sweep it runs after a passing stop — moved module-side with the gate
@@ -5400,15 +5434,15 @@ check "no text offers only the wait on the operator and done" "" "$(two_lines_on
 # The question of a decision round ends on a declared wait on the operator: the stop gate refuses
 # a turn that ends on a bare question.
 check "a decision round's question ends on a declared operator wait" "yes" \
-  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<the question>"})`')"
+  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 # The operator's time: a round is a wave of questions back to back, nothing relayed or launched
 # inside it; the relays and the work come at its end, and a second wave is chained at once.
 # Topic 6.3 of the rules review, the operator's ruling of 2026-10-31: each ruling is relayed at
 # once, nothing is shown between two questions, and the wave launches and reports at its end.
-check "a decision round asks its questions back to back, relays each ruling at once, and launches only when the wave ends" "yes|yes|yes|yes|no|no" \
-  "$(spells "$ROOT/commands/decide.md" 'in this same message, right under the')|$(spells "$ROOT/commands/decide.md" 'nothing launched or reported inside a wave, each ruling relayed at once')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
+check "a decision round asks its questions back to back, relays each ruling at once, and never stops the work its questions do not block" "yes|yes|yes|yes|no|no" \
+  "$(spells "$ROOT/commands/decide.md" 'A question blocks only the work that depends on its answer')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
 check "a decision round shows nothing between a ruling and the next question" "no" \
   "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
 # Topic 6.3: the coordinator's module relays a ruling as soon as round-close returns.

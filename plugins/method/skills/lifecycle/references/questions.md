@@ -1,6 +1,6 @@
 # The question
 
-One question per message, once, in this shape:
+In this shape:
 
 ```
 **Question i of N**
@@ -23,4 +23,4 @@ _Recommendation_ : A — <why it beats the others>
   number may follow in parentheses, never alone.
 - A host dialog takes the same parts: choices as options, the recommended first and marked,
   the free answer as « Other ».
-- The answer is recorded, dated, where the work keeps its decisions, never asked again.
+- The answer is recorded, dated, where the work keeps its decisions.
