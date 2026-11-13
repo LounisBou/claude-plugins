@@ -202,12 +202,11 @@ test('surface and audit', async () => {
   assert.deepEqual(rows()[0]?.['surface'], { kind: 'ui', pr: 'o/r#12', reason: '', at: '2026-11-08T10:11:12Z' })
 })
 
-test('ready: the surface, the audit, the E2E line, then the heads', async () => {
+test('ready: the surface, the audit, then the heads; no E2E line', async () => {
   await withGoals()
   const r = rec()
   const two = '![a](x.png)\n<img src=y>'
   for (let k = 0; k < 4; k++) await cli(['open', r, '--class', 'c', '--tier', 'deep'])
-  const e2e = ['--e2e', 'E2E: t.spec — npm e2e — passed']
   assert.equal(await cli(['ready', r, '1']), '1||ERROR: ready: --head is required\n')
   assert.match(await cli(['ready', r, '1', '--head', 'abc1234']), /does not say whether its pull request changes a frontend surface/)
   await cli(['surface', r, '1', '--ui', 'o/r#12'])
@@ -221,49 +220,32 @@ test('ready: the surface, the audit, the E2E line, then the heads', async () => 
   await cli(['audit', r, '1', '--head', 'abc1234', '--images', '2', '--defect', 'icon off', '--defect', 'stray text'])
   assert.match(await cli(['ready', r, '1', '--head', 'abc1234'], d(two)), /recorded 2 defect\(s\): icon off; stray text\. Fix each one/)
   await cli(['audit', r, '1', '--head', 'abc1234', '--images', '2'])
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234'], d(two)), /gives no E2E line/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', ''], d(two)), /got: nothing/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none'], d(two)), /needs its reason/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'e2e: NONE, x'], d(two)), /must start with `E2E:`/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none — no harness'], d(two)), /has not validated it ready without one: tell him « E2E: none — no harness »/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: NONE: x', '--e2e-waiver', 'ok'], d(two)), /takes the operator's words with their date/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', ...e2e, '--e2e-waiver', 'ok 2026-11-01'], d(two)), /is for a pull request with no E2E test/)
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none — x', '--e2e-waiver', 'ok 2026-11-01'], d(two)),
+  // The E2E line is the github gate's, not this pre-check's: none is asked, none is refused.
+  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none — x'], d(two)), '1||ERROR: ready: unknown option --e2e\n')
+  assert.match(await cli(['ready', r, '1', '--head', 'abc1234'], d(two)),
     /^1\|\|.*ready: no review recorded on row 1: dispatch a review round and record it with `review`: not ready/s)
-  assert.equal(rows()[0]?.['e2e'], undefined)
   await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'tool'])
-  await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none — x', '--e2e-waiver', 'ok 2026-11-01'], d(two))
-  assert.deepEqual(rows()[0]?.['e2e'], { line: 'E2E: none — x', kind: 'none', waiver: 'ok 2026-11-01', exempt: '', head: 'abc1234', at: '2026-11-08T10:11:12Z' })
-  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234ffff', ...e2e], d(two)),
-    '0|ready: row 1 reviewed at abc1234ffff, norms check tool; 2 screenshot(s) on o/r#12, audited clean at abc1234; E2E: t.spec — npm e2e — passed\npr-readiness 12 ready on o/r\n|')
-  assert.match(await cli(['ready', r, '1', '--head', '9999999', ...e2e], d(two)), /last review read abc1234, head is 9999999: the head in front of you has not been read/)
-  assert.match(await cli(['ready', r, '1', '--head', '99', ...e2e], d(two)), /head 99 is too short/)
+  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234ffff'], d(two)),
+    '0|ready: row 1 reviewed at abc1234ffff, norms check tool; 2 screenshot(s) on o/r#12, audited clean at abc1234\npr-readiness 12 ready on o/r\n|')
+  assert.match(await cli(['ready', r, '1', '--head', '9999999'], d(two)), /last review read abc1234, head is 9999999: the head in front of you has not been read/)
+  assert.match(await cli(['ready', r, '1', '--head', '99'], d(two)), /head 99 is too short/)
 
   // A minor row, a review then its correction.
   await cli(['surface', r, '2', '--minor', 'a tooltip'])
   await cli(['review', r, '2', '--head', 'aaaaaaa', '--norms', 'none'])
-  assert.equal(await cli(['ready', r, '2', '--head', 'aaaaaaa', ...e2e]),
-    '0|ready: row 2 reviewed at aaaaaaa, norms check none; frontend change ruled minor: a tooltip - tell the operator this reason with the ready; E2E: t.spec — npm e2e — passed\npr-readiness <n> ready on <owner/repo>\n|')
-  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc', ...e2e]), '1||ERROR: ready: last review read aaaaaaa, head is ccccccc: the head in front of you has not been read\n')
+  assert.equal(await cli(['ready', r, '2', '--head', 'aaaaaaa']),
+    '0|ready: row 2 reviewed at aaaaaaa, norms check none; frontend change ruled minor: a tooltip - tell the operator this reason with the ready\npr-readiness <n> ready on <owner/repo>\n|')
+  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc']), '1||ERROR: ready: last review read aaaaaaa, head is ccccccc: the head in front of you has not been read\n')
   await cli(['fixed', r, '2', '--head', 'bbbbbbb'])
-  assert.match(await cli(['ready', r, '2', '--head', 'bbbbbbb', ...e2e]), /^0\|ready: row 2 reviewed at aaaaaaa, corrected and verified at bbbbbbb, norms check none/)
-  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc', ...e2e]), '1||ERROR: ready: last review read aaaaaaa, its correction bbbbbbb, head is ccccccc: the head in front of you has been neither read nor verified\n')
+  assert.match(await cli(['ready', r, '2', '--head', 'bbbbbbb']), /^0\|ready: row 2 reviewed at aaaaaaa, corrected and verified at bbbbbbb, norms check none/)
+  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc']), '1||ERROR: ready: last review read aaaaaaa, its correction bbbbbbb, head is ccccccc: the head in front of you has been neither read nor verified\n')
 
-  // A row of no surface, under the session's exemption.
+  // A row of no surface, with no E2E line: ready, and no E2E field written.
   await cli(['surface', r, '3', '--none'])
   await cli(['review', r, '3', '--head', 'abc1234', '--norms', 'tool'])
-  assert.match(await cli(['exempt', r]), /--e2e .* is required/)
-  assert.match(await cli(['exempt', r, '--e2e', 'fine']), /with their date/)
-  assert.equal(await cli(['exempt', r, '--bogus']), '1||ERROR: exempt: unknown option --bogus\n')
-  assert.match(await cli(['exempt', join(dir, 'p', 'none.jsonl'), '--e2e', 'fine 2026-11-02']), /no such record/)
-  assert.equal(await cli(['exempt', r, '--e2e', 'fine 2026-11-02']), '0|exempt: every pull request of this session\'s record is exempted from E2E: fine 2026-11-02\n|')
-  assert.match(await cli(['ready', r, '3', '--head', 'abc1234', '--e2e', 'E2E: none — x']), /no frontend surface; E2E: none — x \(this session's pull requests exempted from E2E by the operator: fine 2026-11-02\)/)
-  writeFileSync(`${r}.e2e-exempt`, 'not json')
-  assert.match(await cli(['ready', r, '3', '--head', 'abc1234', '--e2e', 'E2E: none — x']), /has not validated it ready/)
-  mkdirSync(`${r}.e2e-exempt.tmp`)
-  rmSync(`${r}.e2e-exempt`)
-  mkdirSync(`${r}.e2e-exempt`)
-  assert.match(await cli(['exempt', r, '--e2e', 'fine 2026-11-02']), /could not write/)
+  assert.equal(await cli(['ready', r, '3', '--head', 'abc1234']), '0|ready: row 3 reviewed at abc1234, norms check tool; no frontend surface\npr-readiness <n> ready on <owner/repo>\n|')
+  assert.equal(rows()[2]?.['e2e'], undefined)
+  assert.match(await cli(['exempt', r, '--e2e', 'fine 2026-11-02']), /unknown subcommand: exempt/)
 })
 
 test('cost: measured, counted once, recounted when priced, named on a legacy row', async () => {
