@@ -92,9 +92,9 @@ through `core` and names its own install command when it is missing.
 The pin is raised in that constant, with the integrity the registry publishes for each package it
 installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
 writes them into a lockfile and runs `npm ci`, which refuses a tarball of another hash. Then
-`npm run core`: every plugin carrying core ships the change and raises its version, the next
-install lands beside the old one, and the CI cache keyed on the module installs the new one. An
-old version's directory is removed by hand.
+`npm run core`: every plugin carrying core ships the change, and the next release pull request
+raises its version. Once released, the next install lands beside the old one, and the CI cache
+keyed on the module installs the new one. An old version's directory is removed by hand.
 
 ## Languages
 
@@ -108,9 +108,9 @@ language; when another language needs it, it reads it as data, never as a re-imp
 ## Release
 
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
-from it. A pull request that changes what a plugin ships raises its version, or CI refuses it,
-because the host caches by version. A release is the merge: the
-host installs the version the catalogue names, and no tag is made.
+from it. A pull request raises no version. The release pull request (`npm run release`) raises
+the version of every plugin changed since its last release, because the host caches by version.
+A release is its merge: the host installs the version the catalogue names, and no tag is made.
 
 ## What CI holds
 
@@ -122,10 +122,11 @@ host installs the version the catalogue names, and no tag is made.
 | no committed permission grant, every installer rule listed | `npm run permissions`, `contracts.md` |
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
-| shipped change raises the version (pull requests) | `npm run version-bump`, the same manifests against the base branch |
+| every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
 | prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
+| the release raises every changed plugin in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
 A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
