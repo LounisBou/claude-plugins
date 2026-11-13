@@ -232,3 +232,5 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 3. Changing `deck.json`'s format.
 4. Porting the Python engines to TypeScript.
 5. New features outside the goals above.
+
+The next spec of the program is `method-drift-design.md`, correcting the drift of the method: pull requests no longer go all the way.

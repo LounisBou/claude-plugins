@@ -316,7 +316,7 @@ test('an interrupted turn releases the loop', async ($, on) => {
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; head?: string; remote?: string; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { top?: string; cwds?: string[]; topFails?: boolean; records: any[]; prCalls: number; head?: string; remote?: string; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -332,6 +332,10 @@ function wireRecord(on: any, stubs: Stubs) {
   })
   on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
   on('process.run', (_$: any, e: any) => {
+    if (e.argv[0] === 'git') stubs.cwds?.push(e.argv.slice(1).join(' ') + ' @ ' + String(e.init?.cwd))
+    if (e.argv.join(' ') === 'git rev-parse --show-toplevel') {
+      return { value: stubs.topFails ? { ...ok, exitCode: 128, stderr: 'fatal: not a git repository' } : { ...ok, stdout: (stubs.top ?? '/clone/repo') + '\n' } }
+    }
     if (e.argv[0] === 'sleep') stubs.sleeps?.push(e.argv[1])
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
     if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:' + (stubs.remote ?? 'LounisBou/claude-review') + '.git\n' } }
@@ -351,7 +355,7 @@ function wireRecord(on: any, stubs: Stubs) {
     stubs.recordCalls = (stubs.recordCalls ?? 0) + 1
     const first = stubs.recordFirst?.shift()
     if (first !== undefined) return first
-    stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail })
+    stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir })
     return stubs.recordAnswer ?? { result: WRITTEN }
   })
 }
@@ -382,10 +386,38 @@ test('a clean exit writes a passing review record and says where', async ($, on)
   wireRecord(on, stubs)
   const out = await cleanLoop($)
   expect(stubs.records).toEqual([
-    { pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'clean at pass 1, 1 review agents reporting no finding' },
+    { pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'clean at pass 1, 1 review agents reporting no finding', dir: '/clone/repo' },
   ])
   expect(String(out.result)).toContain('record: ' + WRITTEN)
   expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('the record names the checkout the loop started in, and git reads that one', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, cwds: [] }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  expect(stubs.records.map((r) => r.dir)).toEqual(['/clone/repo'])
+  // Every git call after the start (the reviewed head, status, remote, branch) ran in it.
+  const after = stubs.cwds!.slice(1)
+  expect(after.map((c) => c.split(' @ ')[0])).toEqual(['rev-parse HEAD', 'status --porcelain -uno', 'remote get-url origin', 'rev-parse --abbrev-ref HEAD'])
+  expect(after.filter((c) => !c.endsWith(' @ /clone/repo'))).toEqual([])
+})
+
+test('a detached head reads its commit in the checkout the loop started in', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, cwds: [], branch: 'HEAD', pulls: JSON.stringify([{ number: 12, head: { sha: REVIEWED_HEAD } }]) }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  expect(stubs.records.map((r) => r.dir)).toEqual(['/clone/repo'])
+  expect(stubs.cwds!.slice(1).map((c) => c.split(' @ ')[0])).toContain('rev-parse HEAD')
+  expect(stubs.cwds!.slice(1).filter((c) => !c.endsWith(' @ /clone/repo'))).toEqual([])
+})
+
+test('a loop that started outside a git checkout leaves no record and says why', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, topFails: true }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(stubs.records).toEqual([])
+  expect(String(out.result)).toContain('record: none — the loop started outside a git checkout (fatal: not a git repository)')
 })
 
 test('max_passes with no blocking finding left writes pass, with the leftover count', async ($, on) => {
@@ -581,7 +613,7 @@ test('a reviewer\'s loop with only suggestions passes, and a clean one passes as
   await loopCall($, { action: 'begin_pass' })
   await review($, [{ severity: 'suggestion' }])
   await loopCall($, { action: 'findings', keys: ['b.ts::naming'] })
-  expect(stubs.records[0]).toEqual({ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'reviewed: 1 findings, none Critical or Important' })
+  expect(stubs.records[0]).toEqual({ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'reviewed: 1 findings, none Critical or Important', dir: '/clone/repo' })
   await loopCall($, { action: 'start', review_only: true })
   await loopCall($, { action: 'begin_pass' })
   await review($, [])
@@ -1293,7 +1325,7 @@ test('a persistent 503 settles no record: the answer says it is owed, and a late
   expect(String(out.result)).toContain('"exit": "reviewed"')
   // GitHub is back: the same verdict is written, nothing is read again.
   const later = await loopCall($, { action: 'findings', keys: ['other::finding'] })
-  expect(stubs.records).toEqual([{ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'fail', detail: 'reviewed: 1 findings, 1 Critical or Important: a::b' }])
+  expect(stubs.records).toEqual([{ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'fail', detail: 'reviewed: 1 findings, 1 Critical or Important: a::b', dir: '/clone/repo' }])
   expect(String(later.result)).toContain('record: ' + WRITTEN)
   expect(String(later.result)).toContain('"exit": "reviewed"')
   expect(String(later.result)).toContain('"seen": [\n    "a::b"\n  ]')

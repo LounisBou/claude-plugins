@@ -40,10 +40,10 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: any): Record<string, unknown> {
+export function act(e: any, dir?: { dir: string } | { why: string }): Record<string, unknown> {
   const action = String(e?.action ?? '')
   if (action === 'start') {
-    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true)
+    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined)
     if (loop.isReviewOnly) return { pass: 0, max_passes: 1, next: 'call begin_pass, run the review, report its findings: no fix is made, the loop ends there' }
     return { pass: 0, max_passes: MAX_PASSES, next: 'call begin_pass, then run the review' }
   }
@@ -287,7 +287,19 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
 
 const textOf = (answer: any): string => String(answer?.result ?? answer?.text ?? answer?.deny ?? '').trim()
 
-const git = ($: any, argv: string[]) => $.process.run(['git', ...argv], { timeoutMs: 10_000 })
+const git = ($: any, argv: string[], dir?: string) => $.process.run(['git', ...argv], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
+
+// The top directory of the checkout the session is in, or why it is in none.
+async function checkoutDir($: any): Promise<{ dir: string } | { why: string }> {
+  try {
+    const run = await git($, ['rev-parse', '--show-toplevel'])
+    const top = String(run.stdout ?? '').trim()
+    if (run.exitCode === 0 && top.startsWith('/')) return { dir: top }
+    return { why: String(run.stderr ?? '').trim() || 'git rev-parse --show-toplevel answered ' + (top || 'nothing') }
+  } catch (err: any) {
+    return { why: String(err?.message ?? err).trim() }
+  }
+}
 
 // A call to a github tool, asked again after a pause while it fails transiently; a refusal that is
 // not transient is the answer at once. The last answer, or the last error thrown, once the pauses
@@ -316,8 +328,8 @@ async function github($: any, call: Record<string, unknown>): Promise<any> {
 // The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
 // head (a review checkout) names no branch, and the open pull request whose head is its commit is
 // the one, never one of several. The number, or the line that says why there is none.
-async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>) => Promise<any>): Promise<number | string> {
-  const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'])
+async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>) => Promise<any>, dir?: string): Promise<number | string> {
+  const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'], dir)
   const branch = String(branchRun.stdout ?? '').trim()
   if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
   if (branch !== 'HEAD') {
@@ -326,7 +338,7 @@ async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>)
     const pr = Number(textOf(found))
     return Number.isInteger(pr) && pr >= 1 ? pr : 'record: none — the branch has no pull request'
   }
-  const headRun = await git($, ['rev-parse', 'HEAD'])
+  const headRun = await git($, ['rev-parse', 'HEAD'], dir)
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
   const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
@@ -348,8 +360,8 @@ async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>)
 const PENDING_NOTE = '; the record is still owed, the verdict is kept: call findings or status again to write it'
 
 // The head the checkout is at, or undefined when git cannot say.
-async function headOf($: any): Promise<string | undefined> {
-  const run = await git($, ['rev-parse', 'HEAD'])
+async function headOf($: any, dir?: string): Promise<string | undefined> {
+  const run = await git($, ['rev-parse', 'HEAD'], dir)
   const head = String(run.stdout ?? '').trim()
   return run.exitCode === 0 && head !== '' ? head : undefined
 }
@@ -381,21 +393,24 @@ async function recordReview($: any, exit: string, isRetry: boolean): Promise<{ l
   const none = (why: string) => ({ line: 'record: none — ' + why, isOwed })
   try {
     if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return none(NO_GITHUB)
+    // The checkout the loop started in: a later shell `cd` does not move the record to another one.
+    const dir = loop.dir
+    if (!dir) return none('the loop started outside a git checkout (' + (loop.dirWhy || 'no directory read') + ')')
     if (isRetry) {
-      const now = await headOf($)
+      const now = await headOf($, dir)
       if (now === undefined || loop.reviewedHead === undefined || now !== loop.reviewedHead) {
         return none(`the checkout is at ${short(now)}, the review read ${short(loop.reviewedHead)}: a record is written at the head it read`)
       }
     }
-    const status = await git($, ['status', '--porcelain', '-uno'])
+    const status = await git($, ['status', '--porcelain', '-uno'], dir)
     if (status.exitCode !== 0) return none('git status failed: ' + String(status.stderr ?? '').trim())
     if (String(status.stdout).trim() !== '') return none('the tracked files have changes: a record is written on a clean checkout of the head')
-    const remote = await git($, ['remote', 'get-url', 'origin'])
+    const remote = await git($, ['remote', 'get-url', 'origin'], dir)
     const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
     if (!repo) return none('the origin remote is not a GitHub repository')
-    const pr = await pullOf($, repo, ask)
+    const pr = await pullOf($, repo, ask, dir)
     if (typeof pr === 'string') return { line: pr, isOwed }
-    const written = await ask({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
+    const written = await ask({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail, dir })
     if (written?.deny || written?.isError) return none(textOf(written) || 'refused')
     return { line: 'record: ' + textOf(written), isOwed: false }
   } catch (err: any) {
@@ -492,7 +507,7 @@ export function register(on: any): void {
     // A record still owed after a transient github failure is written again at the next
     // `findings` or `status`: the verdict the loop kept stands, nothing is computed again.
     const isOwed = loop.isRecordPending && (e?.action === 'findings' || e?.action === 'status')
-    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e)
+    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e, e?.action === 'start' ? await checkoutDir($) : undefined)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
     // The record is first written at the call that ends the loop, at the head the loop ended on.
@@ -501,7 +516,7 @@ export function register(on: any): void {
     if (isOwed || isFirst) {
       loop.isRecorded = true
       loop.isRecordPending = true
-      if (isFirst) loop.reviewedHead = await headOf($).catch(() => undefined)
+      if (isFirst) loop.reviewedHead = await headOf($, loop.dir).catch(() => undefined)
       const written = await recordReview($, String(loop.exit), isOwed)
       loop.isRecordPending = written.isOwed
       if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) }

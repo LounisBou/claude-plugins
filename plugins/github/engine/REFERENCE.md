@@ -41,7 +41,8 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-list` | | Open PRs |
 | `pr-status` | `<pr>` | State, draft flag, head and base |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
-| `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Changed paths with their patches, paginated |
 | `pr-commits` | `<pr>` | Commits on the PR, paginated |
@@ -49,27 +50,28 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
 
-`pr-gate` reads the pull request, then at its head the status, the check runs and the
-Actions runs (`per_page=100`). `state` is `open`, `closed` or `merged`, `head` the full sha, `labels` its names. `ci.total` counts each workflow's latest run of each check plus commit
-statuses. `ci.result` is `FAILURE` when one failed (`ci.failed` names them), `PENDING` when
-one still runs (`ci.running` counts them) or proved nothing: `skipped`, or `neutral` on a
-draft (`ci.skipped` names them), else `SUCCESS` (also with no check). A skipped
-check never turns green, in `checks-status` too.
-Actions call failed: one `error:` line on stderr, every run counted.
+`pr-gate` reads the pull request, then at its head the status, check runs and Actions runs
+(`per_page=100`); `state` is `open`, `closed` or `merged`, `head` the full sha. `ci.total`:
+statuses and each check's latest run, less a skipped or neutral one of a run older than its
+workflow's latest (greatest run id) if that has a check. `ci.result`: `FAILURE` if one failed
+(`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
+`skipped`, or `neutral` on a draft), else `SUCCESS`, also with no check. A skipped check
+never turns green, in `checks-status` too. Actions call failed: `error:` on stderr, every
+run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
+instead.
 
-`file-at-ref` returns `content`, plus `binary`. When the file is not valid UTF-8,
-`binary` is true and `content` holds base64 — the bytes are never decoded lossily.
+`file-at-ref` returns `content` and `binary`: a file not valid UTF-8 has `binary` true and
+`content` in base64, never decoded lossily.
 
 `pr-merge --sha <full sha>` sends the head that was verified, and GitHub refuses the merge
 if the head has moved since.
 `--match-head-commit` takes the full sha read by `git rev-parse` or `headRefOid`, never
 copied from a short form or completed by hand.
 
-A PR that GitHub counts as part of a stack refuses the synchronous merge with a 403, so
-`pr-merge` then uses the asynchronous merge endpoint with the same method (and the same sha
-when `--sha` is given) and reads the PR until it is merged, for at most `GH_MERGE_WAIT`
-seconds (default 60). It prints the merge commit sha, or exits 3 naming the request's uuid
-if the merge fails or is not seen in time. Any other error is reported as it is.
+A PR GitHub counts in a stack refuses the synchronous merge (403): `pr-merge` then uses the
+asynchronous merge endpoint, same method (and `--sha`), and reads the PR until
+merged, at most `GH_MERGE_WAIT` seconds (default 60). It prints the merge commit sha, or
+exits 3 naming the request's uuid if the merge fails or times out. Other errors pass as is.
 
 ### Review threads and comments
 
@@ -232,10 +234,9 @@ python3 "$GH" image-upload screenshot.png --title "Login screen"
 # ![Login screen](https://github.com/acme/thing/blob/pr-assets/<sha>.png?raw=true)
 ```
 
-`image-upload` also takes several files in one call, each with its own `--title`,
-repeated once per file in the same order. The `markdown` field joins each titled block
-with a horizontal rule, and the JSON carries an `images` list (one `{url, path, reused,
-title}` entry per file) instead of a single `url`/`path`/`reused`:
+`image-upload` takes several files in one call, one `--title` per file, in order.
+`markdown` joins the titled blocks with a horizontal rule; the JSON has an `images` list
+(one `{url, path, reused, title}` per file) in place of `url`/`path`/`reused`:
 
 ```
 python3 "$GH" image-upload before.png after.png --title "Before" --title "After"
@@ -248,9 +249,8 @@ python3 "$GH" image-upload before.png after.png --title "Before" --title "After"
 # ![After](https://github.com/acme/thing/blob/pr-assets/<sha2>.png?raw=true)
 ```
 
-`--title` given for a multi-file call must be repeated exactly once per file, or the
-call is refused as a usage error. A multi-file call with no `--title` at all is refused
-too: each block between two rules needs its title.
+A multi-file call without exactly one `--title` per file is refused as a usage error:
+each block between two rules needs its title.
 
 Requires push access to the repository.
 
@@ -282,12 +282,13 @@ Requires push access to the repository.
 
 ### How the guard reads it, and how a head voids it
 
-- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/` alone: a record at any other sha is not read.
+- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
 - A repository's E2E exemption (below) stands for a missing `e2e` record, named in the `Ready` line; an `e2e` `fail` still holds.
-- A moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
-- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories whose newest file is over 90 days old are removed.
+- A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted, no acceptance and no E2E pass (`<kind> carried from <head7>`).
+- Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
+- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
 
 ### The producers
 
@@ -298,19 +299,19 @@ names no consumer.
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
-| orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; no checkout is read |
+| orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; another `over` is refused with the file to pass |
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason, files with no runtime (below), and a session that did not push the head |
 
 A review record is refused from the session that pushed the head it reviews.
 
-Not producers: `start-review` (a walkthrough the operator submits themselves) and `process-comments` (answers to comments). A human `APPROVED` review on GitHub is no record.
+Not producers: `start-review` (the operator submits it), `process-comments` (answers to comments), a human `APPROVED` review on GitHub.
 
 ### E2E a pull request does not need
 
 Both routes are `hooks/e2e-scope.ts`'s.
 
-- **No runtime.** `not-applicable` is written only when no file of the pull request (`pr-files`
-  at the head) holds runtime, by the rule `runtimeFiles` states; the refusal names the files.
+- **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
+  head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator as a waiver does, or a consent record
@@ -319,12 +320,12 @@ Both routes are `hooks/e2e-scope.ts`'s.
 
 ### What the contract does not stop
 
-The records guard (« Guards » below) does not see a script that writes under the root or runs `record.py` itself. The guards stop a forgotten review, norms check or E2E, not a session set on forging one.
+The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards stop a forgotten review, norms check or E2E, not a forger.
 
 ## Pushing from the sandbox
 
-Outgoing SSH is blocked in the sandbox, even through `!`. Push over HTTPS with gh's
-token and an empty `credential.helper=` first, to avoid the keychain dialogs:
+SSH is blocked in the sandbox, even through `!`: push over HTTPS with gh's token, an
+empty `credential.helper=` first (no keychain dialog):
 `git -c credential.helper= -c credential.helper='!f(){ echo username=x-access-token; echo "password=$(gh auth token)"; }; f' push https://github.com/<owner>/<repo>.git HEAD:<branch>`.
 A push by URL does not update `refs/remotes/origin/*`: `--force-with-lease` takes an
 explicit sha (`--force-with-lease=<branch>:<full sha>`). Same pattern for `fetch`.
@@ -332,16 +333,12 @@ Never « external terminal ».
 
 ## Guards
 
-**Writing rules read.** A commit (`git commit`), a pull request or an issue opened, edited
-with a title or a body, or commented (`gh pr create`, `gh issue create`, `gh pr
-comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue
-edit` with a title or a body), and every call of this tool that carries a text, waits
-until the files of `writing/` its kind of text needs, which the refusal names, were read
-whole in the context that writes it: the Read tool from a file's first line to its last, or
-a Bash `cat` or `sed -n '1,$p'` of it.
-Each subagent reads for itself, and a compaction asks for one more read. The command
-is read word by word, so a message or a body that only mentions one of these commands
-passes. Until then the call is refused with:
+**Writing rules read.** A commit (`git commit`), `gh pr create`, `gh issue create`, `gh pr
+comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue edit` with
+a title or a body, and every call of this tool carrying a text wait until the `writing/` files
+the refusal names were read whole in the context that writes: Read from first line to last, or
+Bash `cat` or `sed -n '1,$p'`. Each subagent reads for itself; a compaction asks one more read.
+The command is read word by word: a text that only mentions these commands passes. Until then:
 
 ```
 github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
