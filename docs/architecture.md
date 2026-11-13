@@ -92,9 +92,9 @@ through `core` and names its own install command when it is missing.
 The pin is raised in that constant, with the integrity the registry publishes for each package it
 installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
 writes them into a lockfile and runs `npm ci`, which refuses a tarball of another hash. Then
-`npm run core`: every plugin carrying core ships the change and raises its version, the next
-install lands beside the old one, and the CI cache keyed on the module installs the new one. An
-old version's directory is removed by hand.
+`npm run core`: every plugin carrying core ships the change, and the next release pull request
+raises its version. Once released, the next install lands beside the old one, and the CI cache
+keyed on the module installs the new one. An old version's directory is removed by hand.
 
 ## Languages
 
@@ -108,9 +108,9 @@ language; when another language needs it, it reads it as data, never as a re-imp
 ## Release
 
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
-from it. A pull request that changes what a plugin ships raises its version, or CI refuses it,
-because the host caches by version. A release is the merge: the
-host installs the version the catalogue names, and no tag is made.
+from it. A pull request raises no version. The release pull request (`npm run release`) raises
+the version of every plugin changed since its last release, because the host caches by version.
+A release is its merge: the host installs the version the catalogue names, and no tag is made.
 
 ## What CI holds
 

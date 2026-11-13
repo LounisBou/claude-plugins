@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { describe, it, type TestContext } from 'node:test'
+import { after, before, describe, it, type TestContext } from 'node:test'
 import { processIo, type Io } from './lib/io.ts'
 import { compareVersions, isEntry, parseManifest } from './lib/plugins.ts'
 import { render, run as marketplace } from './marketplace.ts'
@@ -111,6 +111,22 @@ describe('version-bump run', () => {
 })
 
 describe('release run', () => {
+  // The release commits as whoever runs it; a runner has no git identity, so the test gives one.
+  const identity = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' }
+  const saved: Record<string, string | undefined> = {}
+  before(() => {
+    for (const [key, value] of Object.entries(identity)) {
+      saved[key] = process.env[key]
+      process.env[key] = value
+    }
+  })
+  after(() => {
+    for (const key of Object.keys(identity)) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
+  })
+
   function released(): string {
     const root = repo({ alpha: '1.0.0', beta: '2.0.0' })
     git(root, 'init', '-q', '-b', 'main')
