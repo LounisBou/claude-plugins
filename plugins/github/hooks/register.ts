@@ -882,6 +882,21 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
 // would cover or uncover pull requests without the operator. A labelling that may move any label
 // (opaque) is refused when the exemption names one. A repository that cannot be named has no
 // exemption file to read, as an exemption that cannot be read covers nothing.
+const REPO_PLACEHOLDER = /\{owner\}|\{repo\}|:owner\b|:repo\b/g
+
+/*
+ * The repository a Bash labelling targets: the one it names, its {owner}, {repo}, :owner and :repo
+ * placeholders filled from the checkout's repository as gh api fills them, or the checkout's own
+ * when it names none.
+ */
+async function labellingRepo($: any, named: string | undefined): Promise<string | undefined> {
+  if (named && !named.match(REPO_PLACEHOLDER)) return named
+  const checkout = await targetRepo($, {}).catch(() => undefined)
+  if (!named || !checkout) return checkout
+  const [owner, name] = checkout.split('/')
+  return named.replace(REPO_PLACEHOLDER, (part) => (part.includes('owner') ? owner : name))
+}
+
 async function exemptLabelRefusal($: any, labelling: Labelling, repo: string | undefined): Promise<string | undefined> {
   if (!repo) return undefined
   const exemption = await readExemption($, repo)
@@ -1880,7 +1895,7 @@ export function register(on: any): void {
       // A line that cannot be read moves no label it shows.
     }
     for (const labelling of labellings) {
-      const refused = await exemptLabelRefusal($, labelling, labelling.repo ?? await targetRepo($, {}).catch(() => undefined))
+      const refused = await exemptLabelRefusal($, labelling, await labellingRepo($, labelling.repo))
       if (refused) return { deny: refused }
     }
     const after: Array<(result: any) => Promise<void>> = []

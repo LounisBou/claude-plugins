@@ -108,6 +108,8 @@ function parseWords(words: string[], valued: string[]): Parsed {
     }
     if (word.startsWith('-') && word !== '-') {
       if (valued.includes(word)) out.opts.push([word, words[++k]])
+      // A short valued flag joined to its value (`-Flabels[]=@f`, `-XPATCH`) is read as gh does.
+      else if (/^-[^-]./.test(word) && valued.includes(word.slice(0, 2))) out.opts.push([word.slice(0, 2), word.slice(2)])
       else out.opts.push([word, undefined])
       continue
     }
@@ -255,7 +257,6 @@ function apiAct(argv: string[]): Act | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const base = { name: 'gh api graphql', unnamed: true }
@@ -397,7 +398,6 @@ function apiLabelling(argv: string[]): Labelling | undefined {
   const fields = apiFields(parsed)
   const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
-    ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
   const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
   if (GRAPHQL.test(endpoint)) {
     const query = inlineQuery(parsed, fields)

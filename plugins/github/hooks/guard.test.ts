@@ -2416,6 +2416,38 @@ test('a label an exemption names is refused to Bash, on any route, another label
   expect(other.deny).toBeUndefined()
 })
 
+test('a gh api field joined to its flag is read as a spaced one: a label an exemption names is refused', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED })
+  for (const command of [
+    'gh api -X POST repos/acme/thing/issues/12/labels -f labels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -flabels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=no-e2e',
+    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=@labels.txt',
+    'gh api -XPATCH repos/acme/thing/issues/12 -Flabels[]=@labels.txt',
+    'gh api repos/acme/thing/issues/12/labels --raw-field=labels[]=no-e2e',
+    'gh api repos/acme/thing/issues/12/labels --field=labels[]=no-e2e',
+    'gh api repos/acme/thing/issues/12/labels --field=labels[]=@labels.txt',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toContain('exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  }
+  expect(seen.bash).toEqual([])
+})
+
+test('a gh api path whose repository is a placeholder is read as the checkout\'s repository', async ($, on) => {
+  const seen = await world($, on, { exemption: LABELLED, git: { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } } })
+  for (const command of [
+    'gh api -X POST \'repos/{owner}/{repo}/issues/12/labels\' -f labels[]=no-e2e',
+    'gh api -X POST repos/:owner/:repo/issues/12/labels -f labels[]=no-e2e',
+    'gh api -X POST "repos/{owner}/thing/issues/12/labels" -f labels[]=no-e2e',
+    'gh api -X DELETE \'repos/{owner}/{repo}/issues/12/labels/no-e2e\'',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toContain('exempts pull requests of acme/thing from E2E; only the operator puts it on or takes it off.')
+  }
+  expect(seen.bash).toEqual([])
+})
+
 test('the exemption files are refused to Write, Edit and Bash', async ($, on) => {
   const seen = await world($, on)
   for (const call of [
