@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { run, type Ran, type Run, type RunOptions } from './lib/process.ts'
 import {
-  ancestors, branchFacts, cksum, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds, parsePrs,
+  ancestors, branchFacts, cksum, copyable, copyFiles, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds, parsePrs,
   settingsRules, underRoot, USAGE, type Deps,
 } from './workspace.ts'
 
@@ -279,6 +279,87 @@ test('create: a remote-tracking base, a source without origin, a base the source
   assert.ok(!existsSync(join(dir, 'root', 'lone', 'two')))
 })
 
+test('create --base <branch> starts from the origin, said on stderr, and from the local branch only when the origin has none', async () => {
+  const src = pushed('based')
+  const other = join(dir, 'elsewhere-based')
+  execFileSync('git', ['clone', '-q', '-b', 'main', join(dir, 'based.git'), other])
+  g(other, 'checkout', '-q', '-b', 'feat/remote-only')
+  writeFileSync(join(other, 'remote.txt'), 'remote\n')
+  g(other, 'add', '-A')
+  g(other, 'commit', '-q', '-m', 'Remote')
+  g(other, 'push', '-q', 'origin', 'feat/remote-only')
+  g(other, 'checkout', '-q', 'main')
+  writeFileSync(join(other, 'README.md'), 'two\n')
+  g(other, 'commit', '-q', '-am', 'Two')
+  g(other, 'push', '-q', 'origin', 'main')
+  const stale = g(src, 'rev-parse', 'main')
+  const fresh = g(other, 'rev-parse', 'main')
+  assert.notEqual(stale, fresh)
+  const w = world()
+
+  // The source's local main lags the origin and the source never fetched: the checkout starts from the origin.
+  const lagging = await ws(w, 'create', src, 'lagging', '--base', 'main')
+  assert.equal(lagging.code, 0, lagging.err)
+  assert.equal(g(lagging.out.trim(), 'rev-parse', 'HEAD'), fresh)
+  assert.match(lagging.err, new RegExp(`workspace: base: origin/main at ${fresh}\n`))
+  assert.equal(g(lagging.out.trim(), 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main')
+
+  // A branch only the origin holds, which the source has neither as a branch nor as a remote-tracking ref.
+  const remote = await ws(w, 'create', src, 'remote', '--base', 'feat/remote-only')
+  assert.equal(remote.code, 0, remote.err)
+  assert.equal(readFileSync(join(remote.out.trim(), 'remote.txt'), 'utf8'), 'remote\n')
+  assert.match(remote.err, new RegExp(`workspace: base: origin/feat/remote-only at ${g(other, 'rev-parse', 'feat/remote-only')}\n`))
+
+  // A branch only the source holds: the local branch, said so.
+  g(src, 'checkout', '-q', '-b', 'feat/local-only')
+  writeFileSync(join(src, 'local.txt'), 'local\n')
+  g(src, 'add', '-A')
+  g(src, 'commit', '-q', '-m', 'Local')
+  const localOnly = await ws(w, 'create', src, 'local', '--base', 'feat/local-only')
+  assert.equal(localOnly.code, 0, localOnly.err)
+  assert.equal(readFileSync(join(localOnly.out.trim(), 'local.txt'), 'utf8'), 'local\n')
+  assert.match(localOnly.err, new RegExp(`workspace: base: local branch feat/local-only at ${g(src, 'rev-parse', 'HEAD')}, origin has none\n`))
+
+  // No branch of that name anywhere: refused, nothing left behind.
+  assert.equal((await ws(w, 'create', src, 'none', '--base', 'feat/nowhere')).err, 'workspace: create: the source has no branch or origin/ remote-tracking ref feat/nowhere\n')
+  assert.ok(!existsSync(join(dir, 'root', 'based', 'none')))
+
+  // An origin that cannot be read: the local branch, said so; with no local branch, a refusal.
+  g(src, 'remote', 'set-url', 'origin', join(dir, 'gone.git'))
+  const offline = await ws(w, 'create', src, 'offline', '--base', 'feat/local-only')
+  assert.equal(offline.code, 0, offline.err)
+  assert.match(offline.err, new RegExp(`workspace: base: local branch feat/local-only at ${g(src, 'rev-parse', 'HEAD')}, origin unreadable \\(`))
+  const refused = await ws(w, 'create', src, 'gone', '--base', 'feat/remote-only')
+  assert.equal(refused.code, 1)
+  assert.match(refused.err, /^workspace: create: cannot read origin to resolve feat\/remote-only: /)
+  assert.ok(!existsSync(join(dir, 'root', 'based', 'gone')))
+})
+
+test('create: a nested worktree or repository in the source is skipped from the copy, and a failed copy names its path', async () => {
+  const src = repo(join(dir, 'src', 'nested'))
+  mkdirSync(join(src, '.claude', 'worktrees'), { recursive: true })
+  g(src, 'worktree', 'add', '-q', join(src, '.claude', 'worktrees', 'old'), '-b', 'old')
+  writeFileSync(join(src, '.claude', 'worktrees', 'old', 'inside.txt'), 'inside')
+  writeFileSync(join(src, '.claude', 'kept.md'), 'kept')
+  repo(join(src, 'scratch', 'sub'))
+  writeFileSync(join(src, 'scratch', 'plain.txt'), 'plain')
+  writeFileSync(join(src, '.git', 'info', 'exclude'), 'scratch/\n')
+  const w = world()
+  const r = await ws(w, 'create', src, 'copy')
+  assert.equal(r.code, 0, r.err)
+  const c = r.out.trim()
+  assert.equal(readFileSync(join(c, '.claude', 'kept.md'), 'utf8'), 'kept')
+  assert.ok(!existsSync(join(c, '.claude', 'worktrees')), 'a nested worktree never travels')
+  assert.equal(readFileSync(join(c, 'scratch', 'plain.txt'), 'utf8'), 'plain')
+  assert.ok(!existsSync(join(c, 'scratch', 'sub')), 'a nested repository never travels')
+
+  assert.deepEqual(['a/b', 'a/.git/x', 'a/', 'a/.gitignore'].map(copyable), [true, false, false, true])
+  const failure = copyFiles(dir, join(dir, 'into'), ['ghost.txt'])
+  assert.equal(failure?.path, 'ghost.txt')
+  assert.match(failure?.error ?? '', /ENOENT/)
+  assert.equal(copyFiles(dir, join(dir, 'into'), []), undefined)
+})
+
 test('create: a copy that fails removes the checkout and names the step', async () => {
   const src = repo(join(dir, 'src', 'few'))
   writeFileSync(join(src, 'locked.txt'), 'x')
@@ -292,6 +373,7 @@ test('create: a copy that fails removes the checkout and names the step', async 
   const r = await ws(w, 'create', src, 'locked')
   assert.equal(r.code, 1)
   assert.match(r.err, /workspace: create: copying the excluded files failed\n$/)
+  assert.match(r.err, /workspace: copy failed at missing\.txt: .*ENOENT/)
   assert.ok(!existsSync(join(dir, 'root', 'few', 'locked')))
 })
 
