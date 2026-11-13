@@ -33,6 +33,8 @@ type World = {
   ciUndrafts?: Array<{ repo: string; pr: number; head: string }>
   // git's answers, by its argv after git.
   git?: Record<string, { exitCode: number; stdout: string }>
+  // git's answers in another directory than the session's, by that directory, then by argv after git.
+  gitIn?: Record<string, Record<string, { exitCode: number; stdout: string }>>
   verdict?: any
   answer?: string
   // What the Bash tool answers.
@@ -193,7 +195,9 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     seen.runs.push({ argv: e.argv, ...stdin })
     if (e.argv[0] === 'git' && w.gitThrows) return { deny: w.gitThrows }
     if (e.argv[0] === 'git') {
-      const answer = w.git?.[e.argv.slice(1).join(' ')]
+      const cwd = e.init?.cwd
+      const answers = cwd !== undefined && cwd !== '/work' ? w.gitIn?.[cwd] : w.git
+      const answer = answers?.[e.argv.slice(1).join(' ')]
       return { value: answer ? { stderr: '', ...answer } : { exitCode: 1, stdout: '', stderr: 'no' } }
     }
     if (String(e.argv[1] ?? '').endsWith('/engine/record.py')) {
@@ -1091,6 +1095,43 @@ test('a record is refused away from the head, or on a checkout with changes', as
   const seen = await world($, on, { git: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } })
   const moved: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' } as any)
   expect(moved.deny).toContain('the checkout is at fedcba9, the pull request\'s head is 0123456')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+// A session whose own directory is another checkout (the orchestrator's, or a pinned review worktree).
+const AWAY = { 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' }, 'status --porcelain -uno': { exitCode: 0, stdout: ' M x.ts\n' } }
+const REVIEW_DIR = '/review/thing'
+const REVIEW_ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } }
+
+test('a record names the checkout the tests ran in, and is written at its head there', async ($, on) => {
+  const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, labels: ['Ready'] })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', detail: 'ran', dir: REVIEW_DIR } as any)
+  expect(out.deny).toBeUndefined()
+  expect(out.result).toBe(HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json')
+  expect(recordRun(seen)!.slice(0, 6)).toEqual(['--repo', 'acme/thing', '--pr', '12', '--head', HEAD])
+})
+
+test('a checkout named away from the pull request\'s head is refused, naming both shas and the checkout', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR } as any)
+  expect(out.deny).toContain('the checkout is at fedcba9, the pull request\'s head is 0123456')
+  expect(out.deny).toContain(REVIEW_DIR)
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named with changes in its tracked files is refused, whatever the session\'s directory holds', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR } as any)
+  expect(out.deny).toContain('the tracked files have changes')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a checkout named by a relative path, or that is no git checkout, is refused', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, gitIn: { '/nowhere': {} } })
+  const relative: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: 'review/thing' } as any)
+  expect(relative.deny).toContain('dir is the absolute path of the checkout the tests ran in')
+  const none: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/nowhere' } as any)
+  expect(none.deny).toContain('/nowhere has no commit to read')
   expect(recordRun(seen)).toBeUndefined()
 })
 
