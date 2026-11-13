@@ -17,8 +17,9 @@ const PR_12 = { number: 12, head: { sha: HEAD }, base: { ref: 'main' } }
 // The resolver's answers with the pull request's base passed, and without (a branch with none).
 const resolverRuns = (): FakeSetup['runs'] => ({ ...gitRuns(['src/a.ts'], ['src/a.ts']), ...gitRuns(['src/a.ts'], ['src/a.ts'], {}, 'main') })
 
-function setup(github: Github = {}, runs: FakeSetup['runs'] = {}, calls: any[] = []) {
+function setup(github: Github = {}, runs: FakeSetup['runs'] = {}, calls: any[] = [], env: Record<string, string> = {}) {
   return fakeDollar({
+    env,
     runs: {
       ...resolverRuns(),
       'git status --porcelain -uno': { stdout: '' },
@@ -621,4 +622,23 @@ test('a host that cannot say where the repository is leaves the session\'s direc
   expect(await repositoryDir({ process: { run: async () => { throw new Error('no process') } } })).toBeUndefined()
   const outside = { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }
   expect(await repositoryDir({ process: { run: async () => outside }, session: { root: async () => { throw new Error('no root') } } })).toBeUndefined()
+})
+
+test('in a session the orchestrator spawned, the answer ends on the verdict line naming the record', async () => {
+  resetCache()
+  const { $ } = setup({}, {}, [], { ORCHESTRATOR_SPAWNED: '1' })
+  const m = mounted()
+  await m.scope($)
+  const passing = await m.done($, { open: 0, fixed: 3, passed: 2 })
+  expect(passing.result).toBe(`record: ${WRITTEN}\nRepo#12 ${HEAD.slice(0, 7)} — norms pass: 3 fixed, 2 passed, 0 open — blocking: none — report: ${WRITTEN}`)
+  const failing = await m.done($, { open: 2, fixed: 0, passed: 0 })
+  expect(String(failing.result).split('\n').at(-1)).toBe(`Repo#12 ${HEAD.slice(0, 7)} — norms fail: 0 fixed, 0 passed, 2 open — blocking: 2 open finding(s), in the check's report — report: ${WRITTEN}`)
+})
+
+test('outside a session the orchestrator spawned, the answer is the record line alone', async () => {
+  resetCache()
+  const { $ } = setup({}, {}, [], { ORCHESTRATOR_SPAWNED: '' })
+  const m = mounted()
+  await m.scope($)
+  expect((await m.done($, { open: 0, fixed: 3, passed: 2 })).result).toBe('record: ' + WRITTEN)
 })

@@ -167,7 +167,7 @@ const LEARN_SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:learn$/ }
 
 // Whether the session was spawned, so nobody types in it. An unreadable variable is no
 // variable: the guards arm.
-async function spawned($: any): Promise<boolean> {
+export async function spawned($: any): Promise<boolean> {
   const value: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
   return isSpawned(typeof value === 'string' ? value : undefined)
 }
