@@ -4,7 +4,8 @@
 // green there, and never leaves it (docs/conventions.md, « Ratchets »).
 //
 // A pull request runs the Linux cells of the plugins it changes: a change outside plugins/ runs
-// every plugin, a change of documentation alone none. macOS runs after the merge, on main.
+// every plugin, a change of documentation alone one cell without a suite, which passes (a skipped
+// job proves nothing to the gate). macOS runs after the merge, on main.
 //
 //   npm run plugin-matrix                        prints the matrix; appends it to $GITHUB_OUTPUT when set
 //   npm run plugin-matrix -- --pull-request <base>   the matrix of a pull request against <base>
@@ -20,6 +21,9 @@ export type Platform = (typeof PLATFORMS)[number]
 function isPlatform(value: unknown): value is Platform {
   return PLATFORMS.some(platform => platform === value)
 }
+
+/** The cell a pull request runs when it touches no plugin; the workflow skips its steps. */
+export const NO_SUITE = 'no plugin suite'
 
 export interface Cell {
   readonly plugin: string
@@ -67,9 +71,10 @@ export function touchedPlugins(changed: readonly string[], plugins: readonly str
   return plugins.filter(plugin => touched.has(plugin))
 }
 
-/** The cells a pull request runs: Linux, for the plugins it touches. */
+/** The cells a pull request runs: Linux, for the plugins it touches, else the cell without a suite. */
 export function pullRequestCells(matrix: readonly Cell[], touched: readonly string[]): Cell[] {
-  return matrix.filter(cell => cell.os === 'ubuntu-latest' && touched.includes(cell.plugin))
+  const cells = matrix.filter(cell => cell.os === 'ubuntu-latest' && touched.includes(cell.plugin))
+  return cells.length > 0 ? cells : [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }]
 }
 
 export function run(root: string, args: readonly string[], io: Io): number {
