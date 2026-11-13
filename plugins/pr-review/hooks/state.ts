@@ -51,9 +51,17 @@ export type Loop = {
   isReviewOnly: boolean
   // What each review agent of the pass returned, null for one without a readable block.
   reports: (Finding[] | null)[]
+  // The name each review agent of the pass was launched under, at its place in `reports`.
+  readers: string[]
   // The review agents the host runs in the background: their id, and the place in `reports`
   // their hand-back fills.
   awaiting: Map<string, number>
+  // The awaited agents whose hand-back carried no findings block, not yet asked again for it,
+  // and those asked again: a second hand-back without the block settles as silent.
+  blockless: Set<string>
+  reasked: Set<string>
+  // The awaited agents whose turn ended once: a later end of an agent asked again is its second run's.
+  ended: Set<string>
   // How many waits `findings` answered « still running » in this pass: one per hand-back event.
   waits: number
   // The hand-back events of the session so far, and their count at the last wait counted.
@@ -63,7 +71,7 @@ export type Loop = {
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], awaiting: new Map(), waits: 0, handbacks: 0, waitedAt: -1 }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 
 export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isActive = true
@@ -78,7 +86,11 @@ export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isReviewing = false
   loop.isReviewOnly = isReviewOnly
   loop.reports = []
+  loop.readers = []
   loop.awaiting = new Map()
+  loop.blockless = new Set()
+  loop.reasked = new Set()
+  loop.ended = new Set()
   loop.waits = 0
   loop.waitedAt = -1
 }
