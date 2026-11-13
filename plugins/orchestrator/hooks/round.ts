@@ -84,33 +84,6 @@ function readChoices(question: string): { choices: RoundChoice[]; recommendation
   return { choices, recommendation: named !== null && choices.some(choice => choice.letter === named) ? named : null }
 }
 
-// What the method's question format refuses in a block, read off its text alone: more than five
-// lettered choices, and a recommendation that names a letter and argues nothing. The recommendation
-// is the last labelled field after the last choice (its label is the operator's language, the free
-// answer comes before it); its argument may run on the lines below, up to the machine line. A block with no lettered choice
-// is an older shape, no defect here.
-const LONE_LETTER = /^\**[A-E]\**\s*[.,;:—–-]?$/
-export type QuestionDefect = 'choices' | 'recommendation'
-export function questionDefects(question: string): QuestionDefect[] {
-  const lines = question.split('\n')
-  const defects: QuestionDefect[] = []
-  const choiceLines = lines.flatMap((line, i) => (CHOICE.test(line) ? [i] : []))
-  if (choiceLines.length > LETTERS.length) defects.push('choices')
-  let last: string | null = null
-  let open = false
-  for (const line of lines.slice((choiceLines[choiceLines.length - 1] ?? lines.length) + 1)) {
-    if (/^\s*waiting\s*:/.test(line)) break
-    const field = FIELD.exec(line)
-    if (field) {
-      last = (field[3] ?? '').trim()
-      open = true
-    } else if (line.trim() === '') open = false
-    else if (open && last !== null) last = `${last}\n${line.trim()}`.trim()
-  }
-  if (last !== null && LONE_LETTER.test(last)) defects.push('recommendation')
-  return defects
-}
-
 // The question as the pane shows it above its choices: the whole text, less the choice lines
 // and the recommendation's line when the choices were read, since the pane draws them below.
 export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): string {
