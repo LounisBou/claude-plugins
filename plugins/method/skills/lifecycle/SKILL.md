@@ -32,7 +32,7 @@ A pull request is done at its head when:
 - the checks its plan owes passed, E2E unless the operator waived it durably;
 - CI is green.
 
-The github plugin's ready gate computes it. A content change voids it until
+The github ready gate computes it. A content change voids it until
 the four hold.
 
 ## Consent
