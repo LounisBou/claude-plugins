@@ -12,7 +12,7 @@ import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-g
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { openFence, outsideFences, oneQuestionRefusal, questionDefectRefusal } from './one-question.ts'
+import { openFence, outsideFences } from './one-question.ts'
 import { entryQuestions, parseChoices, questionShape, type QuestionField } from './round.ts'
 
 // The nouns the declaration holds.
@@ -36,13 +36,12 @@ export const QUESTION_MISSING =
   + '(`_Subject_ :`, `_Context_ :`, `_Question_ :`, `_Choices_ :`, `_Free answer_ :`, `_Recommendation_ :`, in his language; '
   + 'method:lifecycle, references/questions.md). A heading alone is no block. If you ask him nothing, declare another kind.'
 
-// The question of an operator wait, validated with the readers the stop gate uses: one numbered block, in the format.
+// The question of an operator wait, validated with the reader the stop gate uses: a numbered block.
 function checkQuestion(question: unknown): { question: string } | { error: string } {
   if (typeof question !== 'string' || question.trim() === '') return { error: QUESTION_MISSING }
   const asked = entryQuestions({ question: outsideFences(question), choices: [], recommendation: null }).filter(part => part.number !== null)
   if (asked.length === 0) return { error: `question holds no question block. ${QUESTION_MISSING}` }
-  const defect = oneQuestionRefusal(question) ?? questionDefectRefusal(question)
-  return defect === null ? { question: question.trim() } : { error: defect }
+  return { question: question.trim() }
 }
 
 const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
@@ -74,8 +73,7 @@ function recommendationOf(question: string, recommendation: QuestionField | null
 // The question block an operator wait holds that the message does not show: appended above the line.
 // The call's question is authoritative: a block in the message is the declared one only when its
 // content matches it, whitespace and line breaks aside. Any other block, of the same numbering and
-// subject or not, does not hide it: the two then make several questions in one turn, which the stop
-// gate refuses.
+// subject or not, does not hide it: the two are then both shown.
 function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
   if (wait.kind !== 'operator' || !wait.question) return null
   if (flat(outsideFences(message)).includes(flat(wait.question))) return null

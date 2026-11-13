@@ -74,15 +74,11 @@ fi
 echo "$CODENAME ready to close, bump $BUMP, artifacts $MODE"
 ```
 
-Both artifact paths are tested one by one, and the test inverts in `committed` mode
-rather than being skipped there: this skill deletes under one of them and trims the
-other, and it does that only where the repository agrees they are working notes. An
-explicit `--docs <path>` skips the test altogether, the caller having taken the
-responsibility for the directory it named. Step 4 derives `MODE` again, for the same
-reason the path is re-exported: it runs in a shell of its own. The guard reads
-`docs/features/probe`, not `docs/features`: before the directory exists,
-`check-ignore` on the bare path reads not ignored, while the inner path is matched by
-every form the pattern takes.
+Both artifact paths are tested one by one, the test inverting in `committed` mode: this
+skill deletes under one of them and trims the other, only where the repository agrees they
+are working notes. An explicit `--docs <path>` skips the test, the caller having taken the
+responsibility. Step 4 derives `MODE` again, for the same reason the path is re-exported: it
+runs in a shell of its own.
 
 ---
 
@@ -209,7 +205,8 @@ of the repository and stay in it.
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
 | The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `question` |
 
-Each stop says its line once and waits. No answer to a stop turns it into an outward
+Each stop says its line once and waits; an orchestrated build (`ORCHESTRATOR_SPAWNED`
+set) has its orchestrator answer it, not the operator. No answer to a stop turns it into an outward
 action that no instruction calls for.
 
 ---

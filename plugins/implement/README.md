@@ -77,7 +77,9 @@ it fails.
   from `HEAD`). The skills use it in place of their derivation blocks when it is
   listed.
 - **Two Iron Rules are held at the call.** While `implement:phase` is armed, a
-  subagent other than `Explore` is refused; while `implement:check` runs, an
+  subagent other than `Explore` runs only when allowed (in a session the orchestrator
+  spawned, it is refused and the orchestrator releases the guard; otherwise the user's
+  Allow in the host's dialog, never a word in a prompt); while `implement:check` runs, an
   edit, a `git add` and a `git commit` are refused until its verdict line is
   written. A push, a merge or a pull request is never refused, whether or not
   the module can read what is armed. No commit trailer is asked for while
@@ -87,9 +89,8 @@ it fails.
 
 A guard stays armed across turns, so a phase stopped on a question resumes
 under the same rules. It is released by another implement skill starting, an
-interrupted turn, the conversation ending or being cleared, and `/implement:release-guard`;
-a subagent during a phase runs on the user's Allow in the host's dialog, never on a word in a
-prompt. During a check, a shell line that writes into the tree (a redirection into a file,
+interrupted turn, the conversation ending or being cleared, and `/implement:release-guard`.
+During a check, a shell line that writes into the tree (a redirection into a file,
 `sed -i`, `rm`, `cp`, `tee`…) is refused like an edit. A shell line is read word by word: a guarded command
 named inside quotes, a comment or a here-document is not a call.
 
