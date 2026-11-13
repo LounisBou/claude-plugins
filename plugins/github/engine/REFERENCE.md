@@ -300,7 +300,7 @@ declared its producer, and names no consumer.
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, computed from the review agents' findings blocks: a clean exit writes `pass`; a loop stopped at its pass limit, or a reviewer's one pass (`review_only`), writes `pass` when nothing Critical or Important was reported, `fail` otherwise or when the severity is unknown. No record when tracked files are dirty or the branch has no PR; the tool's answer then gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; another `over` is refused with the file to pass |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived, detail}`. The module checks that the checkout's `HEAD` equals the PR head read by `pr-gate`, and that the tree is clean, then calls `record.py` with producer `session-e2e`. `waived` needs a detail found verbatim in a prompt the operator typed in this session, or quoting their answer in a consent record of an E2E waiver of that pull request (« Guards » below), and carrying a date |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived, detail, dir?}`, checked as « Guards » below says, then `record.py` with producer `session-e2e` |
 
 A review record is refused when the session writing it pushed the head it reviews: the review is
 another session's.
@@ -414,9 +414,10 @@ Read of a record passes):
 github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
 ```
 
-`mcp__github__record {pr, repo?, result, detail, kind?}` writes one record through
-`record.py`, at the head when the checkout's `HEAD` equals the one `pr-gate` reads and the
-tracked files are clean. A session writes `e2e` only (producer `session-e2e`); each other
+`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through
+`record.py`, at the head when the `HEAD` of `dir`, the checkout the tests ran in (default: the
+session's directory), equals the one `pr-gate` reads and its tracked files are clean; else it
+refuses, naming both shas. A session writes `e2e` only (producer `session-e2e`); each other
 kind is written by the plugin the record contract (core's `pr-record.ts`, `producers`) names
 its producer, any other kind refused with `github: <kind> records are written by their
 producer (<plugin>, <tool>)`. `waived` needs a detail found verbatim in a prompt the operator
