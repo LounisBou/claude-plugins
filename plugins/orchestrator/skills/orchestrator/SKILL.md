@@ -56,8 +56,7 @@ words.
    dispatch. An agent past the gate gets no new phase: rotate it. Your own succession is
    yours to trigger, at a quiet boundary, with `/orchestrator-succeed`; a session lacking
    what the role needs is repaired by a successor that has it.
-8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** Nothing runs
-   when the turn ends but a background watch. No date or hour is typed from memory: it is
+8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: it is
    pasted from `date -u +%FT%TZ` or the event's own timestamp.
 9. **A question blocks only what depends on its answer.** Launch everything else, before
    and after asking, then call `declare_wait` with what the turn waits on.

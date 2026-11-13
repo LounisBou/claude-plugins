@@ -44,11 +44,6 @@ Then:
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh move --tty <your tty> --leftmost
    ```
 
-   Your tab is `self`, so the move needs no `--force`. The launcher keeps the place yours:
-   `rotate` and `move` refuse a tab whose session is named `Coord:` unless `--force`, and
-   the title is refused on any spawn but your successor's, `--coordinator-successor --title
-   "Coord: <subject>"`, which opens at the FIRST place of the window.
-
 5. **Read the facts**: `coordinator.sh owners`, then `coordinator.sh facts`.
 6. **Announce.** Apply « Announcing newcomers » (`orchestrator:coordination`): a fresh
    `ListAgents` names every running `Orch:` session as one you have not yet announced to.

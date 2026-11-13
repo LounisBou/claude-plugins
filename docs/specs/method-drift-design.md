@@ -107,3 +107,58 @@ In two weeks:
 ## 10. Left to the builder
 
 The split into pull requests and their order, the exact form of the records and the messages, the thresholds (for example the duration after which an inactive pull request is taken up again), the content of the framing agent's instructions, and the way of rewriting the method's rules concerned (`method:lifecycle`, the orchestrator's rulebook, `orchestrator:decide`).
+
+## 11. Amendment after the full analysis (2026-11-13) — remove first
+
+Sources: four read-only analyses (gates in the code and the plugins, history, questions, context). The operator's principle: « by wanting to add safeguards, we do worse rather than better » — the correction removes and simplifies before it adds.
+
+### 11.1 Established causes
+
+1. **The cut thread.** The Ready gate requires a review, the norms check and E2E, recorded at the head commit (`plugins/github/hooks/ready.ts:578`). Only the `pr-review:auto-fix-loop` loop can write a review (`packages/core/src/pr-record.ts:22`, `register.ts:1703`); the orchestrator's review never launches it. In an orchestrated build there is no path to Ready without the operator.
+2. **A moving head cancels everything.** Every correction or update on `main` cancels the three proofs, and `review.md:47` then demands a new review. `f283aef` (25 September) had settled this (one review and one correction); `97f4e07` (8 November) brought it back. Review rounds per pull request: 1.0 (claude-plugins#95 to claude-plugins#121) → 2.3 (claude-plugins#122 to claude-plugins#144).
+3. **E2E without a route.** No brief records E2E; a pull request without an E2E test becomes a question (`review.md:43`, `dispatch-record.ts:674`), and the waiver accepts only words typed in the session (`register.ts:1714`): typed again 4 times for claude-plugins#123 on the 12th, 3 times on the 13th. No forged waiver has ever been observed.
+4. **Rules piled up, never removed.** Code of the github hooks: 0 → 504 KB; the orchestrator's prose 70 → 297 KB (moved from SKILL.md to references and guards). 26 removals approved on 31 October, none delivered. Share of the work spent on control: 16–26 % (September) → 49 % (claude-plugins, 11–13 November).
+5. **Relays too frequent that lose the answers.** 300 k reached in 23–33 min on the 13th; `pr-status` returns the raw JSON (≈ 5.8 k tokens per call, `plugins/github/engine/ghlib/pr.py:49`, +45–55 k at each resumption). 154 questions asked again by a new session, 96 of them already answered.
+6. **The questions.** 1,571 from 19 October to 13 November, median answer time 85 min. 55–65 % should not have reached the operator: merge/Ready/draft in repositories in auto-merge (30 %), tooling (17 %), waivers (12 %), successions (11 %), state notes (4 %).
+
+### 11.2 New goal O0 — reconnect the thread (before everything else)
+
+The orchestrator's review (its readers plus its judgment, O2) writes the review record itself, and its decision to set aside a non-critical point counts as acceptance (an extension of claude-plugins#141). The rule of `f283aef` returns: one review, one correction verified by the orchestrator, no new full review. An update with no change of content keeps its proofs (claude-plugins#124). Without O0, O2–O5 stay without effect.
+
+### 11.3 To remove (without replacement)
+
+- G2: refusal of the Ready label set by hand (duplicate of the gate).
+- G17: refusal of `not-applicable` by the session that pushed (G18 already checks the files).
+- G22: obligation to reread the written files in full before writing (G21 checks the text).
+- G21, second stage: the dialog to the operator after two refused texts (the first refusal stays).
+- O1: refusal of a stop that asks several questions; O3: refusal beyond 5 choices or of a recommendation judged unargued; O6: refusal of a malformed machine line (replaced by `declare_wait`); O10: refusal of a stop to display the goals table.
+- O21 and the E2E branch of O18: « no E2E → the operator's validation pull request by pull request » (replaced by the O3 plan).
+- O22: new review demanded after the correction (back to `f283aef`).
+- Deliver the 26 removals approved on 31 October that never were.
+
+### 11.4 Carried pull request by pull request (O3 verification plan)
+
+G1/M1 (the proofs required are those of the plan), G12 (waiver only on a planned verification, durable, attached to the pull request), G18, G25/O32 (screenshots for interface pull requests only), N5, the interface part of O18, O23 (proofs kept after a clean update).
+
+### 11.5 Returned to the orchestrator's judgment
+
+G20 (acceptance, no longer only on a failed review at the same commit), N6 (an open norms point can be set aside, with its reason), P4, O25, I1 (an implementer's subagent: the orchestrator decides, not a dialog to the operator), I4 (the stops of the implement skills: the orchestrator answers in an orchestrated build).
+
+### 11.6 Kept (55)
+
+Everything that protects the secrets, production, merge and leaving draft outside auto-merge, the shape of consent, review by another session, the core of the stop gate (O4, O5, O7, O8), the guards of interactive walkthroughs, Cloudflare and bugs-bot.
+
+### 11.7 Context cuts
+
+- `pr-status` returns a summary of a few lines; the full JSON only on request (`json: true`).
+- `rulings.md` read by index, not in full at each resumption; it is the source of the operator's decisions that the relay takes over (end of questions asked again).
+- The orchestrator opens without the tools it does not call (cloudflare, bugs-bot, norms, implement: ≈ 8.5 k tokens), through `--drop-tool`.
+- Reports and briefs in files, one line in the thread (work item 92); short messages between sessions.
+
+### 11.8 Questions that no longer go up
+
+Merge, leaving draft and Ready in a repository in auto-merge; successions and handovers; tool workarounds (decide, note the defect, continue); state notes without a question; a question already settled in `rulings.md`.
+
+### 11.9 Order and measure
+
+1. O0 + the removals of 11.3 (pull requests that remove more lines than they add). 2. Compact `pr-status` and light relay. 3. Per-pull-request plan (O3) and durable waiver (O4). Each pull request states the lines of guard and of prose it removes and adds; the balance of the whole is negative. The data collection (claude-plugins#132) measures the criteria of §4 before and after.

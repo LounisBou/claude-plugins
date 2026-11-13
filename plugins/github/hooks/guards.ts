@@ -1,32 +1,9 @@
-// The decisions of the guard « writing rules read »: which call authors a text
-// that engine/writing/ governs, which of its files that text needs, and which
-// read puts a file in the reader's context. Pure functions only: register.ts holds the $ that reads
-// the session, keeps the marks and answers the calls.
+// Which call of a Bash line authors a text engine/writing/ governs, and the texts it
+// writes, for the writing rules. Pure functions only: register.ts answers the calls.
 
 import { carriesText, textFields } from './writing.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineOption, engineStart, engineWords } from './shell.ts'
-
-// The writing rules, under the plugin's root: one file per kind of text, and the
-// references every kind follows.
-export const WRITING_DIR = '/engine/writing'
-export const WRITING_FILES = ['commits.md', 'pull-requests.md', 'comments.md', 'references.md'] as const
-export type WritingFile = (typeof WRITING_FILES)[number]
-
-// The files a text needs read, by the authoring command that writes it: a
-// commit its convention, a pull request's or an issue's title and description
-// theirs, anything else (a comment, a review, a reply) the comments' rules.
-const DESCRIBED = /^(gh\.py )?(pr-create|pr-update|issue-create|issue-edit)$|^gh (pr|issue) (create|edit)$/
-export function writingFilesFor(command: string): WritingFile[] {
-  if (command === 'git commit') return ['commits.md', 'references.md']
-  if (DESCRIBED.test(command)) return ['pull-requests.md', 'references.md']
-  return ['comments.md', 'references.md']
-}
-
-// The writing file a path names under a root, or undefined.
-export function writingFileAt(path: string, root: string): WritingFile | undefined {
-  return WRITING_FILES.find((name) => path === normalise(root + WRITING_DIR + '/' + name))
-}
 
 // The text flags of gh pr review, and those of gh pr edit and gh issue edit.
 const REVIEW_TEXT = ['-b', '--body', '-F', '--body-file']
@@ -83,16 +60,6 @@ export function authoringCommand(argv: string[]): string | undefined {
   if (verb === 'create' || verb === 'comment') return name
   if (noun === 'pr' && verb === 'review' && flags.some((w) => setsOne(w, REVIEW_TEXT))) return name
   if (verb === 'edit' && flags.some((w) => setsOne(w, EDIT_TEXT))) return name
-  return undefined
-}
-
-// The first authoring command of a Bash command line, read word by word: a
-// message or a body that only mentions one is an argument, not a command.
-export function bashAuthoring(line: string): string | undefined {
-  for (const argv of simpleCommands(line)) {
-    const found = authoringCommand(argv)
-    if (found) return found
-  }
   return undefined
 }
 
@@ -246,29 +213,6 @@ export function bashTexts(line: string): BashText[] {
   return out
 }
 
-// The tool's authoring call: a subcommand that carries text, with text in it.
-export function toolAuthoring(command: string, args: Record<string, unknown>): string | undefined {
-  return textFields(command, args).length > 0 ? command : undefined
-}
-
-// Whether a Read took the file whole: from its first line, and up to its last.
-export function readsWhole(offset: unknown, limit: unknown, lines: () => number): boolean {
-  if (offset !== undefined && offset !== null && !(Number(offset) <= 1)) return false
-  if (limit === undefined || limit === null) return true
-  return Number(limit) >= lines()
-}
-
-// The file a Bash command line prints whole, when it is that one command and
-// nothing else: `cat <path>` or `sed -n '1,$p' <path>`.
-export function printsWhole(line: string): string | undefined {
-  const commands = simpleCommands(line)
-  if (commands.length !== 1) return undefined
-  const argv = commands[0]
-  if (argv.length === 2 && argv[0] === 'cat' && !argv[1].startsWith('-')) return argv[1]
-  if (argv.length === 4 && argv[0] === 'sed' && argv[1] === '-n' && argv[2] === '1,$p') return argv[3]
-  return undefined
-}
-
 // A path with its . and .. parts and repeated slashes resolved, a relative one
 // against dir.
 export function normalise(path: string, dir = '/'): string {
@@ -279,23 +223,4 @@ export function normalise(path: string, dir = '/'): string {
     else parts.push(part)
   }
   return '/' + parts.join('/')
-}
-
-// The lines of a file as the Read tool counts them: a last newline ends the
-// last line, it opens no other.
-export function lineCount(text: string): number {
-  if (text === '') return 0
-  return text.replace(/\r?\n$/, '').split(/\r?\n/).length
-}
-
-// The reader a mark belongs to: the session, and the loop within it, as a
-// subagent has a context of its own.
-export function readerKey(session: string, agentId?: string): string {
-  return session + '\n' + (agentId ?? 'main')
-}
-
-export function unreadRefusal(root: string, command: string, missing: readonly WritingFile[]): string {
-  const paths = missing.map((name) => root + WRITING_DIR + '/' + name)
-  return 'github: read ' + paths.join(' and ') + ' with the Read tool, whole, before ' + command
-    + ': ' + (paths.length > 1 ? 'their' : 'its') + ' rules apply to this text. Then run the same command again.'
 }

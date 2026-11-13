@@ -18,19 +18,26 @@
   "acceptance": {
     "result": "accepted",
     "kind": "review",
-    "answers": "fail",
     "plugin": "orchestrator",
-    "tool": "mcp__orchestrator__accept"
+    "tool": "mcp__orchestrator__review"
   },
   "producers": {
-    "review": {
-      "plugin": "pr-review",
-      "tool": "its auto-fix-loop"
-    },
-    "norms": {
-      "plugin": "norms",
-      "tool": "/norms:check"
-    }
+    "review": [
+      {
+        "plugin": "pr-review",
+        "tool": "its auto-fix-loop"
+      },
+      {
+        "plugin": "orchestrator",
+        "tool": "mcp__orchestrator__review"
+      }
+    ],
+    "norms": [
+      {
+        "plugin": "norms",
+        "tool": "/norms:check"
+      }
+    ]
   },
   "open": "e2e",
   "detail_max": 500,
