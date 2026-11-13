@@ -10,6 +10,8 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
+import { isSpawned } from '../core/env.ts'
+import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { REPORT_REQUEST, agentText, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
@@ -314,7 +316,8 @@ async function pullOf($: any, repo: string): Promise<number | string> {
 
 // Writes the review record through the github tool, once the loop has ended.
 // Always answers the line the loop's answer carries; never throws.
-async function recordReview($: any, exit: string): Promise<string | null> {
+// `found` takes the repository and the pull request once they are known, for the verdict line.
+async function recordReview($: any, exit: string, found: { repo?: string; pr?: number } = {}): Promise<string | null> {
   const outcome = verdict(exit)
   if (!outcome) return null
   // A pass whose findings were never accepted read nothing: its count is no verdict.
@@ -329,12 +332,28 @@ async function recordReview($: any, exit: string): Promise<string | null> {
     if (!repo) return 'record: none — the origin remote is not a GitHub repository'
     const pr = await pullOf($, repo)
     if (typeof pr === 'string') return pr
+    found.repo = repo
+    found.pr = pr
     const written = await $.tool.call({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
     if (written?.deny || written?.isError) return 'record: none — ' + (textOf(written) || 'refused')
     return 'record: ' + textOf(written)
   } catch (err: any) {
     return 'record: none — ' + String(err?.message ?? err)
   }
+}
+
+// The verdict line an orchestrator's agent sends up (core's verdict.ts), last in the answer that ends
+// the loop, in a session the orchestrator spawned only: the review record is its report, and the
+// blocking findings' files of the last pass what blocks. Null outside such a session, or with no head.
+async function verdictFor($: any, exit: string, repo: string, pr: number, line: string): Promise<string | null> {
+  const spawned: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
+  if (!isSpawned(typeof spawned === 'string' ? spawned : undefined)) return null
+  const outcome = verdict(exit)
+  const headRun = await git($, ['rev-parse', 'HEAD'])
+  const head = String(headRun.stdout ?? '').trim()
+  if (!outcome || headRun.exitCode !== 0 || head === '') return null
+  const blocking = [...new Set((passFindings(loop.reports) ?? []).filter(isBlocking).map((f) => f.file))]
+  return verdictLine({ repo, pr, head, verdict: `review ${outcome.result} (${exit})`, blocking, report: reportPathOf(line.replace(/^record:/, 'report:')) })
 }
 
 // Every agent a pass launches is a reader of it, whatever its type, but a norms agent: the norms
@@ -428,8 +447,10 @@ export function register(on: any): void {
     // The record is written once, at the call that ends the loop.
     if (before === undefined && loop.exit !== undefined && !loop.isRecorded) {
       loop.isRecorded = true
-      const line = await recordReview($, loop.exit)
-      if (line) return { result: text + '\n' + line }
+      const found: { repo?: string; pr?: number } = {}
+      const line = await recordReview($, loop.exit, found)
+      const verdict = line && found.repo && found.pr ? await verdictFor($, loop.exit, found.repo, found.pr, line) : null
+      if (line) return { result: text + '\n' + line + (verdict ? '\n' + verdict : '') }
     }
     return { result: text, ...(answer.error ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
