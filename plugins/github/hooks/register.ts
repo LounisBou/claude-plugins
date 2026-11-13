@@ -491,7 +491,7 @@ function ciColor(ci: string): string {
 async function detail($: any, pr: number): Promise<{ ci: string; failed: string[]; comments: number | null }> {
   const [checks, status] = await Promise.allSettled([
     runGh($, 'pr-checks', { pr, format: 'checks-status' }),
-    runGh($, 'pr-status', { pr }),
+    runGh($, 'pr-status', { pr, json: true }),
   ])
   let ci = '?'
   let failed: string[] = []

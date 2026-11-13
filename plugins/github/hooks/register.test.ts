@@ -248,6 +248,8 @@ test('/prs reads each listed PR in detail and opens the pane', async ($, on) => 
   expect(opened).toEqual([{ id: 'github-prs', title: 'PRs', closeOnEscape: true }])
   expect(runs.length).toBe(5) // pr-list + (pr-checks, pr-status) x 2
   expect(runs.filter((r) => r.command === 'pr-status').map((r) => String(r.args.pr)).sort()).toEqual(['11', '12'])
+  // The comment counts are fields of the full pull request: the compact answer carries none.
+  expect(runs.filter((r) => r.command === 'pr-status').every((r) => r.args.json === true)).toBe(true)
 })
 
 // The colour of the Text a row's Box holds.

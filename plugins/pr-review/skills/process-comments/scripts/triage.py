@@ -216,7 +216,7 @@ def _resolved(gh, ids, tmpdir, name):
 def fetch(gh, pr=None):
     if not os.path.isfile(gh):
         raise TriageError("not a file: %s" % gh)
-    pr_raw = _gh(gh, "pr-status", str(pr)) if pr else _gh(gh, "pr-get")
+    pr_raw = _gh(gh, "pr-status", str(pr), "--json") if pr else _gh(gh, "pr-get")
     number = pr_record(pr_raw).get("number")
     data = {"pr": pr_raw}
     if not number:

@@ -39,7 +39,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR. An unknown number exits 4 |
 | `pr-list` | | Open PRs |
-| `pr-status` | `<pr>` | State, draft flag, head and base |
+| `pr-status` | `<pr> [--json]` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format` gives the full pull request |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
@@ -194,6 +194,7 @@ shape is asked for.
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
+| `pr-summary` | `pr-status` | its default five lines |
 | `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
@@ -214,10 +215,6 @@ bytes, so uploading the same screenshot twice issues no write at all and reports
 `https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true` link — it goes
 through github.com, so it renders for anyone who can see the repository, private
 ones included.
-
-GitHub's web upload endpoint would produce a `user-attachments` URL, but it
-authenticates with browser session cookies rather than a scoped token. That route is
-deliberately not used: it would mean whole-account credentials on disk.
 
 `--title T` puts the screenshot's descriptive title above its image, as a bold line
 followed by the image with the title as alt text (`writing/pull-requests.md` « Pull request
