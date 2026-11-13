@@ -188,7 +188,7 @@ test('live prunes the rulings and state files the brief names, archives beside t
     '- 2026-11-13T21:08:23Z LIVE SUMMARY [bb] what is live.',
     '- Merged: #141.', '',
   ].join('\n'))
-  writeFileSync(w.brief, w.read().replace('{{RULINGS_FILE}}', rulings).replace('{{STATE_FILE}}', state))
+  writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings).replaceAll('{{STATE_FILE}}', state))
   const before = readFileSync(rulings, 'utf8').length + readFileSync(state, 'utf8').length
   // check reads, it never prunes: the Live state is not generated yet, so it refuses.
   assert.equal(w.run('check'), 1)
@@ -212,7 +212,7 @@ test('live prunes nothing the brief does not name, and says a supersession it ke
   assert.match(w.out.at(-1) ?? '', / pruned=rulings:0,state:0 takeover_chars=\d+->\d+\n$/)
   const rulings = join(dir, 'r.md')
   writeFileSync(rulings, '- 2026-11-12T16:00:00Z « C » → x. [superseded: 2026-12-01T00:00:00Z]\n')
-  writeFileSync(w.brief, w.read().replace('{{RULINGS_FILE}}', rulings))
+  writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings))
   assert.equal(w.run('live', '--next', 'x'), 0)
   assert.ok(w.err.includes(`succession: ${rulings}: ruling 2026-11-12T16:00:00Z kept: superseded by 2026-12-01T00:00:00Z, which no ruling of the file or its archive opens on\n`))
 })
