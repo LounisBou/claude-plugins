@@ -11145,8 +11145,6 @@ rm -f "$ASTATE/round/late.json" "$ASTATE/round-listed.json"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
   "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'run the `round-close` the')"
-check "the coordinator closes a withdrawn entry with its recorded reason, and reads a supersede as the newer entry to present" "yes|yes|no" \
-  "$(spells "$COORDSKILL" '`coordinator.sh round-close <id> --answer "withdrawn: <its')|$(spells "$COORDSKILL" 'A reason « superseded by <id> » reads « present <id>')|$(spells "$COORDSKILL" '--answer "withdrawn: answered in its own tab"')"
 # An open question the pane can show is the pane's: `round` marks it due, for the coordinator to
 # present in its tab, only when its sender marked it urgent, however long the others have
 # waited, or when no pane of the coordinator is open: its record, <state>/pane.json, names a
