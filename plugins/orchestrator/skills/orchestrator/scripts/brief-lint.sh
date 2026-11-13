@@ -47,8 +47,10 @@ say() { printf '%s:%s: %s\n' "$brief" "$1" "$2"; findings=$((findings + 1)); }
 # 1. A placeholder that survived instantiation is a hole the agent reads as literal text.
 #    The one name a brief may quote is the succession template's mode, written inside an
 #    inline code span (`Mode: {{MODE}}`): a brief that describes how succession fills that
-#    line holds it as a mention, not as a hole. The same name outside a span, or any other
-#    name anywhere, is still a finding: the template's own `Mode: {{MODE}}` line is one.
+#    line holds it as a mention, not as a hole. A span is closed on the same line: an opening
+#    backtick before the name and a closing one after it, by parity on each side. The same
+#    name outside a closed span, or any other name anywhere, is still a finding: the
+#    template's own `Mode: {{MODE}}` line is one.
 while IFS=: read -r n text; do
     [ -n "${n:-}" ] || continue
     say "$n" "unfilled placeholder $text"
@@ -56,9 +58,11 @@ done < <(LC_ALL=C awk '{
     line = $0; offset = 0
     while (match(line, /\{\{[A-Za-z0-9_]+\}\}/)) {
         before = substr($0, 1, offset + RSTART - 1)
-        ticks = gsub(/`/, "", before)
+        after = substr($0, offset + RSTART + RLENGTH)
+        opened = gsub(/`/, "", before)
+        closed = gsub(/`/, "", after)
         name = substr(line, RSTART, RLENGTH)
-        if (!(name == "{{MODE}}" && ticks % 2 == 1)) print NR ":" name
+        if (!(name == "{{MODE}}" && opened % 2 == 1 && closed % 2 == 1)) print NR ":" name
         offset += RSTART + RLENGTH - 1
         line = substr(line, RSTART + RLENGTH)
     }

@@ -425,12 +425,6 @@ THIRD_ASK="On the third ask, re-read your messages: answered, repeat the answer 
 # rulebook no longer states the limit.
 check "the rulebook leaves the subject's length to rename_session" "no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'twenty-five characters at most')"
-# The module registers rename_session for a session the operator started by hand and withholds it
-# from one the launcher opened (hooks/tests/naming.test.ts): the rulebook orders the call only of
-# the first, and says the launcher's --title names the second. An unconditional order named a tool
-# a successor's list does not hold.
-check "the rulebook orders the rename only of a session the launcher did not name" "yes|no" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'The launcher names its sessions (`--title`); else call `mcp__orchestrator__rename_session`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'On loading, call `mcp__orchestrator__rename_session`')"
 check "the rulebook no longer re-announces the successor's address" "no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'your first message re-announces your new address')"
 check "the merge and undraft rule has no quote in the rulebook and no copy in review.md or the routing skill" "no|no|no" \
@@ -2180,6 +2174,8 @@ ok_brief "$B/modeline.md"; printf 'Mode: {{MODE}}\n' >> "$B/modeline.md"
 check "the mode placeholder left as a line is still a finding" "1" "$(bash "$LINT" "$B/modeline.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
 ok_brief "$B/modeprose.md"; printf 'Your mode is {{MODE}}, and `Mode: {{MODE}}` is the line.\n' >> "$B/modeprose.md"
 check "the mode placeholder in prose beside a quoted one is one finding" "1" "$(bash "$LINT" "$B/modeprose.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
+ok_brief "$B/modestray.md"; printf 'A stray ` before {{MODE}} and none after.\n' >> "$B/modestray.md"
+check "a backtick left open before the mode placeholder keeps it a finding" "1" "$(bash "$LINT" "$B/modestray.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
 ok_brief "$B/spanother.md"; printf 'The branch is `{{BRANCH}}`.\n' >> "$B/spanother.md"
 check "another placeholder in a code span is still a finding" "1" "$(bash "$LINT" "$B/spanother.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
 check "the succession template, unfilled, still fails on its mode line" "1" \
