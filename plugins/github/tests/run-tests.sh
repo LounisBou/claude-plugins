@@ -2074,6 +2074,16 @@ check "pr-gate keeps the latest workflow run of each workflow" "FAILURE test  2"
 RUNS6='{"check_runs":[{"id":1,"name":"build","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"},{"id":5,"name":"build (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"failure"},{"id":9,"name":"build (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
 gate8 wf-rerun "$PULL8" '{"statuses":[]}' "$RUNS6" '{"workflow_runs":[{"id":20,"run_attempt":2,"check_suite_id":200,"workflow_id":1},{"id":10,"run_attempt":1,"check_suite_id":100,"workflow_id":1}]}'
 check "pr-gate reads a re-run of the latest workflow run as that run" "SUCCESS   1" "$(ci8)"
+# A latest workflow run with no check run yet (queued, waiting, failed at startup)
+# proves nothing: the older run of its workflow keeps every check.
+RUNS7='{"check_runs":[{"id":1,"name":"wip-check","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"build","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"}]}'
+gate8 wf-unchecked "$PULL8" '{"statuses":[]}' "$RUNS7" '{"workflow_runs":[{"id":20,"check_suite_id":200,"workflow_id":1,"status":"queued"},{"id":10,"check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate hides nothing behind a latest workflow run with no check run" "FAILURE wip-check build 2" "$(ci8)"
+# A newer run of the workflow on another event only hides what the older run
+# skipped: its failed job still counts.
+RUNS8='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"test (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-event "$PULL8" '{"statuses":[]}' "$RUNS8" '{"workflow_runs":[{"id":20,"event":"pull_request","check_suite_id":200,"workflow_id":1},{"id":10,"event":"push","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate keeps the failed job of an older workflow run" "FAILURE test  2" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'

@@ -48,19 +48,27 @@ def _is_id(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _stale_suites(workflows, suite_runs):
+def _stale_suites(workflows, suite_runs, runs):
     """The check suites of a workflow run older than the latest run of its
     workflow, the greatest run id: a re-run keeps its run id, so it stays the
-    latest. A suite whose run id is not an integer is never stale."""
+    latest. A suite whose run id is not an integer is never stale, nor any suite
+    of a workflow whose latest run has no check run among runs (queued, waiting
+    or failed at startup): it proves nothing yet, so it hides nothing."""
     latest = {}
     for suite, run_id in (suite_runs or {}).items():
         workflow = workflows.get(suite)
         if workflow is not None and _is_id(run_id):
             latest[workflow] = max(latest.get(workflow, run_id), run_id)
+    checked = {str((run.get("check_suite") or {}).get("id")) for run in runs}
+    proven = {
+        workflows.get(suite)
+        for suite, run_id in (suite_runs or {}).items()
+        if suite in checked and _is_id(run_id) and run_id == latest.get(workflows.get(suite))
+    }
     return {
         suite
         for suite, run_id in (suite_runs or {}).items()
-        if _is_id(run_id) and run_id < latest.get(workflows.get(suite), run_id)
+        if workflows.get(suite) in proven and _is_id(run_id) and run_id < latest[workflows.get(suite)]
     }
 
 
@@ -76,18 +84,20 @@ def _latest_runs(runs, workflows, suite_runs=None):
     is dropped. The latest is the greatest id, which grows with creation:
     started_at is kept by a re-run, so a re-run of an old run would pass for the
     newest. A run without an integer id, or tied on the greatest id, is kept:
-    nothing here may hide a failure or a running run, but a run of an older
-    workflow run (suite_runs maps a check suite id to its workflow run id) counts
-    as nothing: only the latest workflow run of each workflow is read."""
+    nothing here may hide a failure or a running run. A skipped or neutral run
+    of an older workflow run (suite_runs maps a check suite id to its workflow
+    run id) counts as nothing: it proved nothing, and the latest workflow run of
+    its workflow, which has check runs, speaks for it."""
     if workflows is None:
         return list(runs)
-    stale = _stale_suites(workflows, suite_runs)
+    stale = _stale_suites(workflows, suite_runs, runs)
     kept = []
     groups = {}
     for run in runs:
         app = run.get("app") or {}
         suite = (run.get("check_suite") or {}).get("id")
-        if str(suite) in stale:
+        unproven = run.get("status") == "completed" and run.get("conclusion") in ("skipped", "neutral")
+        if unproven and str(suite) in stale:
             continue
         key = (run.get("name"), app.get("id", app.get("slug")), workflows.get(str(suite)))
         if key[2] is None and suite is not None:
@@ -104,7 +114,7 @@ def _latest_runs(runs, workflows, suite_runs=None):
 
 def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
     """CI at one head, as the ready guard reads it. Only the latest run of each
-    check in the latest workflow run of each workflow counts. A completed check passes
+    check counts, and none skipped or neutral in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
