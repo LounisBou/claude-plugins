@@ -202,12 +202,14 @@ export function isVerdict(answer: string): boolean {
 
 const LABEL: Record<Action, string> = { 'stage': 'git add', 'commit': 'git commit' }
 const RELEASE = 'Words in a prompt release nothing: a subagent runs when the user allows it when asked, and /implement:release-guard releases every guard.'
+// An orchestrated build has no operator to ask: the orchestrator decides.
+const RELEASE_BY_ORCHESTRATOR = 'Words in a prompt release nothing: your orchestrator decides, not the operator. Name the need to it, last line status: question, and wait; it allows by releasing the guard with /implement:release-guard.'
 
 export function checkDeny(what: string): string {
   return `implement:check edits, stages and commits nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
 }
-export function agentDeny(type: string): string {
-  return `implement:phase writes the work itself: a subagent only searches (subagent_type Explore). ${type} refused by the implement plugin: do the work inline, or name the need and wait. ${RELEASE}`
+export function agentDeny(type: string, isOrchestrated = false): string {
+  return `implement:phase writes the work itself: a subagent only searches (subagent_type Explore). ${type} refused by the implement plugin: do the work inline, or name the need and wait. ${isOrchestrated ? RELEASE_BY_ORCHESTRATOR : RELEASE}`
 }
 
 export const READ_ONLY_AGENTS = new Set(['Explore'])
@@ -232,11 +234,11 @@ export function bashDecision(g: Guard, command: string): string | null {
   return writer ? checkDeny(writer) : null
 }
 
-export function agentDecision(g: Guard, subagentType: unknown): string | null {
+export function agentDecision(g: Guard, subagentType: unknown, isOrchestrated = false): string | null {
   if (g.outer !== 'phase') return null
   const type = typeof subagentType === 'string' && subagentType !== '' ? subagentType : 'general-purpose'
   if (READ_ONLY_AGENTS.has(type)) return null
-  return agentDeny(type)
+  return agentDeny(type, isOrchestrated)
 }
 
 export function editDecision(g: Guard, tool: string): string | null {

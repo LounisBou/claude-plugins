@@ -193,7 +193,8 @@ not settle.
 | A gate command cannot run | a `FAIL` row naming the missing tool, and the run continues |
 | The design is absent | checks 6 and 7 are `FAIL` rows naming it, never silent passes |
 
-Each stop says its line once and waits. This skill never repairs what it finds and
+Each stop says its line once and waits for its answer, the orchestrator's in an
+orchestrated build (`ORCHESTRATOR_SPAWNED` set). This skill never repairs what it finds and
 never asks whether it should continue.
 
 ---
