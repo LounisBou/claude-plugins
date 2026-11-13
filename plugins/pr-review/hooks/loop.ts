@@ -10,7 +10,7 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
-import { REPORT_REQUEST, agentText, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
+import { READER_DENY, REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -70,7 +70,7 @@ export function act(e: any): Record<string, unknown> {
     loop.waitedAt = -1
     loop.lastFindings = 0
     loop.lastBlocking = undefined
-    return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
+    return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
   }
   if (action === 'findings') {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
@@ -106,7 +106,7 @@ export function act(e: any): Record<string, unknown> {
     // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
     // the agents' blocks: none without an agent.
     if (loop.reports.length === 0) {
-      return { error: 'no review agent ran in this pass: the verdict is computed from the agents\' findings; launch the review agents (a call refused for the hook\'s rewrite did not run: issue it again), then report' }
+      return { error: 'no review agent ran in this pass: the verdict is computed from the agents\' findings; launch the review agents (a call the host or a hook refused did not run: issue it again), then report' }
     }
     const found = passFindings(loop.reports)
     if (keys.length === 0 && found === undefined) {
@@ -410,21 +410,22 @@ const isReader = (type: unknown): boolean => !String(type ?? '').startsWith('nor
 const DEFAULT_AGENT = 'general-purpose'
 
 export function register(on: any): void {
-  // Each agent a review pass launches is asked for its findings block, and its answer is read.
-  // The call asks for the foreground, once: a rewrite the call already carries is no rewrite, so
-  // the call the host sends back to be issued again with the hook's input goes through as it is.
-  // The host may run the agent in the background all the same: core's record of the launch then
-  // names the agent, and its hand-back, read below, fills its place in the pass.
+  // Each agent a review pass launches carries the findings-block request in its own prompt, and
+  // its answer is read. The hook never changes the call's input: the host's auto mode reviews the
+  // call before the hooks run, and refuses one a hook rewrote. A reader whose prompt lacks the
+  // request is denied, its message naming the text to end the prompt with; the session issues it again.
+  // The host may run the agent in the background: core's record of the launch then names the
+  // agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
-  // that the host refused for the hook's rewrite never ran, and is no agent of the pass; any other
+  // that the host refused for a hook's rewrite never ran, and is no agent of the pass; any other
   // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing || !isReader(e.subagent_type)) return next(e)
-    const prompt = String(e.prompt ?? '')
+    if (!carriesRequest(String(e.prompt ?? ''))) return { deny: READER_DENY }
     const reader = typeof e.subagent_type === 'string' && e.subagent_type !== '' ? e.subagent_type : DEFAULT_AGENT
     let answer: any
     try {
-      answer = await next({ ...e, prompt: prompt.includes(REPORT_REQUEST) ? prompt : prompt + REPORT_REQUEST, run_in_background: false })
+      answer = await next(e)
     } catch (err: any) {
       loop.reports.push(null)
       loop.readers.push(reader)
