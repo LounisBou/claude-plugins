@@ -61,8 +61,7 @@ word on a point outranks this brief and the rulebook both.
 
 ## Standing context — pointers, not status
 
-- Subject: `Coord: {{SUBJECT}}` — your own successor is spawned with
-  `--coordinator-successor`, in the rulebook's order.
+- Subject: `Coord: {{SUBJECT}}`.
 - State directory: `{{STATE_DIR}}` — the record and the notes.
 - Your context: the module measures it every turn — read the live state with
   /orchestrator-status, your own session's row included; if your session's row

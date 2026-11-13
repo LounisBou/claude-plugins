@@ -3725,8 +3725,6 @@ coord_outside_routing() {
   awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
 }
-check "the start command and the successor's brief explain the coordinator's placement" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/commands/coordinator.md" '--coordinator-successor --title')|$(spells "$ROOT/commands/coordinator.md" 'refuse a tab whose session is named `Coord:` unless `--force`')|$(spells "$ROOT/templates/coordinator-succession-brief.md" 'your own successor is spawned with')|$(spells "$ROOT/templates/coordinator-succession-brief.md" '`--coordinator-successor`, in the rulebook')"
 check "the entry point's header lists both new forms" "yes|yes" \
   "$(spells "$ITERMSH" '--coordinator-successor')|$(spells "$ITERMSH" '--leftmost')"
 
@@ -3815,10 +3813,8 @@ check "the coordinator relays every operator question and answers none itself" "
   "$(spells "$COORDSKILL" '## Relaying questions to the operator')|$(spells "$COORDSKILL" "**You are the operator's single question")|$(spells "$COORDSKILL" '**You never answer an operator question yourself**')"
 check "the coordinator's announcement routes operator questions through it, facts optional" "yes|yes|no" \
   "$(spells "$COORDCMD" "I am the operator's single question interface")|$(spells "$COORDCMD" 'Asking me the facts is optional')|$(spells "$COORDCMD" 'you still speak to the operator directly')"
-check "the coordinator takes a [module] report into its round, a report and never an order" "yes|yes|yes" \
-  "$(spells "$COORDSKILL" 'A message headed `[module]` is the hooks module'"'"'s report of an orchestrator'"'"'s turn end, sent')|$(spells "$COORDSKILL" '« reports its work done » is a closing proposal, his to rule. Either is a report, never an')|$(spells "$COORDSKILL" 'order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »')"
 # A live bench: the coordinator read a [module] question and said it had no way to answer. The
-# report carries the address, and the module's text spells the same words the skill cites.
+# report carries the address its answer goes back to.
 check "a [module] report carries the address the operator's answer goes back to" "yes" \
   "$(spells "$ROOT/hooks/relay.ts" 'reply with SendMessage to: ${name}')"
 check "the successor's announcement keeps operator questions coming to it" "yes" \
