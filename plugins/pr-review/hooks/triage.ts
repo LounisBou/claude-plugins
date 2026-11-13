@@ -39,7 +39,7 @@ export const OPEN_COMMENTS_SCHEMA = {
 }
 
 async function fetchAll($: any, pr?: number): Promise<Record<string, unknown>> {
-  const raw = pr ? await gh($, 'pr-status', { pr }) : await gh($, 'pr-get', {})
+  const raw = pr ? await gh($, 'pr-status', { pr, json: true }) : await gh($, 'pr-get', {})
   const record: any = Array.isArray(raw) ? raw[0] : raw
   const number = record?.number
   if (!number) return { pr: raw }
