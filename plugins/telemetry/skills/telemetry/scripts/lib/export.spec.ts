@@ -3,10 +3,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { exportStore, logsRepo, machineName, safeOutput, type Git } from './export.ts'
+import { addressForms, exportStore, logsRepo, machineName, safeOutput, type Git } from './export.ts'
 import { append, eventsDir } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -79,6 +79,77 @@ test('a reused clone pushes to the repository named now', () => {
     assert.equal(git(['show', 'main:machines/box/2026-11-14.jsonl'], second).stdout, `${event('2026-11-14T10:00:00Z')}\n`)
     assert.equal(git(['rev-list', '--count', 'main'], first).stdout.trim(), '1')
   })
+})
+
+test('a day file an ignore rule of the clone or the machine matches is pushed all the same', () => {
+  scratch((root, remote) => {
+    // The repository's own rule: a committed .gitignore ignoring every day file.
+    const seed = join(root, 'seed')
+    assert.equal(git(['clone', '--quiet', remote, seed], root).status, 0)
+    writeFileSync(join(seed, '.gitignore'), '*.jsonl\n')
+    assert.equal(git(['add', '.gitignore'], seed).status, 0)
+    assert.equal(git(['commit', '--quiet', '-m', 'ignore'], seed).status, 0)
+    assert.equal(git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], seed).status, 0)
+    // The machine's rule: an excludes file ignoring the second day.
+    const excludes = join(root, 'excludes')
+    writeFileSync(excludes, '2026-11-14.jsonl\n')
+    const ignoring: Git = (args, cwd) => git(['-c', `core.excludesFile=${excludes}`, ...args], cwd)
+    const state = join(root, 'state')
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git: ignoring })
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    assert.deepEqual(run(), { lines: ['export: 1 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-13.jsonl'], remote).stdout, `${event('2026-11-13T10:00:00Z')}\n`)
+    append(eventsDir(state), event('2026-11-14T10:00:00Z'), new Map())
+    assert.deepEqual(run(), { lines: ['export: 2 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-14.jsonl'], remote).stdout, `${event('2026-11-14T10:00:00Z')}\n`)
+  })
+})
+
+/** Makes `remote` refuse every push (`exit 1`), or accept them again. */
+function refusePushes(remote: string, refuse: boolean): void {
+  writeFileSync(join(remote, 'hooks', 'pre-receive'), `#!/bin/sh\nexit ${refuse ? 1 : 0}\n`, { mode: 0o755 })
+}
+
+test('a refused push exits non-zero and claims nothing', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    refusePushes(remote, true)
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git })
+    assert.equal(result.code, 1)
+    assert.match(result.lines[0] ?? '', /^export failed at push \(git exit \d+\): /)
+    assert.notEqual(git(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], remote).status, 0)
+  })
+})
+
+test('a commit whose push was refused is pushed by the next export, which says so', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git })
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    refusePushes(remote, true)
+    assert.equal(run().code, 1)
+    refusePushes(remote, false)
+    assert.deepEqual(run(), { lines: ['export: 1 day file(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(git(['show', 'main:machines/box/2026-11-13.jsonl'], remote).stdout, `${event('2026-11-13T10:00:00Z')}\n`)
+    assert.deepEqual(run().lines, ['export: the logs repository already holds every event, nothing pushed'])
+  })
+})
+
+test('a git error naming the address without its credentials prints no part of it', () => {
+  scratch(root => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const user = ['some', 'one'].join('')
+    const repo = `https://${user}:${SECRET}@forge.example/me/logs.git`
+    const refusing: Git = () => ({ status: 128, stdout: '', stderr: "remote: Repository not found.\nfatal: repository 'https://forge.example/me/logs/' not found\nfatal: unable to access 'https://forge.example/me/logs.git/': 403" })
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo, machine: 'm', git: refusing })
+    assert.equal(result.code, 1)
+    const printed = result.lines.join('\n')
+    for (const part of ['forge.example', 'me/logs', user, SECRET]) assert.ok(!printed.includes(part), printed)
+    assert.match(printed, /repository '<logs repository>\/' not found/)
+  })
+  assert.deepEqual(addressForms('git@forge.example:me/logs.git'), ['git@forge.example:me/logs.git', 'git@forge.example:me/logs', 'me/logs.git', 'me/logs'])
 })
 
 test('a failing clone is reported with the repository\'s address hidden', () => {
