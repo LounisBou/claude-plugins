@@ -1,0 +1,48 @@
+{
+  "$comment": "What the host hands each hook, as its declarations shape it, for the event tests.",
+  "session.start": { "cwd": "/Users/me/dev/claude-plugins", "surface": "terminal", "isInteractive": true },
+  "usage": { "startedAt": 1794600000000, "context": { "tokens": 42000, "window": 1000000, "percent": 4 }, "rateLimits": [], "cost": { "usd": 1.25 } },
+  "turn.complete": {
+    "answer": "never kept", "durationMs": 5400, "isAborted": false, "turnId": "turn-1", "reason": "answer",
+    "usage": { "input_tokens": 12, "output_tokens": 340, "cache_read_input_tokens": 30000, "cache_creation_input_tokens": 1200, "model": "claude-opus-5-5" }
+  },
+  "turn.complete.refused": { "answer": "", "durationMs": 900, "isAborted": false, "turnId": "turn-2", "reason": "refusal", "refusal": { "category": "cyber", "explanation": "never kept" } },
+  "tool.check.deny": { "decision": "deny", "reason": "never kept", "rule": "Bash(git push --force:*)" },
+  "tool.check.ask": { "decision": "ask", "hook": "PreToolUse" },
+  "tool.check.allow": { "decision": "allow" },
+  "tool.call.bash": { "tool": "Bash", "tool_use_id": "toolu_01Bash", "command": "cd /tmp/x && npm test -- --grep 'a b' | tail -5", "description": "run" },
+  "result.ok": { "result": { "stdout": "never kept" }, "text": "never kept", "ref": 3 },
+  "tool.call.mcp": { "tool": "mcp__github__gh", "tool_use_id": "toolu_01Mcp", "command": "pr-merge", "args": { "pr": 12 } },
+  "result.plugin-deny": { "isError": true, "result": "x", "text": "<tool_use_error>github: records are written by their producers' tools</tool_use_error>" },
+  "result.auto-mode": { "isError": true, "result": "x", "text": "Permission for this action was denied by the Claude Code auto mode classifier." },
+  "result.user": { "isError": true, "result": "x", "text": "The user doesn't want to proceed with this tool use." },
+  "result.deny": { "deny": "refused by a plugin above" },
+  "result.failed": { "isError": true, "result": "x", "text": "Exit code 1\nnever kept" },
+  "tool.call.ask": {
+    "tool": "AskUserQuestion", "tool_use_id": "toolu_01Ask",
+    "questions": [
+      { "question": "Which store?", "header": "Store", "multiSelect": false, "options": [{ "label": "Local" }, { "label": "Remote" }] },
+      { "question": "Which parts?", "header": "Parts", "multiSelect": true, "options": [{ "label": "A" }, { "label": "B" }, { "label": "C" }] },
+      { "question": "Anything else?", "header": "Else", "multiSelect": false, "options": [{ "label": "No" }, { "label": "Yes" }] }
+    ]
+  },
+  "result.ask": { "result": { "answers": { "Which store?": "Remote", "Which parts?": "A, C", "Anything else?": "my own words" } } },
+  "tool.call.round": { "tool": "mcp__orchestrator__declare_wait", "tool_use_id": "toolu_01Wait", "kind": "operator", "blocks": "never kept", "urgent": true },
+  "tool.call.spawn": {
+    "tool": "Bash", "tool_use_id": "toolu_01Spawn",
+    "command": "/plugins/orchestrator/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir /w --tier deep --title 'Agent: telemetry' --brief /b.md --orchestrator 'Orch: x'"
+  },
+  "tool.call.close": { "tool": "Bash", "tool_use_id": "toolu_01Close", "command": "iterm-agent.sh close --title 'Agent: telemetry'" },
+  "tool.call.dispatch": {
+    "tool": "Bash", "tool_use_id": "toolu_01Disp",
+    "command": "R=/s/record.jsonl; /p/scripts/dispatch-record.sh open /s/record.jsonl --class plugin --model sonnet --effort high --label 'x' && /p/scripts/dispatch-record.sh close /s/record.jsonl 68 --verdict merged"
+  },
+  "tool.call.skill": { "tool": "Skill", "tool_use_id": "toolu_01Skill", "skill": "method:lifecycle" },
+  "agent.spawn": {
+    "tool_use_id": "toolu_01Agent", "prompt": "never kept", "description": "Explore the store", "subagentType": "Explore",
+    "provider": { "plugin": "engine", "tier": "core" }, "model": "haiku", "parentModel": "claude-opus-5-5", "background": false, "fork": false
+  },
+  "agent.spawn.result": { "model": "claude-haiku-5-5", "agentId": "a1b2c3" },
+  "turn.complete.child": { "answer": "never kept", "durationMs": 2000, "isAborted": false, "turnId": "turn-9", "reason": "answer", "agentId": "a1b2c3" },
+  "session.end": { "reason": "prompt_input_exit", "sessionId": "60ed5626-9879-4041-892a-5db0ff0bad69", "resume": {} }
+}

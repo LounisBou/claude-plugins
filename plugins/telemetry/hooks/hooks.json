@@ -1,0 +1,4 @@
+{
+  "description": "The telemetry hooks module",
+  "modules": ["./register.ts"]
+}
