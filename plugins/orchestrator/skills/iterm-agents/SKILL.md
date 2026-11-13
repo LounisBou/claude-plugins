@@ -89,3 +89,7 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 4. Verify with `list` (the old tab gone, the new one present) AND `ListAgents` (new peer session visible, old one gone) before reporting the rotation done.
 
 `--expect-title` remains right for a STANDALONE `close`, where you read the title from `list` seconds before and nothing runs in between.
+
+## Common mistakes
+
+- Spawning without an anchor where you know a better place than the default: « Layout convention ».
