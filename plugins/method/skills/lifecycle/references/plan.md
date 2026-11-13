@@ -11,8 +11,6 @@ Free prose, plus one section the plan and the review read:
 2. ...
 ```
 
-A goal is met when a reading of the code, a command or a commit shows it, never on a claim.
-
 ## The plan
 
 One file per phase, each naming:
@@ -45,6 +43,5 @@ row per phase:
 | 03 | <title> | todo |  |
 ```
 
-Status is `todo`, `doing` or `done`; a `todo` row leaves the milestone empty. Core parses and
-writes it (`parseState`, `markRow`, `nextRow`); a role edits it through them, or by hand in
-exactly this shape.
+Core parses and writes it (`parseState`, `markRow`, `nextRow`); `markRow` holds the statuses
+and milestones.

@@ -14,10 +14,8 @@ _Free answer_ : <or answer in your own words>
 _Recommendation_ : A — <why it beats the others>
 ```
 
-- Two to five choices, lettered A to E, each a materially different piece of work, never
-  shades of one option.
-- The free answer is always open and never opens on a lone letter.
-- The recommendation argues its letter against the others; a bare letter is none.
+- Two to five choices, A to E, each a different piece of work, never shades of one.
+- The free answer never opens on a lone letter; the recommendation argues against the others.
 - Name every item, in the context and each choice, in plain words (what breaks, for whom,
   what it costs him) and by its pull request with the repository name. A tracking-table row
   number may follow in parentheses, never alone.
