@@ -268,10 +268,10 @@ Requires push access to the repository.
 
 ### The one writer: `engine/record.py`
 
-`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable --producer <slug> [--detail <text>] [--session <id>]`
+`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates: the sha shape, the kind, `waived` for `e2e` only and only with a `--detail` that carries a date `YYYY-MM-DD`, `not-applicable` for `e2e` only with a reason, a detail of at most 500 characters.
+- It validates: the sha shape, the kind, `waived` for `e2e` only and only with a `--detail` that carries a date `YYYY-MM-DD`, `not-applicable` for `e2e` only with a reason, `accepted` for `review` only, a detail of at most 500 characters.
 - It writes the file under a temporary name in the same directory, then renames it. It prints the path, and exits 2 on a usage error. Standard library only, like the engine.
 
 ### Fields (one JSON object per file)
@@ -286,7 +286,7 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`. Only that directory counts. A record written at any other sha, older or not yet pushed, is not read.
 - Per kind, the record with the latest `at` decides, so a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or with the PR, is skipped, and the refusal names it when a kind is missing or not accepted.
-- Accepted: `review` `pass`, `norms` `pass`, `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
+- Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
 - A repository's E2E exemption (below) stands for a missing `e2e` record, named in the `Ready` line; an `e2e` `fail` still holds.
 - A moved head voids every record by construction, with nothing deleted. A record written before a push matches once that same sha is pushed: a review of an unpushed commit counts once it is on the PR.
 - Pruning: at `session.start`, at most once a day (a stamp file in the root), the github module removes the `<head>` directories whose newest file is older than 90 days.
@@ -300,7 +300,8 @@ declared its producer, and names no consumer.
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, computed from the review agents' findings blocks: a clean exit writes `pass`; a loop stopped at its pass limit, or a reviewer's one pass (`review_only`), writes `pass` when nothing Critical or Important was reported, `fail` otherwise or when the severity is unknown. No record when tracked files are dirty or the branch has no PR; the tool's answer then gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail}`, producer `session-e2e`, at the head from a clean checkout (« Guards » below). `waived` quotes the operator, dated (« Guards »); `not-applicable` needs its reason, files with no runtime (below), and a session that did not push the head |
+| orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; no checkout is read |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, at the head from a clean checkout (« Guards » below). `waived` quotes the operator, dated (« Guards »); `not-applicable` needs its reason, files with no runtime (below), and a session that did not push the head |
 
 A review record is refused when the session writing it pushed the head it reviews: the review is
 another session's.
@@ -428,9 +429,10 @@ github: records are written by their producers' tools, and E2E by mcp__github__r
 
 The E2E exemption files are refused alike (`github: an E2E exemption changes only through …`).
 
-`mcp__github__record {pr, repo?, result, detail, kind?}` writes one record through
-`record.py`, at the head when the checkout's `HEAD` equals the one `pr-gate` reads and the
-tracked files are clean; a session writes `e2e` only, each other kind its producer. `waived`
+`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through
+`record.py`, at the head when the `HEAD` of `dir`, the checkout the tests ran in (default: the
+session's directory), equals the one `pr-gate` reads and its tracked files are clean; else it
+refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
 needs a detail found verbatim in a prompt the operator typed, or in dated quotes of it naming
 the waiver, or quoting their answer (8 characters at least) in a consent record of an E2E
 waiver of that pull request, carrying a date.

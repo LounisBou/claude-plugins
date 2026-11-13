@@ -25,6 +25,7 @@ KINDS = tuple(_CONTRACT["kinds"])
 RESULTS = tuple(_CONTRACT["results"])
 WAIVABLE = _CONTRACT["waivable"]
 NOT_APPLICABLE = _CONTRACT["not_applicable"]
+ACCEPTANCE = _CONTRACT["acceptance"]
 DETAIL_MAX = _CONTRACT["detail_max"]
 USAGE_EXIT = 2
 
@@ -83,6 +84,8 @@ def validate(args):
             raise UsageError("only an %s record can be not applicable" % NOT_APPLICABLE)
         if not args.detail.strip():
             raise UsageError("a not applicable record needs a --detail giving its reason")
+    if args.result == ACCEPTANCE["result"] and args.kind != ACCEPTANCE["kind"]:
+        raise UsageError("only a %s record can be %s" % (ACCEPTANCE["kind"], ACCEPTANCE["result"]))
     session = args.session if args.session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     return {

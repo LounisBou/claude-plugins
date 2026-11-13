@@ -10,10 +10,18 @@
     "pass",
     "fail",
     "waived",
-    "not-applicable"
+    "not-applicable",
+    "accepted"
   ],
   "waivable": "e2e",
   "not_applicable": "e2e",
+  "acceptance": {
+    "result": "accepted",
+    "kind": "review",
+    "answers": "fail",
+    "plugin": "orchestrator",
+    "tool": "mcp__orchestrator__accept"
+  },
   "producers": {
     "review": {
       "plugin": "pr-review",

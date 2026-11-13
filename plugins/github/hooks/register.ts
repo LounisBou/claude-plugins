@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { DETAIL_MAX, KINDS } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptanceDetail, answersAcceptance, DETAIL_MAX, KINDS } from '../core/pr-record.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
@@ -16,7 +16,7 @@ import {
   unreadRefusal,
 } from './guards.ts'
 import {
-  NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
+  acceptanceOriginRefusal, acceptanceOverRefusal, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
@@ -458,21 +458,22 @@ async function autoMergeRepos($: any): Promise<Set<string>> {
 // Read once per call: the ready guard and the auto-merge check ask for it both.
 const targets = new WeakMap<object, Promise<string | undefined>>()
 
-function targetRepo($: any, e: any): Promise<string | undefined> {
+// `dir`: the checkout whose origin names the repository, when not the session's directory.
+function targetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
   let found = targets.get(e)
   if (!found) {
-    found = readTargetRepo($, e)
+    found = readTargetRepo($, e, dir)
     targets.set(e, found)
   }
   return found
 }
 
-async function readTargetRepo($: any, e: any): Promise<string | undefined> {
+async function readTargetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
   const override = e.repo !== undefined && e.repo !== null ? e.repo : e.args?.repo
   for (const named of [override, await $.env.get('GH_REPO')]) {
     if (named !== undefined && named !== null && String(named) !== '') return String(named)
   }
-  const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000 })
+  const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
   const match = r.exitCode === 0 ? GITHUB_ORIGIN.exec(String(r.stdout).trim()) : null
   return match ? match[1] + '/' + match[2] : undefined
 }
@@ -951,10 +952,13 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   let gate: Gate
   let missing: string[]
   let exempt: string | undefined
+  let accepted: string | undefined
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
     exempt = await e2eExemptionOf($, gate)
-    missing = missingItems(gate, await headRecords($, gate), undefined, exempt)
+    const files = await headRecords($, gate)
+    missing = missingItems(gate, files, undefined, exempt)
+    accepted = reviewAcceptedOver(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -962,7 +966,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing) }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted) }
     return {}
   }
   let now: Gate
@@ -985,7 +989,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, exempt), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, exempt), labels, draft }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
 }
 
@@ -1683,8 +1687,13 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
 // ---- records ----
 
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail } })
+  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+  if (String(e.result ?? '') === ACCEPTANCE.result) return await writeAcceptance($, e, origin)
+  // The checkout the tests ran in: named, or the session's directory.
+  const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
+  if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
+  const inDir = dir ? { cwd: dir } : {}
   const owned = recordKindFor(origin)
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
   if (kind !== owned) {
@@ -1700,7 +1709,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  const repo = await targetRepo($, { repo: e.repo, args: {} }, dir)
   if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
   if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
@@ -1714,12 +1723,16 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   } catch (err: any) {
     return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
   }
-  const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })
+  const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
   const local = head.exitCode === 0 ? String(head.stdout).trim().toLowerCase() : ''
+  if (dir && !local) return { deny: 'github: ' + dir + ' has no commit to read: ' + (String(head.stderr ?? '').trim() || 'git rev-parse HEAD exited ' + head.exitCode) }
   if (local !== gate.head) {
-    return { deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ': a record is written at the head it read.' }
+    return {
+      deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ': a record is written at the head it read. '
+        + (dir ? 'Checkout read: ' + dir + '.' : 'Name the checkout the tests ran in: {"dir": "<absolute path>"}.'),
+    }
   }
-  const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000 })
+  const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000, ...inDir })
   if (status.exitCode !== 0 || String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
@@ -1742,6 +1755,52 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   // The record may complete the four: the gate reads them at the head it just checked.
+  const { line } = await followGate($, repo, pr, gate, true)
+  return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
+}
+
+/*
+ * The orchestrator's acceptance of a failed review (core's ACCEPTANCE): written by its tool alone, at
+ * the pull request's head, over the latest review record there, a failed one. It reads no checkout:
+ * the decision is over the records of the head GitHub names, never over the code.
+ */
+async function writeAcceptance($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  if (origin !== ACCEPTANCE.plugin) return { deny: acceptanceOriginRefusal(origin) }
+  const kind = e.kind === undefined || e.kind === null || e.kind === '' ? ACCEPTANCE.kind : String(e.kind)
+  if (kind !== ACCEPTANCE.kind) return { deny: kindRefusal(kind, origin, ACCEPTANCE.kind) }
+  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
+  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
+  const over = typeof e.over === 'string' ? e.over.trim() : ''
+  const decision = typeof e.detail === 'string' ? e.detail.trim() : ''
+  if (decision === '') return { deny: 'github: an acceptance says its decision in one sentence: {"detail": "<decision>"}' }
+  let gate: Gate
+  try {
+    gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+  } catch (err: any) {
+    return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
+  }
+  const { read } = headRecordsRead(gate, await headRecords($, gate))
+  const failed = over.includes('/') ? undefined : read.get(over)
+  if (!failed || !answersAcceptance(failed)) return { deny: acceptanceOverRefusal(over, gate.head, 'is no failed ' + ACCEPTANCE.kind + ' record') }
+  const later = [...read.entries()].find(([name, r]) => name !== over && r.kind === failed.kind && r.at >= failed.at)
+  if (later) return { deny: acceptanceOverRefusal(over, gate.head, 'is followed by ' + later[0]) }
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  if (selfReview) return { deny: selfReview }
+  let session = ''
+  try {
+    session = String(await $.session.id() ?? '')
+  } catch {
+    // Written without it.
+  }
+  const argv = [
+    'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
+    '--kind', kind, '--result', ACCEPTANCE.result, '--producer', producerSlug(origin), '--detail', acceptanceDetail(over, decision),
+    '--session', session,
+  ]
+  const run = await $.process.run(argv, { timeoutMs: 30_000 })
+  if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
@@ -1821,12 +1880,14 @@ export function register(on: any): void {
           properties: {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
-            result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable'] },
+            result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
             detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words with their date' },
+            over: { type: 'string', description: ACCEPTANCE.result + ': the failed record\'s file name, written by ' + ACCEPTANCE.tool + ' only' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
+            dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },
           required: [],
         },

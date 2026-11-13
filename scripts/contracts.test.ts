@@ -17,6 +17,7 @@ describe('pull request records: github writes, core reads', () => {
     for (const path of [
       write('--kind', 'review', '--result', 'pass'), write('--kind', 'e2e', '--result', 'waived', '--detail', 'operator, 2026-11-08'),
       write('--kind', 'e2e', '--result', 'not-applicable', '--detail', 'documentation only'),
+      write('--kind', 'review', '--result', 'accepted', '--detail', 'over review.x.json: nits only'),
     ]) {
       const record = parsePrRecord(JSON.parse(readFileSync(path, 'utf8')))
       assert.ok(record && accepts(record), path)
@@ -30,5 +31,6 @@ describe('pull request records: github writes, core reads', () => {
     const none = ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--result', 'not-applicable']
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'review', '--detail', 'documentation only'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'e2e'], { stdio: 'pipe' }))
+    assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'norms', '--result', 'accepted'], { stdio: 'pipe' }))
   })
 })
