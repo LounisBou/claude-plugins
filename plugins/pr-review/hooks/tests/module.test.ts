@@ -316,7 +316,7 @@ test('an interrupted turn releases the loop', async ($, on) => {
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { records: any[]; prCalls: number; head?: string; remote?: string; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; recordFirst?: any[]; prFirst?: any[]; recordCalls?: number; sleeps?: string[]; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -334,9 +334,9 @@ function wireRecord(on: any, stubs: Stubs) {
   on('process.run', (_$: any, e: any) => {
     if (e.argv[0] === 'sleep') stubs.sleeps?.push(e.argv[1])
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
-    if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
+    if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:' + (stubs.remote ?? 'LounisBou/claude-review') + '.git\n' } }
     if (e.argv.join(' ') === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: (stubs.branch ?? 'feature') + '\n' } }
-    if (e.argv.join(' ') === 'git rev-parse HEAD') return { value: { ...ok, stdout: REVIEWED_HEAD + '\n' } }
+    if (e.argv.join(' ') === 'git rev-parse HEAD') return { value: { ...ok, stdout: (stubs.head ?? REVIEWED_HEAD) + '\n' } }
     return { value: ok }
   })
   // pr-get answers the branch's pull request number; pr-list, the open pull requests as JSON.
@@ -1295,6 +1295,49 @@ test('a 4xx is no transient failure: asked once, the record is none, and not owe
   await loopCall($, { action: 'status' })
   await loopCall($, { action: 'findings', keys: ['x::y'] })
   expect(stubs.recordCalls).toBe(1)
+})
+
+test('a repository whose name says timeout is recorded once, and never owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, remote: 'LounisBou/timeout-tools', recordAnswer: { result: '/data/records/LounisBou/timeout-tools/review.json' }, sleeps: [] }
+  wireRecord(on, stubs)
+  const out = await reviewedLoop($)
+  expect(String(out.result)).toContain('record: /data/records/LounisBou/timeout-tools/review.json')
+  expect(String(out.result)).not.toContain('owed')
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: ['x::y'] })
+  expect(stubs.recordCalls).toBe(1)
+  expect(stubs.sleeps).toEqual([])
+})
+
+test('a record owed is not written at another head than the one reviewed, and is no longer owed', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE], sleeps: [] }
+  wireRecord(on, stubs)
+  await reviewedLoop($)
+  stubs.head = 'b'.repeat(40)
+  const moved = await loopCall($, { action: 'status' })
+  expect(stubs.records).toEqual([])
+  expect(stubs.recordCalls).toBe(4)
+  expect(String(moved.result)).toContain(`record: none — the checkout is at ${'b'.repeat(12)}, the review read ${'a'.repeat(12)}`)
+  expect(String(moved.result)).not.toContain('owed')
+  // Not owed any more: even at the reviewed head again, nothing is written.
+  stubs.head = undefined
+  await loopCall($, { action: 'status' })
+  expect(stubs.recordCalls).toBe(4)
+  expect(stubs.records).toEqual([])
+})
+
+test('a record write that never answers is still owed at the next call', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordFirst: [new Promise<never>(() => {})], sleeps: [] }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'important' }])
+  void loopCall($, { action: 'findings', keys: ['a::b'] })
+  for (let i = 0; i < 100 && stubs.recordCalls !== 1; i++) await new Promise((r) => setTimeout(r, 5))
+  expect(stubs.recordCalls).toBe(1)
+  const later = await loopCall($, { action: 'status' })
+  expect(stubs.records.length).toBe(1)
+  expect(String(later.result)).toContain('record: ' + WRITTEN)
 })
 
 test('what GitHub says is transient or not', () => {

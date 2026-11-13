@@ -47,6 +47,8 @@ export type Loop = {
   isRecorded: boolean
   // Whether the review record is still owed: GitHub kept failing transiently when it was written.
   isRecordPending: boolean
+  // The head the checkout was at when the loop ended: the record is written at it, and no other.
+  reviewedHead?: string
   // Whether a review runs: from begin_pass to the findings the loop accepts.
   isReviewing: boolean
   // A reviewer's loop: one pass, no fix, its findings are the verdict.
@@ -86,6 +88,7 @@ export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.exit = undefined
   loop.isRecorded = false
   loop.isRecordPending = false
+  loop.reviewedHead = undefined
   loop.isReviewing = false
   loop.isReviewOnly = isReviewOnly
   loop.reports = []

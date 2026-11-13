@@ -316,12 +316,12 @@ async function github($: any, call: Record<string, unknown>): Promise<any> {
 // The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
 // head (a review checkout) names no branch, and the open pull request whose head is its commit is
 // the one, never one of several. The number, or the line that says why there is none.
-async function pullOf($: any, repo: string): Promise<number | string> {
+async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>) => Promise<any>): Promise<number | string> {
   const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'])
   const branch = String(branchRun.stdout ?? '').trim()
   if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
   if (branch !== 'HEAD') {
-    const found = await github($, { tool: GH_TOOL, command: 'pr-get', args: { branch, format: 'pr-number' }, repo })
+    const found = await ask({ tool: GH_TOOL, command: 'pr-get', args: { branch, format: 'pr-number' }, repo })
     if (found?.deny || found?.isError) return 'record: none — ' + (textOf(found) || 'the pull request could not be read')
     const pr = Number(textOf(found))
     return Number.isInteger(pr) && pr >= 1 ? pr : 'record: none — the branch has no pull request'
@@ -329,7 +329,7 @@ async function pullOf($: any, repo: string): Promise<number | string> {
   const headRun = await git($, ['rev-parse', 'HEAD'])
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
-  const listed = await github($, { tool: GH_TOOL, command: 'pr-list', args: {}, repo })
+  const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
   if (listed?.deny || listed?.isError) return 'record: none — ' + (textOf(listed) || 'the pull requests could not be read')
   let pulls: unknown
   try {
@@ -347,28 +347,59 @@ async function pullOf($: any, repo: string): Promise<number | string> {
 // What a record line says when GitHub kept failing: the verdict is kept and the write is owed.
 const PENDING_NOTE = '; the record is still owed, the verdict is kept: call findings or status again to write it'
 
-// Writes the review record through the github tool, once the loop has ended.
-// Always answers the line the loop's answer carries; never throws.
-async function recordReview($: any, exit: string): Promise<string | null> {
+// The head the checkout is at, or undefined when git cannot say.
+async function headOf($: any): Promise<string | undefined> {
+  const run = await git($, ['rev-parse', 'HEAD'])
+  const head = String(run.stdout ?? '').trim()
+  return run.exitCode === 0 && head !== '' ? head : undefined
+}
+
+const short = (head: string | undefined): string => head ? head.slice(0, 12) : 'no commit'
+
+// Writes the review record through the github tool, once the loop has ended. A retry (the record
+// was owed) writes only at the head the loop ended on. The line the loop's answer carries, and
+// whether the record is owed: a github call failed transiently and the write did not happen.
+// Never throws.
+async function recordReview($: any, exit: string, isRetry: boolean): Promise<{ line: string | null; isOwed: boolean }> {
   const outcome = verdict(exit)
-  if (!outcome) return null
+  if (!outcome) return { line: null, isOwed: false }
   // A pass whose findings were never accepted read nothing: its count is no verdict.
-  if (loop.isReviewing) return 'record: none — the last pass has no findings its review agents reported'
+  if (loop.isReviewing) return { line: 'record: none — the last pass has no findings its review agents reported', isOwed: false }
+  // Whether the last github call failed transiently.
+  let isOwed = false
+  const ask = async (call: Record<string, unknown>): Promise<any> => {
+    isOwed = false
+    try {
+      const answer = await github($, call)
+      isOwed = Boolean(answer?.deny || answer?.isError) && isTransient(textOf(answer))
+      return answer
+    } catch (err: any) {
+      isOwed = isTransient(String(err?.message ?? err))
+      throw err
+    }
+  }
+  const none = (why: string) => ({ line: 'record: none — ' + why, isOwed })
   try {
-    if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return `record: none — ${NO_GITHUB}`
+    if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return none(NO_GITHUB)
+    if (isRetry) {
+      const now = await headOf($)
+      if (now === undefined || loop.reviewedHead === undefined || now !== loop.reviewedHead) {
+        return none(`the checkout is at ${short(now)}, the review read ${short(loop.reviewedHead)}: a record is written at the head it read`)
+      }
+    }
     const status = await git($, ['status', '--porcelain', '-uno'])
-    if (status.exitCode !== 0) return 'record: none — git status failed: ' + String(status.stderr ?? '').trim()
-    if (String(status.stdout).trim() !== '') return 'record: none — the tracked files have changes: a record is written on a clean checkout of the head'
+    if (status.exitCode !== 0) return none('git status failed: ' + String(status.stderr ?? '').trim())
+    if (String(status.stdout).trim() !== '') return none('the tracked files have changes: a record is written on a clean checkout of the head')
     const remote = await git($, ['remote', 'get-url', 'origin'])
     const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
-    if (!repo) return 'record: none — the origin remote is not a GitHub repository'
-    const pr = await pullOf($, repo)
-    if (typeof pr === 'string') return pr
-    const written = await github($, { tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
-    if (written?.deny || written?.isError) return 'record: none — ' + (textOf(written) || 'refused')
-    return 'record: ' + textOf(written)
+    if (!repo) return none('the origin remote is not a GitHub repository')
+    const pr = await pullOf($, repo, ask)
+    if (typeof pr === 'string') return { line: pr, isOwed }
+    const written = await ask({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
+    if (written?.deny || written?.isError) return none(textOf(written) || 'refused')
+    return { line: 'record: ' + textOf(written), isOwed: false }
   } catch (err: any) {
-    return 'record: none — ' + String(err?.message ?? err)
+    return none(String(err?.message ?? err))
   }
 }
 
@@ -463,12 +494,16 @@ export function register(on: any): void {
     const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
-    // The record is first written at the call that ends the loop.
-    if (isOwed || (before === undefined && loop.exit !== undefined && !loop.isRecorded)) {
+    // The record is first written at the call that ends the loop, at the head the loop ended on.
+    // It is owed from before the write: a write interrupted is written again at the next call.
+    const isFirst = before === undefined && loop.exit !== undefined && !loop.isRecorded
+    if (isOwed || isFirst) {
       loop.isRecorded = true
-      const line = await recordReview($, String(loop.exit))
-      loop.isRecordPending = line !== null && isTransient(line)
-      if (line) return { result: text + '\n' + (loop.isRecordPending ? line + PENDING_NOTE : line) }
+      loop.isRecordPending = true
+      if (isFirst) loop.reviewedHead = await headOf($).catch(() => undefined)
+      const written = await recordReview($, String(loop.exit), isOwed)
+      loop.isRecordPending = written.isOwed
+      if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) }
     }
     return { result: text, ...(answer.error ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
