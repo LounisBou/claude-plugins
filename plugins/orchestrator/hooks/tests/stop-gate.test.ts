@@ -1772,6 +1772,40 @@ test('a tool line or a plain ending passes while the session\'s question is open
   }
 })
 
+// With no coordinator, nothing enters the round nor marks the wait relayed: the session's own
+// operator wait, still unanswered, is the open question.
+const ownWait = (over: object = {}) => JSON.stringify({ waiting: null, last_waiting: 'operator', blocks: 'the deploy order', waiting_since: OPEN_SINCE, ...over })
+const ending = (handler: Function, setup: object, line: object) =>
+  stop(handler, fakeDollar({ ps: NOTHING_PS, ...setup }).dollar, stopEvent({ ...line, background_tasks: [], session_crons: [] }))
+
+test('a tool line or a plain ending passes while the session\'s own operator wait is unanswered, no coordinator running', async () => {
+  for (const line of [TOOL_WAIT, PLAIN]) {
+    const { handlers } = mounted()
+    const open = await ending(handlers['classic.Stop'], { wait: ownWait() }, line)
+    expect(open.answer).toBe(open.passed)
+    // A prompt he typed before the wait started answers nothing of it.
+    await handlers['prompt.submit'](fakeDollar({}).dollar, { text: 'go on', origin: { kind: 'composer' }, wait: false }, (x: unknown) => x)
+    const later = await ending(handlers['classic.Stop'], { wait: ownWait({ waiting_since: '2999-01-01T00:00:00.000Z' }) }, line)
+    expect(later.answer).toBe(later.passed)
+  }
+})
+
+test('the session\'s own operator wait, once answered or withdrawn, no longer lets a tool line or a plain ending pass', async () => {
+  for (const line of [TOOL_WAIT, PLAIN]) {
+    const { handlers } = mounted()
+    const settled = await ending(handlers['classic.Stop'], { wait: ownWait(), round: roundOf(openEntry({ status: 'withdrawn' })) }, line)
+    expect(settled.passed).toBe(null)
+    const marked = await ending(handlers['classic.Stop'], { wait: ownWait({ typed: { blocks: 'the deploy order', since: OPEN_SINCE, withdrawn: true } }) }, line)
+    expect(marked.passed).toBe(null)
+    const done = await ending(handlers['classic.Stop'], { wait: ownWait({ last_waiting: 'done', blocks: null }) }, line)
+    expect(done.passed).toBe(null)
+    // He answered in this tab: a prompt typed since the wait started.
+    await handlers['prompt.submit'](fakeDollar({}).dollar, { text: 'A, the schema first', origin: { kind: 'composer' }, wait: false }, (x: unknown) => x)
+    const answered = await ending(handlers['classic.Stop'], { wait: ownWait() }, line)
+    expect(answered.passed).toBe(null)
+  }
+})
+
 test('an open question wakes a tool line or a plain ending, never a malformed line', () => {
   const base = { agents: [], resident: false, delivered: [], tasks: [] as string[], questionOpen: true }
   expect(checkWake({ ...base, message: TOOL_WAIT.last_assistant_message })).toEqual({ tool: 'the deploy run' })
