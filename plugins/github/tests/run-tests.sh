@@ -1966,12 +1966,12 @@ sys.exit(gh.main(sys.argv[2:]))
 " "$GHDIR" "$@"
 }
 ci8() { gh8 pr-gate 12 | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])'; }
-PULL8='{"number":12,"state":"open","draft":false,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
+PULL8='{"number":12,"state":"open","draft":false,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
 
 gate8 shape "$PULL8" '{"state":"success","statuses":[{"context":"ci/legacy","state":"success"}]}' '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
-check "pr-gate answers repo, pr, state, draft, head, labels and ci" \
-  "acme/thing 12 open False $GATEHEAD Not Ready|bug SUCCESS 2" \
-  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["ci"]["result"], d["ci"]["total"])')"
+check "pr-gate answers repo, pr, state, draft, head, labels, commits and ci" \
+  "acme/thing 12 open False $GATEHEAD Not Ready|bug 3 SUCCESS 2" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["commits"], d["ci"]["result"], d["ci"]["total"])')"
 check "pr-gate makes four reads, the check runs and the Actions runs a full page" \
   "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100|GET /repos/acme/thing/actions/runs?head_sha=$GATEHEAD&per_page=100" \
   "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
@@ -2062,6 +2062,56 @@ gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'
 check_status "pr-gate of a pull request with no head sha exits 3" 3 gh8 pr-gate 12
 gate8 sha-newline '{"number":12,"state":"open","head":{"sha":"'$GATEHEAD'\n"}}' '{"state":"success","statuses":[]}' '{"total_count":0,"check_runs":[]}'
 check_status "pr-gate of a head sha with a trailing newline exits 3" 3 gh8 pr-gate 12
+
+echo "== diff fingerprints =="
+
+# fp9 <scenario> <commit count> <commit>...: the pull request's commits and each commit, a commit
+# written <sha>:<parents, comma-separated>:<files json>.
+fp9() {
+  F9="$WORK/fix9-$1"; rm -rf "$F9"; mkdir -p "$F9"
+  python3 - "$F9" "$@" <<'PY'
+import json, os, sys
+out, _, count = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(os.path.join(out, "GET_repos_acme_thing_pulls_12_commits__per_page=100.json"), "w") as fh:
+    json.dump([{"sha": "c%d" % i} for i in range(count)], fh)
+for spec in sys.argv[4:]:
+    sha, parents, files = spec.split(":", 2)
+    with open(os.path.join(out, "GET_repos_acme_thing_commits_%s.json" % sha), "w") as fh:
+        json.dump({"sha": sha, "parents": [{"sha": p} for p in parents.split(",") if p], "files": json.loads(files)}, fh)
+PY
+}
+gh9() { env GH_FIXTURES="$F9" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-fingerprint 12 "$@" 2>&1; }
+fpof() { gh9 "$@" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])'; }
+sha9() { python3 -c 'import sys; print(sys.argv[1] * 40)' "$1"; }
+H9=$(sha9 a); C9=$(sha9 b); P9=$(sha9 c); O9=$(sha9 d); D9=$(sha9 e); Q9=$(sha9 f); M9=$(sha9 9)
+A9='[{"filename":"a.ts","status":"modified","sha":"s1","patch":"@@ -1,2 +1,3 @@ fn\n a\n+b"}]'
+B9='[{"filename":"b.ts","status":"added","sha":"s2","patch":"@@ -0,0 +1 @@\n+c"}]'
+A9MOVED='[{"filename":"a.ts","status":"modified","sha":"s9","patch":"@@ -40,2 +41,3 @@ other\n a\n+b"}]'
+
+fp9 head 2 "$H9:$C9:$B9" "$C9:$P9:$A9"; first=$(fpof "$H9")
+check "pr-fingerprint reads the pull request's commits, then each commit along first parents" \
+  "GET /repos/acme/thing/pulls/12/commits?per_page=100|GET /repos/acme/thing/commits/$H9|GET /repos/acme/thing/commits/$C9" \
+  "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F9/sent.jsonl")"
+fp9 stacked 9 "$O9:$D9:$B9" "$D9:$Q9:$A9MOVED"
+check "pr-fingerprint is the same for the same commits replayed on a rewritten parent, at other lines" "$first" "$(fpof "$O9" --count 2)"
+fp9 changed 2 "$O9:$D9:$(printf '%s' "$B9" | sed 's/+c/+C/')" "$D9:$Q9:$A9"
+check "pr-fingerprint differs when a commit's content differs" "yes" "$([ "$(fpof "$O9")" != "$first" ] && echo yes || echo no)"
+fp9 spaced 2 "$O9:$D9:$B9" "$D9:$Q9:$(printf '%s' "$A9" | sed 's/+b/+ b/')"
+check "pr-fingerprint counts whitespace" "yes" "$([ "$(fpof "$O9")" != "$first" ] && echo yes || echo no)"
+fp9 swapped 2 "$O9:$D9:$A9" "$D9:$Q9:$B9"
+check "pr-fingerprint counts the commits in their order" "yes" "$([ "$(fpof "$O9")" != "$first" ] && echo yes || echo no)"
+fp9 bin1 1 "$O9:$D9:"'[{"filename":"i.png","status":"modified","sha":"blob1"}]'; bin1=$(fpof "$O9")
+fp9 bin2 1 "$O9:$D9:"'[{"filename":"i.png","status":"modified","sha":"blob2"}]'
+check "pr-fingerprint counts a file with no patch by its blob" "yes" "$([ "$(fpof "$O9")" != "$bin1" ] && echo yes || echo no)"
+fp9 merge 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"
+check "pr-fingerprint refuses a merge commit" "error: commit bbbbbbb is a merge" "$(gh9 "$H9")"
+fp9 short 2 "$H9::$B9"
+check "pr-fingerprint refuses a head with fewer first-parent commits than the pull request" \
+  "error: aaaaaaa has fewer than 2 commits along its first parents" "$(gh9 "$H9")"
+fp9 many 100
+check "pr-fingerprint refuses a pull request of 100 commits" "error: pull request 12 has 100 commits or more" "$(gh9 "$H9")"
+fp9 files 1 "$H9:$C9:$(python3 -c 'import json; print(json.dumps([{"filename": "f%d" % i, "status": "added", "sha": "x", "patch": "+x"} for i in range(300)]))')"
+check "pr-fingerprint refuses a commit of 300 files" "error: commit aaaaaaa reaches 300 files, more may be left out" "$(gh9 "$H9")"
 
 echo "== draft and back =="
 

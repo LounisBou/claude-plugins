@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import hashlib
 import os
 import re
 import subprocess
@@ -104,8 +105,68 @@ def pr_gate(args):
         "draft": bool(pull.get("draft")),
         "head": sha.lower(),
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
+        # The pull request's commit count at this head, read in the same answer as the head.
+        "commits": pull.get("commits"),
         "ci": fmt.gate_ci(statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows),
     }
+
+
+# The most files GitHub lists for a commit on one page: a commit that reaches it may hold more.
+_COMMIT_FILES_MAX = 300
+# The most commits of a pull request read on one page: one that reaches it may hold more.
+_PR_COMMITS_MAX = 100
+_HUNK_HEADER = re.compile(r"^@@ [^@]* @@.*$", re.M)
+
+
+def diff_fingerprint(files):
+    """The fingerprint of one commit's diff, as GitHub lists its files: the same diff gives the
+    same value wherever its hunks stand and in whatever order its files come, as
+    `git patch-id --stable` does, but whitespace counts. A file whose patch GitHub leaves out
+    (a binary, a diff too large) counts by its blob. None when it changes no file."""
+    parts = []
+    for entry in files:
+        patch = entry.get("patch")
+        body = _HUNK_HEADER.sub("@@", patch) if isinstance(patch, str) else "blob " + str(entry.get("sha") or "")
+        head = "%s %s %s" % (entry.get("status") or "", entry.get("previous_filename") or "", entry.get("filename") or "")
+        parts.append(hashlib.sha256((head + "\n" + body).encode("utf-8")).hexdigest())
+    if not parts:
+        return None
+    return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+
+
+def pr_fingerprint(args):
+    """The fingerprint of the pull request's own commits at a head: the k commits ending at that
+    head along first parents, k the pull request's commit count (or --count), each by its diff,
+    in order. A rewrite below them (a rebase, a parent branch rewritten) leaves it as it is."""
+    if not _FULL_SHA.fullmatch(args.head):
+        raise errors.UsageError("the head must be the full 40-character sha, got: %s" % args.head)
+    owner, name = repo.owner_repo()
+    count = args.count
+    if count is None:
+        commits = http.rest("GET", "/repos/%s/%s/pulls/%s/commits?per_page=%d" % (owner, name, args.pr, _PR_COMMITS_MAX))
+        count = len(commits) if isinstance(commits, list) else 0
+        if count >= _PR_COMMITS_MAX:
+            raise errors.ApiError("pull request %s has %d commits or more" % (args.pr, _PR_COMMITS_MAX))
+    if not 0 < count < _PR_COMMITS_MAX:
+        raise errors.ApiError("pull request %s counts %d commits" % (args.pr, count))
+    prints = []
+    sha = args.head.lower()
+    for _ in range(count):
+        if not sha:
+            raise errors.ApiError("%s has fewer than %d commits along its first parents" % (args.head[:7], count))
+        commit = http.rest("GET", "/repos/%s/%s/commits/%s" % (owner, name, sha))
+        parents = [p.get("sha", "") for p in commit.get("parents") or []] if isinstance(commit, dict) else []
+        files = commit.get("files") if isinstance(commit, dict) else None
+        if not isinstance(files, list):
+            raise errors.ApiError("commit %s lists no files" % sha[:7])
+        if len(parents) > 1:
+            raise errors.ApiError("commit %s is a merge" % sha[:7])
+        if len(files) >= _COMMIT_FILES_MAX:
+            raise errors.ApiError("commit %s reaches %d files, more may be left out" % (sha[:7], len(files)))
+        prints.append(diff_fingerprint(files) or "empty")
+        sha = parents[0].lower() if parents else ""
+    fingerprint = hashlib.sha256("\n".join(reversed(prints)).encode("utf-8")).hexdigest()
+    return {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
 
 
 def pr_diff(args):
@@ -285,6 +346,12 @@ def register(subparsers):
     parser = subparsers.add_parser("pr-gate", help="state, head, labels and CI, as the ready guard reads them")
     parser.add_argument("pr", type=int)
     parser.set_defaults(handler=pr_gate)
+
+    parser = subparsers.add_parser("pr-fingerprint", help="the fingerprint of the pull request's own commits at a head")
+    parser.add_argument("pr", type=int)
+    parser.add_argument("head")
+    parser.add_argument("--count", type=int, default=None, help="the commits to take, by default the pull request's")
+    parser.set_defaults(handler=pr_fingerprint)
 
     parser = subparsers.add_parser("pr-checks", help="combined status and check runs")
     parser.add_argument("pr", type=int)

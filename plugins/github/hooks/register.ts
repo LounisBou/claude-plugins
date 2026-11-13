@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { ACCEPTANCE, acceptanceDetail, answersAcceptance, DETAIL_MAX, KINDS } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptanceDetail, answersAcceptance, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
@@ -19,9 +19,9 @@ import {
   acceptanceNamesRefusal, acceptanceOriginRefusal, acceptanceOverRefusal, latestFailedReviewFile, headRecordsRead, reviewAcceptedOver, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
-  type Act, type Gate, type Labelling, type Phase, type RecordFile,
+  type Act, type Carried, type Gate, type Labelling, type Phase, type RecordFile,
 } from './ready.ts'
 
 export const PANE_ID = 'github-prs'
@@ -30,7 +30,7 @@ export const PANE_ID = 'github-prs'
 // (--stdin-json), and the mod's own (MOD_COMMANDS), answered here.
 // tests/run-tests.sh fails when this list and the two sources disagree.
 export const COMMANDS = [
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files',
   'pr-commits', 'file-at-ref', 'pr-create', 'pr-merge', 'pr-threads',
   'pr-comments', 'pr-issue-comments', 'pr-reviews', 'thread-reply',
   'pr-comment', 'comment-edit', 'comment-delete', 'thread-resolve',
@@ -51,7 +51,7 @@ export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list'])
 // command missing here is treated as a write, so the safe side is the default. After
 // pr-gate and pr-checks the gate may write the Ready label itself: its act, not the session's.
 export const READS = new Set([
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files', 'pr-commits',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files', 'pr-commits',
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
@@ -772,10 +772,10 @@ class RecordsUnread extends Error {}
 // The records of a pull request's head, as files. A directory that is not there
 // holds none; one that cannot be listed throws RecordsUnread, never read as none.
 // A file that cannot be read is one that does not parse.
-async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
+async function headRecords($: any, gate: Gate, head = gate.head): Promise<RecordFile[]> {
   const root = await recordsRoot($)
   if (!root) return []
-  const dir = root + '/' + gate.repo.toLowerCase() + '/' + gate.head
+  const dir = root + '/' + gate.repo.toLowerCase() + '/' + head
   let entries: any[]
   try {
     entries = await $.fs.list(dir)
@@ -787,7 +787,7 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
       // Unknown: not read as absent.
     }
     if (absent) return []
-    throw new RecordsUnread('the records of ' + gate.head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
+    throw new RecordsUnread('the records of ' + head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
   }
   const files: RecordFile[] = []
   for (const entry of entries) {
@@ -802,6 +802,180 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
     files.push({ name, text })
   }
   return files
+}
+
+/*
+ * A rebase that leaves a pull request's own commits unchanged keeps its review, its norms check and
+ * its E2E waiver: a kind with no record at the head counts as present when an earlier head of the
+ * same pull request holds one, clean, passed or waived, and that head's fingerprint is the head's
+ * (the engine's pr-fingerprint: the diffs of the pull request's k commits along first parents, so a
+ * parent branch rewritten below them changes nothing). An E2E pass is run again at the new head, and
+ * CI is always read at it. An earlier head carries only when it held as many commits of the pull
+ * request as the head: the count each gate read finds at its head is kept in the data directory, with
+ * the fingerprint once computed over that count (version 3: the files of version 1 and 2, whose count
+ * may be another head's, are never read).
+ */
+const SHA = /^[0-9a-f]{40}$/
+const FINGERPRINT = /^[0-9a-f]{64}$/
+const FINGERPRINT_VERSION = 3
+export const FINGERPRINT_PREFIX = 'fingerprint.'
+
+type Fingerprint = { fingerprint: string; commits: number }
+// What the data directory keeps of a head: its commit count, and the fingerprint over it once computed.
+type Kept = { commits: number; fingerprint?: string }
+
+async function fingerprintPath($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+  const dir = await dataDir($)
+  return dir ? dir + '/' + FINGERPRINT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
+}
+
+const countOf = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0
+
+async function keptOf($: any, path: string | undefined): Promise<Kept | undefined> {
+  try {
+    if (!path || !(await $.fs.exists(path))) return undefined
+    const kept = JSON.parse(String(await $.fs.read(path)))
+    if (kept?.v !== FINGERPRINT_VERSION || !countOf(kept.commits)) return undefined
+    return { commits: kept.commits, ...(FINGERPRINT.test(String(kept.fingerprint)) ? { fingerprint: kept.fingerprint } : {}) }
+  } catch {
+    return undefined
+  }
+}
+
+async function writeKept($: any, path: string, repo: string, pr: number, head: string, kept: Kept): Promise<void> {
+  await $.fs.write(path, JSON.stringify({ v: FINGERPRINT_VERSION, repo: repo.toLowerCase(), pr, head, ...kept }) + '\n').catch(() => undefined)
+}
+
+// The commit count the gate read at its head, kept for when that head is an earlier one; a count
+// that changed at the same head (a base merged into it) drops the fingerprint taken over the other.
+async function keepCount($: any, gate: Gate): Promise<void> {
+  if (gate.state !== 'open' || !countOf(gate.commits)) return
+  const path = await fingerprintPath($, gate.repo, gate.pr, gate.head)
+  if (path && (await keptOf($, path))?.commits !== gate.commits) await writeKept($, path, gate.repo, gate.pr, gate.head, { commits: gate.commits })
+}
+
+// The fingerprint of the pull request's own commits at a head, over `count` commits (by default the
+// pull request's), or a throw naming why there is none.
+async function headFingerprint($: any, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
+  const path = await fingerprintPath($, repo, pr, head)
+  const kept = await keptOf($, path)
+  if (kept?.fingerprint && (count === undefined || kept.commits === count)) return { fingerprint: kept.fingerprint, commits: kept.commits }
+  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
+  if (!FINGERPRINT.test(String(computed?.fingerprint)) || !countOf(computed.commits)) throw new Error('pr-fingerprint answered no fingerprint')
+  if (path) await writeKept($, path, repo, pr, head, { commits: computed.commits, fingerprint: computed.fingerprint })
+  return { fingerprint: computed.fingerprint, commits: computed.commits }
+}
+
+// The pull requests each head directory's records name, by path, as of the directory's mtime: a
+// directory whose records name other pull requests only is not read again until a record lands in it.
+const headPrs = new Map<string, { mtimeMs: number; prs: number[] }>()
+
+// The records of the gate's pull request at its earlier heads, read once each, by head, and the
+// first head whose records cannot be listed, by why.
+async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found: Map<string, RecordFile[]>; unread?: string }> {
+  const dir = root + '/' + gate.repo.toLowerCase()
+  const found = new Map<string, RecordFile[]>()
+  let unread: string | undefined
+  let heads: string[]
+  try {
+    heads = (await $.fs.list(dir))
+      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .map((x: any) => String(x.name))
+  } catch {
+    return { found }
+  }
+  for (const head of heads) {
+    const path = dir + '/' + head
+    let mtimeMs = NaN
+    try {
+      mtimeMs = Number((await $.fs.stat(path)).mtimeMs)
+    } catch {
+      // Read as changed.
+    }
+    const known = headPrs.get(path)
+    if (known && known.mtimeMs === mtimeMs && !known.prs.includes(Number(gate.pr))) continue
+    let files: RecordFile[]
+    try {
+      files = await headRecords($, gate, head)
+    } catch (err: any) {
+      // Unread, it may hold any kind of the pull request: no earlier head carries.
+      unread ??= String(err?.message ?? err).trim()
+      continue
+    }
+    // A file that does not parse may be the pull request's: such a directory is read every time.
+    if (Number.isFinite(mtimeMs) && unreadableRecords(files).length === 0) headPrs.set(path, { mtimeMs, prs: recordPrs(files) })
+    found.set(head, files)
+  }
+  return { found, unread }
+}
+
+/*
+ * The records the earlier heads of the same commits carry to the gate's head, for the kinds it has
+ * none of: per kind, the latest record by its time across every earlier head of the same commit count
+ * and fingerprint, so a newer failure at one of them is never hidden by an older pass at another. An
+ * earlier head that cannot be fingerprinted may hold that newer failure: the kinds it has records of
+ * are carried from no head, and every kind when the records of a head cannot be listed. A record file
+ * of a head of the same diff that does not parse may be that failure too: its kind is carried from no head.
+ */
+async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
+  await keepCount($, gate)
+  const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
+  const root = wanted.length > 0 ? await recordsRoot($) : undefined
+  if (!root) return []
+  const { found, unread } = await earlierRecords($, gate, root)
+  const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
+  for (const [head, records] of found) {
+    const at = headLatest(gate, head, records)
+    const latest = wanted.flatMap((kind) => at.get(kind) ?? [])
+    const unreadable = unreadableRecords(records)
+      .map((file) => ({ name: file.name, kinds: file.kinds.filter((kind) => wanted.includes(kind)) }))
+      .filter((file) => file.kinds.length > 0)
+    if (latest.length > 0 || unreadable.length > 0) candidates.push({ head, latest, unreadable })
+  }
+  if (!candidates.some((c) => c.latest.some(carries))) return []
+  if (unread) {
+    note($, uncarriedLine(gate.repo, gate.pr, gate.head, unread))
+    return []
+  }
+  let current: Fingerprint
+  try {
+    current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
+  } catch (err: any) {
+    note($, uncarriedLine(gate.repo, gate.pr, gate.head, gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim()))
+    return []
+  }
+  const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
+  const blocked = new Set<PrRecord['kind']>()
+  for (const { head, latest, unreadable } of candidates) {
+    const unreadKinds = wanted.filter((kind) => unreadable.some((file) => file.kinds.includes(kind)))
+    let earlier: Fingerprint
+    try {
+      const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
+      if (!kept) throw new Error('the pull request was never read at that head, its commit count is not known')
+      if (kept.commits !== current.commits) continue
+      earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits)
+    } catch (err: any) {
+      const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
+      for (const kind of kinds) blocked.add(kind)
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds))
+      continue
+    }
+    if (earlier.fingerprint !== current.fingerprint) continue
+    if (unreadKinds.length > 0) {
+      for (const kind of unreadKinds) blocked.add(kind)
+      const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, files, unreadKinds))
+    }
+    for (const record of latest) {
+      const before = newest.get(record.kind)?.record
+      // At the same time, the record that carries nothing wins.
+      if (!before || record.at > before.at || (record.at === before.at && !carries(record))) newest.set(record.kind, { record, from: head })
+    }
+  }
+  return wanted.flatMap((kind) => {
+    const kept = newest.get(kind)
+    return kept && carries(kept.record) && !blocked.has(kind) ? [{ kind, from: kept.from }] : []
+  })
 }
 
 /*
@@ -917,7 +1091,7 @@ async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
   return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
 }
 
-type Readiness = { gate?: Gate; missing: string[]; error?: string }
+type Readiness = { gate?: Gate; missing: string[]; carried?: Carried[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
 async function readiness($: any, repo: string, pr: number, sha?: string): Promise<Readiness> {
@@ -934,7 +1108,8 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
     throw err
   }
-  return { gate, missing: missingItems(gate, files, sha, await e2eExemptionOf($, gate)) }
+  const carried = await carriedRecords($, gate, files)
+  return { gate, missing: missingItems(gate, files, sha, await e2eExemptionOf($, gate), carried), carried }
 }
 
 /*
@@ -953,11 +1128,13 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   let missing: string[]
   let exempt: string | undefined
   let accepted: string | undefined
+  let carried: Carried[]
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
     exempt = await e2eExemptionOf($, gate)
     const files = await headRecords($, gate)
-    missing = missingItems(gate, files, undefined, exempt)
+    carried = await carriedRecords($, gate, files)
+    missing = missingItems(gate, files, undefined, exempt, carried)
     accepted = reviewAcceptedOver(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
@@ -966,7 +1143,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted) }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried) }
     return {}
   }
   let now: Gate
@@ -989,8 +1166,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, exempt), labels, draft }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, exempt, carried), labels, draft }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft }
 }
 
 // The reads after which the gate puts the label.
@@ -1081,7 +1258,7 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
     }
   }
-  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing)
+  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
 }
 
 // The Bash ready guard failed on its own: under warn the command goes on with
@@ -1808,7 +1985,7 @@ async function writeAcceptance($: any, e: any, origin: string): Promise<{ result
 }
 
 // At most once a day, the head directories whose newest record is older than
-// PRUNE_DAYS go: their pull request merged or moved on long ago.
+// PRUNE_DAYS go, their pull request merged or moved on long ago, and the fingerprints kept as long.
 async function pruneRecords($: any): Promise<void> {
   const root = await recordsRoot($)
   if (!root || !(await $.fs.exists(root))) return
@@ -1832,6 +2009,15 @@ async function pruneRecords($: any): Promise<void> {
         }
         if (newest < cut) stale.push(head)
       }
+    }
+  }
+  // The fingerprints kept for the heads, by the same cut-off.
+  const data = await dataDir($)
+  if (data) {
+    for (const file of await $.fs.list(data).catch(() => [])) {
+      const name = String(file?.name ?? '')
+      if (!name.startsWith(FINGERPRINT_PREFIX) || !name.endsWith('.json')) continue
+      if (Number((await $.fs.stat(data + '/' + name)).mtimeMs) < cut) stale.push(data + '/' + name)
     }
   }
   if (stale.length > 0) await $.process.run(['rm', '-rf', '--', ...stale], { timeoutMs: 60_000 })

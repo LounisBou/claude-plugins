@@ -50,6 +50,8 @@ export type Gate = {
   draft: boolean
   head: string
   labels: string[]
+  // The pull request's commit count at this head.
+  commits?: number
   ci: { result: string; failed: string[]; running?: number; skipped?: string[]; total: number }
 }
 
@@ -524,8 +526,9 @@ export function parseGate(text: string): Gate {
 
 const head7 = (sha: string) => sha.slice(0, 7)
 
-// The records of a head that parse and agree with it, by file name, and the names of those that do not.
-export function headRecordsRead(gate: Gate, files: RecordFile[]): { read: Map<string, PrRecord>; skipped: string[] } {
+// The records of the pull request at a head (its own, omitted) that parse and agree with it, by file name,
+// and the names of those that do not.
+export function headRecordsRead(gate: Gate, files: RecordFile[], head: string = gate.head): { read: Map<string, PrRecord>; skipped: string[] } {
   const read = new Map<string, PrRecord>()
   const skipped: string[] = []
   for (const file of files) {
@@ -535,7 +538,7 @@ export function headRecordsRead(gate: Gate, files: RecordFile[]): { read: Map<st
     } catch {
       record = undefined
     }
-    if (!record || record.head.toLowerCase() !== gate.head
+    if (!record || record.head.toLowerCase() !== head
       || record.repo.toLowerCase() !== gate.repo.toLowerCase()
       || record.pr !== Number(gate.pr)
       || !file.name.startsWith(record.kind + '.')) {
@@ -579,10 +582,66 @@ export function reviewAcceptedOver(gate: Gate, files: RecordFile[]): string | un
   return record && isAcceptance(record) ? acceptedFile(record, read) : undefined
 }
 
+// The files of a head's records that do not parse, each with the kinds it may hold: the one its name
+// (`<kind>.<at>.<producer>.json`) gives, or every kind when its name gives none.
+export function unreadableRecords(files: RecordFile[]): Array<{ name: string; kinds: Kind[] }> {
+  const unreadable: Array<{ name: string; kinds: Kind[] }> = []
+  for (const file of files) {
+    let record: PrRecord | undefined
+    try {
+      record = parsePrRecord(JSON.parse(file.text))
+    } catch {
+      record = undefined
+    }
+    if (record) continue
+    const named = KINDS.find((kind) => file.name.startsWith(kind + '.'))
+    unreadable.push({ name: file.name, kinds: named ? [named] : [...KINDS] })
+  }
+  return unreadable
+}
+
+// The pull requests a head's records name, whatever their head.
+export function recordPrs(files: RecordFile[]): number[] {
+  const prs = new Set<number>()
+  for (const file of files) {
+    try {
+      const record = parsePrRecord(JSON.parse(file.text))
+      if (record) prs.add(record.pr)
+    } catch {
+      // Names none.
+    }
+  }
+  return [...prs]
+}
+
+// A record of an earlier head of the pull request, counted at its head as their diffs are the same.
+export type Carried = { kind: Kind; from: string }
+
+// The kinds with no record of the pull request at its head: the ones an earlier head may carry. A
+// kind a file that does not parse may hold is none of them: that file may be its newest failure.
+export function unrecorded(gate: Gate, files: RecordFile[]): Kind[] {
+  const latest = latestByKind(headRecordsRead(gate, files).read)
+  const unread = new Set(unreadableRecords(files).flatMap((file) => file.kinds))
+  return KINDS.filter((kind) => !latest.has(kind) && !unread.has(kind))
+}
+
+// The latest record of each kind of the pull request at an earlier head, whatever its result.
+export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<Kind, PrRecord> {
+  return latestByKind(headRecordsRead(gate, files, head.toLowerCase()).read)
+}
+
+// A record an earlier head carries to a head of the same diff, when it is the latest of its kind
+// across the earlier heads of that diff: a clean review, a passed norms check, an E2E waiver.
+// An E2E pass is run again at the new head, and an acceptance counts only beside its failed record.
+export function carries(record: PrRecord): boolean {
+  return accepts(record) && !isAcceptance(record) && !(record.kind === 'e2e' && record.result === 'pass')
+}
+
 // What a pull request misses to be ready at its head: the four conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
 // e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string): string[] {
+// carried: the kinds with no record at the head that an earlier head of the same diff holds.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eExempt?: string, carried: Carried[] = []): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -593,6 +652,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eE
     const record = latest.get(kind)
     if (record && accepts(record) && (!isAcceptance(record) || acceptedFile(record, read))) continue
     if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
+    if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
     else if (isAcceptance(record)) {
@@ -640,14 +700,20 @@ export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' 
 
 // ---- the texts ----
 
-const tail = (missing: string[]) => 'Missing: ' + missing.join(', ')
+// The records counted at the head from an earlier head of the same diff, as the lines name them.
+export function carriedText(carried: Carried[]): string {
+  return carried.map((c) => c.kind + ' carried from ' + head7(c.from)).join(', ')
+}
+
+const tail = (missing: string[], carried: Carried[] = []) =>
+  'Missing: ' + missing.join(', ') + (carried.length > 0 ? '; ' + carriedText(carried) : '')
 
 // Why leaving draft is refused outside auto-merge, whatever the route.
 const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
   + ' by the gate once the four conditions hold'
 
-export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing)
+export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
     + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
     + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
 }
@@ -713,23 +779,31 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
 // accepted: the failed review's file the orchestrator accepted at the head, named in place of a clean review.
 // e2eExempt: the exemption that stood for its E2E, named.
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string): string {
+// carried: the kinds counted at the head from an earlier head of the same diff.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string,
+  carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
     + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, '
-    + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head.'
+    + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head'
+    + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }
 
 export function reviewAcceptedLine(file: string): string {
   return 'review accepted by the orchestrator over ' + file
 }
 
-export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing)
+export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing, carried)
 }
 
-export function gateMissingLine(repo: string, pr: number, head: string, missing: string[], accepted?: string): string {
+export function gateMissingLine(repo: string, pr: number, head: string, missing: string[], accepted?: string, carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. '
-    + (accepted ? reviewAcceptedLine(accepted) + '. ' : '') + tail(missing)
+    + (accepted ? reviewAcceptedLine(accepted) + '. ' : '') + tail(missing, carried)
+}
+
+// The kinds no earlier head carries (every kind, omitted), for the reason given.
+export function uncarriedLine(repo: string, pr: number, head: string, reason: string, kinds?: Kind[]): string {
+  return 'github: ' + repo + '#' + pr + ': no ' + (kinds ? kinds.join(', ') + ' ' : '') + 'record carried to ' + head7(head) + ': ' + reason
 }
 
 // The gate read nothing it can trust (the pull request, its records): the label stays.

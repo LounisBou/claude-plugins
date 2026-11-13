@@ -41,7 +41,8 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-list` | | Open PRs |
 | `pr-status` | `<pr>` | State, draft flag, head and base |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
-| `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Changed paths with their patches, paginated |
 | `pr-commits` | `<pr>` | Commits on the PR, paginated |
@@ -282,12 +283,13 @@ Requires push access to the repository.
 
 ### How the guard reads it, and how a head voids it
 
-- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/` alone: a record at any other sha is not read.
+- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
 - A repository's E2E exemption (below) stands for a missing `e2e` record, named in the `Ready` line; an `e2e` `fail` still holds.
-- A moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
-- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories whose newest file is over 90 days old are removed.
+- A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted, no acceptance and no E2E pass (`<kind> carried from <head7>`).
+- Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
+- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
 
 ### The producers
 
