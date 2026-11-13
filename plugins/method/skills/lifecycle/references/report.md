@@ -1,7 +1,6 @@
 # The report
 
-One report per unit of work (a phase, a check, a close), written when it ends, in these named
-sections and this order:
+One report per unit of work, in these sections and this order:
 
 ```
 branch:    <type>/<name>, base <sha>

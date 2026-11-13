@@ -16,9 +16,8 @@ _Recommendation_ : A — <why it beats the others>
 
 - Two to five choices, A to E, each a different piece of work, never shades of one.
 - The free answer never opens on a lone letter; the recommendation argues against the others.
-- Name every item, in the context and each choice, in plain words (what breaks, for whom,
-  what it costs him) and by its pull request with the repository name. A tracking-table row
-  number may follow in parentheses, never alone.
-- A host dialog takes the same parts: choices as options, the recommended first and marked,
-  the free answer as « Other ».
-- The answer is recorded, dated, where the work keeps its decisions, never asked again.
+- Name every item in plain words (what breaks, for whom, what it costs him) and by its pull
+  request with the repository name; a tracking-table row number may follow, never alone.
+- A host dialog takes the same parts: the recommended choice first, the free answer as
+  « Other ».
+- The answer is recorded, dated, with the work's decisions; never asked again.

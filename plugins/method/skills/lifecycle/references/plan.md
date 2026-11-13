@@ -2,7 +2,7 @@
 
 ## The spec
 
-Free prose, plus one section the plan and the review read:
+Free prose, plus the section the plan and the review read:
 
 ```
 ## Goals
@@ -10,6 +10,8 @@ Free prose, plus one section the plan and the review read:
 1. <one outcome, measurable: what is true once it is done>
 2. ...
 ```
+
+A goal is met when a reading of the code, a command or a commit shows it, never on a claim.
 
 ## The plan
 
@@ -42,6 +44,3 @@ row per phase:
 | 02 | <title> | doing | <commit the current step started from> |
 | 03 | <title> | todo |  |
 ```
-
-Core parses and writes it (`parseState`, `markRow`, `nextRow`); `markRow` holds the statuses
-and milestones.

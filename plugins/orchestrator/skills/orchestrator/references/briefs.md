@@ -67,7 +67,7 @@ At the dispatch gate you read the agent's fill on `/orchestrator-status` against
 
 ### Prerequisites
 
-A spec settled with the operator and a plan in the method's shapes (`method:lifecycle`, « The formats »), each phase adding its **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory) and your review focus. No dispatch without both, and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator (`dispatch-record.sh goals <record> init --spec <path>|none`, which `open` requires). A plan section that moves goal work after the build is a goal without a phase: put it to him.
+A spec settled with the operator and a plan in the method's shapes (`method:lifecycle`, `plan.md`), each phase adding its **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory) and your review focus. No dispatch without both, and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator (`dispatch-record.sh goals <record> init --spec <path>|none`, which `open` requires). A plan section that moves goal work after the build is a goal without a phase: put it to him.
 
 ### Phase & PR rules
 
