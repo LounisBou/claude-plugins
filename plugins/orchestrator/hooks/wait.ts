@@ -13,7 +13,7 @@ import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { openFence, outsideFences, oneQuestionRefusal, questionDefectRefusal } from './one-question.ts'
-import { entryQuestions, questionShape } from './round.ts'
+import { entryQuestions, parseChoices, questionShape, type QuestionField } from './round.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
@@ -47,19 +47,35 @@ function checkQuestion(question: unknown): { question: string } | { error: strin
 
 const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
-// Each question block a text shows outside its fences, by its numbering and its subject line (its first field).
+// Each question block a text shows outside its fences, by its content with its whitespace flattened:
+// its numbering, its labelled fields, its choices and its recommendation with the lines that argue it.
 function blockKeys(text: string): string[] {
   return entryQuestions({ question: outsideFences(text), choices: [], recommendation: null }).flatMap(part => {
-    const shape = questionShape(part.question, part.choices)
-    const subject = shape?.fields[0]
-    return shape?.number && subject ? [`${flat(shape.number)}\n${flat(subject.label)}: ${flat(subject.text)}`] : []
+    const { choices } = parseChoices(part.question)
+    const shape = questionShape(part.question, choices)
+    if (!shape?.number) return []
+    const fields = shape.fields.map(field => `${flat(field.label)}: ${flat(field.text)}`)
+    const listed = choices.map(choice => `${choice.letter}: ${flat(choice.text)}`)
+    return [[flat(shape.number), ...fields, ...listed, recommendationOf(part.question, shape.recommendation)].join('\n')]
   })
 }
 
-// The question block an operator wait holds that the message does not show: appended above the line. A
-// block of the same numbering and subject line is the declared one, its other words copied or not. The
-// call's question is authoritative: a block of another number or subject does not hide it, the two then
-// make several questions in one turn, which the stop gate refuses.
+// The recommendation of a block, flattened: its line and the lines below it up to a blank one or the
+// machine line, the argument questionShape does not keep. The last line holding its label and its text is its own.
+function recommendationOf(question: string, recommendation: QuestionField | null): string {
+  if (recommendation === null) return ''
+  const lines = question.split('\n')
+  const at = lines.findLastIndex(line => line.includes(recommendation.label) && line.includes(recommendation.text))
+  if (at < 0) return flat(`${recommendation.label}: ${recommendation.text}`)
+  const end = lines.findIndex((line, i) => i > at && (line.trim() === '' || /^\s*waiting\s*:/.test(line)))
+  return flat(`${recommendation.label}: ${lines.slice(at, end < 0 ? lines.length : end).join(' ')}`)
+}
+
+// The question block an operator wait holds that the message does not show: appended above the line.
+// The call's question is authoritative: a block in the message is the declared one only when its
+// content matches it, whitespace and line breaks aside. Any other block, of the same numbering and
+// subject or not, does not hide it: the two then make several questions in one turn, which the stop
+// gate refuses.
 function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
   if (wait.kind !== 'operator' || !wait.question) return null
   if (flat(outsideFences(message)).includes(flat(wait.question))) return null
@@ -123,7 +139,7 @@ export function declaredConsent(declarations: Declarations = DECLARATIONS): Cons
   return wait?.kind === 'operator' ? wait.consent ?? null : null
 }
 
-// The message with the declared question in it unless it shows a block of the same numbering and subject: the pane, the round entry
+// The message with the declared question in it unless it shows a block of the same content: the pane, the round entry
 // and the gate read the question from the call, whatever the prose around it says.
 export function withDeclaredQuestion(message: string, wait: DeclaredWait | null): string {
   const missing = wait === null ? null : questionMissingFrom(message, wait)

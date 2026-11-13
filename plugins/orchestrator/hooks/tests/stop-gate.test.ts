@@ -2396,23 +2396,34 @@ test('a different question block in the message does not hide the declared one: 
   expect(spaced.split('**Question 1 of 1**').length).toBe(2)
 })
 
-test('a near copy of the declared block in the message is the declared one: not appended, one question, the stop passes', async () => {
-  const declared = ['**Question 1 of 1**', '_Subject_ : the report', '_Context_ : the report is ready for review.', '- **A** : yes', '- **B** : no'].join('\n')
+test('a block of the declared number and subject but another content does not hide the declared one: appended, refused as several', async () => {
+  const declared = [
+    '**Question 1 of 1**', '_Subject_ : the report', '_Context_ : the report is ready for review.', '_Question_ : merge it?',
+    '- **A** : yes', '- **B** : no', '', '_Recommendation_ : A, the checks are green', 'and the review is clean.',
+  ].join('\n')
   const wait = waitMounted()
   const fx = fakeDollar({})
   await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: declared })
-  // One word, then one mark of the context changed: the same numbering and subject line, the declared block.
-  for (const copy of [declared.replace('ready', 'done'), declared.replace('review.', 'review !')]) {
-    const handed = withDeclaredWait(copy, { kind: 'operator', blocks: 'the mode', question: declared })
-    expect(handed.split('**Question 1 of 1**').length).toBe(2)
-    const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: copy, ...NOTHING_RUNS }))
-    expect(passed.answer).toBe(passed.passed)
+  const divergent = {
+    stub: ['**Question 1 of 1**', '_Subject_ : the report'].join('\n'),
+    context: declared.replace('ready', 'done'),
+    choices: declared.replace('- **B** : no', '- **B** : later'),
+    recommendation: declared.replace('_Recommendation_ : A,', '_Recommendation_ : B,'),
+    argument: declared.replace('and the review is clean.', 'and nobody objected.'),
   }
-  // Another subject under the same number is another question: appended, and refused as several.
-  const other = declared.replace('_Subject_ : the report', '_Subject_ : the deploy')
-  expect(withDeclaredWait(other, { kind: 'operator', blocks: 'the mode', question: declared }).split('**Question 1 of 1**').length).toBe(3)
-  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: other, ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('One question per turn')
+  for (const [what, copy] of Object.entries(divergent)) {
+    const handed = withDeclaredWait(copy, { kind: 'operator', blocks: 'the mode', question: declared })
+    expect([what, handed.split('**Question 1 of 1**').length]).toEqual([what, 3])
+    expect([what, handed.includes(declared)]).toEqual([what, true])
+    const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: copy, ...NOTHING_RUNS }))
+    expect([what, String((held.answer as any).block).includes('One question per turn')]).toEqual([what, true])
+  }
+  // The same block with its whitespace and line breaks changed is the declared one: not appended, the stop passes.
+  const respaced = declared.replace('_Context_ : the report is ready', '_Context_  :  the report\nis   ready').replace('- **A** : yes', '-   **A** :  yes')
+  const handed = withDeclaredWait(`Voici ma question.\n\n${respaced}\n\nJ'attends.`, { kind: 'operator', blocks: 'the mode', question: declared })
+  expect(handed.split('**Question 1 of 1**').length).toBe(2)
+  const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: respaced, ...NOTHING_RUNS }))
+  expect(passed.answer).toBe(passed.passed)
 })
 
 // The coordinator of the machine, as its record names it, and the messages the module sent it.
