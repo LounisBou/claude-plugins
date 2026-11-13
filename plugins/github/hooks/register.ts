@@ -449,21 +449,22 @@ async function autoMergeRepos($: any): Promise<Set<string>> {
 // Read once per call: the ready guard and the auto-merge check ask for it both.
 const targets = new WeakMap<object, Promise<string | undefined>>()
 
-function targetRepo($: any, e: any): Promise<string | undefined> {
+// `dir`: the checkout whose origin names the repository, when not the session's directory.
+function targetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
   let found = targets.get(e)
   if (!found) {
-    found = readTargetRepo($, e)
+    found = readTargetRepo($, e, dir)
     targets.set(e, found)
   }
   return found
 }
 
-async function readTargetRepo($: any, e: any): Promise<string | undefined> {
+async function readTargetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
   const override = e.repo !== undefined && e.repo !== null ? e.repo : e.args?.repo
   for (const named of [override, await $.env.get('GH_REPO')]) {
     if (named !== undefined && named !== null && String(named) !== '') return String(named)
   }
-  const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000 })
+  const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
   const match = r.exitCode === 0 ? GITHUB_ORIGIN.exec(String(r.stdout).trim()) : null
   return match ? match[1] + '/' + match[2] : undefined
 }
@@ -1507,8 +1508,12 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
 // ---- records ----
 
 async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail } })
+  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+  // The checkout the tests ran in: named, or the session's directory.
+  const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
+  if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
+  const inDir = dir ? { cwd: dir } : {}
   const owned = recordKindFor(origin)
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
   if (kind !== owned) {
@@ -1520,7 +1525,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  const repo = await targetRepo($, { repo: e.repo, args: {} }, dir)
   if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
   if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
@@ -1534,12 +1539,16 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   } catch (err: any) {
     return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
   }
-  const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })
+  const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
   const local = head.exitCode === 0 ? String(head.stdout).trim().toLowerCase() : ''
+  if (dir && !local) return { deny: 'github: ' + dir + ' has no commit to read: ' + (String(head.stderr ?? '').trim() || 'git rev-parse HEAD exited ' + head.exitCode) }
   if (local !== gate.head) {
-    return { deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ': a record is written at the head it read.' }
+    return {
+      deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ': a record is written at the head it read. '
+        + (dir ? 'Checkout read: ' + dir + '.' : 'Name the checkout the tests ran in: {"dir": "<absolute path>"}.'),
+    }
   }
-  const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000 })
+  const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000, ...inDir })
   if (status.exitCode !== 0 || String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
@@ -1640,6 +1649,7 @@ export function register(on: any): void {
             result: { type: 'string', enum: ['pass', 'fail', 'waived'] },
             detail: { type: 'string', description: 'what ran, or the operator\'s waiver with its date' },
             kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
+            dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },
           required: ['pr', 'result'],
         },
