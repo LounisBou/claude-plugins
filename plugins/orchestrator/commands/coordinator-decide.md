@@ -9,7 +9,7 @@ the coordinator's session: anywhere else, say so in one line and stop.
 
 The round's shape is `/orchestrator-decide`'s, read from `commands/decide.md` and followed as
 written: one question per message, in the method's question format; nothing on silence; a
-question re-presented in full after any interruption; a ruling never reopened. The coordination
+question left open in the round, never repeated; a ruling never reopened. The coordination
 skill's rules for relayed questions hold too: the question and every field of its block are
 the sender's, verbatim, and you add nothing of your own. Only what follows differs.
 
