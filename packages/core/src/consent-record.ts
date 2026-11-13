@@ -1,13 +1,13 @@
 // The consent record contract, owned by the orchestrator: the operator's answer to a round
-// question that asked their consent on a subject (an E2E waiver of one pull request, a repository in
-// or out of auto-merge), written by the orchestrator's hooks when they answer it, one file per
+// question that asked their consent on a subject (an E2E waiver of one pull request, a repository
+// exempted from E2E or no longer, a repository in or out of auto-merge), written by the orchestrator's hooks when they answer it, one file per
 // question under <config>/consents/<owner>/<name>/<entry>.json, and read by github in place of
 // the orchestrator's private round. The subject is the one the asking session declared with its
 // question (`declare_wait`'s `consent`), never read from the question's words.
 
 export const CONSENT_RECORD_CONTRACT = {
   version: 1,
-  kinds: ['e2e-waiver', 'auto-merge'],
+  kinds: ['e2e-waiver', 'e2e-exemption', 'auto-merge'],
   producer: 'orchestrator',
   // Who recorded the answer: the operator in the coordinator's pane, or in the asking session's
   // own tab (`tab`), or the coordinator relaying what they told it (`round-close`).
@@ -24,13 +24,13 @@ export const CONSENT_RECORD_CONTRACT = {
 
 const contract = CONSENT_RECORD_CONTRACT
 
-export type ConsentKind = 'e2e-waiver' | 'auto-merge'
+export type ConsentKind = 'e2e-waiver' | 'e2e-exemption' | 'auto-merge'
 export type Answerer = 'pane' | 'coordinator' | 'tab'
 
-/** What the operator is asked to consent to: a waiver names its pull request, auto-merge none. */
+/** What the operator is asked to consent to: a waiver names its pull request, a repository's exemption and auto-merge none. */
 export type ConsentSubject =
   | { readonly kind: 'e2e-waiver'; readonly repo: string; readonly pr: number }
-  | { readonly kind: 'auto-merge'; readonly repo: string }
+  | { readonly kind: 'e2e-exemption' | 'auto-merge'; readonly repo: string }
 
 export interface ConsentRecord {
   readonly v: number
@@ -65,7 +65,7 @@ export function parseConsentSubject(raw: unknown): ConsentSubject | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
   const { kind, repo, pr } = raw as Record<string, unknown>
   if (!isRepo(repo)) return undefined
-  if (kind === 'auto-merge') return pr === undefined ? { kind, repo } : undefined
+  if (kind === 'auto-merge' || kind === 'e2e-exemption') return pr === undefined ? { kind, repo } : undefined
   if (kind !== 'e2e-waiver' || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1) return undefined
   return { kind, repo, pr }
 }
@@ -148,7 +148,7 @@ export function consentRecordOf(fields: {
 /** Whether two subjects are the same: the same kind, repository (as GitHub compares it) and pull request. */
 export function sameSubject(a: ConsentSubject, b: ConsentSubject): boolean {
   if (a.kind !== b.kind || a.repo.toLowerCase() !== b.repo.toLowerCase()) return false
-  return a.kind === 'auto-merge' || (b.kind === 'e2e-waiver' && a.pr === b.pr)
+  return a.kind !== 'e2e-waiver' || (b.kind === 'e2e-waiver' && a.pr === b.pr)
 }
 
 /**
