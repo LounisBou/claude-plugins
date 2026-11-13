@@ -2304,6 +2304,55 @@ test('each rule of an exemption is in the operator\'s words as given', async ($,
   expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'], labels: ['no-e2e'] })
 })
 
+test('a rule found only inside a longer word of the operator\'s words is not given', async ($, on) => {
+  const seen = await world($, on)
+  for (const [words, rule] of [
+    ['plus de dérogation E2E sur thing pour src/docs/, 2026-11-13', { paths: ['docs/'] }],
+    ['plus de dérogation E2E sur thing pour docs/api, 2026-11-13', { paths: ['docs/'] }],
+    ['plus de dérogation E2E sur thing avec no-e2e, 2026-11-13', { labels: ['e2e'] }],
+    ['plus de dérogation E2E sur thing avec e2e-skip, 2026-11-13', { labels: ['e2e'] }],
+  ] as const) {
+    await typed($, words)
+    const out: any = await $.tool.call(exemptCall(true, words, rule))
+    expect(out.deny, words).toContain('each rule as given')
+  }
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+  const whole = 'plus de dérogation E2E sur thing pour docs/, avec e2e.'
+  await typed($, whole + ' 2026-11-13')
+  const given: any = await $.tool.call(exemptCall(true, whole + ' 2026-11-13', { paths: ['docs/'], labels: ['e2e'] }))
+  expect(given.deny).toBeUndefined()
+})
+
+const answeredExemption = (answer: string) => consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer })
+
+for (const [answer, rule] of [
+  ['lance les tests du dépôt, 2026-11-13', {}],
+  ['plus de dérogation E2E sur ce dépôt, 2026-11-13', {}],
+  ['exempt thing from E2E, 2026-11-13', { paths: ['docs/'] }],
+  ['exempt thing from E2E for no-e2e, 2026-11-13', { labels: ['e2e'] }],
+] as const) {
+  test('a consent answer the typed route refuses exempts nothing: ' + answer + ' ' + JSON.stringify(rule), async ($, on) => {
+    const seen = await world($, on, consentWorld({ a: answeredExemption(answer) }))
+    const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + answer + ' — on acme/thing, exempt, docs/ e2e', rule))
+    expect(out.deny).toContain('an E2E exemption quotes the operator')
+    expect(seen.files[EXEMPTION]).toBeUndefined()
+  })
+}
+
+test('a consent answer that does not name the repository revokes nothing', async ($, on) => {
+  const seen = await world($, on, { exemption: EXEMPT, ...consentWorld({ a: answeredExemption('remets les E2E, 2026-11-13') }) })
+  const out: any = await $.tool.call(exemptCall(false, 'operator ruled: remets les E2E, 2026-11-13 — acme/thing'))
+  expect(out.deny).toContain('an E2E exemption quotes the operator')
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('a consent answer with the exemption, the repository and each rule exempts', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: answeredExemption('exempt thing from E2E for docs/, 2026-11-13') }))
+  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: exempt thing from E2E for docs/, 2026-11-13', { paths: ['docs/'] }))
+  expect(out.deny).toBeUndefined()
+  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'] })
+})
+
 test('a revocation names the repository in the operator\'s words', async ($, on) => {
   const seen = await world($, on, { exemption: EXEMPT })
   await typed($, 'plus de dérogation E2E sur ce dépôt, 2026-11-13')
@@ -2352,6 +2401,10 @@ test('a label an exemption names is refused to Bash, on any route, another label
     'gh api -X DELETE repos/acme/thing/issues/12/labels/no-e2e',
     'gh api -X DELETE repos/acme/thing/issues/12/labels',
     'gh api -X POST repos/acme/thing/issues/12/labels --input body.json',
+    'gh api -X POST repos/acme/thing/issues/12/labels -F \'labels[]=@labels.txt\'',
+    'gh api repos/acme/thing/issues/12/labels -F labels[]=@labels.txt',
+    'gh api -X PATCH repos/acme/thing/issues/12 -F \'labels[]=@labels.txt\'',
+    'gh api -X PATCH repos/acme/thing/pulls/12 -f \'labels[]=no-e2e\'',
     'gh label edit bug -R acme/thing --name no-e2e',
     'gh api graphql -f query=\'mutation { addLabelsToLabelable(input: {labelableId: "x", labelIds: ["y"]}) { clientMutationId } }\'',
   ]) {

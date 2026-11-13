@@ -110,16 +110,24 @@ export function exemptionPath(dataDir: string, repo: string): string {
   return dataDir + '/' + EXEMPT_DIR + '/' + repo.toLowerCase() + '.json'
 }
 
-/** Whether a path matches a glob: `*` and `?` within a directory, `**` across them, a trailing `/` for all below. */
+/**
+ * Whether a path matches a glob: `*` and `?` within a directory, `**` across them when it is a whole
+ * segment (`a/**` + `/b`, `a/**`), a trailing `/` for all below. A `**` inside a segment (`a**`) is a `*`.
+ */
 export function globMatches(glob: string, path: string): boolean {
   const pattern = glob.endsWith('/') ? glob + '**' : glob
   let source = ''
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i]
-    if (c === '*' && pattern[i + 1] === '*') {
-      source += '.*'
+    const segment = (i === 0 || pattern[i - 1] === '/') && (i + 2 === pattern.length || pattern[i + 2] === '/')
+    if (c === '*' && pattern[i + 1] === '*' && segment) {
+      // `**/` is any directories, none included; a final `**` is anything below.
+      const last = i + 2 === pattern.length
+      source += last ? '.*' : '(?:[^/]*/)*'
+      i += last ? 1 : 2
+    } else if (c === '*' && pattern[i + 1] === '*') {
+      source += '[^/]*'
       i++
-      if (pattern[i + 1] === '/') i++
     } else if (c === '*') source += '[^/]*'
     else if (c === '?') source += '[^/]'
     else source += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')

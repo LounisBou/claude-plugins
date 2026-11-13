@@ -342,3 +342,11 @@ test('the labels a command puts on, takes off, renames or deletes are read with 
   expect(toolLabelling('label-remove', { pr: 3, name: 'a' })).toEqual({ name: 'label-remove', labels: ['a'] })
   expect(toolLabelling('pr-comment', { pr: 3, body: 'a' })).toBeUndefined()
 })
+
+test('labels gh api reads from a file (-F name=@file) are opaque: any label may move', () => {
+  expect(bashLabellings("gh api repos/o/r/issues/12/labels -F 'labels[]=@f'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'], opaque: true }])
+  expect(bashLabellings('gh api -X PATCH repos/o/r/pulls/12 -F labels[]=@f')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'], opaque: true }])
+  expect(bashLabellings('gh api -X PATCH repos/o/r/labels/old -F new_name=@n')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['old', '@n'], opaque: true }])
+  // -f sends `@f` as it is: a label named so, read on the line.
+  expect(bashLabellings("gh api repos/o/r/issues/12/labels -f 'labels[]=@f'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'] }])
+})
