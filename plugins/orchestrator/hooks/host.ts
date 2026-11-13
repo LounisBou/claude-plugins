@@ -35,7 +35,7 @@ type Nouns = {
     send(args: { to: string; text: string }): Promise<SessionSendResult>
   }
   ui: { toast(text: string): void; invalidate(event: 'ui.render'): void }
-  tool: { register(tool: ToolSpec): Promise<unknown> }
+  tool: { register(tool: ToolSpec): Promise<unknown>; call(input: { tool: string } & Record<string, unknown>): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void> }

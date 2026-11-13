@@ -78,6 +78,7 @@ function record(kind: string, result: string, at = '2026-11-01T10:00:00Z', over:
 }
 
 const FOUR = Object.fromEntries([record('review', 'pass'), record('norms', 'pass'), record('e2e', 'pass')])
+const FOUR_REVIEW = record('review', 'pass')[0]
 
 // The pull request's state as the engine leaves it: its labels and its draft move with pr-readiness and pr-draft.
 type Pull = { labels: string[]; draft: boolean; reads: number }
@@ -199,7 +200,9 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       if (w.recordFails) return { value: { stdout: '', ...w.recordFails } }
       // The record lands among the head's records, as its writer puts it there.
       const option = (name: string) => e.argv[e.argv.indexOf(name) + 1]
-      const [name, text] = record(option('--kind'), option('--result'), '2026-11-02T10:00:00Z', { producer: 'session-e2e' })
+      // An acceptance keeps its producer and the detail that names the failed record it answers.
+      const acceptance = option('--result') === 'accepted' ? { producer: option('--producer'), detail: option('--detail') } : {}
+      const [name, text] = record(option('--kind'), option('--result'), '2026-11-02T10:00:00Z', { producer: 'session-e2e', ...acceptance })
       records[name] = text
       return { value: { exitCode: 0, stdout: HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json\n', stderr: '' } }
     }
@@ -1208,6 +1211,85 @@ for (const [plugin, kind, allowed] of [
     }
   })
 }
+
+// ---- the orchestrator's acceptance of a failed review ----
+
+// A failed review at the head, norms and E2E passed: the review is what the pull request misses.
+const FAILED = record('review', 'fail', '2026-11-01T11:00:00Z', { producer: 'pr-review', detail: '2 Important' })
+const FAILED_AT_HEAD = Object.fromEntries([FAILED, record('norms', 'pass'), record('e2e', 'pass')])
+const ACCEPT = { pr: 12, repo: 'acme/thing', kind: 'review', result: 'accepted', over: FAILED[0], detail: 'both findings are out of scope' }
+
+// A plugin whose command calls the record tool with the acceptance its argument holds, as the
+// orchestrator's accept tool does. Its module runs apart from the test: the call travels as text.
+const accepting = (plugin: string) => ({
+  plugins: [{
+    name: plugin,
+    register(on: any) {
+      on('command.run', { command: 'emit-acceptance' }, async ($: any, e: any) => {
+        const out = await $.tool.call({ tool: 'mcp__github__record', ...JSON.parse(String(e.args)) })
+        return { text: JSON.stringify(out) }
+      })
+    },
+  }],
+})
+
+const accept = async ($: any, over: Record<string, unknown> = {}) =>
+  JSON.parse(String((await $.command.run({ command: 'emit-acceptance', args: JSON.stringify({ ...ACCEPT, ...over }) })).text))
+
+test('the orchestrator accepts the failed review at the head: the record names it, the gate counts it and says so', accepting('orchestrator'), async ($, on) => {
+  // No checkout is read: the decision is over the records of the head GitHub names.
+  const seen = await world($, on, { records: FAILED_AT_HEAD })
+  const out = await accept($)
+  const argv = recordRun(seen)!
+  expect(argv.slice(6, 14)).toEqual(['--kind', 'review', '--result', 'accepted', '--producer', 'orchestrator', '--detail',
+    'over ' + FAILED[0] + ': both findings are out of scope'])
+  expect(String(out.result)).toContain('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator over ' + FAILED[0])
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+for (const plugin of ['pr-review', 'norms']) {
+  test('an acceptance from the ' + plugin + ' plugin is refused', accepting(plugin), async ($, on) => {
+    const seen = await world($, on, { records: FAILED_AT_HEAD })
+    expect((await accept($)).deny).toContain('github: an accepted review is the orchestrator\'s decision, written by mcp__orchestrator__accept')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('an acceptance from the model itself is refused', async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD, git: CLEAN })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', ...ACCEPT } as any)
+  expect(out.deny).toContain('this tool writes none')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an acceptance with no failed review at the head is refused', accepting('orchestrator'), async ($, on) => {
+  const seen = await world($, on)
+  expect((await accept($, { over: FOUR_REVIEW })).deny).toContain('github: ' + FOUR_REVIEW + ' is no failed review record at 0123456, the pull request\'s head')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an acceptance of a failed review of another head is refused', accepting('orchestrator'), async ($, on) => {
+  // The failed review lies at the head before a push; the pull request's head holds only passes.
+  const before = RECORDS + '/acme/thing/' + MOVED
+  const seen = await world($, on, {
+    tree: { [before]: { kind: 'directory', mtimeMs: 1 }, [before + '/' + FAILED[0]]: { kind: 'file', mtimeMs: 1, text: FAILED[1].replace(HEAD, MOVED) } },
+  })
+  expect((await accept($)).deny).toContain('github: ' + FAILED[0] + ' is no failed review record at 0123456')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an acceptance of a failed review a later review followed is refused', accepting('orchestrator'), async ($, on) => {
+  const later = record('review', 'pass', '2026-11-01T12:00:00Z')
+  const seen = await world($, on, { records: { ...FAILED_AT_HEAD, [later[0]]: later[1] } })
+  expect((await accept($)).deny).toContain('is followed by ' + later[0])
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an acceptance with no decision is refused', accepting('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD })
+  expect((await accept($, { detail: '  ' })).deny).toContain('an acceptance says its decision in one sentence')
+  expect(recordRun(seen)).toBeUndefined()
+})
 
 // ---- pruning ----
 

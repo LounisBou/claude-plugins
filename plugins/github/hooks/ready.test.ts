@@ -2,11 +2,11 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciUndraft, createdPr, missingItems, parseGate, pushOf, toolAct, touchesRecords,
+  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAcceptedOver, pushOf, toolAct, touchesRecords,
   recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
-import { producerOf } from '../core/pr-record.ts'
+import { acceptanceDetail, producerOf } from '../core/pr-record.ts'
 
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const OTHER = 'fedcba9876543210fedcba9876543210fedcba98'
@@ -51,6 +51,34 @@ test('an e2e waiver is accepted, a waived review is not', () => {
   expect(missingItems(gate(), waived)).toEqual([])
   const review = [record('review', 'waived'), record('norms', 'pass'), record('e2e', 'pass')]
   expect(missingItems(gate(), review)).toEqual(['review: waived at 0123456 by p-review'])
+})
+
+// A failed review, then the orchestrator's acceptance of it, with norms and E2E passed.
+const FAILED = record('review', 'fail', '2026-11-01T11:00:00Z', { producer: 'pr-review', detail: '2 Important' })
+const accepted = (over: string, at = '2026-11-01T12:00:00Z') =>
+  record('review', 'accepted', at, { producer: 'orchestrator', detail: acceptanceDetail(over, 'both findings are out of scope') })
+const PASSED_OTHERS = [record('norms', 'pass'), record('e2e', 'pass')]
+
+test('the orchestrator\'s acceptance of the failed review at the head passes the review, and the gate names it', () => {
+  const files = [FAILED, accepted(FAILED.name), ...PASSED_OTHERS]
+  expect(missingItems(gate(), files)).toEqual([])
+  expect(reviewAcceptedOver(gate(), files)).toBe(FAILED.name)
+  expect(gateReadyLine('acme/thing', 12, HEAD, false, FAILED.name))
+    .toBe('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator over ' + FAILED.name
+      + ', a passed norms check, passed E2E and green CI hold at its head.')
+  expect(reviewAcceptedOver(gate(), ALL)).toBeUndefined()
+})
+
+test('an acceptance is never carried: without the failed review it names at the head, the review is missing', () => {
+  // The acceptance alone at a head, as a rebase would leave it if it were copied over.
+  const alone = [accepted(FAILED.name), ...PASSED_OTHERS]
+  expect(missingItems(gate(), alone)[0]).toContain('review: accepted at 0123456 by orchestrator over a record that is no failed review at this head')
+  expect(reviewAcceptedOver(gate(), alone)).toBeUndefined()
+  // Over a passed review, or a later review after it: it is no acceptance of the head's verdict.
+  const overPass = [record('review', 'pass'), accepted(record('review', 'pass').name), ...PASSED_OTHERS]
+  expect(missingItems(gate(), overPass)).toHaveLength(1)
+  const later = [FAILED, accepted(FAILED.name), record('review', 'fail', '2026-11-01T13:00:00Z'), ...PASSED_OTHERS]
+  expect(missingItems(gate(), later)[0]).toContain('review: fail at 0123456')
 })
 
 test('a record of another head, repository or pull request is skipped and named', () => {

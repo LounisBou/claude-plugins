@@ -24,6 +24,7 @@ VERSION = _CONTRACT["version"]
 KINDS = tuple(_CONTRACT["kinds"])
 RESULTS = tuple(_CONTRACT["results"])
 WAIVABLE = _CONTRACT["waivable"]
+ACCEPTANCE = _CONTRACT["acceptance"]
 DETAIL_MAX = _CONTRACT["detail_max"]
 USAGE_EXIT = 2
 
@@ -77,6 +78,8 @@ def validate(args):
             raise UsageError("only an %s record can be waived" % WAIVABLE)
         if not _DATE.search(args.detail):
             raise UsageError("a waiver needs a --detail carrying its date, YYYY-MM-DD")
+    if args.result == ACCEPTANCE["result"] and args.kind != ACCEPTANCE["kind"]:
+        raise UsageError("only a %s record can be %s" % (ACCEPTANCE["kind"], ACCEPTANCE["result"]))
     session = args.session if args.session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     return {

@@ -9,9 +9,17 @@
   "results": [
     "pass",
     "fail",
-    "waived"
+    "waived",
+    "accepted"
   ],
   "waivable": "e2e",
+  "acceptance": {
+    "result": "accepted",
+    "kind": "review",
+    "answers": "fail",
+    "plugin": "orchestrator",
+    "tool": "mcp__orchestrator__accept"
+  },
   "producers": {
     "review": {
       "plugin": "pr-review",
