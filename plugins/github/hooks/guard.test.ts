@@ -61,6 +61,10 @@ type World = {
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
   fingerprintFails?: string
+  // The pull request's commit count pr-gate answers; omitted, none.
+  commits?: number
+  // A head directory that is there but cannot be listed.
+  unlistable?: string
 }
 
 type Seen = {
@@ -92,6 +96,7 @@ function gateOf(w: World, pull?: Pull) {
   const head = pull ? heads[Math.min(pull.reads++, heads.length - 1)] : HEAD
   return w.gate ?? {
     repo: 'acme/thing', pr: 12, state: 'open', draft: pull?.draft ?? w.draft ?? true, head, labels: pull?.labels ?? w.labels ?? ['Not Ready'],
+    ...(w.commits === undefined ? {} : { commits: w.commits }),
     ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1, ...(w.ci ?? {}) },
   }
 }
@@ -139,6 +144,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     : e.path in tree ? { value: { kind: tree[e.path].kind, size: 0, mtimeMs: tree[e.path].mtimeMs, isLink: false } } : { deny: 'ENOENT ' + e.path }))
   on('fs.list', (_$: any, e: any) => {
     if (e.path === HEAD_DIR && w.listFails) return { deny: w.listFails }
+    if (e.path === w.unlistable) return { deny: 'EACCES ' + e.path }
     if (e.path === HEAD_DIR) {
       return { value: Object.keys(records).map((name) => ({ name, kind: 'file', size: 1, isLink: false })) }
     }
@@ -2156,12 +2162,18 @@ const fingerprintRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'p
   .map((r) => r.args.head + (r.args.count === undefined ? '' : ' x' + r.args.count))
 // Each world's earlier head directory has a new mtime, as a directory a record lands in does.
 let earlierMtime = 0
+const fingerprintFile = (head: string) => '/data/fingerprint.acme%2Fthing.12.' + head + '.json'
 
-// The earlier head's records as the store holds them, beside the current head's directory.
-function earlier(records: Array<[string, string]>, dir = OLD_DIR): World['tree'] {
+// The earlier head's records as the store holds them, beside the current head's directory, and the
+// commit count a gate read found at that head (none when null).
+function earlier(records: Array<[string, string]>, dir = OLD_DIR, commits: number | null = 2): World['tree'] {
   const tree: NonNullable<World['tree']> = {
     [RECORDS + '/acme/thing']: { kind: 'directory', mtimeMs: 0 },
     [dir]: { kind: 'directory', mtimeMs: ++earlierMtime },
+  }
+  if (commits !== null) {
+    const head = dir.slice(dir.lastIndexOf('/') + 1)
+    tree[fingerprintFile(head)] = { kind: 'file', mtimeMs: 0, text: JSON.stringify({ v: 3, repo: 'acme/thing', pr: 12, head, commits }) }
   }
   for (const [name, text] of records) tree[dir + '/' + name] = { kind: 'file', mtimeMs: 0, text }
   return tree
@@ -2231,7 +2243,7 @@ test('a head whose commits cannot be fingerprinted (a merge in the pull request)
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual([
-    'github: acme/thing#12: no record of an earlier head carried to 0123456, its commits cannot be fingerprinted: error: commit 1234567 is a merge',
+    'github: acme/thing#12: no record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
       + ' norms: no record at 0123456, e2e: no record at 0123456',
   ])
@@ -2258,21 +2270,68 @@ test('an earlier head whose commits cannot be fingerprinted carries nothing, and
     fingerprintFails: 'error: abcdef0 has fewer than 2 commits along its first parents',
   })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs[0]).toBe('github: acme/thing#12: no record of abcdef0 carried to 0123456, its commits cannot be fingerprinted:'
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
     + ' error: abcdef0 has fewer than 2 commits along its first parents')
   expect(seen.logs[1]).toContain('Missing: review: no record at 0123456')
 })
 
-const fingerprintFile = (head: string) => '/data/fingerprint.acme%2Fthing.12.' + head + '.json'
-
-test('a kept fingerprint of another version or commit count is computed again', async ($, on) => {
+test('a kept fingerprint of another version is computed again, and a kept count is fingerprinted once', async ($, on) => {
   const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  seen.files[fingerprintFile(HEAD)] = JSON.stringify({ v: 1, fingerprint: OTHER, commits: 2 })
-  seen.files[fingerprintFile(OLD)] = JSON.stringify({ v: 2, fingerprint: SAME, commits: 3 })
+  seen.files[fingerprintFile(HEAD)] = JSON.stringify({ v: 2, fingerprint: OTHER, commits: 2 })
   const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(JSON.parse(out.result).labels).toEqual(['Ready'])
   expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
-  expect(JSON.parse(seen.files[fingerprintFile(OLD)])).toEqual({ v: 2, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME })
+  expect(JSON.parse(seen.files[fingerprintFile(OLD)])).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME })
+})
+
+test('an earlier head of more commits whose top ones are the head\'s carries nothing, and is not fingerprinted', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], commits: 2, tree: earlier(CLEAN_OLD, OLD_DIR, 3), fingerprints: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD + ' x2'])
+})
+
+test('the commit count a gate read finds at its head is kept for when it is an earlier head', async ($, on) => {
+  const seen = await world($, on, { commits: 4 })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(seen.files[fingerprintFile(HEAD)])).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: HEAD, commits: 4 })
+})
+
+test('an earlier head whose commit count was never read carries nothing of the kinds it holds, and says so', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD, OLD_DIR, null), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
+    + ' the pull request was never read at that head, its commit count is not known')
+  expect(fingerprintRuns(seen)).toEqual([HEAD])
+})
+
+test('a review failed at a later head that cannot be fingerprinted is not carried from an earlier head where it passed', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
+  }
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review record carried to 0123456: 1111111\'s commits cannot be fingerprinted:'
+    + ' error: commit 1234567 is a merge')
+})
+
+test('an earlier head whose records cannot be listed lets no earlier head carry, and says so', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = { ...earlier(CLEAN_OLD), ...earlier([], RECORDS + '/acme/thing/' + LATER) }
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], tree, unlistable: RECORDS + '/acme/thing/' + LATER, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no record carried to 0123456: the records of 1111111 cannot be listed:'
+    + ' github: $.fs.list: EACCES ' + RECORDS + '/acme/thing/' + LATER)
+  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(fingerprintRuns(seen)).toEqual([])
 })
 
 test('an earlier head whose records name only other pull requests is read once, until a record lands in it', async ($, on) => {

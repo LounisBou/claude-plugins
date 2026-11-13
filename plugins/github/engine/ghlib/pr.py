@@ -105,6 +105,8 @@ def pr_gate(args):
         "draft": bool(pull.get("draft")),
         "head": sha.lower(),
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
+        # The pull request's commit count at this head, read in the same answer as the head.
+        "commits": pull.get("commits"),
         "ci": fmt.gate_ci(statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows),
     }
 

@@ -1966,12 +1966,12 @@ sys.exit(gh.main(sys.argv[2:]))
 " "$GHDIR" "$@"
 }
 ci8() { gh8 pr-gate 12 | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])'; }
-PULL8='{"number":12,"state":"open","draft":false,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
+PULL8='{"number":12,"state":"open","draft":false,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
 
 gate8 shape "$PULL8" '{"state":"success","statuses":[{"context":"ci/legacy","state":"success"}]}' '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
-check "pr-gate answers repo, pr, state, draft, head, labels and ci" \
-  "acme/thing 12 open False $GATEHEAD Not Ready|bug SUCCESS 2" \
-  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["ci"]["result"], d["ci"]["total"])')"
+check "pr-gate answers repo, pr, state, draft, head, labels, commits and ci" \
+  "acme/thing 12 open False $GATEHEAD Not Ready|bug 3 SUCCESS 2" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["commits"], d["ci"]["result"], d["ci"]["total"])')"
 check "pr-gate makes four reads, the check runs and the Actions runs a full page" \
   "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100|GET /repos/acme/thing/actions/runs?head_sha=$GATEHEAD&per_page=100" \
   "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"

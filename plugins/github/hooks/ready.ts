@@ -50,6 +50,8 @@ export type Gate = {
   draft: boolean
   head: string
   labels: string[]
+  // The pull request's commit count at this head.
+  commits?: number
   ci: { result: string; failed: string[]; running?: number; skipped?: string[]; total: number }
 }
 
@@ -620,13 +622,12 @@ export function gateMissingLine(repo: string, pr: number, head: string, missing:
   return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. ' + tail(missing, carried)
 }
 
-// The gate read nothing it can trust (the pull request, its records): the label stays.
-// The records of an earlier head are not counted: its commits, or the head's (from omitted), could not be fingerprinted.
-export function uncarriedLine(repo: string, pr: number, head: string, error: string, from?: string): string {
-  return 'github: ' + repo + '#' + pr + ': no record of ' + (from ? head7(from) : 'an earlier head') + ' carried to ' + head7(head)
-    + ', its commits cannot be fingerprinted: ' + error
+// The kinds no earlier head carries (every kind, omitted), for the reason given.
+export function uncarriedLine(repo: string, pr: number, head: string, reason: string, kinds?: Kind[]): string {
+  return 'github: ' + repo + '#' + pr + ': no ' + (kinds ? kinds.join(', ') + ' ' : '') + 'record carried to ' + head7(head) + ': ' + reason
 }
 
+// The gate read nothing it can trust (the pull request, its records): the label stays.
 export function gateLeftLine(repo: string, pr: number, error: string): string {
   return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is: ' + error
 }
