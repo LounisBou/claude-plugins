@@ -34,7 +34,7 @@ import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, toldText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
@@ -2363,6 +2363,8 @@ export async function relayTurnEnd($: any, answer: string, turnId?: unknown): Pr
   }
   const role = roleOf(name)
   if (!name || (role !== 'orchestrator' && role !== 'agent')) return
+  // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
+  if (role === 'agent') answer = heldReport(answer)
   const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
   // The ending of a turn whose open work the operator deferred (`waiting: deferred — <n> items`): no
   // wait, nothing entered or sent, the wait cleared like a tool wait's.

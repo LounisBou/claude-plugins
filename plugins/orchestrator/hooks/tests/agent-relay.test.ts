@@ -5,7 +5,8 @@
 // in the turn's text, the gate sent once per crossing, nothing from a session that is no
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
-import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP, heldReport } from '../relay.ts'
+import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -462,12 +463,12 @@ test('the final report written without a status line still reaches the orchestra
   expect(fx.sent[2]).toEqual({ to: ORCH, text: silent(report) })
 })
 
-test('the text of a turn without a status line is cut past the cap, its head kept, the cut said', async () => {
+test('the text of a turn without a status line is cut at the verdict limit, its head kept, the cut said', async () => {
   const chains = mounted()
   const fx = fake()
-  const long = `${'a'.repeat(RELAY_CAP)}${'z'.repeat(50)}`
+  const long = `${'a'.repeat(VERDICT_LIMIT)}${'z'.repeat(50)}`
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(long, 'turn-1'))
-  expect(fx.sent).toEqual([{ to: ORCH, text: silent(`${'a'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 50} characters]`) }])
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent(`${'a'.repeat(VERDICT_LIMIT)} … (cut at ${VERDICT_LIMIT} of ${VERDICT_LIMIT + 50} characters: no report file named)`) }])
   expect(noStatusText(AGENT, null, 'x'.repeat(RELAY_CAP))).toBe(`[module] ${AGENT} ended a turn without its status line\n${REPLY}\n\n${'x'.repeat(RELAY_CAP)}`)
 })
 
@@ -548,4 +549,44 @@ test("a run launched from the agent's shell writes no row and reports no gate in
   await drive(chains, 'session.measure', agent.dollar, {})
   expect(JSON.parse(agent.files.get(ROW)!).name).toBe(AGENT)
   expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 400,000 (40%) — at the gate` }])
+})
+
+// --- the turn's text held to the verdict limit -----------------------------------------------
+
+const REPORT_FILE = '/tmp/h/briefs/belt/report-p3.md'
+
+test('a long delivery that names its report is relayed cut to the limit, its pointer and its status line kept', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const long = `${'d'.repeat(VERDICT_LIMIT * 2)}\nbelt#12 abc1234 — gate green — report: ${REPORT_FILE}\nstatus: done — PR 12`
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
+  expect(fx.sent.length).toBe(1)
+  const body = fx.sent[0].text.split('\n\n').slice(1).join('\n\n')
+  expect(body.endsWith(` … (cut: full report at ${REPORT_FILE})`)).toBe(true)
+  expect(fx.sent[0].text.startsWith(`[module] ${AGENT} reports its delivery`)).toBe(true)
+  expect(fx.sent[0].text).toContain('— PR 12\n')
+  expect(body.length).toBeLessThanOrEqual(VERDICT_LIMIT + ` … (cut: full report at ${REPORT_FILE})`.length)
+})
+
+test('a long turn that names no report still goes up, cut and saying so', () => {
+  const long = `${'q'.repeat(VERDICT_LIMIT + 100)}\nstatus: question — the base`
+  const held = heldReport(long)
+  expect(held.endsWith('no report file named)\nstatus: question — the base')).toBe(true)
+  expect(parseStatus(held)).toEqual({ kind: 'question', blocks: 'the base', question: held.split('\n')[0] })
+  const noStatus = heldReport('n'.repeat(VERDICT_LIMIT + 1))
+  expect(noStatus).toBe(`${'n'.repeat(VERDICT_LIMIT)} … (cut at ${VERDICT_LIMIT} of ${VERDICT_LIMIT + 1} characters: no report file named)`)
+})
+
+test('a short turn is relayed untouched', () => {
+  expect(heldReport(QUESTION)).toBe(QUESTION)
+})
+
+test("an orchestrator's long turn is never held to the agents' limit", async () => {
+  const chains = mounted()
+  const fx = fake({ name: ORCH, role: 'orchestrator' })
+  fx.files.set(`${STATE}/coordinator.json`, JSON.stringify({ name: 'Coord: ops' }))
+  const long = `${'o'.repeat(VERDICT_LIMIT * 2)}\n\n**Question 1 of 1**\n_Subject_ : x\n- **A** : a\n- **B** : b\nwaiting: operator — blocks: x`
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
+  const said = fx.sent.map(s => s.text).join('\n') + [...fx.files.values()].join('\n')
+  expect(said).toContain('o'.repeat(VERDICT_LIMIT * 2))
 })

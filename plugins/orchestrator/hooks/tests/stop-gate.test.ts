@@ -19,6 +19,8 @@ import { register as registerWait, Declarations, declaredConsent, parseDeclarati
 import { logLineOf, blockOf } from './fakes.ts'
 import { roundEntry } from '../round.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
+import { unnamedReport } from '../relay.ts'
+import { VERDICT_LIMIT } from '../../core/verdict.ts'
 
 // A turn's question for the operator in the decide shape: the orchestrator's stop gate refuses an
 // operator wait with no such block, so the tests that need that wait to pass end on this one.
@@ -2311,4 +2313,62 @@ test('the turn\'s end hands the declared wait to its readers, and shows the answ
   // An agent's end is not the session's.
   await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, (x: any) => { seen = x.answer; return { text: x.answer } })
   expect(seen).toBe('Done.')
+})
+
+// --- an agent's report held to the verdict limit ---------------------------------------------
+
+const REPORT = '/tmp/h/briefs/demo/report-p3.md'
+const LONG = 'w'.repeat(VERDICT_LIMIT + 20)
+
+test("an agent's turn over the verdict limit that names no report file is refused once, the way said", async () => {
+  const { handlers } = mounted()
+  const { dollar, ran } = fakeDollar({ launchName: 'Agent: belt-p3' })
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${LONG}\nstatus: done — PR 12` }))
+  expect((refused.answer as any).block).toBe(unnamedReport(LONG.length + '\nstatus: done — PR 12'.length))
+  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const again = stopEvent({ stop_hook_active: true, last_assistant_message: LONG })
+  expect((await stop(handlers['classic.Stop'], dollar, again)).answer).toBe(again)
+})
+
+test("an agent's turn that names its report, or stays under the limit, passes", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
+  const named = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${LONG} — report: ${REPORT}\nstatus: done — PR 12` }))
+  expect(named.answer).toBe(named.passed)
+  const short = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'demo#12 abc1234 — gate green\nstatus: done — PR 12' }))
+  expect(short.answer).toBe(short.passed)
+})
+
+test("a coordinator's long turn is never held to the agents' limit", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ launchName: 'Coord: machine' })
+  const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: LONG }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+const message = (to: string, text: string) => ({ tool: 'SendMessage', to, message: text })
+const delivered = async (e: any) => ({ result: { sent: e.message } })
+
+test("an agent's long message to its orchestrator is cut to the limit with the pointer to its report", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
+  const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt [a1b2c3]', `${LONG} report: ${REPORT}`), delivered)
+  expect(out.result.sent).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
+})
+
+test("an agent's long message to its orchestrator that names no report is refused, a short one goes whole", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
+  expect(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)).toEqual({ deny: unnamedReport(LONG.length) })
+  const short = `demo#12 abc1234 — gate green — blocking: none — report: ${REPORT}`
+  expect((await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered)).result.sent).toBe(short)
+})
+
+test("the coordinator's and an orchestrator's long messages are never cut", async () => {
+  const { handlers } = mounted()
+  for (const launchName of ['Coord: machine', 'Orch: other']) {
+    const { dollar } = fakeDollar({ launchName })
+    const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)
+    expect(out.result.sent).toBe(LONG)
+  }
 })
