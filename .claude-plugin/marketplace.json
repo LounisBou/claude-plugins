@@ -76,7 +76,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.103.0",
+      "version": "0.103.1",
       "author": {
         "name": "Lounis Bou"
       }
