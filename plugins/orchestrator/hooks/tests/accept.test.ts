@@ -46,13 +46,13 @@ function handler(): (dollar: any, e: object) => Promise<any> {
   return (dollar, e) => found!(dollar, e)
 }
 
-const INPUT = { pr: 128, repo: 'LounisBou/claude-plugins', over: FAILED, decision: 'both findings are out of the phase\'s scope' }
+const INPUT = { pr: 128, repo: 'acme/thing', over: FAILED, decision: 'both findings are out of the phase\'s scope' }
 
 test('an orchestrator\'s acceptance is written through github\'s record tool, as a review accepted over the file named', async () => {
-  const fx = fake('Orch: Claude plugins [7b8980]', { result: '/cfg/pr-records/x/review.json\ngithub: Ready' })
+  const fx = fake('Orch: belt [a1b2c3]', { result: '/cfg/pr-records/x/review.json\ngithub: Ready' })
   const out = await handler()(fx.dollar, INPUT)
   expect(fx.calls).toEqual([{
-    tool: 'mcp__github__record', pr: 128, repo: 'LounisBou/claude-plugins', kind: 'review', result: 'accepted', over: FAILED,
+    tool: 'mcp__github__record', pr: 128, repo: 'acme/thing', kind: 'review', result: 'accepted', over: FAILED,
     detail: 'both findings are out of the phase\'s scope',
   }])
   expect(out).toEqual({ result: '/cfg/pr-records/x/review.json\ngithub: Ready' })
