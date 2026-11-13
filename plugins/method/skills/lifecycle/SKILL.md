@@ -17,8 +17,7 @@ sessions.
 3. **Implementation.** Per step: a failing test first, the code, the project's gate run and
    its exit code read, one commit.
 4. **Review on evidence.** By a session that did not write the code. A result without the
-   command output that shows it is a claim, not a result. A change meant to change nothing
-   may quote a `drift` verdict as proof, never a required gate.
+   command output that shows it is a claim, not a result.
 5. **Ready.** The definition of done below, at the current head.
 6. **Merge.** The operator's, unless the repository is in auto-merge.
 
@@ -54,12 +53,11 @@ A unit of work ends with a report in the shape of `references/report.md`. Its la
 ## Questions to the operator
 
 One question per message, in the shape of `references/questions.md`. Never ask what the spec,
-the plan or the code already answers.
+the plan or the code already answers. Answer him first, check the premise after. Asked again for what you failed to deliver, say you
+failed, answer, offer the hand-over to a fresh session.
 
 ## The formats
 
 - `references/plan.md`: the spec's goals, the plan, the state file.
 - `references/report.md`: the report.
 - `references/questions.md`: the question.
-
-Read each only when writing it.
