@@ -161,6 +161,25 @@ def _checks_status(obj):
     return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
 
 
+def _pr_summary(obj):
+    pull = obj.get("pull") or {}
+    ci = obj.get("ci") or {}
+    mergeable = pull.get("mergeable")
+    mergeable = "unknown" if mergeable is None else str(bool(mergeable)).lower()
+    state = "merged" if pull.get("merged_at") else pull.get("state", "")
+    labels = [label.get("name", "") for label in pull.get("labels") or []]
+    checks = "%s (%d total, %d running, failed: %s)" % (
+        ci.get("result"), ci.get("total", 0), ci.get("running", 0), ", ".join(ci.get("failed") or []) or "none"
+    )
+    return "\n".join([
+        "pr %s: %s%s" % (pull.get("number"), state, ", draft" if pull.get("draft") else ""),
+        "mergeable: %s" % mergeable,
+        "head: %s" % (pull.get("head") or {}).get("sha", ""),
+        "labels: %s" % (", ".join(labels) or "none"),
+        "checks: %s" % checks,
+    ])
+
+
 def _threads(obj, resolved):
     items = obj if isinstance(obj, list) else obj.get("threads", [])
     return json.dumps([t for t in items if bool(t.get("isResolved")) is resolved], sort_keys=True)
@@ -274,6 +293,7 @@ _FORMATTERS = {
     "pr-url": _pr_url,
     "pr-merge-status": _pr_merge_status,
     "pr-details": _pr_details,
+    "pr-summary": _pr_summary,
     "checks-status": _checks_status,
     "open-threads": lambda obj: _threads(obj, False),
     "resolved-threads": lambda obj: _threads(obj, True),
