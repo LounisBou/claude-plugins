@@ -87,6 +87,30 @@ test('append: a secret straddling a length limit is redacted whole before the cu
   })
 })
 
+test('check: what the redaction already marked passes, an identifier mark and a three-word Authorization', () => {
+  withDir(dir => {
+    const header = ['Authorization: Digest ', 'one two ', 'three'].join('')
+    const lines = [event('2026-11-13T10:00:00Z', { agent: 'not an id!' }), event('2026-11-13T10:00:01Z', { bash: { line: `curl -H "${header}" https://api.example.com` } })]
+    assert.deepEqual(append(dir, lines.join('\n'), new Map()).refused, [])
+    const stored = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8')
+    assert.ok(stored.includes('"agent":"[REDACTED:identifier]"'), stored)
+    assert.ok(stored.includes('Authorization: [REDACTED:authorization]\\" https'), stored)
+    assert.ok(!/one|two|three/.test(stored), stored)
+    assert.deepEqual(check(dir, new Map()), [])
+  })
+})
+
+test('append: a secret assignment whose mark the cut drops is redacted again, so the line scans clean', () => {
+  withDir(dir => {
+    // The mark starts two characters before the limit: the cut drops it whole and leaves `PASSWORD=…`.
+    const line = `${'x'.repeat(LINE_MAX - 12)} ${['PASS', 'WORD='].join('')}zq9-cut-value`
+    assert.deepEqual(append(dir, event('2026-11-13T10:00:00Z', { bash: { line } }), new Map()).refused, [])
+    const stored = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8')
+    assert.ok(!stored.includes('zq9'), stored)
+    assert.deepEqual(check(dir, new Map()), [])
+  })
+})
+
 test('check: a token planted in a nested identifier field, or a top-level one, is found', () => {
   withDir(dir => {
     append(dir, event('2026-11-13T10:00:00Z'), new Map())

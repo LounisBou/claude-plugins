@@ -6,6 +6,7 @@ import { entropy, ENV_VALUE_MIN, envPatterns, isHighEntropy, parseEnvFile, redac
 
 const join = (...parts: string[]): string => parts.join('')
 const RANDOM = 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj'
+const HUNTER = join('hun', 'ter2x')
 
 const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string])[] = [
   ['private-key', `key: ${join('-----BEGIN ', 'RSA PRIVATE KEY-----\nMIIE', RANDOM, '\n-----END RSA PRIVATE KEY-----')}`, `MIIE${RANDOM}`],
@@ -29,11 +30,17 @@ const SAMPLES: readonly (readonly [pattern: string, text: string, secret: string
   ['secret-assignment', '{"client_secret": "shhh-not-for-you"}', 'shhh-not-for-you'],
   ['secret-assignment', 'PASSWORD="hush a b" make', ' a b'],
   ['secret-assignment', "PASSWORD='hush a b' make", ' a b'],
-  ['secret-flag', 'mysql --password hunter2x -h db', 'hunter2x'],
-  ['secret-flag', 'mysql --password=hunter2x -h db', 'hunter2x'],
+  ['secret-flag', join('mysql --pass', 'word ', HUNTER, ' -h db'), HUNTER],
+  ['secret-flag', join('mysql --pass', 'word=', HUNTER, ' -h db'), HUNTER],
   ['secret-flag', 'cli --token t0ken-value list', 't0ken-value'],
   ['secret-flag', 'cli --token=t0ken-value list', 't0ken-value'],
   ['user-password', 'curl -u me:s3cretpass https://api.example.com', 's3cretpass'],
+  ['password-flag', join('mysql -h db -', 'p', HUNTER, ' app'), HUNTER],
+  ['password-flag', join('sshpass -', 'p ', HUNTER, ' ssh me@host'), HUNTER],
+  ['password-flag', join('docker login -u me -', 'p ', HUNTER, ' registry.example'), HUNTER],
+  ['secret-assignment', join('DB_', 'PASS=', HUNTER, ' make'), HUNTER],
+  ['secret-assignment', join('MYSQL_', 'PWD=', HUNTER, ' mysql'), HUNTER],
+  ['authorization', join('curl -H "Authorization: Digest ', HUNTER, ' and more" https://api.example.com'), 'and more'],
   ['entropy', `the value ${RANDOM} stays out`, RANDOM],
 ]
 
@@ -59,8 +66,15 @@ test('env: a value shorter than the floor is kept, so common words survive', () 
 })
 
 test('parseEnvFile: quotes, export, inline comments and junk lines', () => {
-  const env = parseEnvFile("A=1\nexport B='two words'\nC=three # note\nnot a line\n=x\n")
-  assert.deepEqual([...env], [['A', '1'], ['B', 'two words'], ['C', 'three']])
+  const env = parseEnvFile("A=1\nexport B='two words'\nC=three # note\nnot a line\n=x\nD=\"quoted # kept\" # note\nE='single' # note\n")
+  assert.deepEqual([...env], [['A', '1'], ['B', 'two words'], ['C', 'three'], ['D', 'quoted # kept'], ['E', 'single']])
+})
+
+test('env: a quoted value followed by a comment is read whole, then redacted in a field', () => {
+  const secrets = parseEnvFile('SERVICE_KEY="zq9-env-value-1" # the service\nOTHER_KEY=\'zq9-env-value-2\' # another\n')
+  const event = { v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69', bash: { line: 'echo zq9-env-value-1 zq9-env-value-2' } }
+  const { value } = redactValue(event, secrets)
+  assert.deepEqual(value, { ...event, bash: { line: 'echo [REDACTED:env] [REDACTED:env]' } })
 })
 
 test('entropy: words, model ids, paths, branches and uuids are kept', () => {
@@ -87,7 +101,7 @@ test('redaction is idempotent: a redacted text scans clean', () => {
 })
 
 test('the option forms keep what holds no secret', () => {
-  for (const kept of ['claude -p --max-tokens 100', 'git push -u origin main', 'tool --token-file ./path --pass-through x']) {
+  for (const kept of ['claude -p --max-tokens 100', 'git push -u origin main', 'tool --token-file ./path --pass-through x', 'mkdir -p a/b', 'docker run -p 8080:80 img', 'mysql -p app']) {
     assert.deepEqual(redactText(kept).hits, [], kept)
   }
 })

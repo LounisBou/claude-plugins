@@ -59,10 +59,14 @@ export function isHighEntropy(run: string): boolean {
   return (letter && digit && bits >= 3.5) || (both && bits >= 4.1)
 }
 
-const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|passw(?:or)?d|passwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*`
+/** A key that names a secret; `pass` and `pwd` anywhere in it (`DB_PASS`, `MYSQL_PWD`, `PASSWORD`). */
+const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*`
 
 /** A command-line option that takes a secret: `--password`, `--db-password`, `--token`, `--api-key`... */
 const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)`
+
+/** The short password options of the common clients: `mysql -pX` (attached), `sshpass -p X`, `docker login -p X`. */
+const PASSWORD_FLAG = String.raw`(\b(?:mysql\w*|mariadb[\w-]*)\b[^\n;&|]*?\s-p|\bsshpass\b[^\n;&|]*?\s-p\s*|\b(?:docker|podman)\s+login\b[^\n;&|]*?\s-p\s*)`
 
 /** A mark this redaction left, alone in its quotes: a quoted value already redacted. */
 const MARK_ONLY = /^\[REDACTED:[a-z-]+\]$/
@@ -89,9 +93,11 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('telegram-token', /\b\d{8,10}:[A-Za-z0-9_-]{30,}/g),
   byRegex('npm-token', /\bnpm_[A-Za-z0-9]{30,}/g),
   byRegex('jwt', /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g),
-  byRegex('authorization', /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)[^\s"',}]+(?:\s+[^\s"',}]+)?/gi, (_m, key, sep) => `${key}${sep}`),
+  // The header's whole value, to its closing quote or the end of the line, unless it is already one mark.
+  byRegex('authorization', /\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)(?!\[REDACTED:[a-z-]+\]\s*(?:["'\r\n]|$))[^\s"'][^"'\r\n]*/gi, (_m, key, sep) => `${key}${sep}`),
   byRegex('bearer', /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, (_m, scheme) => `${scheme} `),
   byRegex('user-password', /(^|[\s;&|(])(-u\s*|--user(?:\s+|=))(?!\[REDACTED)("[^"]*:[^"]*"|'[^']*:[^']*'|[^\s"'-][^\s"']*:[^\s"']*)/g, (_m, before, flag) => `${before}${flag}`),
+  byRegex('password-flag', new RegExp(String.raw`${PASSWORD_FLAG}(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"';&|]+)`, 'g'), (_m, before) => before),
   byRegex('url-credentials', /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, (_m, scheme) => scheme),
   byRegex('url-secret', /([?&](?:access_token|token|key|api_key|apikey|secret|password|sig|signature|auth)=)[^&#\s"']+/gi, (_m, key) => key),
   byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),
@@ -139,7 +145,8 @@ export function redactValue(value: unknown, secrets: EnvSecrets): { value: unkno
 function walk(value: unknown, secrets: EnvSecrets, key: string | undefined, depth: number): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
     const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
-    if (shape !== undefined && !shape.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }
+    // A mark a former pass left in an identifier is accepted as it stands.
+    if (shape !== undefined && !shape.test(value) && !MARK_ONLY.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }
     const { text, hits } = redactText(value, secrets, { entropy: shape === undefined })
     return { value: text, hits }
   }
@@ -174,10 +181,10 @@ export function parseEnvFile(text: string): Map<string, string> {
     const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/.exec(line)
     if (match === null) continue
     const key = match[1] ?? ''
-    let value = (match[2] ?? '').trim()
-    if ((value.startsWith('"') && value.endsWith('"') && value.length >= 2) || (value.startsWith("'") && value.endsWith("'") && value.length >= 2)) value = value.slice(1, -1)
-    else value = value.replace(/\s+#.*$/, '')
-    secrets.set(key, value)
+    const value = (match[2] ?? '').trim()
+    // A quoted value is what its quotes hold, a comment after them dropped: `KEY="v" # note` is `v`.
+    const quoted = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/.exec(value) ?? /^'([^']*)'\s*(?:#.*)?$/.exec(value)
+    secrets.set(key, quoted === null ? value.replace(/\s+#.*$/, '') : quoted[1] ?? '')
   }
   return secrets
 }
