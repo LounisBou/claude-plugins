@@ -1,8 +1,9 @@
 // The host caches an installed plugin by its version: a change shipped under an unchanged
-// version never reaches a running machine. So a pull request that changes what a plugin ships
-// raises that plugin's version.
+// version never reaches a running machine. So the release pull request raises the version of
+// every plugin that changed since the last release (not a feature pull request, and not run by
+// CI on one), then runs `npm run marketplace`. This checks it:
 //
-//   npm run version-bump -- <base-ref>
+//   npm run version-bump -- <last-release-ref>
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { processIo, type Io } from './lib/io.ts'
