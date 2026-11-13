@@ -81,8 +81,6 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 **A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title read from `list` seconds before (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
 
-Prompt and launch files accumulate under the state directory's `prompts/`; they are small and they are the record of what each session was launched with. Delete a wave's when its review is closed, like any other artifact you produced.
-
 ## Safety order for a live rotation
 
 1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
@@ -94,10 +92,4 @@ Prompt and launch files accumulate under the state directory's `prompts/`; they 
 
 ## Common mistakes
 
-- Handing the user a brief path and an invocation to paste: the orchestrator spawns (Overview).
-- Trusting the printed tty: launch steps 3 and 5.
-- Closing by title alone or by position: « Window and tab hygiene ».
 - Spawning without an anchor where you know a better place than the default: « Layout convention ».
-- Reading a process that runs in a directory the host never opened as a launched agent: it is stopped on a question — launch steps 4 and 5.
-- Rotating before the old agent acknowledged stand-down, or passing `--expect-title` to a rotation: rotation steps 1 and 3.
-- Storing a tty and using it after any close happened in between: « Reading the tabs ».

@@ -102,7 +102,4 @@ context, appended to the round. Never re-argue a ruled question inside another o
 4. When no question is left: in one short list, where each ruling was written (file, entry),
    which agent was told, what was launched — and the round ends.
 
-Rules that hold throughout: each ruling relayed at once; explanation before options;
-nothing decided on their behalf.
-
 $ARGUMENTS
