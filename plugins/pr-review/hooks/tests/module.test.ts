@@ -180,7 +180,7 @@ test('open_comments with a PR number reads that PR', async ($, on) => {
   github(on, calls)
   on('process.run', () => ({ value: { ...ok, stdout: '{}' } }))
   await $.tool.call({ tool: 'mcp__pr-review__open_comments', pr: 9 } as any)
-  expect(calls[0]).toEqual({ command: 'pr-status', args: { pr: 9 } })
+  expect(calls[0]).toEqual({ command: 'pr-status', args: { pr: 9, json: true } })
 })
 
 test('open_comments without the github tool points to the Bash route', async ($, on) => {

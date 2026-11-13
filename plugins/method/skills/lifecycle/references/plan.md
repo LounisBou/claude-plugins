@@ -11,8 +11,6 @@ Free prose, plus one section the plan and the review read:
 2. ...
 ```
 
-A goal is met when a reading of the code, a command or a commit shows it, never on a claim.
-
 ## The plan
 
 One file per phase, each naming:
