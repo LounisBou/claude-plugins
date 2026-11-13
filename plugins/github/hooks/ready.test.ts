@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciUndraft, createdPr, missingItems, parseGate, pushOf, toolAct, touchesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, missingItems, parseGate, pushOf, toolAct, toolLabelling, touchesRecords,
   recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -322,4 +322,23 @@ test('the gate moves the label: Ready when the four hold, Not Ready back when Re
   // A closed or merged pull request keeps its labels.
   expect(labelMove(gate({ state: 'merged' }), [])).toBeUndefined()
   expect(labelMove(gate({ state: 'closed', labels: ['Ready'] }), ['the pull request is closed'])).toBeUndefined()
+})
+
+test('the labels a command puts on, takes off, renames or deletes are read with their repository', () => {
+  expect(bashLabellings('gh pr edit 12 -R o/r --add-label a,b --remove-label c')).toEqual([{ name: 'gh pr edit', repo: 'o/r', labels: ['a', 'b', 'c'] }])
+  expect(bashLabellings('gh issue create -l a')).toEqual([{ name: 'gh issue create', labels: ['a'] }])
+  expect(bashLabellings('gh label edit old -R o/r --name new')).toEqual([{ name: 'gh label edit', repo: 'o/r', labels: ['old', 'new'] }])
+  expect(bashLabellings('gh label clone src/x -R o/r')).toEqual([{ name: 'gh label clone', repo: 'o/r', labels: [], opaque: true }])
+  expect(bashLabellings('python3 engine/gh.py --repo o/r label-remove 12 a')).toEqual([{ name: 'gh.py label-remove', repo: 'o/r', labels: ['a'] }])
+  expect(bashLabellings("gh api repos/o/r/issues/12/labels -f 'labels[]=a'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['a'] }])
+  expect(bashLabellings('gh api -X DELETE repos/o/r/issues/12/labels/no%2De2e')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['no-e2e'] }])
+  expect(bashLabellings('gh api -X DELETE repos/o/r/issues/12/labels')).toEqual([{ name: 'gh api', repo: 'o/r', labels: [], opaque: true }])
+  expect(bashLabellings("gh api -X PATCH repos/o/r/labels/old -f new_name=a")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['old', 'a'] }])
+  expect(bashLabellings('gh api graphql -F query=@q.graphql')).toEqual([{ name: 'gh api graphql', labels: [], opaque: true }])
+  for (const line of ['gh pr edit 12 --title t', 'gh api repos/o/r/issues/12/labels', 'gh pr view 12', "git commit -m 'gh pr edit 1 --add-label a'"]) {
+    expect(bashLabellings(line), line).toEqual([])
+  }
+  expect(toolLabelling('label-add', { pr: 3, label: ['a', 'b'] })).toEqual({ name: 'label-add', labels: ['a', 'b'] })
+  expect(toolLabelling('label-remove', { pr: 3, name: 'a' })).toEqual({ name: 'label-remove', labels: ['a'] })
+  expect(toolLabelling('pr-comment', { pr: 3, body: 'a' })).toBeUndefined()
 })

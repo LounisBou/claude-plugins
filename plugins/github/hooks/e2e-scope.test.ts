@@ -1,6 +1,8 @@
 // When a pull request needs no E2E record: files that hold no runtime, and a repository's standing exemption.
 import { expect, test } from 'claude-code/testing'
-import { covers, exemptionLine, exemptionPath, globMatches, parseExemption, parsePrFiles, runtimeFiles, type Exemption } from './e2e-scope.ts'
+import {
+  covers, exemptingLabels, exemptionLine, exemptionPath, globMatches, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
+} from './e2e-scope.ts'
 
 const VERSION_ONLY = '@@ -2,3 +2,3 @@\n   "name": "github",\n-  "version": "0.19.4",\n+  "version": "0.19.5",\n   "author": {'
 
@@ -38,6 +40,10 @@ test('the files of a pull request are read from pr-files, and anything else is r
   expect(parsePrFiles(JSON.stringify([{ filename: 'a.md', status: 'modified', patch: '+x' }, { filename: 'b.ts', previous_filename: 'c.ts' }])))
     .toEqual([{ filename: 'a.md', patch: '+x' }, { filename: 'b.ts', previous_filename: 'c.ts' }])
   for (const text of ['ok', '{}', '[{"name": "a.md"}]']) expect(() => parsePrFiles(text)).toThrow()
+})
+
+test('an empty list of files vouches for nothing: it is refused as an unreadable one', () => {
+  expect(() => parsePrFiles('[]')).toThrow('pr-files answered no files')
 })
 
 test('a glob takes * within a directory, ** across them and a trailing / for a whole directory', () => {
@@ -83,4 +89,21 @@ test('the line of an exemption names its repository, its day and the operator\'s
   expect(exemptionLine(EXEMPTION)).toBe('E2E exemption of acme/thing, 2026-11-13: no E2E on thing, 2026-11-13')
   expect(exemptionLine({ ...EXEMPTION, paths: ['docs/'], labels: ['no-e2e'] }))
     .toBe('E2E exemption of acme/thing (labels no-e2e, paths docs/), 2026-11-13: no E2E on thing, 2026-11-13')
+})
+
+test('a repository named with a part made of dots only is no repository, and has no exemption file', () => {
+  for (const repo of ['../auto-merge', 'o/..', './thing', 'o/.', '.../x']) {
+    expect(isRepoName(repo)).toBe(false)
+    expect(() => exemptionPath('/data', repo)).toThrow()
+    expect(parseExemption({ ...EXEMPTION, repo })).toBeUndefined()
+  }
+  for (const repo of ['acme/thing', 'o/.github', 'o/a..b', '.o/x']) expect(isRepoName(repo)).toBe(true)
+})
+
+test('the labels of a list an exemption in force names, without regard to case', () => {
+  const labelled = { ...EXEMPTION, labels: ['no-e2e'] }
+  expect(exemptingLabels(labelled, ['bug', 'No-E2E'])).toEqual(['No-E2E'])
+  expect(exemptingLabels(labelled, ['bug'])).toEqual([])
+  expect(exemptingLabels({ ...labelled, exempt: false }, ['no-e2e'])).toEqual([])
+  expect(exemptingLabels(undefined, ['no-e2e'])).toEqual([])
 })

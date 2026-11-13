@@ -11,10 +11,12 @@ import { RECORD_VERSION } from '../core/pr-record.ts'
 // One file of pr-files, as far as the rule reads it.
 export type PrFile = { filename: string; previous_filename?: string; patch?: string }
 
-// pr-files' answer, or a throw: an answer that lists no files is never read as none.
+// pr-files' answer, or a throw: an answer that lists no files (none, or none yet after a push) is
+// never read as none.
 export function parsePrFiles(text: string): PrFile[] {
   const raw: unknown = JSON.parse(text)
   if (!Array.isArray(raw)) throw new Error('pr-files answered no list of files')
+  if (raw.length === 0) throw new Error('pr-files answered no files')
   return raw.map((entry: unknown) => {
     const { filename, previous_filename: previous, patch } = (entry ?? {}) as Record<string, unknown>
     if (typeof filename !== 'string' || filename === '') throw new Error('pr-files answered a file with no name')
@@ -86,19 +88,25 @@ export type Exemption = {
 }
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+
+/** Whether a repository is named owner/name, neither part made of dots only (`.`, `..`): a name that never leaves its directory. */
+export function isRepoName(repo: string): boolean {
+  return REPO.test(repo) && repo.split('/').every((part) => !/^\.+$/.test(part))
+}
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string' && v !== '')
 
 /** The exemption a file holds, or undefined when it breaks its shape: then no pull request is exempt. */
 export function parseExemption(raw: unknown): Exemption | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
   const { v, repo, exempt, paths, labels, detail, session, at } = raw as Record<string, unknown>
-  if (v !== RECORD_VERSION || typeof repo !== 'string' || !REPO.test(repo) || typeof exempt !== 'boolean') return undefined
+  if (v !== RECORD_VERSION || typeof repo !== 'string' || !isRepoName(repo) || typeof exempt !== 'boolean') return undefined
   if (!strings(paths) || !strings(labels) || typeof detail !== 'string' || typeof session !== 'string' || typeof at !== 'string') return undefined
   return { v, repo, exempt, paths, labels, detail, session, at }
 }
 
-/** The file of a repository's exemption under the plugin's data directory. */
+/** The file of a repository's exemption under the plugin's data directory, or a throw for a name that is no repository. */
 export function exemptionPath(dataDir: string, repo: string): string {
+  if (!isRepoName(repo)) throw new Error('github: no repository named ' + JSON.stringify(repo))
   return dataDir + '/' + EXEMPT_DIR + '/' + repo.toLowerCase() + '.json'
 }
 
@@ -131,6 +139,13 @@ export function covers(exemption: Exemption, labels: readonly string[], files: r
   if (exemption.paths.length === 0 || !files || files.length === 0) return false
   const matched = (path: string) => exemption.paths.some((glob) => globMatches(glob, path))
   return files.every((file) => matched(file.filename) && (!file.previous_filename || matched(file.previous_filename)))
+}
+
+/** The labels of a list an exemption in force names: a session neither puts nor takes them off. */
+export function exemptingLabels(exemption: Exemption | undefined, labels: readonly string[]): string[] {
+  if (!exemption?.exempt) return []
+  const named = new Set(exemption.labels.map((label) => label.trim().toLowerCase()))
+  return labels.filter((label) => named.has(label.trim().toLowerCase()))
 }
 
 /** How the gate names the exemption that stands for a pull request's E2E. */

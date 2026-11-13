@@ -8,18 +8,20 @@ import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
 import { DETAIL_MAX, KINDS } from '../core/pr-record.ts'
-import { covers, EXEMPT_DIR, exemptionLine, exemptionPath, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile } from './e2e-scope.ts'
+import {
+  covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+} from './e2e-scope.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
 } from './guards.ts'
 import {
-  NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
+  NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
-  kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
-  type Act, type Gate, type Phase, type RecordFile,
+  kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
+  type Act, type Gate, type Labelling, type Phase, type RecordFile,
 } from './ready.ts'
 
 export const PANE_ID = 'github-prs'
@@ -876,6 +878,19 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
   }
 }
 
+// Why a labelling is refused: it puts or takes off a label the repository's exemption names, which
+// would cover or uncover pull requests without the operator. A labelling that may move any label
+// (opaque) is refused when the exemption names one. A repository that cannot be named has no
+// exemption file to read, as an exemption that cannot be read covers nothing.
+async function exemptLabelRefusal($: any, labelling: Labelling, repo: string | undefined): Promise<string | undefined> {
+  if (!repo) return undefined
+  const exemption = await readExemption($, repo)
+  const named = labelling.opaque && exemption?.exempt ? [...exemption.labels] : exemptingLabels(exemption, labelling.labels)
+  if (named.length === 0) return undefined
+  return 'github: ' + labelling.name + ' refused: ' + named.join(', ') + ' exempts pull requests of ' + repo
+    + ' from E2E; only the operator puts it on or takes it off.'
+}
+
 // The line of the operator's exemption that covers this pull request, or undefined. Any doubt (a
 // file or a list of files that cannot be read) covers nothing: the E2E record is asked as before.
 async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
@@ -1349,6 +1364,8 @@ type Quoting = {
   names: (span: string) => boolean
   // A span that is the whole message needs not name it.
   wholeBare: boolean
+  // What the person's words, all together, must say: the text whole, or its quoted spans.
+  carries?: (words: string) => boolean
 }
 
 // True when a text is the person's words: the text whole found in a prompt they typed; else, when
@@ -1358,9 +1375,9 @@ type Quoting = {
 function typedWords(text: string, quoting: Quoting): boolean {
   const whole = spaced(text)
   if (whole === '') return false
-  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return true
+  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return !quoting.carries || quoting.carries(whole)
   const spans = [...text.matchAll(QUOTED_SPAN)].map((m) => spaced(m[1] ?? m[2] ?? m[3] ?? '')).filter((s) => s !== '')
-  if (spans.length === 0) return false
+  if (spans.length === 0 || (quoting.carries && !quoting.carries(spans.join(' ')))) return false
   const days = text.match(ISO_DAY) ?? []
   return typedPrompts.some((p) => {
     const sent = spaced(p.text)
@@ -1424,8 +1441,6 @@ async function touchesAutoMerge($: any, line: string): Promise<boolean> {
   const dir = await dataDir($)
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
-
-const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 // Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
 async function touchesExemptions($: any, line: string): Promise<boolean> {
@@ -1526,7 +1541,7 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   const args = e.args ?? {}
   const repo = String(args.repo ?? '').trim()
-  if (!REPO_NAME.test(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
+  if (!isRepoName(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
   if (typeof args.on !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
   const words = typeof args.words === 'string' ? args.words : ''
   const unproven = await unprovenWord($, words, repo)
@@ -1576,11 +1591,21 @@ async function runtimeRefusal($: any, repo: string, pr: number, head: string): P
     + held.slice(0, 5).join(', ') + (held.length > 5 ? ' and ' + (held.length - 5) + ' more' : '') + '.'
 }
 
-// An exemption of a repository: each quoted span names E2E, the exemption or the repository.
-function exemptionQuoting(repo: string): Quoting {
-  const name = repo.split('/')[1].replace(/[.+^${}()|[\]\\-]/g, '\\$&')
+// The words that grant an exemption, French or English: « test » alone grants none.
+const EXEMPTING = /exempt|exon[èée]r|dispens|d[ée]rogation|waiv/i
+
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
+
+// An exemption of a repository: each quoted span names E2E, the exemption or the repository, and
+// the words together name the repository (owner/name or its name), grant the exemption (not to
+// revoke it) and give each rule as it is written.
+function exemptionQuoting(repo: string, exempt: boolean, rules: readonly string[]): Quoting {
+  const name = escaped(repo.split('/')[1])
   const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|d[ée]rogation|waiv|exempt|exon[ée]r|' + name, 'i')
-  return { dated: true, names: (span) => names.test(span), wholeBare: true }
+  const repository = new RegExp('(?<![A-Za-z0-9_.-])(' + escaped(repo) + '|' + name + ')(?![A-Za-z0-9_-])', 'i')
+  const carries = (words: string) =>
+    repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => words.includes(rule))
+  return { dated: true, names: (span) => names.test(span), wholeBare: true, carries }
 }
 
 const RULES_MAX = 50
@@ -1592,7 +1617,7 @@ const isRule = (value: unknown): value is string[] =>
 async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   if (typeof e.exempt !== 'boolean') return { deny: 'github: an E2E exemption says in or out: {"exempt": true} or {"exempt": false}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} })
-  if (!repo || !REPO_NAME.test(repo)) return { deny: 'github: an E2E exemption names its repository: {"repo": "owner/name"}' }
+  if (!repo || !isRepoName(repo)) return { deny: 'github: an E2E exemption names its repository: {"repo": "owner/name"}' }
   const paths = e.paths ?? []
   const labels = e.labels ?? []
   if (!isRule(paths) || !isRule(labels)) {
@@ -1601,10 +1626,12 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   if (detail.length > DETAIL_MAX || !/\b\d{4}-\d{2}-\d{2}\b/.test(detail)) {
     return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters, with their date (YYYY-MM-DD).' }
   }
-  if (!typedWords(detail, exemptionQuoting(repo)) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }))) {
+  const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
+  if (!typedWords(detail, exemptionQuoting(repo, e.exempt, given)) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }))) {
     return {
-      deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session,'
-        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', with their date.',
+      deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session, naming '
+        + repo + (e.exempt ? ', the exemption and each rule as given' : '') + ', or their answer in a consent record ('
+        + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', with their date.',
     }
   }
   const dir = await dataDir($)
@@ -1836,6 +1863,16 @@ export function register(on: any): void {
     }
     const unread = await writingUnread($, command, e.agentId)
     if (unread) return { deny: unread }
+    let labellings: Labelling[] = []
+    try {
+      labellings = bashLabellings(String(e.command))
+    } catch {
+      // A line that cannot be read moves no label it shows.
+    }
+    for (const labelling of labellings) {
+      const refused = await exemptLabelRefusal($, labelling, labelling.repo ?? await targetRepo($, {}).catch(() => undefined))
+      if (refused) return { deny: refused }
+    }
     const after: Array<(result: any) => Promise<void>> = []
     let current: Act | undefined
     try {
@@ -1950,6 +1987,9 @@ export function register(on: any): void {
       }
     }
     const e = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
+    const labelling = toolLabelling(e.command, e.args)
+    const unlabelled = labelling ? await exemptLabelRefusal($, labelling, await targetRepo($, e).catch(() => undefined)) : undefined
+    if (unlabelled) return { deny: unlabelled }
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
     const refused = await permit($, e, ready?.beforeAsk, ready?.ciUndraft)
