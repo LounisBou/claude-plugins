@@ -182,14 +182,28 @@ test('a target that names the repository is watched on it, whatever the director
 })
 
 test('no repository named, outside a clone: refused in one line, nothing read', async () => {
-  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], repoViewFails: 'fatal: not a git repository\n' })
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], repoViewFails: '' })
   const result = await watch(options(), deps).catch((error: unknown) => error)
   assert.ok(result instanceof Said)
   assert.equal(`${result.line}|${result.code}`, 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
   assert.deepEqual(deps.calls, ['gh repo view --json nameWithOwner --jq .nameWithOwner'])
-  const out = fake({ repoViewFails: 'x' })
+  const out = fake({ repoViewFails: '' })
   assert.equal(await main(['7'], { ORCHESTRATOR_STATE_DIR: state }, out), 5)
   assert.deepEqual(out.out, ['ci-watch: unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>\n'])
+})
+
+test('a failed repo view says why, and an empty answer is refused at once', async () => {
+  const refused = async (script: Script): Promise<string> => {
+    const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], ...script })
+    const result = await watch(options(), deps).catch((error: unknown) => error)
+    assert.ok(result instanceof Said)
+    assert.deepEqual(deps.calls, ['gh repo view --json nameWithOwner --jq .nameWithOwner'])
+    return `${result.line}|${result.code}`
+  }
+  assert.equal(await refused({ repoViewFails: 'To get started with GitHub CLI, please run:  gh auth login\r\nmore\n' }),
+    'unread 7 gh repo view failed: To get started with GitHub CLI, please run:  gh auth login: pass --repo <owner/repo>|5')
+  assert.equal(await refused({ repoView: '' }), 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
+  assert.equal(await refused({ repoView: '\n' }), 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
 })
 
 test('the small readings', () => {
@@ -271,7 +285,6 @@ test('a draft: a red of guards alone settles, and its green needs a check behind
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `unread 7 gh pr checks --watch exited 1 with no failing check named (log: ${join(state, 'ci-watch', 'here-pr7.log')})|5`)
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: '' }), 'unread 7 draft_guard.py failed|5')
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], repoView: '' }), 'unread 7 gh repo view failed: no repository read|5')
   const named = fake({ view: [draft], reg: ['2'], watchCodes: [1], guard: 'tests\n' })
   await watch(options(['7', '--repo', 'acme/x']), named).catch(() => undefined)
   assert.ok(named.calls.includes('python3 /plugin/draft_guard.py acme/x 7'))

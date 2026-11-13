@@ -5345,7 +5345,7 @@ check "a target naming the repository is watched there, whatever the directory: 
   "$(cd "$WORK" && cw "OPEN $HA" "2" 0 "" acme/thing#7 --interval 1)"
 CWOUT="$WORK/ci-watch-outside"
 mkdir -p "$CWOUT/bin" "$CWOUT/dir"
-printf '#!/bin/bash\necho "$*" >> "%s/calls"\necho "fatal: not a git repository" >&2\nexit 1\n' "$CWOUT" > "$CWOUT/bin/gh"
+printf '#!/bin/bash\necho "$*" >> "%s/calls"\nexit 1\n' "$CWOUT" > "$CWOUT/bin/gh"
 chmod +x "$CWOUT/bin/gh"
 check "a bare number outside a clone is refused in one line, asking for --repo, and nothing is read" "ci-watch: unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5|repo view" \
   "$(cd "$CWOUT/dir" && out=$(PATH="$CWOUT/bin:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" bash "$CWSCRIPT" 7 2>/dev/null); echo "$out|$?|$(cut -d' ' -f1,2 "$CWOUT/calls" | sort -u | tr '\n' ' ' | sed 's/ $//')")"

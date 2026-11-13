@@ -296,8 +296,11 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   let resolved = options.repo
   if (resolved === undefined) {
     const here = await deps.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { stderr: 'pipe' })
-    if (here.status !== 0) throw unread(pr, 'this directory is not a clone of the repository: pass --repo <owner/repo>')
-    resolved = chomp(here.stdout)
+    const advice = 'pass --repo <owner/repo>'
+    const why = firstLine(here.stderr)
+    if (here.status !== 0 && why !== '') throw unread(pr, `gh repo view failed: ${why}: ${advice}`)
+    resolved = here.status === 0 ? chomp(here.stdout) : ''
+    if (resolved === '') throw unread(pr, `this directory is not a clone of the repository: ${advice}`)
   }
 
   let current = await readPr()
