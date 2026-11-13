@@ -316,7 +316,7 @@ test('an interrupted turn releases the loop', async ($, on) => {
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { top?: string; cwds?: unknown[]; records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -332,6 +332,8 @@ function wireRecord(on: any, stubs: Stubs) {
   })
   on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
   on('process.run', (_$: any, e: any) => {
+    stubs.cwds?.push(e.init?.cwd)
+    if (e.argv.join(' ') === 'git rev-parse --show-toplevel') return { value: { ...ok, stdout: stubs.top ? stubs.top + '\n' : '' } }
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
     if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
     if (e.argv.join(' ') === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: (stubs.branch ?? 'feature') + '\n' } }
@@ -347,7 +349,7 @@ function wireRecord(on: any, stubs: Stubs) {
   })
   on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
     if (stubs.recordThrows) throw new Error('boom')
-    stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail })
+    stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, ...(e.dir ? { dir: e.dir } : {}) })
     return stubs.recordAnswer ?? { result: WRITTEN }
   })
 }
@@ -382,6 +384,16 @@ test('a clean exit writes a passing review record and says where', async ($, on)
   ])
   expect(String(out.result)).toContain('record: ' + WRITTEN)
   expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('the record names the checkout the loop started in, and git reads that one', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, top: '/clone/repo', cwds: [] }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  expect(stubs.records.map((r) => r.dir)).toEqual(['/clone/repo'])
+  // Everything after the start (status, remote, branch) ran in it.
+  expect(stubs.cwds!.slice(1).filter((c) => c !== undefined).length).toBeGreaterThan(0)
+  expect(stubs.cwds!.slice(1).filter((c) => c !== undefined && c !== '/clone/repo')).toEqual([])
 })
 
 test('max_passes with no blocking finding left writes pass, with the leftover count', async ($, on) => {

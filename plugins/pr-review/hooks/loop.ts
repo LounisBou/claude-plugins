@@ -40,10 +40,10 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: any): Record<string, unknown> {
+export function act(e: any, dir?: string): Record<string, unknown> {
   const action = String(e?.action ?? '')
   if (action === 'start') {
-    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true)
+    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir)
     if (loop.isReviewOnly) return { pass: 0, max_passes: 1, next: 'call begin_pass, run the review, report its findings: no fix is made, the loop ends there' }
     return { pass: 0, max_passes: MAX_PASSES, next: 'call begin_pass, then run the review' }
   }
@@ -279,13 +279,24 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
 
 const textOf = (answer: any): string => String(answer?.result ?? answer?.text ?? answer?.deny ?? '').trim()
 
-const git = ($: any, argv: string[]) => $.process.run(['git', ...argv], { timeoutMs: 10_000 })
+const git = ($: any, argv: string[], dir?: string) => $.process.run(['git', ...argv], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
+
+// The top directory of the checkout the session is in, or undefined when it is in none.
+async function checkoutDir($: any): Promise<string | undefined> {
+  try {
+    const run = await git($, ['rev-parse', '--show-toplevel'])
+    const top = String(run.stdout ?? '').trim()
+    return run.exitCode === 0 && top.startsWith('/') ? top : undefined
+  } catch {
+    return undefined
+  }
+}
 
 // The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
 // head (a review checkout) names no branch, and the open pull request whose head is its commit is
 // the one, never one of several. The number, or the line that says why there is none.
-async function pullOf($: any, repo: string): Promise<number | string> {
-  const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'])
+async function pullOf($: any, repo: string, dir?: string): Promise<number | string> {
+  const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'], dir)
   const branch = String(branchRun.stdout ?? '').trim()
   if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
   if (branch !== 'HEAD') {
@@ -294,7 +305,7 @@ async function pullOf($: any, repo: string): Promise<number | string> {
     const pr = Number(textOf(found))
     return Number.isInteger(pr) && pr >= 1 ? pr : 'record: none — the branch has no pull request'
   }
-  const headRun = await git($, ['rev-parse', 'HEAD'])
+  const headRun = await git($, ['rev-parse', 'HEAD'], dir)
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
   const listed = await $.tool.call({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
@@ -321,15 +332,17 @@ async function recordReview($: any, exit: string): Promise<string | null> {
   if (loop.isReviewing) return 'record: none — the last pass has no findings its review agents reported'
   try {
     if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return `record: none — ${NO_GITHUB}`
-    const status = await git($, ['status', '--porcelain', '-uno'])
+    // The checkout the loop started in: a later shell `cd` does not move the record to another one.
+    const dir = loop.dir
+    const status = await git($, ['status', '--porcelain', '-uno'], dir)
     if (status.exitCode !== 0) return 'record: none — git status failed: ' + String(status.stderr ?? '').trim()
     if (String(status.stdout).trim() !== '') return 'record: none — the tracked files have changes: a record is written on a clean checkout of the head'
-    const remote = await git($, ['remote', 'get-url', 'origin'])
+    const remote = await git($, ['remote', 'get-url', 'origin'], dir)
     const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
     if (!repo) return 'record: none — the origin remote is not a GitHub repository'
-    const pr = await pullOf($, repo)
+    const pr = await pullOf($, repo, dir)
     if (typeof pr === 'string') return pr
-    const written = await $.tool.call({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
+    const written = await $.tool.call({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail, ...(dir ? { dir } : {}) })
     if (written?.deny || written?.isError) return 'record: none — ' + (textOf(written) || 'refused')
     return 'record: ' + textOf(written)
   } catch (err: any) {
@@ -422,7 +435,7 @@ export function register(on: any): void {
 
   on('tool.call', { tool: 'mcp__pr-review__loop' }, async ($: any, e: any) => {
     const before = loop.exit
-    const answer = act(e)
+    const answer = act(e, e?.action === 'start' ? await checkoutDir($) : undefined)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
     // The record is written once, at the call that ends the loop.
