@@ -14,7 +14,23 @@ import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { SHAPED } from './fixtures.ts'
 import { ROW_MARKER } from '../remote-row.ts'
-import { ASK_MARKER, ACK_MARKER, ANSWER_MARKER, ANSWER_ACK_MARKER, askLine, ackLine, parseAsk, parseAnswer, answerAckLine } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer } from '../remote-round.ts'
+
+// The lines this release writes between machines: the event line (remote-round.ts), read back here
+// as the four lines it replaced, so each case below says what it said of them.
+const askLine = qAskLine
+const ackLine = (id: string, since: string) => qAckLine({ id, seq: seqOf(since), of: 'ask' })
+const answerAckLine = (id: string, since: string) => qAckLine({ id, seq: seqOf(since), of: 'answer' })
+const isAskLine = (text: string) => parseQ(text)?.event.kind === 'ask'
+const askObject = (text: string) => JSON.parse(text.slice(Q_MARKER.length)).event.entry
+function parseAsk(text: string) {
+  const q = parseQ(text)
+  return q?.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null
+}
+function parseAnswer(text: string) {
+  const q = parseQ(text)
+  return q?.event.kind === 'answer' ? { id: q.id, since: q.event.since, text: q.event.text, at: q.event.at, readable: q.event.readable } : null
+}
 
 const HOME = '/tmp/h'
 const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
@@ -767,10 +783,10 @@ test('a coordinator on another machine is sent the wait as an entry of its round
   const fx = fake({ remote: true })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   const row = fx.row()
-  const report = fx.sent.filter(s => s.text.startsWith('[module]') || s.text.startsWith(ASK_MARKER))
+  const report = fx.sent.filter(s => s.text.startsWith('[module]') || isAskLine(s.text))
   expect(report.length).toBe(1)
   expect(report[0].to).toBe('Coord: ops [abc]')
-  const sent = JSON.parse(report[0].text.slice(ASK_MARKER.length))
+  const sent = askObject(report[0].text)
   const entry = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, row.waiting_since!, sent.at)
   expect(report[0].text).toBe(askLine(entry, 'unknown'))
   expect(entries(fx)).toEqual([])
@@ -1207,7 +1223,7 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
   // The withdrawal first, then the same wait asked again (nothing is held yet: its ack is not
   // back) and the new question: the report is the last ask.
-  const shown = (m: { text: string }) => m.text.startsWith(ASK_MARKER) ? `ask: ${parseAsk(m.text)!.entry.blocks}`
+  const shown = (m: { text: string }) => isAskLine(m.text) ? `ask: ${parseAsk(m.text)!.entry.blocks}`
     : m.text.startsWith(ROW_MARKER) ? `row: ${JSON.parse(m.text.slice(ROW_MARKER.length)).blocks}` : m.text
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
     ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')],
@@ -1889,8 +1905,8 @@ function delivered(from: string, fromName: string, body: string) {
   return { text: `<cross-session-message from="${from}" from-name="${fromName}">\n${body}\n</cross-session-message>`, origin: { kind: 'peer' } }
 }
 
-const asks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ASK_MARKER))
-const acks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ACK_MARKER))
+const asks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => isAskLine(s.text))
+const acks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQAck(s.text)?.of === 'ask')
 const waitOf = (fx: ReturnType<typeof fake>) => JSON.parse(fx.files.get(WAIT)!)
 
 test('a remote wait becomes an entry on the coordinator\'s machine, and is acked', async () => {
@@ -1911,7 +1927,7 @@ test('a remote wait becomes an entry on the coordinator\'s machine, and is acked
   expect(typeof consumed.consumed).toBe('string')
   const [entry] = entries(coordinator)
   expect(entries(coordinator).length).toBe(1)
-  expect(entry).toEqual({ ...asked, at: entry.at, origin: { machine: 'unknown', address: SENDER_AT } })
+  expect(entry).toEqual({ ...asked, at: entry.at, origin: { machine: 'unknown', address: SENDER_AT, line: 'q' } })
   expect(coordinator.files.has(`${ROUND}/${asked.id}.json`)).toBe(true)
   expect(acks(coordinator)).toEqual([{ to: SENDER_AT, text: ackLine(asked.id, since) }])
 })
@@ -1952,7 +1968,7 @@ test('no ack → resent at the next turn end, never twice entered', async () => 
   await drive(chains, 'turn.complete', sender.dollar, ask)
   const [once, again] = asks(sender)
   expect(asks(sender).length).toBe(2)
-  const read = (text: string) => JSON.parse(text.slice(ASK_MARKER.length))
+  const read = askObject
   expect([read(again.text).id, read(again.text).since]).toEqual([read(once.text).id, read(once.text).since])
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', again.text))
   expect(entries(coordinator).length).toBe(1)
@@ -1975,7 +1991,7 @@ test('an ask reaching a session that is not the coordinator is consumed and ente
   expect(elsewhere.logged.filter(l => l.includes('| receive: a remote question reached a session that is no coordinator')).length).toBe(1)
   // A line that fails the check is consumed the same, in the coordinator's own session too.
   const coordinator = coordinatorMachine()
-  const refused = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', `${ASK_MARKER}{"id":1}`))
+  const refused = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', `${OLD_ASK_MARKER}{"id":1}`))
   expect(typeof refused.consumed).toBe('string')
   expect([entries(coordinator), coordinator.sent]).toEqual([[], []])
 })
@@ -2030,7 +2046,7 @@ test('a late ack of an older ask leaves a newer pending wait pending, resent at 
   await drive(chains, 'turn.start', sender.dollar, { text: '' })
   await drive(chains, 'turn.complete', sender.dollar, ask)
   expect(asks(sender).length).toBe(2)
-  expect(JSON.parse(asks(sender)[1].text.slice(ASK_MARKER.length)).since).toBe(newer)
+  expect(askObject(asks(sender)[1].text).since).toBe(newer)
   await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, newer)))
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
 })
@@ -2093,7 +2109,7 @@ test('the same remote wait asked again urgent, or plain again, takes the mark on
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator (urgent) — blocks: phase 3')))
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender).at(-1)!.text))
   expect(entries(coordinator)[0].urgent).toBe(true)
-  expect(entries(coordinator)[0].origin).toEqual({ machine: 'unknown', address: SENDER_AT })
+  expect(entries(coordinator)[0].origin).toEqual({ machine: 'unknown', address: SENDER_AT, line: 'q' })
 })
 
 test('a remote note without choices, under the same wait, keeps the entry\'s question, choices and recommendation', async () => {
@@ -2113,8 +2129,8 @@ test('a remote note without choices, under the same wait, keeps the entry\'s que
 
 // --- the pane's answer to a remote entry, carried back to its sender and acknowledged ----------
 
-const answers = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ANSWER_MARKER))
-const answerAcks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ANSWER_ACK_MARKER))
+const answers = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQ(s.text)?.event.kind === 'answer')
+const answerAcks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQAck(s.text)?.of === 'answer')
 const emptyPane = () => ({ opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() })
 
 // Two turn ends of one test may fall in one millisecond: a new start is told apart from the old
@@ -2177,10 +2193,10 @@ test('an answer whose since is not the acknowledged wait\'s is passed and acked,
   const line = answers(coordinator)[0].text
   const older = line.replace(JSON.stringify(entry.since), JSON.stringify('2026-10-01T00:00:00.000Z'))
   const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', older))
-  expect(passed.text.includes(ANSWER_MARKER)).toBe(false)
+  expect(passed.text.includes(Q_MARKER)).toBe(false)
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
   expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, '2026-10-01T00:00:00.000Z') }])
-  const refused = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', `${ANSWER_MARKER}{"id":1}\nreadable`))
+  const refused = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', `${OLD_ANSWER_MARKER}{"id":1}\nreadable`))
   expect(typeof refused.consumed).toBe('string')
   expect(refused.text).toBeUndefined()
   expect(answerAcks(sender).length).toBe(1)
@@ -2257,7 +2273,7 @@ test('an answered remote entry, the same wait again at the next turn end, is ent
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[1].text))
   const again = stored()
   expect([again.status, again.answer, again.delivery]).toEqual(['open', null, undefined])
-  expect(again.origin).toEqual({ machine: 'unknown', address: SENDER_AT })
+  expect(again.origin).toEqual({ machine: 'unknown', address: SENDER_AT, line: 'q' })
   expect(acks(coordinator).length).toBe(2)
 })
 
@@ -2693,7 +2709,7 @@ test('a question that asks no consent carries none on its ask line', async () =>
   const sender = fake({ remote: true })
   DECLARATIONS.turnStarted()
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
-  expect(asks(sender).map(s => Object.keys(JSON.parse(s.text.slice(ASK_MARKER.length))).includes('consent'))).toEqual([false])
+  expect(asks(sender).map(s => Object.keys(askObject(s.text)).includes('consent'))).toEqual([false])
 })
 
 test('a subject whose repository is longer than the ask line holds goes without it, and one line in the log names it', async () => {
@@ -2921,4 +2937,63 @@ test('an answer to a consent question that names none of its choices records not
   await answerFromPaneText({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, 'C')
   expect(consentFiles(fx)).toEqual([])
   expect(fx.logged.map(l => l.replace(/^.*\| supervision \| /, ''))).toContain(`round: the consent of ${asked.id} (auto-deploy Acme/Thing) was not recorded: « C » names none of its choices`)
+})
+
+// --- an older machine's lines, still read and answered in its own line; crossing answers --------
+
+test('an older machine\'s ask line is entered, acked in its own line, and its pane answer goes back in the old answer line', async () => {
+  DECLARATIONS.turnStarted()
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  const ask = turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE))
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  const asked = parseAsk(asks(sender)[0].text)!.entry
+  // The sender of an older release writes the old line for the same entry.
+  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAskLine(asked, 'far')))
+  expect(typeof consumed.consumed).toBe('string')
+  const [entry] = entries(coordinator)
+  expect(entry.origin).toEqual({ machine: 'far', address: SENDER_AT })
+  expect(coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)).toEqual([oldAckLine(asked.id, asked.since)])
+  // Its old acknowledgment, read by this release's sender, clears the pending ask as the event's does.
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', oldAckLine(asked.id, asked.since)))
+  expect([waitOf(sender).pending, waitOf(sender).relayed_id]).toEqual([null, asked.id])
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const line = coordinator.sent.at(-1)!
+  expect([line.to, parseOldAnswer(line.text)?.text, parseQ(line.text)]).toEqual([SENDER_AT, 'A : merge it', null])
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line.text))
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord: ops [abc]', parseOldAnswer(line.text)!.readable).text)
+  expect(sender.sent.at(-1)).toEqual({ to: COORD_AT, text: oldAnswerAckLine(asked.id, asked.since) })
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAnswerAckLine(asked.id, asked.since)))
+  expect(JSON.parse(coordinator.files.get(`${ROUND}/${asked.id}.json`)!).delivery.state).toBe('acked')
+})
+
+test('answers that cross: the tab\'s, first at the owner, wins; the pane\'s is acked « already », passed to no model, and said on the pane', async () => {
+  DECLARATIONS.turnStarted()
+  const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
+  // He types in the sender's tab: the owner settles the question there first.
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'B, wait'))
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const [line] = answers(coordinator)
+  const received = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line.text))
+  expect(typeof received.consumed).toBe('string')
+  expect(received.text).toBeUndefined()
+  expect(answerAcks(sender).map(a => parseQAck(a.text))).toEqual([{ id: entry.id, seq: seqOf(entry.since), of: 'answer', already: true }])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAcks(sender)[0].text))
+  const settled = stored()
+  expect([settled.status, settled.delivery?.state, settled.delivery?.reason]).toEqual(['closed', 'failed', 'already answered in its own tab'])
+})
+
+test('answers that cross: the pane\'s, first at the owner, is applied; the tab typed after it settles nothing more', async () => {
+  DECLARATIONS.turnStarted()
+  const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', answers(coordinator)[0].text))
+  expect(passed.consumed).toBeUndefined()
+  expect(answerAcks(sender).map(a => parseQAck(a.text)?.already)).toEqual([undefined])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAcks(sender)[0].text))
+  expect([stored().status, stored().delivery?.state]).toEqual(['closed', 'acked'])
+  const before = sender.sent.length
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'thanks'))
+  expect(sender.sent.length).toBe(before)
 })

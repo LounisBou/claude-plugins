@@ -45,8 +45,9 @@ import {
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import {
-  CONSENT_REPO_CAP, askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
+  CONSENT_REPO_CAP, ackLine, parseAsk, parseAck, isAsk, isAck,
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -1710,8 +1711,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side; so are a remote orchestrator's
   // ask, entered in the coordinator's round, its acknowledgment, and the acknowledgment of an
-  // answer sent back (remote-round.ts). That answer reaches the sender's model as its readable
-  // line alone, its marked first line taken out. A coordinator's message
+  // answer sent back (remote-round.ts), by the event line or an older machine's lines. That
+  // answer reaches the sender's model as its readable part alone, its marked line taken out. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
@@ -1720,11 +1721,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
-        if (isAsk(delivery.body)) return await receiveAsk($, delivery)
-        if (isAck(delivery.body)) return await receiveAck($, delivery.body)
-        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, delivery.body)
-        if (isAnswer(delivery.body)) {
-          const received = await receiveAnswer($, delivery)
+        if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body))
+        if (isAck(delivery.body)) return await receiveAck($, oldAck(parseAck(delivery.body), 'ask'))
+        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, oldAck(parseAnswerAck(delivery.body), 'answer'))
+        const q = isQ(delivery.body) ? parseQ(delivery.body) : null
+        if (isQ(delivery.body) && q?.event.kind !== 'answer') {
+          return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null, true)
+        }
+        if (isAsk(delivery.body)) return await receiveAsk($, delivery, parseAsk(delivery.body), false)
+        if (q?.event.kind === 'answer' || isAnswer(delivery.body)) {
+          const answer = q?.event.kind === 'answer' ? { id: q.id, ...q.event } : parseAnswer(delivery.body)
+          const received = await receiveAnswer($, delivery, answer, q !== null)
           if ('consumed' in received) return received
           // The marked first line out, the readable answer in its place, the envelope kept.
           const at = e.text.indexOf(delivery.body)
@@ -2524,7 +2531,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     if (asked && !carried) await logLine($, 'supervision', `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
     const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
+    const sent = await sendToCoordinator($, to, qAskLine(entry, await machineOf($)))
     if (sent?.isDelivered) return
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
@@ -2646,6 +2653,7 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
       await tellSettled($, settled)
       return settled.map(({ entry }) => entry.id)
     }
+    await answeredInTab($, sessionId, held.since)
     const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since, held.said))
     if (sent?.isDelivered) {
       // The round of a coordinator elsewhere is not this machine's: no consent record is written
@@ -2659,6 +2667,16 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
     await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
     return null
   }
+}
+
+// The question a coordinator elsewhere holds for this wait, settled here first by what the operator
+// typed in this tab: kept as the last answer taken (answeredKey), so the pane's answer crossing it
+// is told « already answered » (receiveAnswer), the owner's first settlement winning.
+async function answeredInTab($: any, sessionId: string, since: string | null): Promise<void> {
+  const wait = await readWait($, sessionId)
+  const id = wait?.relayed_id ?? wait?.pending ?? null
+  if (!id || !since) return
+  await writeAtomic($, `${await storeOf($)}/${answeredKey(sessionId)}`, JSON.stringify({ id, since, by: 'tab' }) + '\n')
 }
 
 // The question of a session's wait that a coordinator elsewhere holds (acknowledged: `relayed`) or
@@ -3012,7 +3030,9 @@ async function sendAnswer($: any, path: string, entry: RoundEntry, text: string)
   let reason: string | null = null
   try {
     const readable = (entry.answer!.by === 'coordinator' ? coordinatorClosedText : paneAnswerText)(entry, carried, at)
-    const sent = await $.session.send({ to: entry.origin!.address, text: answerLine(entry.id, entry.since, carried, at, readable) })
+    // An entry entered from an older machine's line, or before this release, is answered in that line, which it alone reads.
+    const line = entry.origin!.line === 'q' ? qAnswerLine : answerLine
+    const sent = await $.session.send({ to: entry.origin!.address, text: line(entry.id, entry.since, carried, at, readable) })
     if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
   } catch (err) {
     reason = (err as Error).message
@@ -3462,8 +3482,7 @@ async function supersede($: any, entry: RoundEntry): Promise<void> {
 // the wait's text too: a note without choices under the same wait has the same id and the same
 // start (roundEntryId reads no question under a wait that blocks something), so it never replaces
 // the entry, as keptChoices keeps a local one's. Anything else is one log line.
-async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: string }> {
-  const asked = parseAsk(delivery.body)
+async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
     await logLine($, 'supervision', `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
@@ -3485,7 +3504,7 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
         await takeUrgent($, { path, entry: known }, asked.entry)
       }
     } else {
-      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
+      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from, ...(byEvent ? { line: 'q' as const } : {}) } }
       step = 'the entry write'
       await changeEntry($, path, () => entry)
       await logLine($, 'supervision', `round: entered from ${asked.machine}: ${entry.id}`)
@@ -3497,7 +3516,8 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
       $.ui.invalidate('ui.render')
     }
     step = 'the acknowledgment'
-    const sent = await $.session.send({ to: from, text: ackLine(asked.entry.id, asked.entry.since) })
+    const ack = byEvent ? qAckLine({ id: asked.entry.id, seq: seqOf(asked.entry.since), of: 'ask' }) : ackLine(asked.entry.id, asked.entry.since)
+    const sent = await $.session.send({ to: from, text: ack })
     if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
     await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
@@ -3510,13 +3530,12 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
 // a delivery's, and clears it. An older ask's, late, matches nothing: the newer one stays pending
 // and is sent again. The wait is read again just before, a turn's end may have written it. Any
 // other is one log line.
-async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
-  const ack = parseAck(body)
+async function receiveAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the wait read'
   try {
     const sessionId = await $.session.id()
     const now = ack === null ? null : await readWait($, sessionId)
-    if (ack === null || !now || now.pending !== ack.id || now.waiting_since !== ack.since || typeof now.pending_key !== 'string') {
+    if (ack === null || !now || now.pending !== ack.id || !now.waiting_since || seqOf(now.waiting_since) !== ack.seq || typeof now.pending_key !== 'string') {
       await logLine($, 'supervision', `receive: an acknowledgment ${ack === null ? 'was refused' : `of ${ack.id} matches no pending question`}`)
       return { consumed: 'orchestrator: an acknowledgment, dropped' }
     }
@@ -3538,8 +3557,7 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
 // one part a model reads. The last one taken is kept (answeredKey): the same answer sent again, its
 // acknowledgment lost, is acknowledged again and passed nowhere. A throw is one log line and the
 // readable line still passes. A refused one is one log line, passed nowhere, never acknowledged.
-async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: string } | { readable: string }> {
-  const answer = parseAnswer(delivery.body)
+async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<typeof parseAnswer>, byEvent: boolean): Promise<{ consumed: string } | { readable: string }> {
   if (!answer) {
     await logLine($, 'supervision', `receive: an answer was refused (${delivery.body.length} characters)`)
     return { consumed: 'orchestrator: a malformed answer, refused' }
@@ -3550,6 +3568,8 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
     const taken = `${await storeOf($)}/${answeredKey(sessionId)}`
     const last = parseAnswered(String(await $.fs.read(taken).catch(() => '')))
     const again = last?.id === answer.id && last.since === answer.since
+    // Settled first in this session's own tab: the answer that crossed it is not applied.
+    const already = again && last.by === 'tab'
     const now = again ? null : await readWait($, sessionId)
     if (now && now.waiting_since === answer.since && (now.relayed_id === answer.id || now.pending === answer.id)) {
       step = 'the wait write'
@@ -3561,9 +3581,11 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
     const from = peerAddress(delivery)
     if (!from) await logLine($, 'supervision', `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
     else {
-      const sent = await $.session.send({ to: from, text: answerAckLine(answer.id, answer.since) })
+      const ack = byEvent ? qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) }) : answerAckLine(answer.id, answer.since)
+      const sent = await $.session.send({ to: from, text: ack })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
     }
+    if (already) return { consumed: 'orchestrator: an answer to a question answered in its tab first, said already answered' }
     if (again) return { consumed: 'orchestrator: an answer received already, acknowledged again' }
   } catch (err) {
     await logLine($, 'supervision', `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
@@ -3572,10 +3594,10 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
 }
 
 // The last answer taken, as answeredKey's file holds it: null when it holds no id and start.
-function parseAnswered(text: string): { id: string; since: string } | null {
+function parseAnswered(text: string): { id: string; since: string; by?: 'tab' } | null {
   try {
     const read = JSON.parse(text)
-    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since } : null
+    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since, ...(read.by === 'tab' ? { by: 'tab' as const } : {}) } : null
   } catch {
     return null
   }
@@ -3584,8 +3606,7 @@ function parseAnswered(text: string): { id: string; since: string } | null {
 // A remote sender's acknowledgment of the answer sent to it, consumed whatever it holds: the
 // entry of that id and start, its answer pending, sent or failed, is acknowledged and closed, and
 // the pane drawn again. Any other is one log line.
-async function receiveAnswerAck($: any, body: string): Promise<{ consumed: string }> {
-  const ack = parseAnswerAck(body)
+async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the entry read'
   try {
     if (!ack) {
@@ -3595,7 +3616,7 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
     const path = roundPath(await stateDir($), ack.id)
     const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     const state = entry?.delivery?.state
-    if (!entry?.origin || !entry.delivery || entry.since !== ack.since || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
+    if (!entry?.origin || !entry.delivery || seqOf(entry.since) !== ack.seq || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
       await logLine($, 'supervision', `receive: an answer's acknowledgment of ${ack.id} matches no answer sent`)
       return { consumed: "orchestrator: an answer's acknowledgment, dropped" }
     }
@@ -3603,6 +3624,8 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
     await changeEntry($, path, now => {
       if (!now?.delivery || now.delivery.state !== entry.delivery!.state) return null
       const { reason: _reason, ...delivery } = now.delivery
+      // Answered first in its sender's tab: the pane says so, as it says an answer not delivered.
+      if (ack.already) return { ...now, status: 'closed', delivery: { ...delivery, state: 'failed', at: new Date().toISOString(), reason: ALREADY_ANSWERED } }
       return { ...now, status: 'closed', delivery: { ...delivery, state: 'acked', at: new Date().toISOString() } }
     })
     step = 'the pane redraw'
@@ -3612,6 +3635,19 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
   }
   return { consumed: "orchestrator: an answer's acknowledgment, recorded" }
 }
+
+// An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
+async function receiveQAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
+  return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
+}
+
+// An old line's acknowledgment, read as the event line's: its start as the seq.
+function oldAck(ack: { id: string; since: string } | null, of: QAck['of']): QAck | null {
+  return ack && { id: ack.id, seq: seqOf(ack.since), of }
+}
+
+// What the pane says of an answer its sender's tab had settled first.
+const ALREADY_ANSWERED = 'already answered in its own tab'
 
 // A peer's address as its envelope gave it, when it is one a send can reach.
 function peerAddress(delivery: Delivery): string | null {

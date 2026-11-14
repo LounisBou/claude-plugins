@@ -40,7 +40,7 @@ export type RoundEntry = {
   answer: RoundAnswer | null
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
-  origin?: { machine: string; address: string } // a sender on another machine (remote-round.ts): its machine's label and the address its ask came from, written by this machine's module on receipt; absent for a sender on this machine
+  origin?: { machine: string; address: string; line?: 'q' } // a sender on another machine (remote-round.ts): its machine's label, the address its ask came from, and `q` when it came by the event line (none: an older machine's ask line, answered in that line), written by this machine's module on receipt; absent for a sender on this machine
   delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by `coordinator.sh round-close`
   partial?: string[]            // the answers the pane gave so far to an entry that asks several questions, each with its question's number
   consent?: ConsentSubject      // the subject the question asks the operator's consent on, as its sender declared it (declare_wait): his answer is written as its consent record
