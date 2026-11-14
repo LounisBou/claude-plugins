@@ -73,7 +73,8 @@ export const EVENT_SCHEMA = {
       field('refusal', 'string', 'The category of a refusal that ended the turn.'),
       field('context_tokens', 'number', 'The context fill (the session\'s own loop only).', TOKENS),
       field('window', 'number', 'The context window (the session\'s own loop only).', TOKENS),
-      field('cost_usd', 'number', 'The session\'s cumulative cost.', 'usd'),
+      field('cost_usd', 'number', 'The session\'s cumulative cost, up to this turn: never sum it across events.', 'usd'),
+      field('turn_cost_usd', 'number', 'This turn\'s own cost: `cost_usd` less the previous turn\'s (the first turn: its whole value). Sum this one across events.', 'usd'),
     ],
   },
   tool_call: {

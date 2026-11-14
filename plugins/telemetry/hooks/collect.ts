@@ -188,7 +188,12 @@ export function usageFacts(usage: unknown): UsageFacts {
   return compact({ contextTokens: num(context['tokens']), window: num(context['window']), costUsd: num(cost['usd']), startedAt: num(u['startedAt']) }) as UsageFacts
 }
 
-export function turnEnd(at: number, session: string, input: unknown, usage: UsageFacts): Event {
+/**
+ * `turn_end`. `turnCostUsd` is the turn's own cost, the difference the collector computed between
+ * this turn's cumulative figure and the previous one (`Collector.turnCost`); `cost_usd` stays the
+ * session's cumulative figure.
+ */
+export function turnEnd(at: number, session: string, input: unknown, usage: UsageFacts, turnCostUsd?: number): Event {
   const e = record(input)
   const u = record(e['usage'])
   const refusal = record(e['refusal'])
@@ -204,6 +209,7 @@ export function turnEnd(at: number, session: string, input: unknown, usage: Usag
     context_tokens: e['agentId'] === undefined ? usage.contextTokens : undefined,
     window: e['agentId'] === undefined ? usage.window : undefined,
     cost_usd: usage.costUsd,
+    turn_cost_usd: turnCostUsd,
   })
 }
 
@@ -540,8 +546,23 @@ export class Collector {
   launchedAt: number | undefined
   firstTurnSeen = false
   turns = 0
+  private costSoFar: number | undefined
   private actor: { title: string; role: string } | undefined
   private headRead = false
+
+  /**
+   * The cost of the turn that just ended, from the session's cumulative `costUsd`: the difference
+   * with the highest figure seen so far, subagent turns included, so the turns' costs add up to
+   * the session's cost. The first turn costs its whole figure. A figure below the baseline (two
+   * turns that ended together read the host out of order) costs nothing and leaves the baseline
+   * where it is. Undefined, and the baseline kept, when the host gave no figure.
+   */
+  turnCost(costUsd: number | undefined): number | undefined {
+    if (costUsd === undefined) return undefined
+    const before = this.costSoFar ?? 0
+    this.costSoFar = Math.max(before, costUsd)
+    return Math.round(Math.max(0, costUsd - before) * 1e9) / 1e9
+  }
 
   /** The session's title, once known. */
   get title(): string | undefined {
