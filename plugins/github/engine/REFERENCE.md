@@ -226,10 +226,10 @@ A multi-file call without one `--title` per file is a usage error.
 
 ### The one writer: `engine/record.py`
 
-`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
+`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e|tests --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a not applicable's `--detail` giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
+- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a not applicable's `--detail` giving its reason), `accepted` for `review` only, `tests` `pass|fail` by `light-ci` only, a detail of 500 characters at most.
 - It writes under a temporary name in the same directory, then renames; prints the path; exits 2 on a usage error. Standard library only.
 
 ### Fields (one JSON object per file)
@@ -245,10 +245,10 @@ A multi-file call without one `--title` per file is a usage error.
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in the `Ready` line; a `fail` holds.
-- A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
-- Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
-- Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in `Ready`; a `fail` holds.
+- A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`).
+- Otherwise a moved head voids every record; one of an unpushed commit counts once that sha is on the PR.
+- Pruning: once a day at `session.start`, `<head>` directories and fingerprints untouched for 90 days go.
 
 ### The producers
 
@@ -260,6 +260,7 @@ names no consumer.
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
+| github `mcp__github__light_ci` | tests | « Light CI » below |
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason and files with no runtime (below) |
 
 A review record is refused from the session that pushed the head it reviews.
@@ -282,77 +283,80 @@ Both routes are `hooks/e2e-scope.ts`'s.
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing.
 
+### Light CI
+
+A stacked PR (`pr-gate`'s `stacked`: its base heads another open PR, unprotected, not default) is ready on
+its review and a `tests` pass at its head or its checks green; a failed run or check blocks. File
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`: `{"command": [...], "prepare": [...]?,
+"timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}` (review alone, dated in `Ready`).
+
+- `mcp__github__light_ci {action: "run", pr, dir?}`: clean checkout of the head; `prepare`, then `command` (no
+  shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written: run
+  `python3 <github root>/engine/light_ci.py run --pr <n>` in the background.
+- `{action: "status", repo?}`: the file, CI on stacked bases, median PR run, stacked PRs in 30 days, a command.
+
 ### What the contract does not stop
 
 The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards stop a forgotten review, norms check or E2E, not a forger.
 
 ## Pushing from the sandbox
 
-SSH is blocked in the sandbox, even through `!`: push over HTTPS with gh's token, an
-empty `credential.helper=` first (no keychain dialog):
+SSH is blocked in the sandbox, even through `!`: push over HTTPS with gh's token, `credential.helper=`
+emptied first (no keychain dialog):
 `git -c credential.helper= -c credential.helper='!f(){ echo username=x-access-token; echo "password=$(gh auth token)"; }; f' push https://github.com/<owner>/<repo>.git HEAD:<branch>`.
-A push by URL does not update `refs/remotes/origin/*`: `--force-with-lease` takes an
-explicit sha (`--force-with-lease=<branch>:<full sha>`). Same pattern for `fetch`.
+A push by URL leaves `refs/remotes/origin/*`: `--force-with-lease=<branch>:<full sha>`. Same for `fetch`.
 Never « external terminal ».
 
 ## Guards
 
-**Ready.** `pr-ready`, `pr-merge` and
-`pr-create` out of draft, and in the shell `gh pr ready` (not `--undo`; `--undo=false` is
-none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `gh api` (a path or a full URL) with `PUT` or `POST`
-on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
-or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
-script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head (core's readiness contract, « Records » above), CI included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
-`pr-merge --sha` other than that head is not ready either. A `Ready` label put by `label-add` or in the shell is no
-act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
-refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
-still carrying `Ready` goes back to `Not Ready`. Opening out of draft is refused, and a
-readiness `pr-gate` could not read with `github: readiness of <owner/name>#<n> unverified:
-<error>`. A shell merge or undraft naming no repository (`-R`, `--repo` or a
-URL) is refused; a GraphQL merge or undraft names no pull request and is always refused, with
-the tool call to run. A GraphQL query the command does not show (`-F query=@file`, `--input`, a
-shell variable or substitution) is refused outside auto-merge, an unverified readiness inside
-it. `gh.py --stdin-json` run from Bash is refused: its request cannot be read.
+**Ready.** These acts need the pull request ready at its head (core's readiness contract, « Records »
+above), CI included; the gate puts `Ready` just before the act, which runs on that label only: `pr-ready`,
+`pr-merge`, `pr-create` out of draft; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
+`gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `gh api` `PUT`/`POST` on
+`repos/<o>/<r>/pulls/<n>/merge` (path or URL), `gh api graphql` naming `mergePullRequest`,
+`markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the engine's same subcommands from Bash.
+A `--match-head-commit` or `pr-merge --sha` off that head is not ready; a `Ready` put by `label-add` or the
+shell is no act. Refused before any question with `github: <act> refused on <owner/name>#<n> at <head7>:
+not ready. Missing: <item>, …`, `Ready` going back to `Not Ready`, or `github: readiness of
+<owner/name>#<n> unverified: <error>`. Refused too: opening out of draft; a shell merge or undraft naming
+no repository (`-R`, `--repo`, a URL); a GraphQL merge or undraft (no pull request named; the tool call is
+given); a GraphQL query the line does not show (`-F query=@file`, `--input`, a shell expansion), unverified
+in auto-merge; `gh.py --stdin-json` from Bash.
 
-**The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
-`pr-checks` read through the tool, the module reads readiness, CI included, at the open pull request's head
-and puts `Ready` when nothing is missing, or `Not Ready` back on one carrying `Ready`: the gate's
-act. It reads the head again just before writing, and writes nothing on a moved head or on
-records it cannot list. Outside auto-merge one the plugin undrafted for CI
-goes back to draft first. Its line follows a record's output; after a read it is a line of
-its own, and `pr-gate` stays JSON, with the labels and draft the gate left.
+**The gate puts `Ready`.** After a record is written and a `pr-gate` or `pr-checks` read through the tool,
+the module reads readiness at the open pull request's head and puts `Ready` when nothing is missing, or
+`Not Ready` back on one carrying it. It rereads the head just before writing, and writes nothing on a moved
+head or unlistable records. Outside auto-merge one the plugin undrafted for CI goes back to draft first.
+Its line follows a record's output, or stands alone after a read; `pr-gate` stays JSON, with the labels and
+draft the gate left.
 
-A pull request that carries `Not Ready` and no passed check at its head may leave draft for
-its CI to run, in every repository and with no question: the tool runs `pr-ready --for-ci`,
-which keeps `Not Ready`, the shell's `gh pr ready` passes, and both print `github:
-<owner/name>#<n> out of draft to run CI, still Not Ready`. Going back to draft
-(`pr-draft`, `gh pr ready --undo`) always passes and puts `Not Ready`, and so does `gh pr
-create --draft`. After a `git push`, a pull request of the pushed branch that carries
-`Ready` goes back to `Not Ready`, with one line; a branch or a repository the push does not
-name with certainty is left as it is.
+A pull request carrying `Not Ready` with no passed check at its head may leave draft for its CI, anywhere
+and unasked: `pr-ready --for-ci` (keeps `Not Ready`) or the shell's `gh pr ready`, both printing `github:
+<owner/name>#<n> out of draft to run CI, still Not Ready`. Back to draft (`pr-draft`, `gh pr ready
+--undo`, `gh pr create --draft`) always passes and puts `Not Ready`. After a `git push`, a pull request of
+the pushed branch carrying `Ready` goes back to `Not Ready`, in one line; a push naming no branch or
+repository with certainty leaves it.
 
-**Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository
-listed in `auto-merge.json`, the ready guard on top. Elsewhere leaving draft is refused on every route, never asked (`github: <act> refused on <owner/name>: outside
-auto-merge, leaving draft is the operator's, …`); a merge is asked through the tool and refused
-in the shell. The engine's undraft is a CI undraft only with `--for-ci`; it names its
-repository with `--repo`.
+**Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository of
+`auto-merge.json`, the ready guard on top. Elsewhere leaving draft is refused on every route, unasked
+(`github: <act> refused on <owner/name>: outside auto-merge, leaving draft is the operator's, …`); a merge
+is asked through the tool, refused in the shell. The engine's undraft is a CI one only with `--for-ci`, and
+names `--repo`.
 
-The engine's texts run from Bash (`pr-create`, `pr-comment`, `pr-update`, `review-submit`,
-`thread-reply`, `comment-edit`, `review-pending-*`) wait for the writing rules to be read
-and are linted, `--title` and the `--body-file` file, as the tool's call would be. An engine
-act whose pull request number cannot be read (`pr-merge {}` from an `xargs`, `pr-merge "$PR"`)
-is refused, never read against the current branch's: write the number.
+The engine's texts from Bash (`pr-create`, `pr-comment`, `pr-update`, `review-submit`, `thread-reply`,
+`comment-edit`, `review-pending-*`) wait for the writing rules and are linted (`--title`, the `--body-file`
+file) as the tool's would be. An engine act whose pull request number cannot be read (`pr-merge {}` from
+`xargs`, `pr-merge "$PR"`) is refused: write the number.
 
 What the guards do not read on that route:
 
 - An engine script given by a shell variable not followed by one of its subcommands, `$PY
   engine/gh.py …`, `eval`, `uv run`, or an unquoted `${CLAUDE_PLUGIN_ROOT}/engine/gh.py`:
-  run it as `python3 "<root>/engine/gh.py" …`. Nor a `gh alias`, a script or a subprocess
-  that runs `gh` or the engine, or `curl` on the API: documented, not guarded.
-- A `--comments-file` is not read, so its inline comments are not linted.
-- A body file written by the same command line (`printf … > body.md && python3 gh.py
-  pr-create --body-file body.md`) is read before it exists, so it is not linted.
+  run `python3 "<root>/engine/gh.py" …`. Nor a `gh alias`, a script or a subprocess running
+  `gh` or the engine, or `curl` on the API.
+- A `--comments-file`: its inline comments are not linted.
+- A body file the same command line writes (`printf … > body.md && python3 gh.py pr-create
+  --body-file body.md`): read before it exists, not linted.
 
 **Records.** A Write, Edit, MultiEdit or NotebookEdit under the records root, and a shell
 command naming that root, a `pr-records/` path or `engine/record.py` (in its text or in any word
@@ -364,11 +368,10 @@ github: records are written by their producers' tools, and E2E by mcp__github__r
 
 The E2E exemption and check plan files are refused alike (`github: an E2E exemption changes only through …`).
 
-`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through
-`record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
-directory), is the head `pr-gate` reads and its tracked files are clean; else it
-refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs his waiver: his answer as recorded, or for E2E its free text quoted in `detail`.
+`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through `record.py` when
+the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate` reads and its tracked files are
+clean, else names both shas. A session writes `e2e` only. `waived` needs his answer as recorded, or for E2E
+its free text quoted in `detail`.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

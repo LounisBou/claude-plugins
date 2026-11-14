@@ -10,7 +10,7 @@ import { CONSENT_GRANT, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_REFUSE, CON
 import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
-import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
@@ -20,7 +20,7 @@ import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
-  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems, notReadyAnswer, unverifiedAnswer,
+  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems, notReadyAnswer, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   type Act, type Carried, type Gate, type Labelling, type RecordFile,
@@ -726,6 +726,31 @@ async function configDir($: any): Promise<string | undefined> {
   return home ? home + '/.claude' : undefined
 }
 
+/*
+ * The light CI's project file, ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json, which the
+ * gate reads for one key: `off`, the operator's refusal of light CI for the repository. The date of that refusal
+ * when a stacked pull request's repository has one, or undefined: a file that cannot be read refuses nothing.
+ */
+export const LIGHT_CI_TOOL = SCRIPTED.tool
+// The host runs a process for 10 minutes at most: the script stops the run within its budget, a little less.
+const LIGHT_CI_TIMEOUT_MS = 600_000
+const LIGHT_CI_BUDGET_S = 570
+
+async function lightCiOffOf($: any, gate: Gate): Promise<string | undefined> {
+  if (gate.stacked !== true) return undefined
+  try {
+    const dir = await configDir($)
+    const [owner, name] = gate.repo.toLowerCase().split('/')
+    const path = dir ? dir + '/light-ci/' + owner + '-' + name + '.json' : undefined
+    if (!path || !(await $.fs.exists(path))) return undefined
+    const file = JSON.parse(String(await $.fs.read(path)))
+    if (typeof file?.off !== 'string' || file.off.trim() === '') return undefined
+    return typeof file.at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(file.at) ? file.at.slice(0, 10) : 'undated'
+  } catch {
+    return undefined
+  }
+}
+
 // ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/pr-records, or undefined when unreadable.
 async function recordsRoot($: any): Promise<string | undefined> {
   try {
@@ -889,7 +914,9 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
  */
 async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
   await keepCount($, gate)
-  const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
+  // A tests record carries only to a stacked pull request: the bottom one reads no light CI.
+  const possible = KINDS.filter((kind) => kind !== SCRIPTED.kind || gate.stacked === true)
+  const wanted = gate.state === 'open' ? unrecorded(gate, files).filter((kind) => possible.includes(kind)) : []
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
   const { found, unread } = await earlierRecords($, gate, root)
@@ -904,7 +931,7 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   // A line on the kinds not carried leaves out the kinds a waiver stands for.
   const uncarried = (reason: string, kinds: PrRecord['kind'][] = wanted) => {
     const left = kinds.filter((kind) => !waivers.some((w) => w.kind === kind))
-    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === KINDS.length ? undefined : left))
+    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === possible.length ? undefined : left))
   }
   const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
   for (const [head, records] of found) {
@@ -1111,7 +1138,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     throw err
   }
   const carried = await carriedRecords($, gate, files)
-  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried, 'gate'), carried }
+  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried, 'gate', await lightCiOffOf($, gate)), carried }
 }
 
 /*
@@ -1131,13 +1158,16 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   let excused: Excused
   let accepted: string | undefined
   let carried: Carried[]
+  let ciText: string | undefined
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
     excused = await excusedOf($, gate)
     const files = await headRecords($, gate)
     carried = await carriedRecords($, gate, files)
-    missing = missingItems(gate, files, undefined, excused, carried)
+    const off = await lightCiOffOf($, gate)
+    missing = missingItems(gate, files, undefined, excused, carried, undefined, off)
     accepted = reviewAccepted(gate, files)
+    ciText = stackedCi(gate, files, carried, off)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -1168,7 +1198,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried), labels, draft, missing }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried, ciText), labels, draft, missing }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing }
 }
 
@@ -2012,6 +2042,50 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
 
+/*
+ * The light CI of a stacked pull request (engine/light_ci.py): `run` checks the checkout is the pull request's
+ * head and clean, runs the project's command and writes the tests record of its exit code, then the gate follows
+ * it; `status` says what the repository's project file holds and the facts of the invitation. The script does
+ * every check and every write: this hook names the checkout, the session and the gate's line.
+ */
+async function lightCi($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  const verdict = await $.tool.check({ tool: LIGHT_CI_TOOL, input: { action: e.action, pr: e.pr, repo: e.repo, dir: e.dir } })
+  if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+  const action = String(e.action ?? '')
+  if (action !== 'run' && action !== 'status') {
+    return { deny: 'github: ' + LIGHT_CI_TOOL + ' takes {"action": "run", "pr": <n>} or {"action": "status"}, each with "repo" and "dir" if needed' }
+  }
+  const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
+  if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout, got: ' + dir }
+  const notDir = dir === undefined ? undefined : await notDirectory($, dir)
+  if (notDir) return { deny: 'github: ' + notDir }
+  const named = e.repo === undefined || e.repo === null || e.repo === '' ? undefined : String(e.repo)
+  if (named !== undefined && !isRepoName(named)) return { deny: 'github: repo is owner/name, got: ' + named }
+  const script = ['python3', $.plugin.root + '/engine/light_ci.py']
+  const inDir = dir ? { cwd: dir } : {}
+  const repoArgs = named ? ['--repo', named] : []
+  if (action === 'status') {
+    const run = await $.process.run([...script, 'status', ...repoArgs], { timeoutMs: 120_000, ...inDir })
+    if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
+    return { result: String(run.stdout).trim() }
+  }
+  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"action": "run", "pr": <n>}' }
+  let session = ''
+  try {
+    session = String(await $.session.id() ?? '')
+  } catch {
+    // Run without it.
+  }
+  const run = await $.process.run([...script, 'run', '--pr', String(pr), '--session', session, '--budget', String(LIGHT_CI_BUDGET_S), ...repoArgs],
+    { timeoutMs: LIGHT_CI_TIMEOUT_MS, ...inDir })
+  if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
+  const repo = await targetRepo($, { repo: named, args: {} }, dir).catch(() => undefined)
+  // The record may complete readiness, or break it: the gate reads the pull request again.
+  const { line } = repo ? await followGate($, repo, pr, undefined, true) : { line: undefined }
+  return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
+}
+
 // At most once a day, the head directories whose newest record is older than
 // PRUNE_DAYS go, their pull request merged or moved on long ago, and the fingerprints kept as long.
 async function pruneRecords($: any): Promise<void> {
@@ -2099,7 +2173,7 @@ export function register(on: any): void {
             repo: { type: 'string', description: 'owner/name, overriding origin' },
             result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
             detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words' },
-            kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
+            kind: { type: 'string', enum: KINDS.filter((kind) => kind !== SCRIPTED.kind), description: 'default: the kind this caller writes' },
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
@@ -2118,6 +2192,28 @@ export function register(on: any): void {
       })
     } catch (err: any) {
       note($, 'github: the record tool could not be registered: ' + String(err?.message ?? err))
+    }
+    try {
+      await $.tool.register({
+        name: 'light_ci',
+        isDeferred: false,
+        description:
+          'Light CI of a stacked pull request (its base another open pull request\'s head): "run" {pr}, from a clean checkout '
+          + 'of its head, runs the repository\'s command and records its tests at the head for the Ready gate; "status" '
+          + 'says the repository\'s light CI file and whether to propose one. See ' + root + '/engine/REFERENCE.md « Light CI ».',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['run', 'status'] },
+            pr: { type: 'integer', description: 'run: the pull request number' },
+            repo: { type: 'string', description: 'owner/name, overriding origin' },
+            dir: { type: 'string', description: 'absolute path of the checkout (default: the session\'s directory)' },
+          },
+          required: ['action'],
+        },
+      })
+    } catch (err: any) {
+      note($, 'github: the light CI tool could not be registered: ' + String(err?.message ?? err))
     }
     try {
       await pruneRecords($)
@@ -2252,6 +2348,14 @@ export function register(on: any): void {
       return { result: String(err?.message ?? err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the record hook itself failed' }))
+
+  on('tool.call', { tool: LIGHT_CI_TOOL }, async ($: any, e: any) => {
+    try {
+      return await lightCi($, e)
+    } catch (err: any) {
+      return { result: String(err?.message ?? err), isError: true }
+    }
+  }).catch(async () => ({ deny: 'github mod error: the light CI hook itself failed' }))
 
   on('tool.call', { tool: TOOL }, async ($: any, raw: any) => {
     if (MOD_COMMANDS.has(raw.command)) {

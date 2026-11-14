@@ -128,6 +128,31 @@ def _base(pull):
     return (pull.get("base") or {}).get("ref") or ""
 
 
+def _stacked(owner, name, pull):
+    """Whether the pull request is stacked: its base is the head branch of another open pull request of
+    the repository, and no long-lived branch: neither the default branch nor one under branch protection or a
+    ruleset (main, develop, staging and their kind, which a release pull request heads too). A read that fails
+    says why on stderr and reads as not stacked: the gate then asks what the bottom pull request needs, the most."""
+    base = _base(pull)
+    if not base or base == ((pull.get("base") or {}).get("repo") or {}).get("default_branch"):
+        return False
+    branch = quote(base, safe="")
+    try:
+        pulls = http.rest(
+            "GET", "/repos/%s/%s/pulls?state=open&head=%s&per_page=100" % (owner, name, quote(owner + ":" + base, safe=""))
+        )
+        number = pull.get("number")
+        if not any(isinstance(p, dict) and p.get("number") != number for p in pulls or []):
+            return False
+        if (http.rest("GET", "/repos/%s/%s/branches/%s" % (owner, name, branch)) or {}).get("protected"):
+            return False
+        return not (http.rest("GET", "/repos/%s/%s/rules/branches/%s" % (owner, name, branch), paginate=True) or [])
+    except (errors.GhError, OSError) as exc:
+        why = exc.message if isinstance(exc, errors.GhError) else exc
+        print("error: cannot read whether %s is a stacked base: %s" % (base, why), file=sys.stderr)
+        return False
+
+
 def pr_checks(args):
     owner, name = repo.owner_repo()
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
@@ -169,6 +194,8 @@ def pr_gate(args):
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
         # The pull request's commit count at this head, read in the same answer as the head.
         "commits": pull.get("commits"),
+        "base": _base(pull),
+        "stacked": _stacked(owner, name, pull),
         "ci": fmt.gate_ci(
             statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs,
             *_required_checks(owner, name, _base(pull)),
