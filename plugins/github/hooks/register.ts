@@ -11,11 +11,11 @@ import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
-import { PLAN_NEEDS } from '../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -42,12 +42,12 @@ export const COMMANDS = [
   'pr-ready', 'pr-draft', 'label-add', 'label-remove', 'reviewer-add', 'reviewer-remove',
   'assignee-add', 'assignee-remove', 'labels-ensure', 'pr-readiness', 'issue-view', 'issue-list',
   'issue-search', 'pr-linked-issues', 'image-upload', 'auth-check', 'auto-merge-set', 'auto-merge-list',
-  'auto-deploy-set', 'auto-deploy-list', 'protect-check', 'protect-apply',
+  'auto-deploy-set', 'auto-deploy-list', 'protect-check', 'protect-apply', 'pr-plan',
 ]
 
-// The subcommands this module answers without the engine: the lists of
-// repositories in auto-merge and in auto-deploy are files on this machine, not GitHub's.
-export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-deploy-set', 'auto-deploy-list'])
+// The subcommands this module answers without the engine: the lists of repositories in
+// auto-merge and in auto-deploy, and a pull request's check plan, are files on this machine, not GitHub's.
+export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-deploy-set', 'auto-deploy-list', 'pr-plan'])
 
 // The subcommands the session calls to read. Every other one writes to GitHub, and a
 // command missing here is treated as a write, so the safe side is the default. After
@@ -57,7 +57,7 @@ export const READS = new Set([
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
-  'auto-deploy-list', 'protect-check',
+  'auto-deploy-list', 'protect-check', 'pr-plan',
 ])
 
 export const TOOL = 'mcp__github__gh'
@@ -1819,6 +1819,16 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
 }
 
+// pr-plan {pr}: the pull request's check plan as the gate reads it, as JSON, or the line that says it has none.
+async function showPlan($: any, raw: any): Promise<{ result: string; isError?: boolean }> {
+  const pr = Number(String(raw.args?.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { result: 'github: name the pull request: {"pr": <n>}', isError: true }
+  const repo = await targetRepo($, raw)
+  if (!repo || !isRepoName(repo)) return { result: 'github: name the repository: {"repo": "owner/name"}', isError: true }
+  const plan = await readPlan($, repo, pr)
+  return { result: plan ? JSON.stringify(plan, null, 2) : 'no check plan for ' + repo + '#' + pr }
+}
+
 /*
  * The record tool's {pr, plan: {e2e, norms}}: the proofs the pull request owes, decided when the work is
  * scoped, kept across its heads and posted on it. A new plan may require more; one that no longer requires
@@ -1827,7 +1837,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
 async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const checks = planInput(e.plan)
   if (typeof checks === 'string') {
-    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "full|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|none"}, each "<need>: <reason>" but the first: ' + checks }
   }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
@@ -1849,7 +1859,7 @@ async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string
     posted = '\ngithub: the plan is not posted on ' + repo + '#' + pr + ': ' + String(err?.message ?? err).trim()
   }
   const { line } = await followGate($, repo, pr, undefined, true)
-  return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + checks.review.need + posted + (line ? '\n' + line : '') }
+  return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + needText(checks.review) + posted + (line ? '\n' + line : '') }
 }
 
 // ---- records ----
@@ -2055,7 +2065,7 @@ export function register(on: any): void {
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
             plan: {
               type: 'object',
-              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
               // The needs each check may be given are core's readiness contract's alone.
               properties: Object.fromEntries(
                 Object.entries(PLAN_NEEDS).map(([check, needs]) => [check, { type: 'string', description: needs.join(', ') }]),
@@ -2209,6 +2219,7 @@ export function register(on: any): void {
         if (raw.command === 'auto-deploy-set') return await setAutoDeploy($, raw)
         const verdict = await $.tool.check({ tool: TOOL, input: { command: raw.command, args: raw.args, repo: raw.repo } })
         if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+        if (raw.command === 'pr-plan') return await showPlan($, raw)
         return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
       } catch (err: any) {
         return { result: String(err?.message ?? err), isError: true }

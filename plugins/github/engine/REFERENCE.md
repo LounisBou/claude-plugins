@@ -191,13 +191,13 @@ else `raw`. `--json` (or `--format raw`) is the full object a program parses; a 
 `image-upload` stores the file on a dedicated branch (`pr-assets` by default) through
 the Contents API, using the scoped token. A file that is not a PNG, JPEG, GIF or WebP by its
 first bytes is refused. The blob is named after the SHA-256 of its
-bytes, so uploading the same screenshot twice issues no write at all and reports
+bytes, so the same screenshot uploaded twice writes nothing and reports
 `reused`. It prints both the URL and ready-to-paste markdown, as a
 `https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true` link, which renders for anyone who can see the repository.
 
 `--title T` puts the screenshot's descriptive title above its image, as a bold line
 followed by the image with the title as alt text (`writing/pull-requests.md` « Pull request
-descriptions »): one line, trimmed, 100 characters or fewer, with no colon at its end. Asterisks and
+descriptions »): one line, trimmed, 100 characters or fewer, no colon at its end. Asterisks and
 closing brackets are taken out of it, as they would break the bold line or the alt text. A title
 the description rules would refuse is refused too, so the block always passes them: a semicolon,
 a `#N` or `repo#N` reference or a pull request URL, and the phrasings that say what a pull
@@ -274,8 +274,9 @@ Both routes are `hooks/e2e-scope.ts`'s.
 - **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
   head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
-  `full|one-pass` (unread by the gate), each `<need>[: <reason>]`, a reason unless the first; rules
-  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR.
+  `required[: max <n>]|none` (core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
+  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;
+  `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator's answer in a consent record
@@ -303,8 +304,7 @@ none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `
 on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head as core's readiness contract defines it (« Records » above), CI green
-included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
+ready at its head (core's readiness contract, « Records » above), CI included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
 `pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
 act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
@@ -334,8 +334,7 @@ create --draft`. After a `git push`, a pull request of the pushed branch that ca
 name with certainty is left as it is.
 
 **Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository
-listed in `auto-merge.json`, the ready guard on top. Elsewhere leaving draft or opening out of
-draft is refused on every route, never asked (`github: <act> refused on <owner/name>: outside
+listed in `auto-merge.json`, the ready guard on top. Elsewhere leaving draft is refused on every route, never asked (`github: <act> refused on <owner/name>: outside
 auto-merge, leaving draft is the operator's, …`); a merge is asked through the tool and refused
 in the shell. The engine's undraft is a CI undraft only with `--for-ci`; it names its
 repository with `--repo`.

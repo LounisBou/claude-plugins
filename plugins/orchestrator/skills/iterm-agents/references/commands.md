@@ -154,8 +154,8 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   Its pair is the one the order names, --model <id> --effort <level>, or neither: the
     #   host's default for the session applies. A model alone and an effort alone are refused,
     #   and so are --tier and --inherit-model: a tier or the caller's own live pair would be a
-    #   pair nobody ordered. Lands immediately right of you, joins no chain (chain=none) and
-    #   comes up under remote control under its name. Refuses every succession flag,
+    #   pair nobody ordered. Lands, joins no chain and comes up under remote control as --wake
+    #   does. Refuses every succession flag,
     #   --wake, an anchor (--right-of, --left-of), --title-free, --resident, --brief,
     #   --orchestrator and --no-remote-control.
 

@@ -15,7 +15,7 @@ How the tables are measured, generalised and exported: `references/calibration.m
 
 ## Pairs, tiers and the map
 
-A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; `--model` without `--effort` is refused, and so is an agent given neither `--tier` nor `--model` (decision 3 of `docs/agent-dispatches.md`). Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`. `spawn --tier` takes the effort from `--effort`, else from the map, else the effort the plugin ships for the tier — `standard` high, `light` medium — and `deep` runs at your own live effort, read on your transcript. **Read your map before dispatching a wave.** An unbound tier is not an error (the host applies its default model, the tier's effort still typed): when the work needs it, pick the model you judge fit — `--model <name> --effort <level>`, or the host's default model on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn. The map is his and binds every project: a binding the mode check refuses is put to him. A pair `pick` returns for one class or one project goes in the brief, the record and `calibrate`'s project table, never in `models.json`, which the module keeps from your writes.
+A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; `--model` without `--effort` is refused, and so is an agent given neither `--tier` nor `--model` (decision 3 of `docs/agent-dispatches.md`). Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`. `spawn --tier` takes the effort from `--effort`, else from the map, else the effort the plugin ships for the tier — `standard` high, `light` medium — and `deep` runs at your own live effort, read on your transcript. **Read your map before dispatching a wave.** An unbound tier is not an error (the host applies its default model, the tier's effort still typed): when the work needs it, pick the model you judge fit — `--model <name> --effort <level>`, or the host's default on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn. The map is his and binds every project: a binding the mode check refuses is put to him. A pair `pick` returns for one class or one project goes in the brief, the record and `calibrate`'s project table, never in `models.json`, which the module keeps from your writes.
 
 **A tier or a pair names a family alias, never a versioned identifier**; the launcher warns on a versioned binding.
 
@@ -25,8 +25,7 @@ A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, 
 
 Before each dispatch, run `routing.py pick --repo <checkout> --class <class> --record <record>
 --files <n> --lines <n>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`). It
-prints the pair and the table it came from — the project's, its profile's, the global one, a
-shipped default, or the tier table below. Write the pair, its source and your reason in the
+prints the pair and the table it came from (the order is below). Write the pair, its source and your reason in the
 brief. You may override it: say why. An entry marked `stale` was measured on a model the alias
 no longer resolves to; use it, and tell the operator in one line that a bench run would refresh
 it.
@@ -53,7 +52,7 @@ map.
 
 `/orchestrator-calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it: it runs steps 1 to 4 below in order, stops at the first failure, and leaves 5 and 6 to the operator. It refuses to run without his cap and never picks one. Run by hand, these are the `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
 
-1. `harvest <repo> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`, its brief in `projects/<slug>/briefs/pr-<n>.md`.
+1. `harvest <repo> --class <class> --pr <n> [--pr <n>]...`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`; its other options are in `references/calibration.md`.
 2. `ready <slug> <task-id>...`: the control run. Needs the manifest's `test_command` and `test_globs`. Runs the tests on each task's merged commit and marks it `ready`, or `void` when its own reference fails.
 3. `bench <slug> --max-usd <n>`: the spend cap, given by the operator and required; `--budget-usd` caps each trial. Needs ready tasks and the `deep` tier bound (the judge). Runs the grid of pairs on the ready tasks and appends each trial to `projects/<slug>/trials.jsonl`.
 4. `calibrate <slug>`: writes the project's table, `tables/project-<slug>.json`, which `pick` reads first.
@@ -94,6 +93,8 @@ Read the third and the fourth concretely. **Blast radius** is high when the phas
 Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by measured cost per closed dispatch), never more, never as a running total: the readings are retaken at each dispatch.
 
 ## The correction round runs one notch above its phase
+
+A pull request's rounds are its check plan's `review` max.
 
 `pick` ends with `corrective=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it; the phase itself is never retried at its own pair. `--class corrective` serves a correction round whose phase's pair is unknown: it runs at that call's `pair=` line; its `corrective=` line is not read.
 
