@@ -3,7 +3,7 @@
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { currentSessionName, parseSessionName } from '../core/names.ts'
-import { simpleCommands } from '../core/shell.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
 export const EVENT_VERSION = 1
@@ -25,7 +25,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -260,11 +260,16 @@ export interface Target {
 export const HEAD_MAX = 12
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const SHA = /^[0-9a-f]{7,40}$/i
-const PULL_URL = /github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d+)/
-const REMOTE_URL = /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?:\/|$)/
+/** `github.com` on a boundary: the start of the word, a `/`, an `@` or the `.` of a subdomain. */
+const GITHUB = '(?:^|[/@.])github\\.com'
+const PULL_URL = new RegExp(`${GITHUB}/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\\d+)`)
+const PULL_URLS = new RegExp(PULL_URL.source, 'g')
+/** A whole word that is a pull request's URL. */
+const PULL_WORD = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#].*)?$/
+const REMOTE_URL = new RegExp(`${GITHUB}[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\\.git)?(?:/|$)`)
 
 function targetFrom(repo: unknown, pr: unknown, head: unknown): Target {
-  const number = typeof pr === 'number' ? pr : typeof pr === 'string' && /^\d{1,9}$/.test(pr) ? Number(pr) : undefined
+  const number = typeof pr === 'number' ? pr : typeof pr === 'string' && /^#?\d{1,9}$/.test(pr) ? Number(pr.replace('#', '')) : undefined
   return compact({
     repo: typeof repo === 'string' && REPO.test(repo) ? repo : undefined,
     pr: number !== undefined && Number.isInteger(number) && number > 0 ? number : undefined,
@@ -274,23 +279,37 @@ function targetFrom(repo: unknown, pr: unknown, head: unknown): Target {
 
 const merged = (first: Target, second: Target): Target => ({ ...second, ...first })
 
-/** A `mcp__github__gh` call's target: its arguments first, then what its result names. */
-function githubTarget(input: Fields, result: unknown): Target {
-  const args = record(input['args'])
-  const named = targetFrom(input['repo'] ?? args['repo'], input['pr'] ?? args['pr'] ?? args['number'], args['sha'] ?? args['head'] ?? input['sha'] ?? input['head'])
-  if (named.repo !== undefined && named.pr !== undefined && named.head !== undefined) return named
+/** What a result names, from its top-level JSON object (a string of JSON or an object) and its text. */
+function resultOf(result: unknown): { json: Fields; raw: string } {
   const r = record(result)
   const body = r['result'] ?? r['text']
-  let parsed: Fields = typeof body === 'object' ? record(body) : {}
-  let raw = typeof body === 'string' ? body : ''
+  let json: Fields = typeof body === 'object' ? record(body) : {}
+  const raw = typeof body === 'string' ? body : text(r['text']) ?? ''
   if (raw.startsWith('{')) {
     try {
-      parsed = record(JSON.parse(raw))
+      json = record(JSON.parse(raw))
     } catch { /* not JSON: read as text */ }
   }
-  if (typeof body !== 'string') raw = text(r['text']) ?? ''
-  const url = PULL_URL.exec(raw)
-  return merged(named, merged(targetFrom(parsed['repo'], parsed['pr'], parsed['head']), url === null ? {} : targetFrom(url[1], url[2], undefined)))
+  return { json, raw }
+}
+
+/**
+ * A `mcp__github__gh` call's target. A pr named by the arguments is the target's: the result only
+ * completes its repository and head, from its top-level JSON of that same pr. Else one source,
+ * the result's JSON or its one pull URL, gives repository and pr together.
+ */
+function githubTarget(input: Fields, result: unknown): Target {
+  const args = record(input['args'])
+  const isPr = text(input['command'])?.startsWith('pr-') === true
+  const named = targetFrom(input['repo'] ?? args['repo'], input['pr'] ?? args['pr'] ?? (isPr ? args['number'] : undefined), args['sha'] ?? args['head'] ?? input['sha'] ?? input['head'])
+  const { json, raw } = resultOf(result)
+  const fromJson = targetFrom(json['repo'], json['pr'], json['head'])
+  if (named.pr !== undefined) return fromJson.pr === named.pr ? merged(named, fromJson) : named
+  if (fromJson.pr !== undefined || fromJson.repo !== undefined) return merged(named, fromJson)
+  const urls = new Set([...raw.matchAll(PULL_URLS)].map(m => `${m[1]}#${m[2]}`))
+  const [only] = urls.size === 1 ? urls : []
+  const [repo, pr] = only === undefined ? [] : only.split('#')
+  return merged(named, targetFrom(repo, pr, undefined))
 }
 
 /** A Bash `gh` or `git push` command's target: what its arguments name plainly. */
@@ -308,15 +327,15 @@ export function bashTarget(command: string): Target | undefined {
     if (program === 'gh') {
       const at = words.findIndex(w => w === '-R' || w === '--repo')
       const inline = words.find(w => w.startsWith('--repo='))
-      const sub = words[0] === 'pr' ? words[2] : undefined
-      const url = words.map(w => PULL_URL.exec(w)).find(m => m !== null)
+      const positional = words[0] === 'pr' ? words[2] : undefined
+      const url = at < 0 && inline === undefined && positional !== undefined ? PULL_WORD.exec(positional) : null
       found = merged(
-        targetFrom(at >= 0 ? words[at + 1] : inline?.slice('--repo='.length), sub, flag(words, '--match-head-commit') ?? flag(words, '--sha')),
-        url === undefined || url === null ? {} : targetFrom(url[1], url[2], undefined),
+        targetFrom(at >= 0 ? words[at + 1] : inline?.slice('--repo='.length), positional, flag(words, '--match-head-commit') ?? flag(words, '--sha')),
+        url === null ? {} : targetFrom(url[1], url[2], undefined),
       )
     } else if (program === 'git') {
-      const push = words.indexOf('push')
-      const remote = push < 0 ? undefined : words.slice(push + 1).map(w => REMOTE_URL.exec(w)).find(m => m !== null)
+      const sub = gitSubcommand(argv)
+      const remote = sub === undefined || argv[sub.at] !== 'push' ? undefined : argv.slice(sub.at + 1).map(w => REMOTE_URL.exec(w)).find(m => m !== null)
       if (remote !== undefined && remote !== null) found = targetFrom(remote[1], undefined, undefined)
     }
     if (Object.keys(found).length > 0) return found
@@ -491,7 +510,8 @@ export class Collector {
   /** `event` with the session's title and role, but for those its kind carries of its own. */
   private stamped(event: Event): Event {
     if (this.actor === undefined) return event
-    return { ...event, title: event['title'] ?? this.actor.title, role: event['role'] ?? this.actor.role }
+    const own = text(event['title'])
+    return { ...event, title: own ?? this.actor.title, role: event['role'] ?? (own === undefined ? this.actor.role : roleOf(own)) }
   }
 
   push(...events: Event[]): boolean {

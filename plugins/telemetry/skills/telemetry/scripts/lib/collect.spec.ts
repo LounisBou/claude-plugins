@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, roleOf,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, roleOf,
   sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
@@ -197,7 +197,7 @@ test('target: a github tool call that names nothing in its arguments is read fro
   const gate = { result: JSON.stringify({ repo: 'acme/thing', pr: 12, head: SHA, state: 'open' }) }
   assert.deepEqual(targetOf(gh('pr-gate', {}), gate), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
   assert.deepEqual(targetOf(gh('pr-create', {}), { text: 'https://github.com/acme/thing/pull/30' }), { repo: 'acme/thing', pr: 30 })
-  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), gate), { repo: 'acme/thing', pr: 5, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), gate), { pr: 5 })
   assert.equal(targetOf(gh('pr-list', {}), { text: 'no pull request' }), undefined)
 })
 
@@ -263,4 +263,74 @@ test('title: the three sources', () => {
   assert.equal(titleFromTranscriptHead(head), 'Agent: actor')
   assert.equal(titleFromTranscriptHead('{"type":"mode"}\nnot json'), undefined)
   assert.equal(titleFromTranscriptHead(''), undefined)
+})
+
+// ----- the corrective round: what a title, a target and a remote may and may not name -----
+
+const closeLine = "/plugins/orchestrator/skills/iterm-agents/scripts/iterm-agent.sh close --title 'Agent: x'"
+const bashCall = (command: string) => ({ tool: 'Bash', tool_use_id: 'toolu_01B', command })
+
+test('title: a launched session\'s spawn and close take the role of the child\'s own title, not the actor\'s', () => {
+  const c = new Collector()
+  c.setTitle('Orch: billing')
+  const spawn = toolEvents(AT, S, bashCall("iterm-agent.sh spawn --dir /w --title 'Review: x' --brief /b.md"), F('result.ok'), undefined, 1)[1]
+  const close = toolEvents(AT, S, bashCall(closeLine), F('result.ok'), undefined, 1)[1]
+  assert.equal(close?.['event'], 'agent_closed')
+  c.push(spawn as never, close as never)
+  const lines = c.drain().trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  assert.deepEqual([lines[0]?.['title'], lines[0]?.['role']], ['Review: x', 'reviewer'])
+  assert.deepEqual([lines[1]?.['title'], lines[1]?.['role']], ['Agent: x', 'agent'])
+})
+
+test('title: it is cut like any free text', () => {
+  assert.equal(CUTS['title'], 80)
+  assert.equal((cutFields({ title: 'T'.repeat(500) }) as { title: string }).title.length, 81)
+})
+
+test('target: arguments that name a pr are the only source: the result is not read, nor mixed in', () => {
+  const cited = { text: 'see https://github.com/other/z/pull/3' }
+  assert.deepEqual(targetOf(gh('pr-status', { pr: 5 }), cited), { pr: 5 })
+  assert.deepEqual(targetOf(gh('pr-status', { pr: 5, repo: 'acme/thing' }), cited), { repo: 'acme/thing', pr: 5 })
+  assert.deepEqual(targetOf(gh('pr-status', {}), cited), { repo: 'other/z', pr: 3 })
+  const gate5 = { result: JSON.stringify({ repo: 'acme/thing', pr: 5, head: SHA }) }
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), gate5), { repo: 'acme/thing', pr: 5, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), { text: JSON.stringify({ repo: 'acme/thing', pr: 5 }), ...cited }), { pr: 5 })
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 6 }), gate5), { pr: 6 })
+})
+
+test('target: without a pr in the arguments, one source gives repo and pr together; several pull URLs give nothing', () => {
+  const list = { text: 'https://github.com/a/b/pull/1\nhttps://github.com/c/d/pull/2' }
+  assert.equal(targetOf(gh('pr-list', {}), list), undefined)
+  assert.deepEqual(targetOf(gh('pr-list', {}), { text: 'https://github.com/a/b/pull/1 and again https://github.com/a/b/pull/1' }), { repo: 'a/b', pr: 1 })
+})
+
+test('target: a number is a pr for a pr command only, and a leading # is dropped', () => {
+  assert.equal(targetOf(gh('issue-view', { number: 7 })), undefined)
+  assert.deepEqual(targetOf(gh('issue-view', { number: 7, repo: 'acme/thing' })), { repo: 'acme/thing' })
+  assert.deepEqual(targetOf(gh('pr-get', { number: 7, repo: 'acme/thing' })), { repo: 'acme/thing', pr: 7 })
+  assert.deepEqual(targetOf(gh('pr-status', { pr: '#12', repo: 'acme/thing' })), { repo: 'acme/thing', pr: 12 })
+})
+
+test('target: a github host is anchored: notgithub.com is no pull request nor remote', () => {
+  assert.equal(targetOf(gh('pr-create', {}), { text: 'https://notgithub.com/acme/thing/pull/30' }), undefined)
+  assert.equal(targetOf(bashCall('gh pr checks https://notgithub.com/acme/thing/pull/9')), undefined)
+  assert.equal(targetOf(bashCall('git push https://notgithub.com/acme/thing.git HEAD:x')), undefined)
+  assert.deepEqual(targetOf(bashCall('git push git@github.com:acme/thing.git HEAD:x')), { repo: 'acme/thing' })
+  assert.deepEqual(targetOf(bashCall('gh pr checks https://www.github.com/acme/thing/pull/9')), { repo: 'acme/thing', pr: 9 })
+})
+
+test('target: a Bash gh takes a pull URL only as a standalone positional of a pr subcommand with no number and no repo flag', () => {
+  assert.deepEqual(targetOf(bashCall('gh pr comment 12 --body "see https://github.com/x/y/pull/3"')), { pr: 12 })
+  assert.equal(targetOf(bashCall('gh pr comment --body "see https://github.com/x/y/pull/3" 12')), undefined)
+  assert.deepEqual(targetOf(bashCall('gh pr comment 12 -R a/b --body "see https://github.com/x/y/pull/3"')), { repo: 'a/b', pr: 12 })
+  assert.deepEqual(targetOf(bashCall('gh pr merge 12 https://github.com/x/y/pull/3')), { pr: 12 })
+  assert.equal(targetOf(bashCall('gh issue view https://github.com/x/y/pull/3')), undefined)
+  assert.deepEqual(targetOf(bashCall('gh pr view https://github.com/x/y/pull/3')), { repo: 'x/y', pr: 3 })
+  assert.deepEqual(targetOf(bashCall('gh pr view https://github.com/x/y/pull/3 -R a/b')), { repo: 'a/b' })
+})
+
+test('target: git push is the git subcommand, not any word', () => {
+  assert.equal(targetOf(bashCall('git log --grep push https://github.com/a/b')), undefined)
+  assert.equal(targetOf(bashCall('git commit -m push https://github.com/a/b')), undefined)
+  assert.deepEqual(targetOf(bashCall('git -C /w push https://github.com/a/b HEAD:x')), { repo: 'a/b' })
 })
