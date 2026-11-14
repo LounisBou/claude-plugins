@@ -1,0 +1,4 @@
+{
+  "description": "The learning hooks module",
+  "modules": ["./register.ts"]
+}
