@@ -83,22 +83,32 @@ function unpushed(git: Git, clone: string): boolean {
 const transcriptPath = (machine: string, session: string): string => `machines/${machine}/transcripts/${session}.jsonl`
 
 /**
+ * What stands for a line that is no JSON. Its text is never kept: a value of ~/.env sits in it as
+ * JSON wrote it (`\"`, `\\`, `é`), so the redaction, which looks for the value itself, would
+ * pass it, and a value cut short is no value at all.
+ */
+const NOT_JSON_MARK = '[REDACTED:not-json]'
+
+/**
  * A transcript's text with every secret masked: each line parsed and each of its strings redacted
  * at any depth (the same redaction as an event, so a value of ~/.env or a token inside a message
- * is masked wherever it sits), a line that is no JSON redacted as text. Wrapped, so no field of
- * the line is held to the shape of an event's identifier.
+ * is masked wherever it sits). Wrapped, so no field of the line is held to the shape of an event's
+ * identifier. A line that is no JSON becomes a mark, and the text after the last newline, which
+ * the host is still writing, is left for the export that finds it ended.
  */
 export function redactTranscript(text: string, secrets: EnvSecrets): string {
-  return text.split('\n').map(line => {
-    if (line.trim() === '') return line
+  const lines = text.split('\n')
+  lines.pop()
+  return lines.map(line => {
+    if (line.trim() === '') return `${line}\n`
     let parsed: unknown
     try {
       parsed = JSON.parse(line)
     } catch {
-      return redactText(line, secrets).text
+      return `${NOT_JSON_MARK}\n`
     }
-    return JSON.stringify((redactValue({ line: parsed }, secrets).value as { line: unknown }).line)
-  }).join('\n')
+    return `${JSON.stringify((redactValue({ line: parsed }, secrets).value as { line: unknown }).line)}\n`
+  }).join('')
 }
 
 /** The index of the repository: the schema pages, the manifest of each day file of the store, and the sessions those name. */

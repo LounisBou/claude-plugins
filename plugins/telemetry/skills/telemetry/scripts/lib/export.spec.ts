@@ -224,9 +224,50 @@ test('a transcript is pushed beside the day files, redacted: no value of ~/.env,
     assert.match(lines[0] ?? '', /a prompt that is kept/)
     assert.match(lines[1] ?? '', /\[REDACTED:env\]/)
     assert.match(lines[1] ?? '', /\[REDACTED:anthropic-key\]/)
-    assert.match(lines[2] ?? '', /^not json, but \[REDACTED:env\] all the same$/)
+    assert.equal(lines[2], '[REDACTED:not-json]')
     assert.doesNotThrow(() => JSON.parse(lines[1] ?? ''))
     for (const value of [ENV_VALUE, SECRET]) assert.equal(git(['grep', '-c', value, 'main'], remote).status, 1, value)
+  })
+})
+
+/** Whether `main` of `remote` holds `text` anywhere, read as a fixed string. */
+const holds = (remote: string, text: string): boolean => git(['grep', '-F', '-c', '-e', text, 'main'], remote).status === 0
+
+// Invented values of ~/.env that a raw text would not match once JSON wrote them: a quote, a backslash, non-ASCII.
+const AWKWARD = ['say "cheese" now', 'back\\slash\\value', 'clé-secrète-élevée']
+
+test('a line that is no JSON is never pushed as text: a mark when it is complete, held back while the host writes it', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const secrets = new Map(AWKWARD.map((value, i) => [`AWKWARD_${i}`, value]))
+    const escaped = AWKWARD.map(value => JSON.stringify(value).slice(1, -1))
+    const cut = (AWKWARD[2] ?? '').slice(0, 9)
+    const file = join(root, `${S}.jsonl`)
+    writeFileSync(file, [
+      JSON.stringify({ type: 'user', message: 'a prompt that is kept' }),
+      // Complete, but cut inside a string: it parses to nothing and holds each value as written and as JSON writes it.
+      `{"type":"assistant","message":"${[...AWKWARD, ...escaped].join(' | ')}`,
+      JSON.stringify({ type: 'user', message: 'the last complete line' }),
+      // The host is writing this one: it stops inside a value, no newline after it.
+      `{"type":"assistant","message":"the key is ${cut}`,
+    ].join('\n'))
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), secrets)
+    const run = () => exportStore({ stateDir: state, secrets, repo: remote, machine: 'box', git, transcript: () => file })
+    assert.equal(run().code, 0)
+    const pushed = git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout
+    assert.equal(pushed, [
+      JSON.stringify({ type: 'user', message: 'a prompt that is kept' }),
+      '[REDACTED:not-json]',
+      JSON.stringify({ type: 'user', message: 'the last complete line' }),
+      '',
+    ].join('\n'))
+    for (const text of [...AWKWARD, ...escaped, cut, (AWKWARD[0] ?? '').slice(0, 8)]) assert.equal(holds(remote, text), false, text)
+    // Once the host ends the line, the next export pushes it, its value masked.
+    appendFileSync(file, `${(AWKWARD[2] ?? '').slice(9)}"}\n`)
+    assert.equal(run().code, 0)
+    const done = git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout.split('\n')
+    assert.equal(done[3], JSON.stringify({ type: 'assistant', message: 'the key is [REDACTED:env]' }))
+    for (const text of [...AWKWARD, cut]) assert.equal(holds(remote, text), false, text)
   })
 })
 
