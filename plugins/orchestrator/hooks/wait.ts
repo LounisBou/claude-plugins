@@ -13,6 +13,7 @@ import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } 
 import { messageOf, type Host, type On } from './host.ts'
 import { entryQuestions, fencedLines, numberOfLine, openFence, outsideFences, parseChoices, questionShape, type QuestionField } from '../core/method.ts'
 import { logLine } from './module-io.ts'
+import { holdsDone } from './unattended.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
@@ -252,6 +253,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
     const parsed = parseDeclaration(e)
     if ('error' in parsed) return { result: parsed.error, isError: true }
+    // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
+    const held = await holdsDone($, parsed.wait)
+    if (held !== null) return { result: held, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
   }).catch(async ($, e, next) => {
