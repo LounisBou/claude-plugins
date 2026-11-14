@@ -182,6 +182,34 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
   assert.equal(rows()[1]?.['deferred'], undefined)
 })
 
+test('verdict: the row carries the verdict, its few words and the findings index, level 1 of the review', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(await cli(['verdict', r, '1']), '1||ERROR: verdict: --head is required\n')
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc', '--result', 'pass', '--words', 'clean']), /too short/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'maybe', '--words', 'x']), /--result is pass, fail or accepted, got: maybe/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass']), /--words "<a few words>" is required/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'a\nb']), /one line of at most 120 characters/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'x'.repeat(121)]), /one line of at most 120 characters/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', 'x', '--findings', 'rel/index.md']), /--findings is the absolute path of the review's findings index, got: rel\/index.md/)
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', '1 critical', '--findings', '/b/review-1.md']),
+    '0|row 1: fail — 1 critical — findings: /b/review-1.md\n|WARNING: verdict: row 1 has no review recorded: recording the verdict anyway\n')
+  // A new review round voids the verdict of the previous one; a correction keeps it; rounds never move.
+  await cli(['review', r, '1', '--head', 'abc1234'])
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', '1 critical', '--findings', '/b/review-1.md']), '0|row 1: fail — 1 critical — findings: /b/review-1.md\n|')
+  await cli(['fixed', r, '1', '--head', 'def5678'])
+  assert.equal(await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', '2 set aside']), '0|row 1: accepted — 2 set aside — findings: none\n|')
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z', fixed: { head: 'def5678', at: '2026-11-08T10:11:12Z' },
+    verdict: { head: 'def5678', result: 'accepted', words: '2 set aside', findings: null, at: '2026-11-08T10:11:12Z' },
+  })
+  assert.equal(rows()[0]?.['rounds'], 2)
+  assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted — 2 set aside — findings=none')
+  await cli(['review', r, '1', '--head', 'aaa1111'])
+  assert.equal((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], undefined)
+})
+
 test('surface and audit', async () => {
   await withGoals()
   const r = rec()

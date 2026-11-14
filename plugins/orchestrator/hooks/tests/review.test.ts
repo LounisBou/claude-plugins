@@ -207,3 +207,80 @@ for (const [label, change] of [
     expect(fx.calls).toEqual([])
   })
 }
+
+// ---- level 1 of the review: the verdict, a few words and the findings index, in the dispatch record's row ----
+
+// A fake whose runs answer git's head and dispatch-record's line, each run kept with its init.
+function rowFake(record: { exitCode: number; stdout: string; stderr: string } = { exitCode: 0, stdout: 'row 4: fail — two to fix — findings: /b/review-128.md\n', stderr: '' }) {
+  const fx = fake('Orch: belt', { result: WRITTEN })
+  const runs: { argv: string[]; init: Record<string, unknown> | undefined }[] = []
+  fx.dollar.process.run = async (argv: readonly string[], init?: Record<string, unknown>) => {
+    runs.push({ argv: [...argv], init })
+    if (argv[0] === 'git') return { exitCode: 0, stdout: '0123456789abcdef0123456789abcdef01234567\n', stderr: '' }
+    if (String(argv[1] ?? '').endsWith('/dispatch-record.sh')) return record
+    return { exitCode: 0, stdout: '', stderr: '' }
+  }
+  return { ...fx, runs }
+}
+
+const FAILED = { pr: 128, dir: '/work/thing', verdict: 'fail', detail: 'two to fix', kept: [{ point: 'a.ts:3', file: 'a.ts', line: 3 }] }
+
+test('given its record and row, the verdict writes the gate\'s record, then level 1 into the row, in one call', async () => {
+  const fx = rowFake()
+  const out = await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4, findings: '/b/review-128.md' })
+  expect(fx.calls.length).toBe(1)
+  expect(fx.runs[0]).toEqual({ argv: ['git', 'rev-parse', 'HEAD'], init: { cwd: '/work/thing', timeoutMs: 10000 } })
+  expect(fx.runs[1]!.argv).toEqual([
+    'bash', '/plugins/orch-root/skills/orchestrator/scripts/dispatch-record.sh', 'verdict', '/b/record.jsonl', '4',
+    '--head', '0123456789abcdef0123456789abcdef01234567', '--result', 'fail', '--words', 'two to fix', '--findings', '/b/review-128.md',
+  ])
+  expect((fx.runs[1]!.init!['env'] as Record<string, string>)['CLAUDE_CODE_SESSION_ID']).toBe('s-one')
+  expect(out).toEqual({ result: `${WRITTEN}\nrow 4: fail — two to fix — findings: /b/review-128.md` })
+})
+
+test('an acceptance\'s few words count its set-asides, never their words', async () => {
+  const fx = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: none\n', stderr: '' })
+  await handler()(fx.dollar, { ...ACCEPTED, record: '/b/record.jsonl', row: 4 })
+  const argv = fx.runs.find((r) => r.argv[2] === 'verdict')!.argv
+  expect(argv.slice(argv.indexOf('--result'))).toEqual(['--result', 'accepted', '--words', '2 point(s) set aside'])
+})
+
+test('a row the record refuses comes back as an error that says the gate\'s record is written', async () => {
+  const fx = rowFake({ exitCode: 1, stdout: '', stderr: 'ERROR: verdict: no row with id 4 in /b/record.jsonl\n' })
+  const out = await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 })
+  expect(out).toEqual({ result: `${WRITTEN}\nthe gate's record is written; the row is not: ERROR: verdict: no row with id 4 in /b/record.jsonl`, isError: true })
+})
+
+test('without a record, the verdict touches no row', async () => {
+  const fx = rowFake()
+  await handler()(fx.dollar, FAILED)
+  expect(fx.runs.filter((r) => r.argv[0] === 'git' || r.argv[2] === 'verdict')).toEqual([])
+})
+
+test('a refused gate record writes no row', async () => {
+  const fx = rowFake()
+  fx.dollar.tool.call = async () => ({ deny: 'github: no.' })
+  await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 })
+  expect(fx.runs.filter((r) => r.argv[0] === 'git' || r.argv[2] === 'verdict')).toEqual([])
+})
+
+for (const [label, change] of [
+  ['a record without its row', { record: '/b/record.jsonl' }],
+  ['a row without its record', { row: 4 }],
+  ['a relative record', { record: 'b/record.jsonl', row: 4 }],
+  ['a row that is no id', { record: '/b/record.jsonl', row: 0 }],
+  ['a relative findings index', { record: '/b/record.jsonl', row: 4, findings: 'review.md' }],
+] as const) {
+  test(`a verdict with ${label} is refused and calls nothing`, async () => {
+    const fx = rowFake()
+    const out = await handler()(fx.dollar, { ...FAILED, ...change })
+    expect(out.isError).toBe(true)
+    expect(fx.calls).toEqual([])
+  })
+}
+
+test('a check plan names no row', async () => {
+  const fx = rowFake()
+  expect((await handler()(fx.dollar, { ...PLANNED, record: '/b/record.jsonl', row: 4 })).isError).toBe(true)
+  expect(fx.calls).toEqual([])
+})
