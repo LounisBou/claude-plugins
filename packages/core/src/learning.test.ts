@@ -4,7 +4,7 @@ import { DATA_FILES } from './data.ts'
 import {
   AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, eventId, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
-  parseJournalEvent, parseLearningEvent, prRefsOf, prunable,
+  foldWeekly, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
 const AT = '2026-11-14T10:15:00Z'
@@ -143,10 +143,10 @@ describe('the journal of a plugin', () => {
     assert.throws(() => journalDir('/home/u/.claude', 'Git Hub'))
   })
 
-  it('sets the window at 30 days, the retention at 180 and the count at 2,000', () => {
+  it('sets the window at 30 days, the retention at 90 and the count at 6,000', () => {
     assert.equal(LEARNING_WINDOW_DAYS, 30)
-    assert.equal(JOURNAL_MAX_AGE_DAYS, 180)
-    assert.equal(JOURNAL_MAX_EVENTS, 2000)
+    assert.equal(JOURNAL_MAX_AGE_DAYS, 90)
+    assert.equal(JOURNAL_MAX_EVENTS, 6000)
   })
 
   const NOW = '2026-11-14T10:15:00Z'
@@ -154,12 +154,12 @@ describe('the journal of a plugin', () => {
   const entry = (name: string, days: number) => ({ id: name, at: at(days) })
 
   it('drops what is older than the retention, keeps what is exactly as old', () => {
-    const events = [entry('old', 181), entry('edge', 180), entry('new', 1)]
+    const events = [entry('old', 91), entry('edge', 90), entry('new', 1)]
     assert.deepEqual(prunable(events, NOW), ['old'])
   })
 
   it('drops the oldest past the count, whatever the order it is given in', () => {
-    const events = Array.from({ length: JOURNAL_MAX_EVENTS + 3 }, (_, i) => ({ id: `e${i}`, at: at(100 - i / 100) }))
+    const events = Array.from({ length: JOURNAL_MAX_EVENTS + 3 }, (_, i) => ({ id: `e${i}`, at: at(80 - i / 100) }))
     const dropped = prunable([...events].reverse(), NOW)
     assert.deepEqual([...dropped].sort(), ['e0', 'e1', 'e2'])
   })
@@ -172,6 +172,41 @@ describe('the journal of a plugin', () => {
   it('keeps an entry whose time it cannot read, and drops nothing from a journal within its bounds', () => {
     assert.deepEqual(prunable([{ id: 'x', at: 'not a time' }, entry('a', 1)], NOW), [])
     assert.deepEqual(prunable([], NOW), [])
+  })
+})
+
+describe('the weekly fold of the events a journal drops', () => {
+  const refusal = (when: string, code = 'github.ready.missing-review') => {
+    const event = learningEvent({ kind: 'refusal', at: when, random: '0a1b2c3d', source: { plugin: 'github', code }, trust: 'computed' })
+    assert.ok(event, when)
+    return event
+  }
+
+  it('names a signature by kind and code, and by severity and languages when the event has them', () => {
+    assert.equal(signatureOf(refusal(AT)), 'refusal:github.ready.missing-review')
+    const finding = parseLearningEvent({
+      ...EVENT, kind: 'finding', evidence: [{ type: 'finding', severity: 'critical', file: 'plugins/github/hooks/ready.ts' }],
+    })
+    assert.ok(finding)
+    assert.equal(signatureOf(finding), 'finding:github.ready.missing-review:critical:typescript')
+  })
+
+  it('counts one line per signature and week, by week then signature, the week named by its Monday in UTC', () => {
+    const folded = foldWeekly([
+      refusal('2026-11-09T00:00:00Z'), refusal('2026-11-15T23:59:59Z'), refusal('2026-11-16T00:00:00Z'),
+      refusal('2026-11-10T08:00:00Z', 'norms.push-ask'),
+    ])
+    assert.deepEqual(folded, [
+      { signature: 'refusal:github.ready.missing-review', week: '2026-11-09', count: 2 },
+      { signature: 'refusal:norms.push-ask', week: '2026-11-09', count: 1 },
+      { signature: 'refusal:github.ready.missing-review', week: '2026-11-16', count: 1 },
+    ])
+  })
+
+  it('answers nothing for nothing, whatever the order the events come in', () => {
+    assert.deepEqual(foldWeekly([]), [])
+    const events = [refusal('2026-11-16T00:00:00Z'), refusal('2026-11-09T00:00:00Z')]
+    assert.deepEqual(foldWeekly(events), foldWeekly([...events].reverse()))
   })
 })
 

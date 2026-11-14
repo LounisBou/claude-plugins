@@ -9,8 +9,9 @@
 // plugin's copy, which a writer in Python loads. Version 1 is the first field list, not the last:
 // a kind or a field added later (an audit trail's timestamps, decisions or waits, say) is a new
 // version of the contract, read beside this one, and never a field slipped into version 1. The
-// window, the retention and the count of a journal are held here once, on the recommendation of
-// the design's question 9 (30 days, 180 days, 2,000 events) while the operator has not answered it.
+// window, the retention and the count of a journal are held here once, as the operator answered the
+// design's question 9: 30 days, 90 days, 6,000 events; what a journal drops is folded into one count
+// per signature and week (`foldWeekly`).
 
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
@@ -23,8 +24,8 @@ export const LEARNING_CONTRACT = {
   // What a journal keeps: the days a retrospective looks back over, the days an event stays, the
   // events a plugin's journal holds. A writer prunes its own directory past the last two.
   window_days: 30,
-  max_age_days: 180,
-  max_events: 2000,
+  max_age_days: 90,
+  max_events: 6000,
   // The directory under a plugin's state directory.
   journal_dir: 'journal',
   paths_max: 20,
@@ -271,6 +272,49 @@ export function prunable(events: ReadonlyArray<{ readonly id: string; readonly a
   const kept = dated.filter(e => !isAged(e)).sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : 1))
   const over = kept.slice(0, Math.max(0, kept.length - contract.max_events))
   return [...aged, ...over].map(e => e.id)
+}
+
+/**
+ * What groups events of one kind of fact: the kind, the code that raised it, then, when the event
+ * has them, the severity of its first finding and its languages. The same events give the same
+ * signature, whoever reads them.
+ */
+export function signatureOf(event: LearningEvent): string {
+  const severity = event.evidence.flatMap(e => (e.type === 'finding' ? [e.severity] : []))[0]
+  const parts = [event.kind, event.source.code, ...(severity ? [severity] : []), ...event.context.languages]
+  return parts.join(':')
+}
+
+export interface FoldedCount {
+  readonly signature: string
+  /** The Monday, in UTC, of the week the events fall in: `YYYY-MM-DD`. */
+  readonly week: string
+  readonly count: number
+}
+
+/** The Monday of the UTC week of `ms`, as `YYYY-MM-DD`. */
+function weekOf(ms: number): string {
+  const day = new Date(ms)
+  const sinceMonday = (day.getUTCDay() + 6) % 7
+  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() - sinceMonday)).toISOString().slice(0, 10)
+}
+
+/**
+ * One count per signature and week of `events`, the ones a journal drops, in the order of week then
+ * signature: what stays of them once their files are gone. An event whose time cannot be read is not
+ * counted.
+ */
+export function foldWeekly(events: readonly LearningEvent[]): FoldedCount[] {
+  const counts = new Map<string, FoldedCount>()
+  for (const event of events) {
+    const ms = Date.parse(event.at)
+    if (Number.isNaN(ms)) continue
+    const signature = signatureOf(event)
+    const week = weekOf(ms)
+    const key = `${week} ${signature}`
+    counts.set(key, { signature, week, count: (counts.get(key)?.count ?? 0) + 1 })
+  }
+  return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, folded]) => folded)
 }
 
 // ----- version 2: the audit trail -----
