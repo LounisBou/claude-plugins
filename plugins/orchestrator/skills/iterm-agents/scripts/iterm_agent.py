@@ -175,10 +175,6 @@ def current_name(name):
 # through the host's `enableArtifact` setting, which also drops the « Scratchpad
 # directory » line every agent brief relies on.
 LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "ReportFindings")
-# The module registers this in every session it does not name by itself, and only an orchestrator
-# or the coordinator, handed over, calls it: its successor asks it to end its session.
-END_TOOLS = ("mcp__orchestrator__end_session",)
-END_ROLES = (ORCH, COORD)
 # The tools only an orchestrator calls, registered in every session too: an implementer agent
 # is never given them, a title of no role being read as an agent's.
 ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
@@ -4188,11 +4184,10 @@ def title_role(title):
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
-    orchestrator and the coordinator keep the one that ends a session, only an agent
-    loses the four an orchestrator alone calls, and an orchestrator also loses the servers it
-    never calls."""
-    return (LEAN_REMOVED + (() if role in END_ROLES else END_TOOLS)
-            + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS) + (ORCH_UNUSED if role == ORCH else ()))
+    agent loses the four an orchestrator alone calls, and an orchestrator also loses the
+    servers it never calls."""
+    return (LEAN_REMOVED + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS)
+            + (ORCH_UNUSED if role == ORCH else ()))
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -6745,8 +6740,7 @@ def read_offered(path):
 def tool_rows(offered, catalogue):
     """The listing, one `kind | name | characters | tokens | roles` row per item. A `?` is a
     figure this transcript cannot give: a name the default removes from at least one role
-    (the five unused tools from every role, the one that ends a session from every
-    role but `Orch` and `Coord`, the four only an orchestrator calls from `Agent`) is listed even when the reader's own session lacks it (a
+    (the five unused tools from every role, the four only an orchestrator calls from `Agent`) is listed even when the reader's own session lacks it (a
     lean caller never received it), and a catalogue server has no size unless this session
     loaded it. The last field names the roles whose default removes the item, `-` when none
     does."""
@@ -6768,7 +6762,7 @@ def tool_rows(offered, catalogue):
     for kind in ("loaded", "deferred", "skills", "agent-types"):
         items = dict(offered[kind])
         if kind == "loaded":
-            every = set().union(*removed.values()) | set(END_TOOLS) | set(ORCH_TOOLS)
+            every = set().union(*removed.values()) | set(ORCH_TOOLS)
             missing = sorted(every - set(offered["loaded"]) - set(offered["deferred"]))
         else:
             missing = []
