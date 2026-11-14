@@ -1,6 +1,6 @@
 ---
 name: lifecycle
-description: The development method every role follows - the lifecycle, definition of done, consent, report and question formats. Load it once per session before planning, implementing or reviewing work ending in a pull request.
+description: The development method every role follows - the lifecycle, definition of done, consent, report and question formats. Load it once per session before planning, implementing or reviewing work ending in a PR.
 ---
 
 # The method
@@ -20,11 +20,11 @@ sessions.
 
 ## Self-review
 
-With the gate green, the implementer reviews its change, so the outside review confirms
-instead of discovering: the review round's lenses (correctness, tests, silent failures, spec
-conformity, security where it applies) over `origin/<base>...HEAD`, each a read-only
-`orchestrator:lens`. A finding is fixed or answered in the pull request body's « Self-review »
-section, one line each. The outside review reads it first.
+Once the gate is green, before the pull request opens, the implementer reviews its change, so the
+outside review confirms instead of discovering: the review round's lenses (correctness, tests,
+silent failures, spec conformity, security where it applies) over `origin/<base>...HEAD`, each a
+read-only `orchestrator:lens`. A finding is fixed (gate rerun) or answered in the pull request
+body's « Self-review » section, one line each. The outside review reads it first.
 
 ## Done means ready
 
@@ -39,7 +39,7 @@ Outside auto-merge, leaving draft, after their review, and the merge need it; `R
 
 ## Reports
 
-A unit of work ends with a report as in `references/report.md`, whose last line is its status.
+A unit of work ends with a report as in `references/report.md`.
 
 ## Questions to the operator
 

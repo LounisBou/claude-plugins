@@ -464,7 +464,7 @@ check "the module's tests pass in the host's kit" "0" \
 check "close and phase point at the method's self-review" "1|1" \
   "$(grep -c 'self-review comes after the last step below and before the pull request opens' "$ROOT/skills/close/SKILL.md")|$(grep -c 'the self-review before the pull request, consent, ready' "$ROOT/skills/phase/SKILL.md")"
 check "phase says its lens readers are refused until the guard's release" "1" \
-  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'lens readers are subagents this guard refuses until `/implement:release-guard`')"
+  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'lens readers are subagents this guard refuses: they run after `implement:close`, or once `/implement:release-guard` has released it.')"
 
 echo
 echo "$pass passed, $fail failed"
