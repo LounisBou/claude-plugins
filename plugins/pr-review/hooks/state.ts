@@ -5,6 +5,7 @@
 // (no walkthrough active means no guard refuses anything).
 import type { Skill } from './policy.ts'
 import type { Finding } from './report.ts'
+import { REVIEW_ROUNDS } from '../core/readiness.ts'
 
 export type Walkthrough = {
   // The skill whose rules hold, or null when none runs.
@@ -34,7 +35,7 @@ export type Fix = { key: string; sha: string; description: string; reverted: boo
 export type Loop = {
   isActive: boolean
   pass: number
-  // The passes the loop may run: MAX_PASSES alone, ORCHESTRATED_PASSES in a session the orchestrator spawned.
+  // The passes the loop may run: MAX_PASSES alone, the pull request's check plan's rounds in a session the orchestrator spawned.
   maxPasses: number
   testCommand: string
   // The checkout the loop started in, as its top directory: the record is written for it, wherever the session's directory moves.
@@ -79,10 +80,8 @@ export type Loop = {
   waitedAt: number
 }
 
-export const MAX_PASSES = 5
-
-// The orchestrator runs one review and one correction round itself: its agent's loop reviews once.
-export const ORCHESTRATED_PASSES = 1
+// The rounds a review runs at most: core's cap on a check plan's review rounds.
+export const MAX_PASSES: number = REVIEW_ROUNDS.cap
 
 export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 

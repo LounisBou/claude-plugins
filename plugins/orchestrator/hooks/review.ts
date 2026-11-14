@@ -8,7 +8,7 @@
 // request's check plan (github's check-plan.ts), which github takes from this plugin only.
 import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
-import { PLAN_NEEDS } from '../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
@@ -129,7 +129,7 @@ export function register(on: On<Held>): void {
             detail: { type: 'string', description: 'pass or fail: one line on what was reviewed or found' },
             plan: {
               type: 'object',
-              description: 'in place of the verdict: each "<need>" or "<need>: <reason>"',
+              description: 'in place of the verdict: each "<need>" or "<need>: <reason>"; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
               properties: {
                 e2e: { type: 'string', description: needsOf('e2e') },
                 norms: { type: 'string', description: needsOf('norms') },

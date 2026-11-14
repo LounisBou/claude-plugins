@@ -4,7 +4,7 @@
   "conditions": {
     "review": {
       "holder": "gate",
-      "means": "a review record that passes: no blocking finding, or the orchestrator's acceptance of its set-asides"
+      "means": "a review record that passes: no blocking finding, or the orchestrator's acceptance of its set-asides, unless the check plan excuses it"
     },
     "e2e": {
       "holder": "gate",
@@ -36,14 +36,24 @@
         "none"
       ],
       "review": [
-        "full",
-        "one-pass"
+        "required",
+        "none"
       ]
     },
     "omitted": {
       "e2e": "none: not in the plan",
       "norms": "none: not in the plan",
-      "review": "full"
+      "review": "required"
+    },
+    "rounds": {
+      "omitted": 3,
+      "cap": 3
+    },
+    "former": {
+      "review": {
+        "full": 3,
+        "one-pass": 1
+      }
     }
   },
   "voids": "a head whose own diff differs"

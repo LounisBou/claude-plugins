@@ -778,7 +778,7 @@ export function ciUndraftLine(repo: string, pr: number): string {
 export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, excused: Excused = {},
   carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', '
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : excused.review ? 'no review needed (' + excused.review + ')' : 'a clean review') + ', '
     + (excused.norms ? 'no norms check needed (' + excused.norms + '), ' : '')
     + (excused.e2e ? 'no E2E needed (' + excused.e2e + ')' : 'passed E2E') + ' and green CI hold at its head'
     + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
