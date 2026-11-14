@@ -9,10 +9,10 @@ owner or a proposed reading, when a review returned an arbitration, or when the 
 says « one question at a time ». The user arbitrates scope; you decide nothing of
 theirs and never ask two things in one message.
 
-**The operator's time is the scarce thing, and a question never stops the rest of the work.**
-A round is a WAVE: the questions follow one another, each ruling relayed to its agent at once.
-A question blocks only the work that depends on its answer: everything else is launched,
-verified and merged meanwhile.
+**The operator's time is the scarce thing.** A round is a WAVE: the questions follow one another,
+each ruling relayed to its agent at once. A question never stops the rest of the work
+(`method:lifecycle`, « Questions to the operator »): everything else is launched, verified and
+merged meanwhile.
 
 **While a coordinator runs, the wave goes through it**, carried by the hooks module: each
 question ends its turn as step 2 says, and the module forwards it.
@@ -58,8 +58,9 @@ question ends the turn's last message, then `declare_wait({kind: "operator", blo
 
 ## 3. While the answer is awaited
 
-What the question blocks does not proceed on silence; do not pick for them, not even the
-« obvious » one. A partial or ambiguous answer gets ONE clarifying line, not a new question.
+What the question blocks goes on as `method:lifecycle` says, on the recommended option or, for an
+exception it names, waiting. A partial or ambiguous answer gets ONE clarifying line, not a new
+question.
 Everything else goes on: agents' reports and idle notices are acted on as they arrive, and
 such a turn ends on `kind: "tool"`, or no wait, the open question waking you with its answer.
 The question stays open in the round, not repeated in later messages. A

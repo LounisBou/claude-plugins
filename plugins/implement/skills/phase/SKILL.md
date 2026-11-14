@@ -163,12 +163,11 @@ left, say that `implement:close` is next.
 | Either of them is ignored in committed mode | `docs/features and ROADMAP.md must not be ignored in committed mode` |
 | A gate still red after two fixes | `gate red after two fixes: <command> exit <code>` — status `blocked` |
 | A second `FAIL` on the same sub-phase | `check failed twice on <sub-phase>: <the failing rows>` — status `blocked` |
-| The plan does not settle a scope question | the question in one line, then wait — status `question` |
+| The plan does not settle a scope question | the question in one line — status `question` |
 | An outward-facing or irreversible action is needed that no instruction calls for | name it and wait; it is not taken on the skill's own account |
 
-Each stop asks once, in one line, and waits: for the operator, and in an orchestrated
-build (`ORCHESTRATOR_SPAWNED` set) for the orchestrator, whose answer stands. No progress
-narration between sub-phases, and no question whose answer is already in the plan.
+Each stop asks once, in one line; a question never stops the phase (`method:lifecycle`). No
+narration between sub-phases.
 
 ---
 

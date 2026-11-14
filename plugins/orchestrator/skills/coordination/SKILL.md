@@ -194,7 +194,7 @@ and present the next one in full in the same message; a superseded one makes <id
    presenting it; one found settled on its artifact is withdrawn on that evidence:
    `coordinator.sh round-close <id> --withdraw "<evidence>"`, which tells its sender it was
    withdrawn, never « the operator answered »; it leaves the count, and the next question is
-   presented in full instead. Then wait: nothing on silence, nothing picked for him.
+   presented in full instead. Then wait: you pick nothing for him.
 6. **On his answer, in the same turn:** « Recorded: <his ruling> »; for an entry of the round,
    run `coordinator.sh round-close <id> --answer "<his words>"` alone, never a SendMessage
    beside it: your module sends it to the sender, dated, as soon as `round-close` returns,
