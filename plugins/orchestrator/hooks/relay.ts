@@ -235,16 +235,22 @@ export function coordinatorOf(recordText: string): string | null {
   }
 }
 
+// An instant as every surface shows it to the operator: the hour and minute of the machine's own
+// time; `?` for none.
+export function localMinute(iso: string | null): string {
+  const at = new Date(String(iso ?? ''))
+  if (!Number.isFinite(at.getTime())) return '?'
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
 // The wait in its two parts, the one definition every surface reads: the status words, with
 // their start in the machine's local time, and for a wait on the operator what it blocks
 // (« unsaid » when the row carries none; null for a proposal to close). Null when the row
 // waits on nothing.
 export function waitParts(row: SessionRow): { status: string; blocks: string | null } | null {
   if (row.waiting !== 'operator' && row.waiting !== 'done') return null
-  const at = new Date(String(row.waiting_since ?? ''))
-  const since = Number.isFinite(at.getTime())
-    ? ` since ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-    : ''
+  const minute = localMinute(row.waiting_since ?? null)
+  const since = minute === '?' ? '' : ` since ${minute}`
   return row.waiting === 'done'
     ? { status: `done${since}, proposes to be closed`, blocks: null }
     : { status: `waiting for the operator${since}`, blocks: row.blocks ?? 'unsaid' }
