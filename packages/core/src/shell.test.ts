@@ -36,9 +36,28 @@ describe('simpleCommands', () => {
 
   it('keeps a brace inside a word, and groups only a brace standing alone', () => {
     assert.deepEqual(commands('gh api repos/{owner}/x'), [['gh', 'api', 'repos/{owner}/x']])
-    assert.deepEqual(commands('echo {a,b} x{y z}'), [['echo', '{a,b}', 'x{y', 'z}']])
+    assert.deepEqual(commands('echo {a,b} x{y z}'), [['echo', 'a', 'b', 'x{y', 'z}']])
     assert.deepEqual(commands('echo a}; { ls;}'), [['echo', 'a}'], ['ls']])
     assert.deepEqual(commands('{ git push; } | cat'), [['git', 'push'], ['cat']])
+  })
+
+  it('expands an unquoted brace expansion into several words, as bash does before the command runs', () => {
+    assert.deepEqual(commands('{git,push,--force} origin'), [['git', 'push', '--force', 'origin']])
+    assert.deepEqual(commands('git {push,pull} x{1,2}y'), [['git', 'push', 'pull', 'x1y', 'x2y']])
+    assert.deepEqual(commands('echo {a..c} {3..1} {1..7..3} {01..03} {a,{b,c}}'), [['echo', 'a', 'b', 'c', '3', '2', '1', '1', '4', '7', '01', '02', '03', 'a', 'b', 'c']])
+    assert.deepEqual(commands('echo {a,b}{c,d} a{b}{c,d} {a..c}.{x,y}'), [['echo', 'ac', 'ad', 'bc', 'bd', 'a{b}c', 'a{b}d', 'a.x', 'a.y', 'b.x', 'b.y', 'c.x', 'c.y']])
+  })
+
+  it('leaves what bash leaves: quoted or escaped braces, a group with no comma or range, a parameter, a range too long', () => {
+    assert.deepEqual(commands(`echo '{a,b}' "{a,b}" \\{a,b} {a\\,b} x'{'a,b} {a,b'}'`), [['echo', '{a,b}', '{a,b}', '{a,b}', '{a,b}', 'x{a,b}', '{a,b}']])
+    assert.deepEqual(commands('echo {} {a} {a..} {..b} {a..1} {1..a} {a,b x,y} ${x,y} ${a:-b,c}'), [['echo', '{}', '{a}', '{a..}', '{..b}', '{a..1}', '{1..a}', '{a,b', 'x,y}', '${x,y}', '${a:-b,c}']])
+    assert.deepEqual(commands('echo repos/{owner}/{repo}/x { ls; }'), [['echo', 'repos/{owner}/{repo}/x', 'ls']])
+    assert.deepEqual(commands('echo {1..100000} {a,b}{1..100}{1..100}{1..100}'), [['echo', '{1..100000}', '{a,b}{1..100}{1..100}{1..100}']])
+  })
+
+  it('expands a word of a command substitution, an eval and a here-string as bash does', () => {
+    assert.deepEqual(commands('echo $(git {push,--force}) <<< {a,b}'), [['git', 'push', '--force'], ['echo']])
+    assert.deepEqual(commands('eval {git,push,-f}'), [['eval', 'git', 'push', '-f'], ['git', 'push', '-f']])
   })
 
   it('skips arithmetic and the targets of redirections and here-strings', () => {

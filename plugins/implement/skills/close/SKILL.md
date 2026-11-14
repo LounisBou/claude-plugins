@@ -205,9 +205,8 @@ of the repository and stay in it.
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
 | The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `question` |
 
-Each stop says its line once and waits; an orchestrated build (`ORCHESTRATOR_SPAWNED`
-set) has its orchestrator answer it, not the operator. No answer to a stop turns it into an outward
-action that no instruction calls for.
+Each stop says its line once; a question never stops a session (`method:lifecycle`). No answer to
+a stop turns it into an outward action that no instruction calls for.
 
 ---
 

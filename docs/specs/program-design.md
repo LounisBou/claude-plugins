@@ -50,35 +50,37 @@ to this repository only once it is proved stable (`docs/migration.md`).
 21. A context simulator computes the tokens of each scenario from declared loads, CI shows each pull request's difference by scenario, and the gauge's first-turn measures calibrate it.
 22. A script reports the rules a prompt states that neither code enforces nor an eval names.
 
-## State on main (2026-11-09)
+## State on main (2026-11-14)
 
-What the code on `main` holds for each goal, read from the code and CI, not from the history.
-« Open » says what is left and why; a goal is met only when its row says so.
+What the code on `main` (`6a0cd839`) holds for each goal, read from the code and CI, not from
+the history. Pull requests are named with the repository, `claude-plugins#N`. « Open » says what is
+left and why; a goal is met only when its row says so. Goals 2, 16 and 17 are operator steps
+outside this repository.
 
 | # | State | Evidence | Open, and why |
 |---|---|---|---|
-| 1 | partly met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json`; bugs-bot: the deploy check is refused unless the project file is the operator's alone (`agent.py`, `_refuse_foreign_check`) | bugs-bot's `deploy_check` still runs with `shell=True` (`bugs_bot/agent.py`): the risk is narrowed to the operator's own command, not removed |
-| 2 | not verified | the catalogue's relative sources (`.claude-plugin/marketplace.json`) | an install in a separate profile on the operator's machine; nothing in this repository can run it |
-| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts) reaches github, implement, norms, orchestrator and pr-review as a copy; the shell reader replaced its copies (claude-plugins#29, #73); pr-review runs github's installer (#29) | the copies listed in « Copied rules core replaces » marked open |
-| 4 | partly met | typed in core with a version: PR records (tested from both sides, `scripts/contracts.test.ts`), consent records (#78), the method's formats, the store convention | the measure file, `deck.json`, the launcher's command line and `ListAgents` are not typed in core (`docs/contracts.md`) |
-| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the orchestrator's skill scripts and eight of its hook files | the other hook files of every plugin are outside the strict check (62 files still type `$` as `any`) |
-| 6 | met | `ci/plugins.json`: the nine plugins block on Linux and macOS; the orchestrator's suite passes in full on macOS's bash 3.2 (main run 42636393668, 2363 passed, 0 failed) | — |
-| 7 | met | `npm run deps` (`scripts/deps.ts`) | — |
-| 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (#20); the review verdict is computed from the review agents' findings (#18) | norms' pass is still computed from the figures the model passes to `check_done` |
-| 9 | partly met | no grant read from words in norms (#28), pr-review (#17), implement (#30); github reads consent from consent records declared with `declare_wait` (#78) | the orchestrator's stop gate still reads a turn's last line when it declared no wait (the transitional clause of `orchestrator-refoundation-design.md`) |
-| 10 | met for the guards listed in the defects | github (#15), bugs-bot (#16), norms' push guard (#28) refuse when they cannot decide | — |
-| 11 | met | `npm run permissions`; the installer rules of `docs/contracts.md` (#21) | — |
-| 12 | met | `/github:protect [apply]` (#21); the orchestrator's local push guard removed (#72) | — |
-| 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open |
-| 14 | met | `ci/prompts.json` held by CI; `npm run context`: the orchestrator's start is 1,960 tokens in `build`, 1,290 in `investigate` | — |
-| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`) | no pilot or measure has run: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; nothing runs them at a release |
-| 16 | not started | — | the operator's configuration repository, outside this one |
-| 17 | not met | `docs/migration.md` | follows goals 2, 6, 15, 16 |
-| 18 | met for the strict parts | `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the orchestrator's skill scripts | no Python part is measured; a part joins the day it is strict |
-| 19 | met | `plugins/method` (the kernel and its references), core's `method.ts`; implement and the orchestrator point at `method:lifecycle` (#19, #67, #74) | the orchestrator's relay still parses an agent's status line with its own `parseStatus` (`hooks/relay.ts`) rather than core's `reportStatus` |
-| 20 | met | `/implement:review` runs the review in another session (#20) | the operator's open decision on implement in orchestrated briefs (below) |
-| 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (#32) | not calibrated on the gauge's first-turn measures, which live on the operator's machine |
-| 22 | met | `npm run rules` (#33) | — |
+| 1 | partly met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | bugs-bot's `deploy_check` still runs with `shell=True` (`bugs_bot/agent.py:254`): the risk is narrowed to the operator's own command, not removed |
+| 2 | operator step | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check` | an install in a separate profile on the operator's machine; nothing in this repository can run it |
+| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent and PR records) reaches github, implement, norms, orchestrator and pr-review as a copy; the shell reader replaced its copies (claude-plugins#29, claude-plugins#73); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: `resolve_github.py` (norms, pr-review), the session-name shape, the context gate's arithmetic, the negative-phrase list; `logLine` is defined in 11 orchestrator hook files, `configDir` in 6 |
+| 4 | partly met | typed in core with a version: PR records (tested from both sides, `scripts/contracts.test.ts`), consent records (claude-plugins#78), the method's formats, the verdict line (`verdict.ts`), the store convention | the measure file, `deck.json`, the launcher's command lines, the declared wait kinds and `ListAgents` are not typed in core (`docs/contracts.md`) |
+| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, orchestrator and telemetry skill scripts, eight of the orchestrator's hook files and two of telemetry's | the other hook files of every plugin are outside the strict check (36 files still type `$` as `any`) |
+| 6 | met | `ci/plugins.json`: ten plugins block on Linux and macOS, drift on Linux (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169) | — |
+| 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
+| 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); a check plan is accepted only from the orchestrator (claude-plugins#164) | norms' pass is still computed from the figures the model passes to `check_done` (`plugins/norms/hooks/record.ts`) |
+| 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78) | the orchestrator's stop gate still reads a turn's last line when it declared no wait (`hooks/stop-gate.ts`, the transitional clause of `orchestrator-refoundation-design.md`) |
+| 10 | met for the guards listed in the defects | github (claude-plugins#15), bugs-bot (claude-plugins#16), norms' push guard (claude-plugins#28) refuse when they cannot decide | — |
+| 11 | met | `npm run permissions`; the installer rules of `docs/contracts.md` (claude-plugins#21) | — |
+| 12 | met | `/github:protect [apply]` (claude-plugins#21); the orchestrator's local push guard removed (claude-plugins#72) | — |
+| 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly |
+| 14 | met | `ci/prompts.json` held by CI; `npm run context`: the orchestrator's start is 1,931 tokens in `build`, 1,266 in `investigate` | — |
+| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; nothing runs them at a release |
+| 16 | operator step | — | the operator's configuration repository, outside this one |
+| 17 | operator step | `docs/migration.md` | follows goals 2, 6, 15, 16; the criteria need the operator's days of use and a rehearsal |
+| 18 | met for the strict parts | `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured; a part joins the day it is strict |
+| 19 | met | `plugins/method` (the kernel and its references), core's `method.ts`; implement and the orchestrator point at `method:lifecycle` (claude-plugins#19, claude-plugins#67, claude-plugins#74) | the orchestrator's relay still parses an agent's status line with its own `parseStatus` (`hooks/relay.ts`) rather than core's `reportStatus` |
+| 20 | met | `/implement:review` runs the review in another session (claude-plugins#20) | the operator's open decision on implement in orchestrated briefs (below) |
+| 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
+| 22 | met | `npm run rules` (claude-plugins#33) | — |
 
 ## Constraints
 
