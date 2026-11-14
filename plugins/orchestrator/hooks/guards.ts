@@ -36,6 +36,7 @@ import {
 } from './stop-gate.ts'
 import { agentStopNudge } from './agent-stop.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { launcherOf } from '../core/orchestration.ts'
 import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from './unanswered-question.ts'
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
@@ -611,7 +612,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.
-      const rows = listing(await mustRun($, ['bash', `${root}/skills/iterm-agents/scripts/iterm-agent.sh`, 'list'], "the launcher's listing", until))
+      const rows = listing(await mustRun($, ['bash', launcherOf(root), 'list'], "the launcher's listing", until))
       const chain = await quietly($, () => $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`), until, '')
       const owner = await chainOwner($)
       if (!owner) {

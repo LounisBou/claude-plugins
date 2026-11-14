@@ -1,4 +1,6 @@
 // hooks/gauge.ts
+import { gateThresholds } from '../core/env.ts'
+import { gateTokensOf, MEASURE_VERSION } from '../core/orchestration.ts'
 import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -76,11 +78,13 @@ export function register(on: On<Gauge>): void {
       }
       const figures = { context_tokens: tokens, updated_at: updatedAt }
       const reading: MeasureReading = {
+        version: MEASURE_VERSION,
         context_tokens: tokens,
         context_window: window,
         context_percent: percent,
         model: String(model ?? 'unavailable'),
         updated_at: updatedAt,
+        gate_tokens: gateTokensOf(window, await gateEnv($)),
         start: starts.get(sessionId) ?? startOf(await keptStart($, sessionId), figures, await startBrief($)),
       }
       starts.set(sessionId, reading.start!)
@@ -142,6 +146,15 @@ export function register(on: On<Gauge>): void {
     // in a catch, called or not.
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
+  })
+}
+
+// The gate's thresholds (core's gateThresholds) over this file's reads of the variables, each
+// by its literal name as the engine requires.
+async function gateEnv($: Host<'env'>): Promise<{ gate?: number; gateTokens?: number }> {
+  return gateThresholds({
+    ORCHESTRATOR_CONTEXT_GATE: await $.env.get('ORCHESTRATOR_CONTEXT_GATE'),
+    ORCHESTRATOR_CONTEXT_GATE_TOKENS: await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS'),
   })
 }
 

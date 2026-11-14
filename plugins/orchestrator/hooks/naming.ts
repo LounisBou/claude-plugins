@@ -9,6 +9,7 @@
 // turn's completion runs the rename — the same transcript entry a typed /rename
 // writes, the one every name walk reads.
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { launcherOf } from '../core/orchestration.ts'
 import { endsAfterMove } from './moving.ts'
 import { messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
@@ -238,7 +239,7 @@ export const HOME_MOVE_MS = 90_000
 
 // The launcher's move of this session into a home session of its own, as argv.
 export function homeArgv(root: string, sessionId: string, name: string): string[] {
-  return [`${root}/skills/iterm-agents/scripts/iterm-agent.sh`, 'home', '--session', sessionId, '--name', name, '--prompt', resumeText(name)]
+  return [launcherOf(root), 'home', '--session', sessionId, '--name', name, '--prompt', resumeText(name)]
 }
 
 // Whether the launcher moved this session (`moved: …` on its first line). A session it
