@@ -1591,6 +1591,11 @@ async function listAutoMerge($: any): Promise<string> {
   return listed.length > 0 ? listed.join('\n') : 'no repository in auto-merge'
 }
 
+// How a session names the subject its question asks consent on, in declare_wait's own fields.
+function askedConsent(kind: string, repo: string, extra?: string, value?: string): string {
+  return 'consent_kind "' + kind + '" and consent_repo "' + repo + '"' + (extra ? ' and ' + extra + ' "' + value + '"' : '')
+}
+
 // The refusal of an auto-merge-set whose words are not the operator's, or undefined.
 async function unprovenWord($: any, words: string, repo: string, on: boolean): Promise<string | undefined> {
   if (!AUTO_MERGE_WORD.test(words)) {
@@ -1599,8 +1604,7 @@ async function unprovenWord($: any, words: string, repo: string, on: boolean): P
   }
   if (await consentAnswered($, words, { kind: 'auto-merge', repo }, on ? grants : undefined)) return undefined
   return 'github: auto-merge-set refused on ' + repo + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
-    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s consent {"kind": "auto-merge", "repo": "'
-    + repo + '"}, choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
+    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s ' + askedConsent('auto-merge', repo) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
 }
 
 // The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
@@ -1698,8 +1702,7 @@ async function unprovenDeployWord($: any, words: string, repo: string, env: Depl
   }
   if (await consentAnswered($, words, { kind: 'auto-deploy', repo, env }, on ? grants : undefined)) return undefined
   return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
-    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s consent {"kind": "auto-deploy", "repo": "'
-    + repo + '", "env": "' + env + '"}, choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
+    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s ' + askedConsent('auto-deploy', repo, 'consent_env', env) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
 }
 
 // The declarations a call adds for its repository, or a refusal naming what is wrong.
@@ -1813,7 +1816,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     return {
       deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
         + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
-        + (e.exempt ? ', the exemption and each rule as given' : '') + '. Ask them with declare_wait\'s consent {"kind": "e2e-exemption", "repo": "' + repo + '"}.',
+        + (e.exempt ? ', the exemption and each rule as given' : '') + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
     }
   }
   const dir = await dataDir($)

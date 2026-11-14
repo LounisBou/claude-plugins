@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -264,8 +264,9 @@ const CARD_PADDING_TOP = 1
 const FIELD_INDENT = 2
 const BADGE_COLUMN = 5
 
-// How many rows tall the « Other answer » field is drawn, label included: a typed answer shows
-// whole up to this many lines, and a longer one scrolls within the field.
+// How many rows tall the « Other answer » field is drawn, label included. The host's field
+// holds lines (a newline starts one) and cuts a line wider than its room with an ellipsis, never
+// wrapping it: the text typed is drawn again under the field, whole and wrapped.
 const ANSWER_ROWS = 4
 
 // The mark of the recommended choice and of the recommendation's line.
@@ -837,7 +838,8 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // to a sender on this machine a render found that sender gone for, never said again in this
 // module's life (each by its entry's id and its answer's stamp: the failure itself is in the
 // entry's file), the entries whose answer is in flight, so a second press on one does nothing,
-// and the entry whose « Other answer » was picked, its text field drawn until the ring leaves it.
+// the entry whose « Other answer » was picked, its text field drawn until the ring leaves it, and
+// the text typed in each field, which the pane draws again whole under it.
 export type PaneMemory = {
   opened: { role: 'coordinator' | 'orchestrator'; tty: string | null } | null
   ticker: { cancel(): void } | null
@@ -845,6 +847,7 @@ export type PaneMemory = {
   writing: string | null
   forgotten: Set<string>
   answering: Set<string>
+  typed?: Map<string, string>
   // The content last drawn, as the module counts its rows, and the tree's height as the
   // person's last move measured it, with the content it measured.
   drawn?: string
@@ -1473,7 +1476,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
-  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, forgotten: new Set(), answering: new Set() }
+  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, forgotten: new Set(), answering: new Set(), typed: new Map() }
   // The entry whose recommended choice was last asked the focus: once per entry, never at a redraw.
   let focusedFor: string | null = null
   // This session's own repository, read once it answers: its owner names the pull requests the
@@ -1832,6 +1835,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
     const result = await next(e)
     if (pane.writing !== null && !result?.deny && e.element !== answerKey(pane.writing)) {
+      pane.typed?.delete(pane.writing)
       pane.writing = null
       $.ui.invalidate('ui.render')
     }
@@ -2030,7 +2034,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // first not yet answered.
       const parts = asking ? entryQuestions(asking) : []
       const index = asking ? Math.min(asking.partial?.length ?? 0, parts.length - 1) : 0
-      const part = parts[index] ?? null
+      const read = parts[index] ?? null
+      const part = read === null ? null : { ...read, question: withLetteredChoices(read.question, read.choices) }
       // An entry's key, or with several questions its question's, so each question's picker, field
       // and focus are its own.
       const keyOf = (entry: RoundEntry) => (parts.length > 1 ? `${entry.id}:${index + 1}` : entry.id)
@@ -2180,6 +2185,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           rows: rowsOf(`${head}${takesRows(recommendation.text)}`, inner),
         }
       }
+      // What is typed in the field, drawn again under it whole and wrapped at the card.
+      const typedMirror = (entry: RoundEntry): Drawn[] => {
+        const typed = pane.typed?.get(keyOf(entry)) ?? ''
+        return typed === '' ? [] : [{ node: el.Text({ children: typed }), rows: rowsOf(typed, inner) }]
+      }
       // Beside a picker the field is drawn only once « Other answer » is picked: drawn sooner,
       // it is a stop of the ring that Tab reaches from a choice, and text typed there lands.
       const otherAnswer = (entry: RoundEntry): Drawn[] => typeof el.Input === 'function'
@@ -2190,10 +2200,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
             placeholder: WORDS.otherPlaceholder,
             submitLabel: WORDS.send,
             rows: ANSWER_ROWS,
+            onInput: (value: string) => {
+              if (value === '') pane.typed?.delete(keyOf(entry))
+              else pane.typed?.set(keyOf(entry), value)
+              $.ui.invalidate('ui.render')
+            },
             onSubmit: (value: string) => answerFromPaneText($, pane, entry, value, index),
           }),
           rows: ANSWER_ROWS,
-        }])
+        }, ...typedMirror(entry)])
         : [{
           node: el.Box({
             flexDirection: 'column',
@@ -2287,7 +2302,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -2735,11 +2750,14 @@ export function withConsent(entry: RoundEntry, consent: RoundEntry['consent'] | 
 // The operator's answer to an entry that asks his consent, written as that subject's consent
 // record (core's consent-record.ts), the contract github reads in place of the round. An entry
 // that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
-// is: the failure is one log line.
+// is: an entry that asked a consent and records none says why in one log line.
 export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<void> {
   if (!entry.consent) return
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
-  if (!record) return
+  if (!record) {
+    await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: « ${text.trim()} » names none of its choices`)
+    return
+  }
   try {
     const path = consentPath(await configDir($), record)
     const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 5000 })
@@ -2827,6 +2845,7 @@ function failedKey(entry: RoundEntry): string {
 // A question's « other answer » forgotten: its field and its note to answer in the session.
 function forgetDraft(pane: PaneMemory, key: string): void {
   pane.other.delete(key)
+  pane.typed?.delete(key)
   if (pane.writing === key) pane.writing = null
 }
 

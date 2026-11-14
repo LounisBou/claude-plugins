@@ -1320,6 +1320,7 @@ test('words the operator typed are no consent: with no consent record auto-merge
   }
   const out: any = await $.tool.call(setAutoMerge(true, HIS_WORDS))
   expect(out.deny).toContain('consent record (orchestrator) of auto-merge on acme/thing')
+  expect(out.deny).toContain('declare_wait\'s consent_kind "auto-merge" and consent_repo "acme/thing"')
   expect(seen.files).toEqual({})
   expect(seen.writes).toEqual([])
 })
@@ -2063,6 +2064,7 @@ test('words the operator typed are no consent: with no consent record they exemp
   await typed($, HIS_EXEMPTION)
   const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
   expect(out.deny).toContain('an E2E exemption quotes the operator')
+  expect(out.deny).toContain('declare_wait\'s consent_kind "e2e-exemption" and consent_repo "')
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
@@ -3017,6 +3019,7 @@ test('words the operator typed are no consent: with no consent record a list cha
   await typed($, AUTO_DEPLOY_WORDS)
   const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
   expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(out.deny).toContain('declare_wait\'s consent_kind "auto-deploy" and consent_repo "acme/infra" and consent_env "prod"')
   expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
   expect(seen.writes).toEqual([])
 })

@@ -9,8 +9,8 @@
 // entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
 import { fingerprint, type HeldQuestion, type Wait } from './relay.ts'
-import { answersChoice, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
-import { entryQuestions, parseChoices, questionParts, questionShape, type Choice } from '../core/method.ts'
+import { answersChoice, CONSENT_GRANT, CONSENT_REFUSE, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
+import { entryQuestions, numberOfLine, parseChoices, questionParts, questionShape, type Choice } from '../core/method.ts'
 import { parseSessionName } from '../core/names.ts'
 
 export type RoundChoice = Choice   // letter: one of 'A' to 'E'
@@ -195,10 +195,39 @@ export function roundEntryId(sessionId: string, wait: Wait): string {
   return `${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint(plain)}`
 }
 
+// The two choices of a consent question as the tool's description words them, « Accorder » then
+// « Refuser », each a bold label opening a line with no letter before it: read as A and B, the
+// label alone the choice's text (the answer a record quotes). The entry keeps the lines in its
+// question; the pane draws them through `withLetteredChoices`, once, as it draws lettered ones.
+const NAMED_CHOICE = /^\s*[-*]\s+\*\*([^*\n]+)\*\*\s*(?:[:.)]|—|–|-|$)/
+function namedChoices(question: string): { choices: Choice[]; at: number[] } {
+  const lines = question.split('\n')
+  const first = Math.max(0, lines.findLastIndex(line => numberOfLine(line) !== null))
+  const at = lines.flatMap((line, i) => (i >= first && NAMED_CHOICE.test(line) ? [i] : []))
+  const labels = at.map(i => NAMED_CHOICE.exec(lines[i] ?? '')?.[1]?.trim() ?? '')
+  const [grant, refuse] = [CONSENT_GRANT, CONSENT_REFUSE]
+  return labels.length === 2 && labels[0]?.toLowerCase() === grant.toLowerCase() && labels[1]?.toLowerCase() === refuse.toLowerCase()
+    ? { choices: [{ letter: 'A', text: grant }, { letter: 'B', text: refuse }], at }
+    : { choices: [], at: [] }
+}
+
+// The question as the pane reads it: the two unlettered choice lines of a consent question put in
+// the lettered form its choices were read as, their own text left out, so the choices are drawn
+// once, under the question's own field, and not again among its fields.
+export function withLetteredChoices(question: string, choices: readonly Choice[]): string {
+  const named = namedChoices(question)
+  if (named.at.length === 0 || choices.length !== named.choices.length) return question
+  const lines = question.split('\n')
+  named.at.forEach((line, i) => { lines[line] = `- **${named.choices[i]?.letter}** : ${named.choices[i]?.text}` })
+  return lines.join('\n')
+}
+
 // The entry of an orchestrator's wait, open and unanswered, its question whole.
 export function roundEntry(sessionId: string, from: string, wait: Wait, since: string, at: string): RoundEntry {
   if (wait.kind !== 'operator' && wait.kind !== 'done') throw new Error(`a ${wait.kind} wait is no round entry`)
-  const { choices, recommendation } = parseChoices(wait.question)
+  const parsed = parseChoices(wait.question)
+  const { recommendation } = parsed
+  const choices = parsed.choices.length > 0 || wait.kind !== 'operator' ? parsed.choices : namedChoices(wait.question).choices
   return {
     id: roundEntryId(sessionId, wait),
     from,
