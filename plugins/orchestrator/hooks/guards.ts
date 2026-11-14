@@ -602,7 +602,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
         if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
-        if (pr?.state === 'OPEN') awaitingMerge.push(`${agent.label} (pull request #${pr.number})`)
+        if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
       }
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
@@ -617,6 +617,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return table
       }
       const background = ownBackground(await processes(), pid)
+      if (!pid) await logLine($, 'guards', 'stop gate: host pid unread: the process table could not be tied to this session')
       const wake = checkWake({
         agents, resident, delivered, background, awaitingMerge,
         // The host's own list of the session's work in flight, the reliable reading of what will wake it.
@@ -632,7 +633,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // figures that say whether the gate earns its cost are read there.
         await logLine($, 'guards', `stop gate: check1 blocks ${wake.blocks}`)
       } else if (wake !== null && typeof wake === 'object' && 'warn' in wake) {
-        // Measured, not refused: these three reminders cost a turn each and mostly turned out wrong.
+        // Measured, not refused: these reminders cost a turn each and mostly turned out wrong.
         await logLine($, 'guards', `stop gate: warn ${wake.warn}${wake.detail === '' ? '' : ` ${wake.detail}`}`)
       } else if (wake === 'read-what-is-left') {
         // The done line: the facts are read only now, as the shell gate read them lazily.

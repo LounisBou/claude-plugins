@@ -448,9 +448,9 @@ export type Held = { case: string; reason: string }
 // answer: a turn that advanced other work meanwhile ends on no line, with nothing else in
 // flight, and never puts the question again.
 //
-// An idle agent of its own whose pull request is open (`awaitingMerge`) is not stood down: the
-// executor lives until its pull request merges and receives the kept findings, so it is
-// neither flagged for the log nor counted as left behind, until the done line reads it.
+// An idle agent of its own whose pull request is open (`awaitingMerge`, by label) is not stood
+// down: the executor lives until its pull request merges and receives the kept findings. The log
+// names it apart (`awaiting-merge`), never among the idle agents, until the done line reads it.
 //
 // « Nothing will wake you » is decided on the host's own word (`tasks`, hostTasks above): what
 // the host holds in flight for the session is what will wake it. The process table walked by
@@ -468,7 +468,7 @@ export function checkWake(facts: {
   awaitingMerge?: readonly string[]
   tasks?: readonly string[] | null
   questionOpen?: boolean
-}): Held | { blocks: string } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
+}): Held | { blocks: string } | { warn: 'idle-delivered' | 'idle-agents' | 'awaiting-merge' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
   // The wait is the one the turn declared, spelled as its line: the model's own last line decides nothing.
   const last = facts.declared ? waitLine(facts.declared) : ''
   const matched = MACHINE_LINE.exec(last)
@@ -489,10 +489,12 @@ export function checkWake(facts: {
   if (facts.awaiting) return null
   if (matched || deferredIds(last) !== null) return 'read-what-is-left'
   // The executor waits for its kept findings and its merge: no stand-down asked of it.
-  if ((facts.awaitingMerge ?? []).length > 0) return null
-  if (facts.agents.length > 0) {
-    return { warn: 'idle-agents', detail: facts.agents.map(a => a.label).join(', ') }
+  const merging = facts.awaitingMerge ?? []
+  const idle = facts.agents.filter(a => !merging.includes(a.label))
+  if (idle.length > 0) {
+    return { warn: 'idle-agents', detail: idle.map(a => a.label).join(', ') }
   }
+  if (merging.length > 0) return { warn: 'awaiting-merge', detail: merging.join(', ') }
   // A question still open in the round: its answer wakes the session.
   if (facts.questionOpen) return null
   if (facts.resident) {

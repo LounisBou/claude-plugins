@@ -1331,7 +1331,7 @@ test('the wake decision: an awaited notice wakes, and a handed-over session is n
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', awaiting: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', handedOver: true })).toBeNull()
   // A delivered idle agent is still told: a subscription does not lift it.
-  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
+  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
 })
 
 test('a ci-watch this session started, still running, will wake it; a stranger\'s will not', async () => {
@@ -1378,8 +1378,8 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: [], resident: false, delivered: [], message: '`handed over`.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done', handedOver: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
-  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
-  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
+  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
+  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
   // A bare question declares no wait: it wakes nothing.
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
@@ -2442,20 +2442,27 @@ test('no refusal teaches a tool wait: what runs, or a busy agent, wakes the sess
 
 // The fresh-eye plan A, item 4 (2026-11-14): the executor lives until its pull request merges and
 // receives the kept findings; the gate no longer flags it for its stand-down while that pull request is open.
-test('an idle agent whose pull request is open is not dismissed: the stop passes, nothing flagged; once merged it is', async () => {
+test('an idle agent whose pull request is open is not dismissed: the stop passes, logged apart; once merged it is delivered', async () => {
   const { handlers } = mounted()
   const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n' }
   const open = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
   const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...NOTHING_RUNS }))
   expect(out.answer).toBe(out.passed)
   expect(open.written.some(l => l.includes('idle-delivered') || l.includes('idle-agents') || l.includes('nothing-will-wake'))).toBe(false)
+  expect(open.written.some(l => l.endsWith('| stop gate: warn awaiting-merge Agent: idle-p3'))).toBe(true)
+  // Its done is still held through the handler: it is still there until the merge.
+  const done = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
+  const held = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Agent: idle-p3 is still there')
   const merged = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"MERGED"}' })
   await warnsNotRefuses(handlers, merged, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
 })
 
-test('an executor with its pull request open still holds a done: it is still there until the merge', () => {
-  const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3 (pull request #160)'], tasks: [] as string[] }
-  expect(checkWake({ ...base, message: 'Reviewing.' })).toBeNull()
+test('an executor with its pull request open still holds a done, and another idle agent is still named', () => {
+  const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3'], tasks: [] as string[] }
+  expect(checkWake({ ...base, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  const other = { label: 'Agent: other-p4', state: 'idle' as const, tty: '/dev/ttys004' }
+  expect(checkWake({ ...base, agents: [AGENT_IDLE, other], message: 'Reviewing.' })).toEqual({ warn: 'idle-agents', detail: 'Agent: other-p4' })
   expect(checkWake({ ...base, message: 'waiting: done' })).toBe('read-what-is-left')
   expect((checkWakeDone({ agents: [AGENT_IDLE], checkouts: [], deferred: [] }) as any).reason).toContain('Agent: idle-p3 is still there')
 })
