@@ -4,7 +4,7 @@
 // means are core's readiness contract (readiness.ts). Pure functions only: register.ts reads and
 // writes the file, and posts the plan on the pull request.
 
-import { CONSENT_GRANT, CONSENT_QUOTE_MIN, CONSENT_REFUSE } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
 import { PLAN_NEEDS, PLAN_OMITTED, reviewNeed, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
 import { isRepoName } from './e2e-scope.ts'
@@ -94,27 +94,6 @@ export const WAIVED = WAIVABLE
 export const WAIVER_WORDS: Record<Waivable, string> = { e2e: "d'E2E", norms: 'de normes' }
 export const waiverSubject = (check: Waivable) => (check + '-waiver') as 'e2e-waiver' | 'norms-waiver'
 const WAIVER_QUESTION = /^\s*Dispense (d['’]E2E|de normes) pour ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\s*:/i
-
-/*
- * His answer quoted in an E2E waiver's detail, from a channel with no consent record: « <words> » with its date, and the
- * channel it came by: `typed in the session`, `decision pane, round entry <id>`, or `relayed by <coordinator>, <date>`
- * (the relay's own date beside the answer's). Returns the latest date it names, or undefined when it is not such a quote.
- */
-const QUOTED = /[«“"][^»”"]*[»”"]/g
-const DATES = /\b\d{4}-\d{2}-\d{2}\b/g
-const TYPED = /\btyped in the session\b/i
-const PANE = /\bpane\b.*\bround entry\s+[A-Za-z0-9][A-Za-z0-9._-]*/i
-const RELAYED = /\brelayed by\s+(?:.*?\S)\s*,\s*(?:on\s+)?\d{4}-\d{2}-\d{2}/i
-export function quotedWaiver(detail: string): string | undefined {
-  const quotes = detail.match(QUOTED) ?? []
-  if (!quotes.some((quote) => quote.slice(1, -1).trim().length >= CONSENT_QUOTE_MIN)) return undefined
-  const outside = detail.replace(QUOTED, ' ')
-  const dates = detail.match(DATES) ?? []
-  const relayed = RELAYED.test(outside)
-  const channel = TYPED.test(outside) || PANE.test(outside) || relayed
-  if (!channel || dates.length < (relayed ? 2 : 1)) return undefined
-  return [...dates].sort().pop()
-}
 
 /** The check and pull request a dialog question asks the waiver of, or undefined when it is no waiver question. */
 export function waiverQuestion(question: unknown): { check: Waivable; repo: string; pr: number } | undefined {
