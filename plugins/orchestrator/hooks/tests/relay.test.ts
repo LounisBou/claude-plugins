@@ -2761,3 +2761,50 @@ test('a question whose earlier ask holds no answer of his, or asks another block
     expect(entries(fx).find(e => e.session === 's-one')!.status).toBe('open')
   }
 })
+
+// --- a waiver asked in the round: his « Accorder » or « Refuser » is the consent record github reads ---
+
+const WAIVER = { kind: 'e2e-waiver' as const, repo: 'acme/thing', pr: 12 }
+const WAIVER_QUESTION = [
+  '**Question 1 of 1**',
+  '_Subject_ : the E2E of thing#12',
+  '_Context_ : docs only.',
+  '_Question_ : Dispense d\'E2E pour acme/thing#12 : docs only ?',
+  '_Choices_ :',
+  '- **A** : Accorder',
+  '- **B** : Refuser',
+  '_Recommendation_ : A — nothing runs',
+].join('\n')
+
+async function askedWaiver(fx: ReturnType<typeof fake>, chains: Record<string, Function[]>) {
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', consent: WAIVER })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(WAIVER_QUESTION))
+  return entries(fx).find(e => e.session === 's-one' && e.status === 'open')!
+}
+
+for (const [choice, answer] of [[0, 'Accorder'], [1, 'Refuser']] as const) {
+  test(`his « ${answer} » pressed in the pane on a waiver question is its pull request's consent record, « ${answer} »`, async () => {
+    const chains = mounted()
+    const fx = fake()
+    const asked = await askedWaiver(fx, chains)
+    const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+    await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[choice])
+    const records = consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!)
+    expect(records.map(r => [r.subject, r.answer, r.by])).toEqual([[WAIVER, answer, 'pane']])
+  })
+}
+
+test('a waiver question asked again after his answer is answered from the record, and his one consent record stays the only one', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const asked = await askedWaiver(fx, chains)
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[0])
+  // The question asked again, reworded above its block: the round answers it from the record.
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', consent: WAIVER })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(`Asked again after the hand-over.\n\n${WAIVER_QUESTION}`))
+  expect(entries(fx).filter(e => e.status === 'open')).toEqual([])
+  expect(consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!.answer)).toEqual(['Accorder'])
+})
