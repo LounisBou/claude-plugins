@@ -23,4 +23,4 @@ Its parts, in order:
 
 At the dispatch gate you read the agent's fill on `/orchestrator-status` against the gate the module reports, then choose the model/effort pair the work needs. `orchestrator:model-routing` is the aid to that decision: the table informs, you decide and write your choice, its reason and the reading that chose it in the brief, so the agent can tell you when the work outgrew it; it names the servers the session was given, so an agent never reaches for a tool it was not given.
 
-**Route by size.** A small task (one plugin, prose or a small fix, a few files): one session writes and self-reviews, one fresh reviewer reads it in one pass, the session fixes the kept findings, and it merges where allowed. The outside multi-lens round is for risk (security, guards, data, wire protocols).
+**Route by size.** A small task (one plugin, prose or a small fix, a few files) goes to one session that writes, self-reviews, fixes the kept findings and merges where allowed; its review is the one pass `review-round.md` sizes by risk, the full multi-lens round being for risk alone.
