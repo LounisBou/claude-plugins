@@ -1990,6 +1990,19 @@ POST /repos/acme/thing/labels {"color": "27e760", "name": "Ready"}
 POST /repos/acme/thing/labels {"color": "8c1455", "name": "Not Ready"}
 POST /repos/acme/thing/issues/12/labels {"labels": ["Not Ready"]}' "$(sent7)"
 
+new7 create-line
+CREATED7='{"number":12,"html_url":"https://github.com/acme/thing/pull/12","head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+printf '%s' "$CREATED7" > "$F7/POST_repos_acme_thing_pulls.json"
+check "pr-create answers one line: repository and number, URL, head, labels" \
+  "acme/thing#12 https://github.com/acme/thing/pull/12 head 0123456789abcdef0123456789abcdef01234567 labels Not Ready" \
+  "$(gh7 pr-create --title T --head feature-x --draft)"
+check "pr-create --json answers the full pull request, as the forge sent it" "True" \
+  "$(gh7 pr-create --title T --head feature-x --draft --json | python3 -c 'import json,sys; print(json.load(sys.stdin) == json.loads(sys.argv[1]))' "$CREATED7")"
+printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_12_labels.json"
+check "pr-create answers no label when labelling failed" \
+  "acme/thing#12 https://github.com/acme/thing/pull/12 head 0123456789abcdef0123456789abcdef01234567 labels none" \
+  "$(gh7 pr-create --title T --head feature-x --draft 2>/dev/null)"
+
 new7 create-ready
 printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
 gh7 pr-create --title T --head feature-x >/dev/null
