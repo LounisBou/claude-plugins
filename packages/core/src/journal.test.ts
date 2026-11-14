@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { appendEventOver, randomPart, type JournalIo } from './journal.ts'
 import { appendEvent } from './journal-sync.ts'
-import { JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseJournalEvent } from './learning.ts'
+import { foldedText, foldWeekly, JOURNAL_FOLD_FILE, JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseFold, parseJournalEvent } from './learning.ts'
 
 const NOW = '2026-11-14T10:15:00Z'
 const scratch = () => mkdtempSync(join(tmpdir(), 'journal-'))
@@ -60,17 +60,81 @@ for (const [label, append] of [
     it('is pruned of what is past the retention, and of no file it did not write', async () => {
       const dir = join(scratch(), 'journal')
       mkdirSync(dir, { recursive: true })
-      const old = eventAt(aged(181))
+      const old = eventAt(aged(91))
       writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
       writeFileSync(join(dir, 'notes.txt'), 'kept')
       const event = eventAt(NOW)
       await append(dir, event, true)
-      assert.deepEqual(readdirSync(dir).sort(), [journalFileOf(event.id), 'notes.txt'].sort())
+      assert.deepEqual(readdirSync(dir).sort(), [JOURNAL_FOLD_FILE, journalFileOf(event.id), 'notes.txt'].sort())
+    })
+
+    it('counts what it drops into its fold file, by signature and week, and adds to the counts already there', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const first = eventAt(aged(100))
+      const second = eventAt(aged(99), '0000000b')
+      for (const old of [first, second]) writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+      await append(dir, eventAt(NOW), true)
+      const folded = parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts
+      assert.equal(folded?.reduce((sum, line) => sum + line.count, 0), 2)
+      assert.ok(folded?.every(line => line.signature === 'refusal:orchestrator.kill.refused'))
+      const third = eventAt(aged(98), '0000000c')
+      writeFileSync(join(dir, journalFileOf(third.id)), JSON.stringify(third))
+      await append(dir, eventAt(NOW, '0000000d'), true)
+      assert.equal(parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts?.reduce((sum, line) => sum + line.count, 0), 3)
+    })
+
+    it('never counts an event twice: one a removal left behind, already counted and pending, is removed without being counted again', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const left = eventAt(aged(100))
+      writeFileSync(join(dir, journalFileOf(left.id)), JSON.stringify(left))
+      // What the earlier prune wrote before its removal did not happen.
+      writeFileSync(join(dir, JOURNAL_FOLD_FILE), foldedText(foldWeekly([left]), [left.id]))
+      const other = eventAt(aged(99), '0000000b')
+      writeFileSync(join(dir, journalFileOf(other.id)), JSON.stringify(other))
+      await append(dir, eventAt(NOW), true)
+      const folded = parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))
+      assert.equal(folded?.counts.reduce((sum, line) => sum + line.count, 0), 2)
+      assert.deepEqual([...(folded?.pending ?? [])].sort(), [left.id, other.id].sort())
+      assert.ok(!readdirSync(dir).includes(journalFileOf(left.id)))
+      assert.ok(!readdirSync(dir).includes(journalFileOf(other.id)))
+    })
+
+    it('drops nothing, and says why, when the fold file it holds cannot be read', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const old = eventAt(aged(100))
+      writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+      writeFileSync(join(dir, JOURNAL_FOLD_FILE), 'garbled')
+      await assert.rejects(append(dir, eventAt(NOW), true), /fold/)
+      assert.ok(readdirSync(dir).includes(journalFileOf(old.id)))
+      assert.equal(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'), 'garbled')
+    })
+
+    it('writes no fold file when nothing is dropped', async () => {
+      const dir = join(scratch(), 'journal')
+      await append(dir, eventAt(NOW), true)
+      assert.ok(!existsSync(join(dir, JOURNAL_FOLD_FILE)))
     })
   })
 }
 
 describe('a hooks module\'s journal', () => {
+  it('says a removal that failed, leaves the events, and counts them once when the next prune removes them', async () => {
+    const dir = join(scratch(), 'journal')
+    mkdirSync(dir, { recursive: true })
+    const olds = [eventAt(aged(100)), eventAt(aged(99), '0000000b')]
+    for (const old of olds) writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+    const io = realIo()
+    const failing: JournalIo = { ...io, run: async argv => (argv[0] === 'rm' && argv.some(arg => arg.endsWith('.json')) ? { exitCode: 1, stderr: 'busy' } : io.run(argv)) }
+    await assert.rejects(appendEventOver(failing, dir, eventAt(NOW), NOW, true), /could not be pruned: busy/)
+    assert.ok(olds.every(old => readdirSync(dir).includes(journalFileOf(old.id))))
+    await appendEventOver(realIo(), dir, eventAt(NOW, '0000000c'), NOW, true)
+    assert.ok(olds.every(old => !readdirSync(dir).includes(journalFileOf(old.id))))
+    assert.equal(parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts.reduce((sum, line) => sum + line.count, 0), 2)
+  })
+
   it('lists nothing when asked not to prune', async () => {
     const io = realIo()
     const dir = join(scratch(), 'journal')
