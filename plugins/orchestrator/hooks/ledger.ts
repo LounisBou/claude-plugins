@@ -21,13 +21,24 @@ const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pul
 const GH_PR_CREATE = /(?:^|[\n;&|(])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gh\s+(?:-R\s+\S+\s+)?pr\s+create(?=\s|$)/
 
 // The pull request a creation opened, from the call and its answer; null for any other call, a failed
-// one, or an answer that names none. The last address in the answer is the one `gh` prints last.
+// one, or an answer that names none. A JSON answer is read at its `html_url`, a text one at its last address, the one `gh` prints last.
 export function createdPr(e: Readonly<Record<string, unknown>>, result: unknown): { repo: string; pr: number } | null {
   const opens = e['tool'] === 'mcp__github__gh' ? e['command'] === 'pr-create'
     : e['tool'] === 'Bash' && typeof e['command'] === 'string' && GH_PR_CREATE.test(e['command'])
   const answer = opens ? answerText(result) : null
-  const last = answer === null ? undefined : [...answer.matchAll(PULL_URL)].at(-1)
+  if (answer === null) return null
+  const last = [...(htmlUrlOf(answer) ?? answer).matchAll(PULL_URL)].at(-1)
   return last?.[1] === undefined || last[2] === undefined ? null : { repo: last[1], pr: Number(last[2]) }
+}
+
+// The `html_url` of a JSON answer (the forge's pull request), so a body that names other pull requests is never read for one.
+function htmlUrlOf(answer: string): string | null {
+  try {
+    const url = (JSON.parse(answer) as { html_url?: unknown } | null)?.html_url
+    return typeof url === 'string' ? url : null
+  } catch {
+    return null
+  }
 }
 
 const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
