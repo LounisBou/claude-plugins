@@ -146,11 +146,12 @@ of auto-merge reminds the session to call `auto-merge-set`.
 
 A pull request is ready when three things hold at its current head commit: a
 clean review, passed end-to-end tests (or a waiver the operator dated in their
-own words) and green CI. A norms check is on demand: it blocks only when it ran at the head and
+own words) and green CI, but for what the pull request's check plan does not
+require. A norms check is on demand: it blocks only when it ran at the head and
 failed. The `Ready` label, leaving
 draft and a merge need the three; a draft opens with `Not Ready`, and a push to
 the branch puts `Not Ready` back. A rebase that leaves the pull request's own
-commits unchanged carries its review, norms check and E2E waiver to the new head. CI is read from GitHub: no check at all is
+commits unchanged carries its review and norms check to the new head; an E2E waiver stands for every later head. CI is read from GitHub: no check at all is
 green, a check that failed, still runs, was skipped, or is neutral on a draft
 is not. The others are records, one small JSON file per run under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by

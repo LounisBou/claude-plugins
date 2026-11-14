@@ -11,10 +11,11 @@ import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, type CheckPlan, type Excused } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
@@ -270,11 +271,13 @@ export const AUTO_MERGE_FILE = 'auto-merge.json'
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
-// The E2E exemptions, one file per repository below this directory of the data directory.
-const EXEMPT_PATH = new RegExp('/' + EXEMPT_DIR + '(/|$)')
-const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + EXEMPT_DIR + '/')
+// The E2E exemptions, one file per repository, and the check plans, one per pull request, below these directories of the data directory.
+const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
+const EXEMPT_PATH = new RegExp('/' + GUARDED_DIRS + '(/|$)')
+const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
-  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}.'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
+export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
 // from the call alone (no state can be read once the hook has thrown); the rest goes through.
@@ -285,11 +288,11 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create-draft', 'redraft'])
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(EXEMPT_DIR + '/')) return NET_REFUSAL
+    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(EXEMPT_DIR + '/') || command.includes(PLAN_DIR + '/')) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    return /\b(gh|git)\b|pr-records|auto-merge|e2e-exempt/.test(command) ? NET_REFUSAL : null
+    return /\b(gh|git)\b|pr-records|auto-merge|e2e-exempt|check-plans/.test(command) ? NET_REFUSAL : null
   }
 }
 
@@ -822,6 +825,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
   const { found, unread } = await earlierRecords($, gate, root)
+  const waiver = wanted.includes('e2e') && !unread ? durableWaiver(gate, found) : undefined
+  // The waiver stands beside what the same diff carries, or alone.
+  const withWaiver = (carried: Carried[]): Carried[] => (waiver && !carried.some((c) => c.kind === 'e2e') ? [...carried, waiver] : carried)
+  // A line on the kinds not carried leaves out the E2E the waiver stands for.
+  const uncarried = (reason: string, kinds: PrRecord['kind'][] = wanted) => {
+    const left = waiver ? kinds.filter((kind) => kind !== 'e2e') : kinds
+    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === KINDS.length ? undefined : left))
+  }
   const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
   for (const [head, records] of found) {
     const at = headLatest(gate, head, records)
@@ -831,17 +842,17 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
       .filter((file) => file.kinds.length > 0)
     if (latest.length > 0 || unreadable.length > 0) candidates.push({ head, latest, unreadable })
   }
-  if (!candidates.some((c) => c.latest.some(carries))) return []
+  if (!candidates.some((c) => c.latest.some(carries))) return withWaiver([])
   if (unread) {
-    note($, uncarriedLine(gate.repo, gate.pr, gate.head, unread))
-    return []
+    uncarried(unread)
+    return withWaiver([])
   }
   let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
   } catch (err: any) {
-    note($, uncarriedLine(gate.repo, gate.pr, gate.head, gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim()))
-    return []
+    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim())
+    return withWaiver([])
   }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
   const blocked = new Set<PrRecord['kind']>()
@@ -856,14 +867,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
     } catch (err: any) {
       const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
-      note($, uncarriedLine(gate.repo, gate.pr, gate.head, head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds))
+      uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds)
       continue
     }
     if (earlier.fingerprint !== current.fingerprint) continue
     if (unreadKinds.length > 0) {
       for (const kind of unreadKinds) blocked.add(kind)
       const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
-      note($, uncarriedLine(gate.repo, gate.pr, gate.head, files, unreadKinds))
+      uncarried(files, unreadKinds)
     }
     for (const record of latest) {
       const before = newest.get(record.kind)?.record
@@ -871,10 +882,10 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
       if (!before || record.at > before.at || (record.at === before.at && !carries(record))) newest.set(record.kind, { record, from: head })
     }
   }
-  return wanted.flatMap((kind) => {
+  return withWaiver(wanted.flatMap((kind) => {
     const kept = newest.get(kind)
     return kept && carries(kept.record) && !blocked.has(kind) ? [{ kind, from: kept.from }] : []
-  })
+  }))
 }
 
 /*
@@ -990,6 +1001,25 @@ async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
   return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
 }
 
+// The pull request's check plan as it stands, or undefined when there is none or it cannot be read: then it owes every proof.
+async function readPlan($: any, repo: string, pr: number): Promise<CheckPlan | undefined> {
+  try {
+    const dir = await dataDir($)
+    const path = dir ? planPath(dir, repo, pr) : undefined
+    if (!path || !(await $.fs.exists(path))) return undefined
+    const plan = parsePlan(JSON.parse(String(await $.fs.read(path))))
+    return plan && plan.repo === repo.toLowerCase() && plan.pr === pr ? plan : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// The kinds that stand without a record at the head: those the plan excuses, and E2E under the operator's exemption.
+async function excusedOf($: any, gate: Gate): Promise<Excused> {
+  const exempt = await e2eExemptionOf($, gate)
+  return { ...(exempt ? { e2e: exempt } : {}), ...planExcuses(await readPlan($, gate.repo, Number(gate.pr))) }
+}
+
 type Readiness = { gate?: Gate; missing: string[]; carried?: Carried[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
@@ -1008,7 +1038,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     throw err
   }
   const carried = await carriedRecords($, gate, files)
-  return { gate, missing: missingItems(gate, files, sha, await e2eExemptionOf($, gate), carried), carried }
+  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried), carried }
 }
 
 /*
@@ -1025,15 +1055,15 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean }
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
-  let exempt: string | undefined
+  let excused: Excused
   let accepted: string | undefined
   let carried: Carried[]
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
-    exempt = await e2eExemptionOf($, gate)
+    excused = await excusedOf($, gate)
     const files = await headRecords($, gate)
     carried = await carriedRecords($, gate, files)
-    missing = missingItems(gate, files, undefined, exempt, carried)
+    missing = missingItems(gate, files, undefined, excused, carried)
     accepted = reviewAccepted(gate, files)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
@@ -1065,7 +1095,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, exempt, carried), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried), labels, draft }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft }
 }
 
@@ -1537,7 +1567,7 @@ async function touchesAutoMerge($: any, line: string): Promise<boolean> {
 
 // Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
 async function touchesExemptions($: any, line: string): Promise<boolean> {
-  if (!line.includes(EXEMPT_DIR)) return false
+  if (!line.includes(EXEMPT_DIR) && !line.includes(PLAN_DIR)) return false
   const dir = await dataDir($)
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
@@ -1751,6 +1781,39 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
 }
 
+/*
+ * The record tool's {pr, plan: {e2e, norms}}: the proofs the pull request owes, decided when the work is
+ * scoped, kept across its heads and posted on it. A new plan may require more; one that no longer requires
+ * a check the plan required is refused, as only the operator's waiver lifts it.
+ */
+async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  const checks = planInput(e.plan)
+  if (typeof checks === 'string') {
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "full|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
+  }
+  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
+  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  if (!repo || !isRepoName(repo)) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
+  const dir = await dataDir($)
+  if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
+  const lifted = relaxed(await readPlan($, repo, pr), checks)
+  if (lifted.length > 0) {
+    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' requires ' + lifted.join(' and ') + ': only the operator\'s waiver lifts a required check, never a new plan.' }
+  }
+  const path = planPath(dir, repo, pr)
+  const body = { v: 1, repo: repo.toLowerCase(), pr, ...checks, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }
+  await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(body, null, 2) + '\n'))
+  let posted = ''
+  try {
+    await runGh($, 'pr-comment', { pr, body: planText(checks) }, repo)
+  } catch (err: any) {
+    posted = '\ngithub: the plan is not posted on ' + repo + '#' + pr + ': ' + String(err?.message ?? err).trim()
+  }
+  const { line } = await followGate($, repo, pr, undefined, true)
+  return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + checks.review.need + posted + (line ? '\n' + line : '') }
+}
+
 // ---- records ----
 
 // Why a path is no directory, or undefined when it is one. The host's `$.fs.stat` says `dir`; a
@@ -1784,6 +1847,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   }
   const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
   if (e.exempt !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
+  if (e.plan !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
   const result = String(e.result ?? '')
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
@@ -1801,6 +1865,10 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
         ? 'github: ' + dir + ' has no GitHub origin remote, so the repository is unknown: name it: {"repo": "owner/name"}'
         : 'github: name the repository: {"repo": "owner/name"}',
     }
+  }
+  const planned = result === 'waived' ? (await readPlan($, repo, pr))?.e2e : undefined
+  if (planned && planned.need !== 'required') {
+    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no E2E (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
   }
   if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
@@ -1947,6 +2015,14 @@ export function register(on: any): void {
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
+            plan: {
+              type: 'object',
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
+              properties: {
+                e2e: { type: 'string', description: 'required, none or screenshots' }, norms: { type: 'string', description: 'required or none' },
+                review: { type: 'string', description: 'full or one-pass (one review_only pass)' },
+              },
+            },
             dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },
           required: [],
@@ -2055,7 +2131,7 @@ export function register(on: any): void {
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
         return { deny: AUTO_MERGE_REFUSAL }
       }
-      if ((data && path.startsWith(normalise(data + '/' + EXEMPT_DIR) + '/')) || ANY_EXEMPT_PATH.test(path)) {
+      if ((data && [EXEMPT_DIR, PLAN_DIR].some((dir) => path.startsWith(normalise(data + '/' + dir) + '/'))) || ANY_EXEMPT_PATH.test(path)) {
         return { deny: EXEMPT_REFUSAL }
       }
       return next(e)

@@ -4,7 +4,8 @@
 // that sets non-critical points aside, each with its reason. The record is github's (core's
 // pr-record.ts): this tool writes it only from an orchestrator session, and github checks the rest
 // at the head of the clean checkout it reads: the caller's plugin, a session that did not push
-// that head, and no pass over a failed review there.
+// that head, and no pass over a failed review there. In place of a verdict, the same tool writes the pull
+// request's check plan (github's check-plan.ts), which github takes from this plugin only.
 import { ACCEPTANCE, acceptanceDetail } from '../core/pr-record.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
@@ -17,7 +18,7 @@ export const REVIEW_TOOL = 'review'
 const RECORD_TOOL = 'mcp__github__record'
 const VERDICTS = ['pass', 'fail', ACCEPTANCE.result] as const
 
-export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review verdict: the review round is its own.'
+export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review verdict or a check plan: the review round and the scope are its own.'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 
@@ -25,6 +26,12 @@ const text = (value: unknown): string => (typeof value === 'string' ? value.trim
 export function verdictCall(input: Record<string, unknown>): { tool: string } & Record<string, unknown> | string {
   const pr = Number(String(input['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return 'pr is the pull request number'
+  const repo = text(input['repo']) ? { repo: text(input['repo']) } : {}
+  const plan = input['plan']
+  if (plan !== undefined) {
+    if (typeof plan !== 'object' || plan === null || Array.isArray(plan)) return 'plan is {"e2e": …, "norms": …, "review": …}'
+    return input['verdict'] === undefined ? { tool: RECORD_TOOL, pr, ...repo, plan } : 'a plan goes in place of the verdict'
+  }
   const verdict = text(input['verdict'])
   if (!VERDICTS.some((v) => v === verdict)) return 'verdict is pass, fail or ' + ACCEPTANCE.result
   const raw = input['set_asides']
@@ -34,7 +41,6 @@ export function verdictCall(input: Record<string, unknown>): { tool: string } & 
   }
   if (verdict !== ACCEPTANCE.result && raw !== undefined) return 'set_asides goes with the verdict ' + ACCEPTANCE.result + ' only'
   const detail = verdict === ACCEPTANCE.result ? acceptanceDetail(setAsides) : text(input['detail'])
-  const repo = text(input['repo']) ? { repo: text(input['repo']) } : {}
   const dir = text(input['dir']) ? { dir: text(input['dir']) } : {}
   return { tool: RECORD_TOOL, pr, ...repo, ...dir, kind: ACCEPTANCE.kind, result: verdict, detail }
 }
@@ -53,7 +59,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: REVIEW_TOOL,
         isDeferred: false,
-        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session.',
+        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. In place of the verdict, plan sets the proofs the pull request owes.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -67,8 +73,17 @@ export function register(on: On<Held>): void {
               items: { type: 'object', properties: { point: { type: 'string' }, reason: { type: 'string' } }, required: ['point', 'reason'] },
             },
             detail: { type: 'string', description: 'pass or fail: one line on what was reviewed or found' },
+            plan: {
+              type: 'object',
+              description: 'in place of the verdict: each "<need>" or "<need>: <reason>"',
+              properties: {
+                e2e: { type: 'string', description: 'required, none or screenshots' },
+                norms: { type: 'string', description: 'required or none' },
+                review: { type: 'string', description: 'full or one-pass' },
+              },
+            },
           },
-          required: ['pr', 'verdict'],
+          required: ['pr'],
         },
       })
     } catch (err) {

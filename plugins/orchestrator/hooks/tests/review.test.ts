@@ -102,3 +102,37 @@ test('a subagent of the orchestrator records no verdict', async () => {
   expect((await handler()(fx.dollar, { ...ACCEPTED, agentId: 'a1' })).isError).toBe(true)
   expect(fx.calls).toEqual([])
 })
+
+// ---- the check plan, in place of the verdict ----
+
+const PLAN = { e2e: 'none: docs only', norms: 'required', review: 'one-pass: a typo' }
+const PLANNED = { pr: 164, repo: 'acme/thing', plan: PLAN }
+
+test('an orchestrator\'s check plan is written through github\'s record tool', async () => {
+  const fx = fake('Orch: belt [a1b2c3]', { result: 'github: check plan of acme/thing#164' })
+  const out = await handler()(fx.dollar, PLANNED)
+  expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 164, repo: 'acme/thing', plan: PLAN }])
+  expect(out).toEqual({ result: 'github: check plan of acme/thing#164' })
+})
+
+for (const name of ['Agent: md-s10', 'Coord: general', 'Audit: method']) {
+  test(`a session named ${name} writes no check plan`, async () => {
+    const fx = fake(name)
+    expect(await handler()(fx.dollar, PLANNED)).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+    expect(fx.calls).toEqual([])
+  })
+}
+
+for (const [label, change] of [['no plan object', { plan: 'none' }], ['a verdict beside it', { verdict: 'pass' }]] as const) {
+  test(`a check plan with ${label} is refused and calls nothing`, async () => {
+    const fx = fake('Orch: belt')
+    expect((await handler()(fx.dollar, { ...PLANNED, ...change })).isError).toBe(true)
+    expect(fx.calls).toEqual([])
+  })
+}
+
+test('a subagent of the orchestrator writes no check plan', async () => {
+  const fx = fake('Orch: belt')
+  expect((await handler()(fx.dollar, { ...PLANNED, agentId: 'a1' })).isError).toBe(true)
+  expect(fx.calls).toEqual([])
+})
