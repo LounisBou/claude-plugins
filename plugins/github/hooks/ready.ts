@@ -6,7 +6,7 @@
 
 import { ACCEPTANCE, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { carriesAcross, heldBy, missingEvidence, type Holder } from '../core/readiness.ts'
-import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { gitSubcommand, innerLine, readCommands, simpleCommands } from '../core/shell.ts'
 import type { Excused } from './check-plan.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
@@ -182,6 +182,9 @@ const API_VALUED = [
   '-t', '--template', '--cache', '-p', '--preview', '--hostname',
 ]
 const MERGE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/merge\/?$/
+// The shape of a merge path whose repository or number the line does not show (`$PR`, `${PR}`,
+// `$REPO`, which may stand for owner/name, a substitution): an opaque merge.
+const MERGE_SHAPE = /^\/?repos\/(?:[^/]*\/){1,2}pulls\/[^/]*\/merge\/?$/
 const LABELS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/labels\/?$/
 // An issue or a pull request itself, whose PATCH may set its labels.
 const ISSUE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)\/(\d+)\/?$/
@@ -250,7 +253,10 @@ function apiAct(argv: string[]): Act | undefined {
   const path = endpoint.replace(API_HOST, '')
   if (method !== 'PUT' && method !== 'POST') return undefined
   const merge = MERGE_PATH.exec(path)
-  return merge ? { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) } : undefined
+  if (merge) return { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) }
+  // A substitution splits the path into words: the words are joined as the shell would.
+  const joined = parsed.positionals.join('').replace(API_HOST, '')
+  return MERGE_SHAPE.test(joined) ? { kind: 'merge', name: 'gh api', unreadable: true } : undefined
 }
 
 // The act of one run of the plugin's engine, engine/gh.py, from Bash. A draft
@@ -268,12 +274,32 @@ function engineAct(call: EngineCall): Act | undefined {
   return undefined
 }
 
+// The simple commands of a line as simpleCommands reads them, each with whether a command
+// substitution stands among its words: the shell drops it from the argv, where it may have been the
+// pull request's number or branch.
+function commandsOf(line: string): Array<{ argv: string[]; substituted: boolean }> {
+  const read = (text: string) => readCommands(text).map((command) => ({ argv: [...command.argv], substituted: command.substitutions.length > 0 }))
+  const out = read(line)
+  for (const { argv } of [...out]) {
+    const inner = innerLine(argv)
+    if (inner !== undefined) out.push(...read(inner))
+  }
+  return out
+}
+
+// A merge or an undraft that names no pull request, in a command that holds a substitution
+// (`gh pr merge $(…) -R o/n`), names one the line does not show: it is no current-branch act.
+function unreadableTarget(act: Act): Act {
+  const names = act.pr !== undefined || (act.branch ?? '') !== '' || act.unreadable
+  return names || (act.kind !== 'merge' && act.kind !== 'undraft') || !act.name.startsWith('gh pr ') ? act : { ...act, unreadable: true }
+}
+
 // Every act of a Bash command line, read word by word: a message or a body
 // that only mentions one is an argument, not a command. A request the engine
 // reads from stdin (`gh.py --stdin-json`) shows no act: it is one of its own, refused.
 export function bashActs(line: string): Act[] {
   const found: Act[] = []
-  for (const argv of simpleCommands(line)) {
+  for (const { argv, substituted } of commandsOf(line)) {
     const start = engineStart(argv)
     if (start !== undefined && argv.length === start + 1 && argv[start] === '--stdin-json') {
       found.push({ kind: 'merge', name: 'gh.py --stdin-json', stdin: true })
@@ -281,7 +307,7 @@ export function bashActs(line: string): Act[] {
     }
     const engine = engineCall(argv)
     const act = engine ? engineAct(engine) : !GH.test(argv[0] ?? '') ? undefined : argv[1] === 'api' ? apiAct(argv) : prAct(argv)
-    if (act) found.push(act)
+    if (act) found.push(substituted ? unreadableTarget(act) : act)
   }
   return found
 }

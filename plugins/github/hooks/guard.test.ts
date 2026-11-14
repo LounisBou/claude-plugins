@@ -735,6 +735,30 @@ test('a Bash gh.py act whose pull request number cannot be read is refused, neve
   expect(commands(seen)).toEqual([])
 })
 
+test('a Bash merge whose pull request is a shell expansion is refused, never read against the current branch', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'], pulls: { '': [{ number: 12 }] } })
+  for (const command of [
+    'gh api repos/acme/thing/pulls/$PR/merge -X PUT',
+    'gh api repos/acme/thing/pulls/${PR}/merge -X PUT',
+    'gh api repos/$REPO/pulls/12/merge -X PUT',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toBe('github: gh api refused: the pull request number cannot be read from the command.'
+      + ' Write it as a number, or run the tool\'s mcp__github__gh call with {"pr": <n>}.')
+  }
+  for (const command of [
+    'gh pr merge $(gh pr list -q .[0].number) -R acme/thing',
+    'gh pr merge `gh pr list -q .[0].number` -R acme/thing',
+    'gh pr ready $(gh pr list -q .[0].number) -R acme/thing',
+  ]) {
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny, command).toBe('github: ' + command.split(' ').slice(0, 3).join(' ') + ' refused: the pull request number cannot be read from the command.'
+      + ' Write it as a number, or run the tool\'s mcp__github__gh call with {"pr": <n>}.')
+  }
+  expect(seen.bash.length).toBe(0)
+  expect(commands(seen)).toEqual([])
+})
+
 test('a Bash undraft through gh.py for CI passes in auto-merge too, still Not Ready', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], ci: { result: 'PENDING', skipped: ['test'] } })
   const out: any = await $.tool.call(bash(ENGINE + ' pr-ready 12 --for-ci --repo acme/thing'))

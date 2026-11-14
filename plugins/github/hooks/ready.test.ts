@@ -174,6 +174,35 @@ test('the Bash merges and undrafts are recognised with their repository and pull
   expect(bashActs('gh pr ready 3 -R o/r --undo')).toEqual([{ kind: 'redraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
 })
 
+test('a gh api merge whose pull request or repository is a shell expansion is an unreadable merge', () => {
+  const unreadable = [{ kind: 'merge', name: 'gh api', unreadable: true }]
+  for (const line of [
+    'gh api repos/o/r/pulls/$PR/merge -X PUT',
+    'gh api repos/o/r/pulls/${PR}/merge -X PUT',
+    'gh api repos/$REPO/pulls/12/merge -X PUT',
+    'gh api repos/o/r/pulls/$(gh pr list -q .[0].number)/merge -X POST',
+    'gh api "repos/o/r/pulls/$(echo 12)/merge" -X POST',
+    'gh api repos/o/r/pulls/$PR/merge -f merge_method=squash',
+  ]) {
+    expect(bashActs(line), line).toEqual(unreadable)
+  }
+  // A read, or another endpoint, is no merge.
+  expect(bashActs('gh api repos/o/r/pulls/$PR/merge')).toEqual([])
+  expect(bashActs('gh api repos/o/r/pulls/$PR/files -X POST')).toEqual([])
+})
+
+test('a merge or an undraft whose pull request is a command substitution is unreadable, never the current branch\'s', () => {
+  const at = (kind: string, name: string, extra = {}) => [{ kind, name, repo: 'o/r', unreadable: true, ...extra }]
+  expect(bashActs('gh pr merge $(gh pr list -q .[0].number) -R o/r')).toEqual(at('merge', 'gh pr merge'))
+  expect(bashActs('gh pr merge `gh pr list -q .[0].number` -R o/r')).toEqual(at('merge', 'gh pr merge'))
+  expect(bashActs('gh pr merge "$(cat number)" -R o/r')).toEqual(at('merge', 'gh pr merge', { branch: '' }))
+  expect(bashActs('gh pr ready $(cat number) -R o/r')).toEqual(at('undraft', 'gh pr ready'))
+  expect(bashActs('bash -c "gh pr merge \\$(cat number) -R o/r"')).toEqual(at('merge', 'gh pr merge'))
+  // A substitution elsewhere in the line leaves a number the line shows readable.
+  expect(bashActs('gh pr merge 12 -R o/r --body "$(cat body)"')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r', pr: 12 }])
+  expect(bashActs('gh pr merge -R o/r')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r' }])
+})
+
 test('gh pr ready --undo is read as gh reads a boolean flag: =false leaves draft', () => {
   expect(bashActs('gh pr ready 3 -R o/r --undo')[0].kind).toBe('redraft')
   expect(bashActs('gh pr ready 3 -R o/r --undo=true')[0].kind).toBe('redraft')
