@@ -6,9 +6,11 @@
 // command line, a prompt's words, a finding's summary or a figure a model passed to a tool. Every
 // field is a name, a number, a pattern-bound path or a code, and the reader refuses any field the
 // contract does not name. Defined here once; `npm run core` writes it as learning.json beside each
-// plugin's copy, which a writer in Python loads. The window, the retention and the count of a
-// journal are held here once (the operator's answer to the design's question 9 is the
-// recommendation: 30 days, 180 days, 2,000 events).
+// plugin's copy, which a writer in Python loads. Version 1 is the first field list, not the last:
+// a kind or a field added later (an audit trail's timestamps, decisions or waits, say) is a new
+// version of the contract, read beside this one, and never a field slipped into version 1. The
+// window, the retention and the count of a journal are held here once, on the recommendation of
+// the design's question 9 (30 days, 180 days, 2,000 events) while the operator has not answered it.
 
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
