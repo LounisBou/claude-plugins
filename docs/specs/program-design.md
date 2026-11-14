@@ -73,7 +73,7 @@ outside this repository.
 | 12 | met | `/github:protect [apply]` (claude-plugins#21); the orchestrator's local push guard removed (claude-plugins#72) | — |
 | 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly |
 | 14 | met | `ci/prompts.json` held by CI; `npm run context`: the orchestrator's start is 1,931 tokens in `build`, 1,266 in `investigate` | — |
-| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; nothing runs them at a release |
+| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; the release pull request asks whether to re-run the measure (`docs/architecture.md`, « Release »), and nothing runs without the operator's yes |
 | 16 | operator step | — | the operator's configuration repository, outside this one |
 | 17 | operator step | `docs/migration.md` | follows goals 2, 6, 15, 16; the criteria need the operator's days of use and a rehearsal |
 | 18 | met for the strict parts | `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured; a part joins the day it is strict |
