@@ -165,8 +165,8 @@ export interface Extracted {
 
 /**
  * The commit directories to remove: neither installed nor the one before, nor left within KEEP_MS.
- * A commit of the history was left when the next one was installed (that entry's `at`); any other
- * directory at its modification time, which a rollback sets on the commit it leaves.
+ * A directory was left at its modification time, which a rollback sets on the commit it leaves, or,
+ * for a commit of the history, when the next one was installed (that entry's `at`), the later of both.
  */
 export function prunable(state: State, dirs: readonly Extracted[], now: number): string[] {
   const keep = new Set(state.history.slice(0, 2).map(entry => entry.commit))
@@ -175,7 +175,7 @@ export function prunable(state: State, dirs: readonly Extracted[], now: number):
     const next = state.history[at - 1]
     if (next !== undefined && !left.has(entry.commit)) left.set(entry.commit, Date.parse(next.at))
   })
-  return dirs.filter(dir => SHA.test(dir.name) && !keep.has(dir.name) && now - (left.get(dir.name) ?? dir.at) >= KEEP_MS).map(dir => dir.name)
+  return dirs.filter(dir => SHA.test(dir.name) && !keep.has(dir.name) && now - Math.max(left.get(dir.name) ?? dir.at, dir.at) >= KEEP_MS).map(dir => dir.name)
 }
 
 /** One line: the installed commit, when, the one before, each plugin's version, the last failure. */
@@ -281,15 +281,14 @@ function withoutFailure({ lastError: _failure, ...state }: State): State {
   return state
 }
 
-/** Records `message` as the last failure in the state, when there is a state to record it in. */
-function recordFailure(paths: Paths, message: string, now: number): void {
-  let state: State | undefined
+/** Records `message` as the last failure in the state, when there is a state to record it in; the run's own error still reaches stderr. */
+function recordFailure(paths: Paths, message: string, now: number, io: Io): void {
   try {
-    state = readState(paths)
-  } catch {
-    return // the state itself is unreadable: the error that made the run fail still reaches stderr
+    const state = readState(paths)
+    if (state !== undefined) writeState(paths, { ...state, lastError: { at: new Date(now).toISOString(), message: message.replace(/\s+/g, ' ').trim() } })
+  } catch (error) {
+    io.err(`deploy: the failure was not recorded in installed.json: ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (state !== undefined) writeState(paths, { ...state, lastError: { at: new Date(now).toISOString(), message: message.replace(/\s+/g, ' ').trim() } })
 }
 
 function readState(paths: Paths): State | undefined {
@@ -344,10 +343,7 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): numb
   const runs = host.api(`repos/${repo}/actions/workflows/${WORKFLOW_PATH.split('/').pop() ?? ''}/runs?branch=main&status=success&exclude_pull_requests=true&per_page=100`)
   const green = greenCommit(runs, only)
   if (green === null) {
-    if (only !== undefined) {
-      io.err(`deploy: ${only} has no successful push run on main among the last 100`)
-      return 1
-    }
+    if (only !== undefined) throw new Error(`${only} has no successful push run on main among the last 100`)
     io.out('deploy: no commit of main with a successful push run')
     return 0
   }
@@ -390,8 +386,7 @@ function rollback(paths: Paths, host: Host, io: Io): number {
   const state = readState(paths)
   const [current, previous] = state?.history ?? []
   if (state === undefined || current === undefined || previous === undefined || !existsSync(join(paths.root, previous.commit))) {
-    io.err('deploy: no earlier commit installed to roll back to')
-    return 1
+    throw new Error('no earlier commit installed to roll back to')
   }
   const left = join(paths.root, current.commit)
   if (existsSync(left)) utimesSync(left, new Date(host.now()), new Date(host.now()))
@@ -416,8 +411,10 @@ export function run(args: readonly string[], io: Io, host: Host = processHost())
     mkdirSync(root, { recursive: true, mode: 0o700 })
     const lock = lockOf(paths.state)
     if (existsSync(lock)) {
+      const judged = readText(lock)
       if (isStale(lock, host)) {
-        rmSync(lock, { force: true })
+        // Only the lock judged: a run that took it over meanwhile wrote its own pid.
+        if (readText(lock) === judged) rmSync(lock, { force: true })
         io.err('deploy: removed the lock of a run that died')
       } else if (args.includes('--rollback')) {
         io.err('deploy: another deploy is running: roll back once it ends')
@@ -435,7 +432,7 @@ export function run(args: readonly string[], io: Io, host: Host = processHost())
         if (state?.lastError !== undefined) writeState(paths, withoutFailure(state))
         return code
       } catch (error) {
-        recordFailure(paths, error instanceof Error ? error.message : String(error), host.now())
+        recordFailure(paths, error instanceof Error ? error.message : String(error), host.now(), io)
         throw error
       }
     }, { waitMs: 0, staleMs: LOCK_STALE_MS, now: host.now })

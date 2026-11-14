@@ -405,6 +405,20 @@ describe('the directories kept', () => {
     assert.deepEqual(prunable(stateOf([A, B, C]), dirs, replaced + KEEP_MS), [C])
   })
 
+  it('removes a directory outside the history once its own time is old, and keeps one a rollback just left', () => {
+    const now = Date.UTC(2026, 0, 9) + KEEP_MS
+    assert.deepEqual(prunable(stateOf([A, B]), [{ name: C, at: now - KEEP_MS }], now), [C])
+    assert.deepEqual(prunable(stateOf([A, B, C]), [{ name: C, at: now - 1 }], now), [])
+  })
+
+  it('records a refusal that exits 1 as the last failure', () => {
+    const box = sandbox()
+    const f = fake()
+    deploy(box, f.host)
+    assert.equal(deploy(box, f.host, '--rollback'), 1)
+    assert.match(stateIn(box).lastError?.message ?? '', /no earlier commit/)
+  })
+
   it('keeps a directory extracted long ago that running sessions may still read', () => {
     const box = sandbox()
     const day = 24 * 3_600_000
