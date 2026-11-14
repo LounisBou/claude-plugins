@@ -37,6 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
+import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
@@ -201,9 +202,10 @@ const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 const ROUND_WAKE_MS = 30000
 
 // An answer sent to a sender on another machine and not acknowledged is sent again by that same
-// reading once its last send is this old, ANSWER_SENDS sends at most, then failed.
-const ANSWER_RESEND_MS = 30000
-const ANSWER_SENDS = 3
+// reading once its last send is this old, ANSWER_SENDS sends at most, then failed. A question asked
+// with `ask` keeps them, both ways (remote-asked.ts).
+export const ANSWER_RESEND_MS = 30000
+export const ANSWER_SENDS = 3
 
 // A coordinator's pane render that takes longer than this is logged with its duration: its reads
 // are bounded one by one, and a pane held past this is one the operator sees frozen.
@@ -1134,6 +1136,7 @@ async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: nu
   await deliverInTurn($)
   try {
     await resendAnswers($)
+    await resendReplies($)
   } catch (err) {
     await logLine($, 'supervision', `round resend: ${(err as Error).message}`)
   }
@@ -1724,7 +1727,24 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (isAck(delivery.body)) return await receiveAck($, oldAck(parseAck(delivery.body), 'ask'))
         if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, oldAck(parseAnswerAck(delivery.body), 'answer'))
         const q = isQ(delivery.body) ? parseQ(delivery.body) : null
-        if (isQ(delivery.body) && q?.event.kind !== 'answer') {
+        // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
+        // by the coordinator alone, and the reply given on its replica, which its asker's model reads.
+        if (q?.event.kind === 'asked' || q?.event.kind === 'reply') {
+          const from = peerAddress(delivery)
+          if (!from) {
+            await logLine($, 'supervision', `receive: a remote ${q.event.kind} of ${q.id} came with no sender address, refused`)
+            return { consumed: `orchestrator: a remote ${q.event.kind} with no sender address, refused` }
+          }
+          if (q.event.kind === 'asked') {
+            if (await ownRole($) === 'coordinator') return await receiveAsked($, from, q.event.object)
+            await logLine($, 'supervision', `receive: a remote question asked with ask reached a session that is no coordinator: ${q.id}`)
+            return { consumed: 'orchestrator: a remote question asked with ask for no coordinator, dropped' }
+          }
+          const received = await receiveReply($, from, q.id, q.seq, q.event.reply)
+          if ('consumed' in received) return received
+          const at = e.text.indexOf(delivery.body)
+          passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
+        } else if (isQ(delivery.body) && q?.event.kind !== 'answer') {
           return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null, true)
         }
         if (isAsk(delivery.body)) return await receiveAsk($, delivery, parseAsk(delivery.body), false)
@@ -1913,9 +1933,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
         // One moved to a successor by its name alone is drawn while a live record of that name hosts it.
+        // A replica of one asked on another machine, while a live remote row of its asker's name was measured there.
         const allAsked = await readAsked($)
         const hostedAsked = await hostedSuccessors($, allAsked.map(askedAsEntry), local, store.alive, new Set(allAsked.map(entry => entry.id)))
-        const localAsked = allAsked.filter(entry => sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
+        const localAsked = allAsked.filter(entry => entry.origin !== undefined
+          ? merged[remoteKey(entry.sender.name)]?.machine === entry.origin.machine
+          : sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
         asked = askedGroups(localAsked).flat()
         pending += asked.length
         // The orchestrator whose question is drawn, by its session: two may share a name.
@@ -1935,6 +1958,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         failed.push(...localAsked.filter(entry => entry.status === 'answered' && entry.delivery?.state === 'failed')
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' })))
         delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
+        // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
+        delivering.push(...localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry))
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -3760,6 +3785,8 @@ async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: s
 
 // An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
 async function receiveQAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
+  if (ack?.of === 'asked') return receiveAskedAck($, ack)
+  if (ack?.of === 'reply') return receiveReplyAck($, ack)
   return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
 }
 
@@ -3769,7 +3796,7 @@ function oldAck(ack: { id: string; since: string } | null, of: QAck['of']): QAck
 }
 
 // What the pane says of an answer its sender's tab had settled first.
-const ALREADY_ANSWERED = 'already answered in its own tab'
+export const ALREADY_ANSWERED = 'already answered in its own tab'
 
 // A peer's address as its envelope gave it, when it is one a send can reach.
 function peerAddress(delivery: Delivery): string | null {
