@@ -2900,10 +2900,11 @@ test('a run that failed at an earlier head before the « Accorder » leaves it s
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
 })
 
-test('a waived record with no « Accorder » recorded is refused, and names the question to put', async ($, on) => {
+test('a waived record with no « Accorder » recorded is refused, and names the question to put and where it goes', async ($, on) => {
   const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
-  const out: any = await $.tool.call(waiveCall('the operator said so, 2026-11-03'))
+  const out: any = await $.tool.call(waiveCall('the operator said so'))
   expect(out.deny).toContain('github: an E2E waiver is the operator\'s « Accorder » to one question, « Dispense d\'E2E pour acme/thing#12 : <why> »')
+  expect(out.deny).toContain('asked as method:lifecycle « Questions to the operator » says')
   expect(recordRun(seen)).toBeUndefined()
 })
 
