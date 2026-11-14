@@ -132,6 +132,5 @@ The release pull request also asks the operator whether to re-run the outcome me
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
-A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
-runs every plugin, a change of documentation alone (`docs/`, a Markdown file at the root) none.
-A push to `main` runs every plugin on Linux and macOS.
+What runs when (a pull request, the release, a push to `main`, the night) is the table at the head of
+`scripts/plugin-matrix.ts`.
