@@ -125,14 +125,16 @@ export interface PullRequest {
   readonly head: string
   readonly auto: boolean
   readonly draft: boolean
+  /** Set only when GitHub reports the pull request as conflicting with its base. */
+  readonly conflicting?: true
 }
 
-/** What `gh pr view`'s one-line answer says: `<STATE> <head>[ auto][ draft]`. */
+/** What `gh pr view`'s one-line answer says: `<STATE> <head>[ auto][ draft][ conflicting]`. */
 export function parseView(out: string): PullRequest {
   const [state, rest] = split(out)
   const [head, flags] = split(rest)
   const words = rest === head ? [] : flags.split(' ')
-  return { state, head, auto: words.includes('auto'), draft: words.includes('draft') }
+  return { state, head, auto: words.includes('auto'), draft: words.includes('draft'), ...(words.includes('conflicting') ? { conflicting: true as const } : {}) }
 }
 
 /** The log of this pull request's watch, `suffix` naming which watch writes it. */
@@ -171,8 +173,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   let log = logPath(options, '')
 
   const readPr = async (): Promise<PullRequest> => {
-    const ran = await gh(['pr', 'view', pr, '--json', 'state,headRefOid,autoMergeRequest,isDraft', '--jq',
-      '.state + " " + .headRefOid + (if .autoMergeRequest then " auto" else "" end) + (if .isDraft then " draft" else "" end)'], { stderr: 'pipe' })
+    const ran = await gh(['pr', 'view', pr, '--json', 'state,headRefOid,autoMergeRequest,isDraft,mergeable', '--jq',
+      '.state + " " + .headRefOid + (if .autoMergeRequest then " auto" else "" end) + (if .isDraft then " draft" else "" end) + (if .mergeable == "CONFLICTING" then " conflicting" else "" end)'], { stderr: 'pipe' })
     const out = chomp(ran.stdout)
     if (ran.status !== 0 || out === '') throw fail('gh pr view', ran)
     return parseView(out)
@@ -399,6 +401,9 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       passed = countBucket(buckets, 'pass', new Set((await draftGuard('--dependents')).split('\n').filter(Boolean)))
     }
     if (names === '') {
+      // GitHub starts no workflow run on a conflicting pull request: what passed is an external check
+      // at most, and the suites never ran. Auto-merge will never merge it either, so no wait.
+      if (current.conflicting) return new Said(`no-checks ${pr} ${current.head} conflicting`, 2)
       if (options.base && current.auto) {
         // Auto-merge will merge: wait for it, bounded, and follow the base branch.
         const until = deps.now() + options.mergeWait * 1000
