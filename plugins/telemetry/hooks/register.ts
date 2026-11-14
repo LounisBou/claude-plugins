@@ -81,7 +81,7 @@ async function readTitle($: Host, collector: Collector): Promise<void> {
     const info = await $.session.info()
     const path = typeof info === 'object' && info !== null ? (info as Record<string, unknown>)['transcriptPath'] : undefined
     if (typeof path !== 'string' || path === '') return
-    const run = await $.process.run(['head', '-c', String(TRANSCRIPT_HEAD_BYTES), path], { timeoutMs: HEAD_READ_TIMEOUT_MS })
+    const run = await $.process.run(['head', '-c', String(TRANSCRIPT_HEAD_BYTES), '--', path], { timeoutMs: HEAD_READ_TIMEOUT_MS })
     if (run.exitCode === 0) collector.setTitle(titleFromTranscriptHead(run.stdout))
   } catch { /* the title stays unknown */ }
 }

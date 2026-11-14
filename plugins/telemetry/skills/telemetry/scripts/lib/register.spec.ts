@@ -185,7 +185,7 @@ test('who: unknown at the first main turn\'s end, the title is read once from th
   assert.equal(heads(runs).length, 0)
   await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
   await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
-  assert.deepEqual(heads(runs).map(r => r.argv), [['head', '-c', '8192', '/t/s.jsonl']])
+  assert.deepEqual(heads(runs).map(r => r.argv), [['head', '-c', '8192', '--', '/t/s.jsonl']])
   assert.deepEqual(lines(runs).map(l => [l['event'], l['title'], l['role']]), [
     ['session_start', undefined, undefined], ['turn_end', undefined, undefined], ['turn_end', 'Agent: actor', 'agent'], ['turn_end', 'Agent: actor', 'agent'],
   ])
