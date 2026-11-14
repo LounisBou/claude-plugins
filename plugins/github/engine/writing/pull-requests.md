@@ -92,9 +92,10 @@ semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
 --draft`, the house default), and leaves draft only once it is ready. Outside
 auto-merge, leaving draft (a CI undraft aside) is the operator's, on GitHub after their
 review, and a merge needs their explicit word, given through this tool. In an
-auto-merge repository, the merge, leaving draft and the deployment its method
-foresees need no operator approval once the pull request is ready. A repository
-enters or leaves auto-merge only through `auto-merge-set`, on the operator's recorded answer.
+auto-merge repository, the merge and leaving draft need no operator approval once the
+pull request is ready. A deployment needs its repository listed for its environment
+(`auto-deploy-set`). A repository enters or leaves auto-merge only through `auto-merge-set`,
+on the operator's recorded answer.
 Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.
 A colleague's PR and any review comment are proposed first.
@@ -115,7 +116,7 @@ screen, the state shown, the screen size, and before or after when there is a pa
 read as a section label. Its image, `![…](…)` or an `<img>` tag, is on the next line.
 Two screenshots in a row are separated by a `---` line with a blank line before it, so
 the line above never turns into a heading: the block `image-upload --title` writes.
-Every image is audited before the PR is Ready, and a PR without both is not ready. When
+A PR without both is not ready. When
 a visual is fixed after the merge, retake the screenshots and replace them on GitHub
 and Notion.
 
