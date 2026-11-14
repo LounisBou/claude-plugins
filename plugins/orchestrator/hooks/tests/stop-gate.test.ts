@@ -2265,6 +2265,9 @@ test('an operator question may declare the subject it asks consent on, read by t
     { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
     { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'merge', repo: 'acme/thing' } },
   ]) expect('error' in parseDeclaration(bad)).toBe(true)
+  const deploy = { kind: 'auto-deploy', repo: 'acme/infra', env: 'staging' }
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED } })
+  expect('error' in parseDeclaration({ kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'auto-deploy', repo: 'acme/infra' } })).toBe(true)
   const declarations = new Declarations()
   declarations.turnStarted()
   expect(declaredConsent(declarations)).toBe(null)
@@ -2281,6 +2284,8 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
   await wait['session.start'](dollar, {}, (x: unknown) => x)
   expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
+  // The consent an operator question asks names the environment of an auto-deploy.
+  expect(tools[0].inputSchema.properties.consent.properties.env).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
   expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.
