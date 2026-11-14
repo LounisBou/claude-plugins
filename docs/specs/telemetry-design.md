@@ -38,9 +38,10 @@ by `backfill`.
 
 ## What is not recorded (secrets win over « toutes les données »)
 
-No prompt, answer, message, tool output, file content, question text or option label: the
-least revealing default, until the operator rules otherwise. A Bash command line is kept
-redacted and cut to 400 characters; other tools keep their name and the enumerated arguments
+No prompt, answer, message, tool output, file content, question text or option label in the
+events: the least revealing default, until the operator rules otherwise. The operator's order of
+2026-11-14 puts the raw transcripts, redacted, in the logs repository beside the events (below).
+A Bash command line is kept redacted and cut to 400 characters; other tools keep their name and the enumerated arguments
 named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80. The
 events carry these fields whole: the writer redacts each whole value, then cuts it (never inside
 a mark), so a secret straddling a limit leaves nothing of itself.
@@ -120,8 +121,12 @@ reading every line:
 - `index/<machine>/<day>.json`: the day's manifest, built by `lib/manifest.ts` from the day file:
   its sessions (role, models, title, project, cost, span, whether it ended), the pull requests,
   branches and dispatch rows its events name, the github tool's commands by count, and for each
-  session the path of its transcript under the machine's configuration directory.
+  session the path of its redacted transcript in the repository.
 
-Raw transcripts are not exported: they hold prompts and possibly secrets. The manifest names their
-local path and the session id, nothing of their content. The index is scanned as the day files
-are: a secret it would carry refuses the export, nothing pushed.
+Raw transcripts are exported, redacted (the operator's order of 2026-11-14: everything goes into
+the logs repository, indexed like the rest). The export copies the transcript of each session the
+day files name to `machines/<machine>/transcripts/<session>.jsonl`, after passing it through
+`lib/redact.ts`: each line parsed, each string redacted at any depth, a line that is no JSON
+redacted as text; the values of `~/.env` never reach the repository. The manifest names that copy,
+nothing of its content. The index is scanned as the day files are: a secret it would carry
+refuses the export, nothing pushed.
