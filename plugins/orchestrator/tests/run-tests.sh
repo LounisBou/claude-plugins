@@ -11045,6 +11045,21 @@ jq -n '{id:"tmp", from:"Orch: tmp", session:"s-tmp.tmp-1-abcdef", kind:"operator
 check "round reads no temporary file beside the sessions files as a sender's" \
   "round tmp | operator | from Orch: tmp | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
   "$(ORCHESTRATOR_STATE_DIR="$TSTATE" CLAUDE_CONFIG_DIR="$TCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round tmp ')"
+# A sender on another machine has no sessions file here, and said « sender gone » whatever it was
+# doing: its header names the machine its remote row says, and « sender gone » is left to a sender
+# with neither a row nor a session.
+RSTATE="$WORK/coord-remote"; RMOD="$WORK/coord-remote-module"
+mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote"
+cp "$CS/pane.json" "$RSTATE/pane.json"
+for who in far lost; do
+  jq -n --arg id "$who" '{id:$id, from:("Orch: " + $id), session:("s-" + $id), kind:"operator", since:"2026-10-18T10:01:00.000Z",
+    blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null,
+    origin:{machine:"bench-mac", address:"uds:/tmp/x.sock"}}' > "$RSTATE/round/$who.json"
+done
+jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote/Orch__far"
+check "round names the machine of a sender on another machine whose remote row is stored, and says gone of one with no row" \
+  "round far | operator | from Orch: far | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | remote on bench-mac|round lost | operator | from Orch: lost | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
+  "$(ORCHESTRATOR_STATE_DIR="$RSTATE" ORCHESTRATOR_MODULE_DIR="$RMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round ' | paste -sd'|' -)"
 # An entry the operator answered from the coordinator's pane is printed after the open ones and
 # before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
 ASTATE="$WORK/coord-answered"; ACFG="$WORK/coord-answered-config"
