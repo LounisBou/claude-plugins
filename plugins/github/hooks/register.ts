@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
-import { CONSENT_PRODUCER, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_PRODUCER, CONSENT_REFUSE, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, grants, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
@@ -14,7 +14,7 @@ import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_GRANT, WAIVER_REFUSE, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -284,8 +284,8 @@ export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp
   + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 export function waiverRefusal(repo: string, pr: number, check: Waivable): string {
-  return 'github: ' + (check === 'e2e' ? 'an E2E' : 'a norms') + ' waiver is the operator\'s « ' + WAIVER_GRANT + ' » to one question, « Dispense ' + WAIVER_WORDS[check] + ' pour ' + repo + '#' + pr
-    + ' : <why> », choices « ' + WAIVER_GRANT + ' » / « ' + WAIVER_REFUSE + ' », asked as method:lifecycle « Questions to the operator » says: none is recorded.'
+  return 'github: ' + (check === 'e2e' ? 'an E2E' : 'a norms') + ' waiver is the operator\'s « ' + CONSENT_GRANT + ' » to one question, « Dispense ' + WAIVER_WORDS[check] + ' pour ' + repo + '#' + pr
+    + ' : <why> », choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », asked as method:lifecycle « Questions to the operator » says: none is recorded.'
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
@@ -1583,7 +1583,7 @@ async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
   for (const question of Array.isArray(e.questions) ? e.questions : []) {
     const asked = waiverQuestion(question)
     const answer = String(answers[String(question?.question ?? '')] ?? '').trim()
-    if (!asked || (answer !== WAIVER_GRANT && answer !== WAIVER_REFUSE)) continue
+    if (!asked || (answer !== CONSENT_GRANT && answer !== CONSENT_REFUSE)) continue
     const dir = await configDir($)
     if (!dir) return
     const now = Number(await $.clock.now())
@@ -1630,15 +1630,15 @@ async function listAutoMerge($: any): Promise<string> {
 }
 
 // The refusal of an auto-merge-set whose words are not the operator's, or undefined.
-async function unprovenWord($: any, words: string, repo: string): Promise<string | undefined> {
+async function unprovenWord($: any, words: string, repo: string, on: boolean): Promise<string | undefined> {
   if (!AUTO_MERGE_WORD.test(words)) {
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
       + ' "automerge"), in their recorded answer.'
   }
-  if (await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
-  return 'github: auto-merge-set refused on ' + repo + ': its "words" are not the operator\'s answer in a consent record ('
-    + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s consent {"kind": "auto-merge", "repo": "'
-    + repo + '"}, then quote their answer verbatim.'
+  if (await consentAnswered($, words, { kind: 'auto-merge', repo }, on ? grants : undefined)) return undefined
+  return 'github: auto-merge-set refused on ' + repo + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
+    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s consent {"kind": "auto-merge", "repo": "'
+    + repo + '"}, choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
 }
 
 // The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
@@ -1699,7 +1699,7 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
   if (!isRepoName(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
   if (typeof args.on !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
   const words = typeof args.words === 'string' ? args.words : ''
-  const unproven = await unprovenWord($, words, repo)
+  const unproven = await unprovenWord($, words, repo, args.on)
   if (unproven) return { deny: unproven }
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -1729,15 +1729,15 @@ async function listAutoDeploy($: any): Promise<string> {
 }
 
 // The refusal of an auto-deploy-set whose words are not the operator's, or undefined.
-async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv): Promise<string | undefined> {
+async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv, on: boolean): Promise<string | undefined> {
   if (!AUTO_DEPLOY_WORD.test(words)) {
     return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
       + ' "autodeploy" or "auto-déploiement"), in their recorded answer.'
   }
-  if (await consentAnswered($, words, { kind: 'auto-deploy', repo, env })) return undefined
-  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are not the operator\'s answer in a consent record ('
-    + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s consent {"kind": "auto-deploy", "repo": "'
-    + repo + '", "env": "' + env + '"}, then quote their answer verbatim.'
+  if (await consentAnswered($, words, { kind: 'auto-deploy', repo, env }, on ? grants : undefined)) return undefined
+  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
+    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s consent {"kind": "auto-deploy", "repo": "'
+    + repo + '", "env": "' + env + '"}, choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
 }
 
 // The declarations a call adds for its repository, or a refusal naming what is wrong.
@@ -1764,7 +1764,7 @@ async function setAutoDeploy($: any, e: any): Promise<{ result?: string; deny?: 
   if (typeof args.on !== 'boolean') return { deny: 'github: auto-deploy-set says in or out: {"on": true} or {"on": false}' }
   const declared = declarationsOf(args.commands, repo)
   if (typeof declared === 'string') return { deny: declared }
-  const unproven = await unprovenDeployWord($, typeof args.words === 'string' ? args.words : '', repo, env)
+  const unproven = await unprovenDeployWord($, typeof args.words === 'string' ? args.words : '', repo, env, args.on)
   if (unproven) return { deny: unproven }
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)

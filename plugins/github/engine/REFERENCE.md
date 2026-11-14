@@ -167,7 +167,7 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 
 `auto-merge-set` needs `words` naming auto-merge (« auto-merge », « auto merge » or
 « automerge ») that quote the operator's answer in a consent record of auto-merge on that
-repository (core's `consent-record.ts`, `<config dir>/consents/<owner>/<name>/`).
+repository (core's `consent-record.ts`, `<config dir>/consents/<owner>/<name>/`); `on: true` needs that answer to be « Accorder », the choice every consent question offers beside « Refuser ».
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
 without regard to case, and it is changed under a lock (`<file>.lock`, core's convention),
@@ -419,7 +419,7 @@ Answered by the mod (README « Repositories in auto-deploy »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant or withdraw the environment on the operator's quoted word; `commands`: its deploys |
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (« Accorder » recorded) or withdraw the environment on the operator's quoted word; `commands`: its deploys |
 | `auto-deploy-list` | | The environments granted |
 
 ## Exit codes

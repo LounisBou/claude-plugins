@@ -137,10 +137,10 @@ lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 
 The list changes only through the tool, on the operator's word:
-`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<their words>"}`
+`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<their recorded answer>"}`
 adds or removes a repository, under a lock on the file, when `words` names auto-merge (« auto-merge », « auto
 merge » or « automerge ») and quotes their answer in a consent record of auto-merge on that
-repository (core's `consent-record.ts`; the orchestrator writes them under
+repository; `on: true` needs that answer to be « Accorder » (never « Refuser » or prose) (core's `consent-record.ts`; the orchestrator writes them under
 `<config dir>/consents/`), and `auto-merge-list` prints it. A Write, an Edit or a shell command
 on the file is refused.
 
@@ -174,10 +174,10 @@ still meets the host's permission decision. An absent file grants nothing, and a
 malformed one declares nothing and says so in one transcript line.
 
 The file changes only through the tool, on the operator's word:
-`auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "<their words>", "commands": [...]}`
+`auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "<their recorded answer>", "commands": [...]}`
 grants or withdraws one environment under a lock on the file, when `words` names auto-deploy
 (« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement ») and quotes their answer
-in a consent record of auto-deploy on that repository and environment (core's `consent-record.ts`). `commands` adds declarations for the repository
+in a consent record of auto-deploy on that repository and environment (core's `consent-record.ts`); `on: true` needs that answer to be « Accorder ». `commands` adds declarations for the repository
 (`repo` implied) and needs the same words; the tool never removes one. `auto-deploy-list` prints
 each granted environment. A Write, an Edit or a shell command on the file is refused.
 
