@@ -126,7 +126,7 @@ export type Call = { tool: string; [key: string]: unknown }
 const ASK = 'Ask the user; they lift this by answering with that word, by saying "end review", or by pressing Esc.'
 
 function editDecision(skill: Skill, e: Call, prompt: string): string | null {
-  const path = String(e.file_path ?? e.notebook_path ?? '')
+  const path = String(e['file_path'] ?? e['notebook_path'] ?? '')
   if (path && isScratch(path)) return null
   if (grantsEdit(skill, prompt)) return null
   const word = skill === 'start-review' ? '"fix"' : '"fix", 1 or 3'
@@ -134,13 +134,13 @@ function editDecision(skill: Skill, e: Call, prompt: string): string | null {
 }
 
 function ghDecision(skill: Skill, e: Call, prompt: string): string | null {
-  const command = String(e.command ?? '')
-  const args = (e.args && typeof e.args === 'object' ? e.args : {}) as Record<string, unknown>
+  const command = String(e['command'] ?? '')
+  const args = (e['args'] && typeof e['args'] === 'object' ? e['args'] : {}) as Record<string, unknown>
   if (GH_READS.has(command)) return null
   if (skill === 'start-review') {
     if (command === 'review-pending-create' || command === 'review-pending-add') return null
-    if (command === 'review-submit' && args.event !== undefined && String(args.event) !== 'COMMENT') {
-      return `pr-review start-review: a review is never submitted with event ${String(args.event)}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}`
+    if (command === 'review-submit' && args['event'] !== undefined && String(args['event']) !== 'COMMENT') {
+      return `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}`
     }
     if (GH_PUBLISH.has(command)) {
       return grantsPublish(prompt) ? null
@@ -175,7 +175,7 @@ export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = 
   if (EDITORS.has(e.tool)) return editDecision(skill, e, prompt)
   if (e.tool === GH_TOOL) return ghDecision(skill, e, prompt)
   if (e.tool === 'Bash') {
-    const command = String(e.command ?? '')
+    const command = String(e['command'] ?? '')
     if (ghListed && /resolve_github\.py/.test(command)) {
       return `pr-review ${skill}: ${GH_TOOL} is listed in this session, so GitHub calls go through it, where the permission check applies; the Bash route is for sessions without it.`
     }
@@ -192,12 +192,12 @@ export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows
  */
 export function pushQuestion(skill: Skill | null, e: Call): string | null {
   if (skill === null || skill === 'auto-fix-loop' || e.tool !== 'Bash') return null
-  const command = String(e.command ?? '')
+  const command = String(e['command'] ?? '')
   return runsGitPush(command) ? `pr-review ${skill}: push now? ${command.trim().slice(0, 200)}` : null
 }
 
 // Whether a Bash call needs the tool list to be decided (the one async read).
-export const needsToolList = (e: Call): boolean => e.tool === 'Bash' && /resolve_github\.py/.test(String(e.command ?? ''))
+export const needsToolList = (e: Call): boolean => e.tool === 'Bash' && /resolve_github\.py/.test(String(e['command'] ?? ''))
 
 // The closing lines the two skills print at their end: the walkthrough is over.
 export function endsWalkthrough(skill: Skill, answer: string): boolean {

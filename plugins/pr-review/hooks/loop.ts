@@ -544,10 +544,10 @@ export function register(on: any): void {
       const found: { repo?: string; pr?: number } = {}
       const written = await recordReview($, String(loop.exit), isOwed, found)
       loop.isRecordPending = written.isOwed
-      const verdict = written.line && found.repo && found.pr ? await verdictFor($, loop.exit, found.repo, found.pr, written.line) : null
+      const verdict = written.line && found.repo && found.pr ? await verdictFor($, loop.exit!, found.repo, found.pr, written.line) : null
       if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) + (verdict ? '\n' + verdict : '') }
     }
-    return { result: text, ...(answer.error ? { isError: true } : {}) }
+    return { result: text, ...(answer['error'] ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
 
   on('classic.Stop', async ($: any, e: any, next: any) => {
