@@ -2,7 +2,12 @@
 
 **Status: proposal for the next version, awaiting the operator's confirmation.** Nothing in it
 is decided or scheduled until the operator answers the « Open questions »; the current program
-does not build it.
+does not build it. One part is built ahead of the answers, small and undoable: the learning
+event contract of phase L2 (`packages/core/src/learning.ts`), on the recommendation of question 9
+(a window of 30 days, journals kept 180 days and at most 2,000 events a plugin) while the operator
+has not answered it.
+The event's kinds and fields are version 1's list, open to additions as new versions (an audit
+trail's events, for one), not a final list.
 
 **Review notes (2026-11-11).** Seven notes, each marked « Review note » at the section it
 concerns, check this design against published evidence on coding agents. They propose; they
@@ -540,3 +545,142 @@ window, the design keeps its contract and writers and defers L5 until they are.
 > several cases twice, and from it compute the cases needed for the release measure to detect
 > a 20-point fall, setting note 6's growth from that number; (3) count refusals per guard
 > prefix in the host transcripts, as the table above says, before L2.
+
+### L0 measurements (2026-11-14)
+
+Two readings, taken from data already on the operator's machine, with no model run and no
+spend. They change no behaviour and add no mechanism. Each figure comes with the command that
+measures it, so it can be taken again. Step (3) of note 7 is done below; its steps (1) and (2)
+need the operator's cap and stay open.
+
+#### Refusals per guard prefix, last 30 days
+
+- **Window.** Entries stamped 2026-10-15 to 2026-11-14, in the session transcripts
+  `~/.claude/projects/*/*.jsonl` (2,707 files). Subagent transcripts sit deeper and are outside
+  that glob.
+- **A refusal** is a `tool_result` with `is_error` true whose text, once the leading
+  `<tool_use_error>` tag is removed, starts with a plugin's refusal prefix. It is counted once
+  per `tool_use_id`. A plain search for the prefixes is wrong: they appear thousands of times
+  in transcripts as source files read and tool descriptions, which are not refusals.
+- **Privacy.** Only counts leave the transcripts. The examples below are the guards' own
+  constant text, taken from the source, with the path redacted.
+
+The command, read-only (the 30-day cut is the stamp `2026-10-15`; run on 2026-11-14 at 10:18,
+Paris time, and a live session adds events):
+
+```bash
+find ~/.claude/projects -maxdepth 2 -name '*.jsonl' -mtime -30 -print0 | xargs -0 grep -h -F '<tool_use_error>' | jq -r --arg cut 2026-10-15 'select((.timestamp // "") >= $cut) | .sessionId as $s | .message.content | arrays | .[] | select(.type == "tool_result" and .is_error == true) | ((.content | if type == "array" then map(.text? // "") | join(" ") else (. // "") end) | sub("^<tool_use_error>\\s*"; "") | (capture("^(?<p>github: read |github: records are written |github: an E2E waiver |github: |norms: |pr-review: |pr-review [a-z-]+: |implement:[a-z]+ |kill refused:|bugs-bot: )") | .p) // empty) as $p | [.tool_use_id, $s, $p] | @tsv' | sort -u | awk -F'\t' '{n[$3]++; if (!(($2 FS $3) in seen)) {seen[$2 FS $3]=1; s[$3]++}; t++} END {for (p in n) printf "%s\t%d\t%d\n", p, n[p], s[p]; print "TOTAL\t" t}' | sort
+```
+
+| Prefix | Plugin | Refusals | Sessions | Example (constant text) |
+|---|---|---|---|---|
+| `github: read ` | github | 550 | 506 | `github: read <path> with the Read tool, whole, before git commit: its rules … apply to this text. Then run the same command again.` |
+| `github: records are written ` | github | 87 | 63 | `github: <kind> records are written by their producer …` (`ready.ts:815`) |
+| `github: an E2E waiver ` | github | 28 | 14 | `github: an E2E waiver quotes the operator …` |
+| `github: ` (any other) | github | 56 | 31 | `github: pr-readiness refused …`, `github: auto-merge-set refused …` |
+| `norms: ` | norms | 4 | 1 | `norms: never push during a norms walkthrough unless the user allows it when asked. …` (`guards.ts:91`) |
+| `implement:phase ` | implement | 5 | 2 | `implement:phase writes the work itself: a subagent only searches …` (`core.ts:212`) |
+| `kill refused:` | orchestrator | 23 | 22 | `kill refused: this session was spawned by the launcher, and it kills only what it started, by the pid it recorded in a file …` (`guards.ts:126`) |
+| `pr-review: `, `pr-review <skill>: ` | pr-review | 0 | 0 | `pr-review <skill>: the walkthrough never pushes unless the user allows it when asked; …` (`walkthrough.ts:76`) |
+| `bugs-bot: ` | bugs-bot | 0 | 0 | `bugs-bot: the tool itself failed; …` (`tool.ts:108`) |
+| **Total** | | **753** | | github 721, orchestrator 23, implement 5, norms 4 |
+
+The sessions column counts distinct sessions in a row; the github rows overlap, so it does
+not add up.
+
+What it shows:
+
+- **One guard is three quarters of the github count.** The writing-rules guard that sends the
+  session to read the rules before a commit or a pull request text (`github: read …`) is 550
+  of 721. It is a one-off nudge, answered by reading the file and running the command again,
+  not a failure. A cluster keyed on the prefix would be that guard alone, which supports a
+  stable code per refusal (goal 2) over a prefix.
+- **Only github has volume.** No github refusal is stamped before 2026-10-29. The other
+  plugins give 4 (norms, one session), 5 (implement, two sessions) and 23 (orchestrator's kill
+  guard, from 2026-11-05), and none for pr-review or bugs-bot. The orchestrator's other
+  refusal texts in `hooks/guards.ts` start with no stable prefix and cannot be counted this
+  way: its figure is a lower bound.
+- **Pull requests cannot be read from here.** The window's condition (three events from two
+  pull requests) needs a pull request per event, which a transcript does not carry; the
+  sessions column is the nearest figure. By sessions, the github guards, the orchestrator's
+  kill guard and implement (exactly two) reach two; norms (one) does not. Whether that defers L5
+  (« What to measure », last paragraph) is left to the design's rule; this section only gives
+  the figures.
+
+#### Eval variance and the smallest detectable effect
+
+The only baselines committed are the orchestrator's behaviour baselines
+(`plugins/orchestrator/evals/baseline-0.34.0.json`, `baseline-0.36.0.json`). `evals/outcome/`
+and `scripts/lib/outcome/` hold cases, caps and the harness, and no outcome baseline: the
+outcome evals' own variance stays unknown until the pilot runs (note 7, step 1).
+
+Per arm and baseline, from the runs' `passed` flags (K cases, r runs per case, p̂ᵢ a case's
+pass rate):
+
+```bash
+jq -c --arg arm with '[.cases[] | .[$arm] | {r: length, k: ([.[] | select(.passed)] | length)}] as $c | ($c | length) as $K | ([$c[].k] | add) as $S | ([$c[].r] | add) as $N | ([$c[] | (.k / .r) * (1 - .k / .r) * .r / (.r - 1)] | add / $K) as $w | ([$c[] | .k / .r] | (add / length) as $m | map(. - $m | . * .) | add / ($K - 1)) as $s2 | ([$c[] | $w / .r] | add / $K) as $wr | {cases: $K, runs: $N, pass: $S, p: ($S / $N), disagree: ([$c[] | select(.k > 0 and .k < .r)] | length), sigma_w2: $w, s2: $s2, sigma_b2: ($s2 - $wr), cost_run: ([.cases[][$arm][].costUsd] | add / length)}' plugins/orchestrator/evals/baseline-0.34.0.json
+```
+
+(`--arg arm without` for the other arm; the other file for 0.36.0, which has only `with`.)
+
+| Baseline, arm | K × runs | Pass | p | Cases that disagree | σw² | s² | σb² | USD per run |
+|---|---|---|---|---|---|---|---|---|
+| 0.34.0, with | 36 × 3 | 85 of 108 | 0.787 | 8 | 0.0741 | 0.1216 | 0.0969 | 0.472 |
+| 0.34.0, without | 36 × 3 | 5 of 108 | 0.046 | 1 | 0.0093 | 0.0391 | 0.0360 | 0.139 |
+| 0.36.0, with | 19 × 3 or 6 | 57 of 63 | 0.905 | 4 | 0.0579 | 0.0320 | 0.0137 | 0.417 |
+
+The formulas:
+
+- **σw², the variance of one run of a case** (a pass or a fail): the mean over cases of
+  p̂ᵢ(1 − p̂ᵢ) · rᵢ / (rᵢ − 1), the unbiased Bernoulli variance.
+- **s²**, the sample variance of the case pass rates p̂ᵢ, divided by K − 1.
+- **σb², the variance between cases**: s² − mean(σw² / rᵢ). The check: σb² + σw² = 0.171 for
+  0.34.0 « with », against p(1 − p) = 0.168 for one run drawn at random from a random case.
+- **The smallest detectable effect** at 5 % two-sided and 80 % power, normal approximation
+  (z = 1.960 + 0.842 = 2.802), over k cases and r runs per case and per variant:
+  - **paired by case** (the same cases under both variants, the case effect cancels):
+    MDE = 2.802 · √(2 σw² / (k · r)). It assumes no rule-by-case interaction, which these
+    baselines cannot measure.
+  - **unpaired**: MDE = 2.802 · √(2 (σb² + σw² / r) / k).
+
+  Both use the 0.34.0 « with » variance (σw² = 0.0741, σb² = 0.0969), the larger of the two
+  « with » arms, so the figure is on the safe side. A rise is also bounded by 100 % − p,
+  21 points at 0.787. The cost of n runs per arm is 2 · n · 0.417 USD, the 0.36.0 per-run cost
+  (the ablation's arms are taken to cost the same).
+
+```bash
+jq -n -r --argjson w 0.0741 --argjson b 0.0969 --argjson c 0.4173 'def mde_paired($n): 2.802 * ((2 * $w / $n) | sqrt); def mde_unpaired($k; $r): 2.802 * ((2 * ($b / $k + $w / ($k * $r))) | sqrt); def pts: (. * 100 | round); ([3,6,11,18,36,60,108][] | "n=\(.) paired \(mde_paired(.) | pts) points, \((. * 2 * $c * 100 | round) / 100) USD"), ([[1,3],[3,1],[6,1],[3,3],[6,3],[12,3],[36,3]][] | "k=\(.[0]) r=\(.[1]) unpaired \(mde_unpaired(.[0]; .[1]) | pts) points, paired \(mde_paired(.[0] * .[1]) | pts) points")'
+```
+
+| Runs per variant (k × r) | Paired | Unpaired | Cost of the pair of variants |
+|---|---|---|---|
+| 3 (1 × 3, or 3 × 1) | 62 points | 138 (none) for 1 × 3; 95 (none) for 3 × 1 | 2.50 USD |
+| 6 (6 × 1: the shape of the outcome measure, six cases, one run) | 44 points | 67 points | 5.01 USD |
+| 11 | 33 points | | 9.18 USD |
+| 18 (6 × 3) | 25 points | 56 points | 15.02 USD |
+| 36 (12 × 3) | 18 points | 40 points | 30.05 USD |
+| 108 (36 × 3, the 0.34.0 suite) | 10 points | 23 points | 90.14 USD |
+
+The cost column prices behaviour runs at 0.417 USD. The outcome measure runs whole pull
+requests and is priced by its own cap (120 USD for six cases, `evals/outcome/caps.json`), not
+by this column.
+
+What it shows:
+
+- **Pairing by case cuts the smallest effect by a third or more** (√(σw² / (σb² + σw²)) =
+  0.66 at one run per case; more where the runs share a case), as note 5 proposed. It does not make a single rule's ablation conclusive.
+- **At the per-rule budget the smallest effect is 62 points.** The proposed cap of 10 USD
+  for at most three candidates is 3.33 USD each, which buys 3 runs per variant. Spent whole on
+  one candidate, 10 USD buys 11 runs per variant and 33 points. An effect of 40 points needs
+  8 runs per variant (6.68 USD); 30 points needs 13 (10.85 USD); 20 points needs 30 (25.04 USD).
+  Under note 5's rule, a result under that effect is « inconclusive » and the rule does not
+  enter: with question 11's 10 USD on a single candidate, that is every candidate whose
+  effect is under about 33 points. The cap in question 11 and the count in goal 9 are the operator's to read against
+  these figures.
+- **The six-case outcome measure sees 44 points paired, 67 unpaired** (note 6: about 73 points
+  from a 79 % rate, by the two-proportion formula of note 7). Twelve cases of 3 runs would
+  bring the paired figure to 18 points; what that costs in outcome runs is not measured.
+- **Limits.** The normal approximation is indicative at these sizes. σw² is the mean over
+  cases; a case that always passes or always fails adds none, so a rule tested on a case near
+  a 50 % rate has a larger minimum than the figures above. These are behaviour evals; the
+  outcome evals' variance is not measured.

@@ -1,14 +1,16 @@
 // Generated from packages/core/src by `npm run core`: edit the source, never this copy.
 // The consent record contract, owned by the orchestrator: the operator's answer to a round
 // question that asked their consent on a subject (an E2E or norms waiver of one pull request, a repository
-// exempted from E2E or no longer, a repository in or out of auto-merge), written by the orchestrator's hooks when they answer it, one file per
+// exempted from E2E or no longer, a repository in or out of auto-merge, a repository auto-deployed in one environment or no longer), written by the orchestrator's hooks when they answer it, one file per
 // question under <config>/consents/<owner>/<name>/<entry>.json, and read by github in place of
 // the orchestrator's private round. The subject is the one the asking session declared with its
 // question (`declare_wait`'s `consent`), never read from the question's words.
 
 export const CONSENT_RECORD_CONTRACT = {
   version: 1,
-  kinds: ['e2e-waiver', 'norms-waiver', 'e2e-exemption', 'auto-merge'],
+  kinds: ['e2e-waiver', 'norms-waiver', 'e2e-exemption', 'auto-merge', 'auto-deploy'],
+  // The environments an auto-deploy names: a deploy is granted per repository and environment.
+  envs: ['dev', 'staging', 'prod'],
   producer: 'orchestrator',
   // Who recorded the answer: the operator in the coordinator's pane, or in the asking session's
   // own tab (`tab`), or the coordinator relaying what they told it (`round-close`).
@@ -25,14 +27,16 @@ export const CONSENT_RECORD_CONTRACT = {
 
 const contract = CONSENT_RECORD_CONTRACT
 
-export type ConsentKind = 'e2e-waiver' | 'norms-waiver' | 'e2e-exemption' | 'auto-merge'
+export type ConsentKind = 'e2e-waiver' | 'norms-waiver' | 'e2e-exemption' | 'auto-merge' | 'auto-deploy'
 export type WaiverKind = 'e2e-waiver' | 'norms-waiver'
+export type DeployEnv = 'dev' | 'staging' | 'prod'
 export type Answerer = 'pane' | 'coordinator' | 'tab'
 
-/** What the operator is asked to consent to: a waiver names its pull request, a repository's exemption and auto-merge none. */
+/** What the operator is asked to consent to: a waiver names its pull request, an auto-deploy its environment, a repository's exemption and auto-merge neither. */
 export type ConsentSubject =
   | { readonly kind: WaiverKind; readonly repo: string; readonly pr: number }
   | { readonly kind: 'e2e-exemption' | 'auto-merge'; readonly repo: string }
+  | { readonly kind: 'auto-deploy'; readonly repo: string; readonly env: DeployEnv }
 
 export interface ConsentRecord {
   readonly v: number
@@ -46,6 +50,7 @@ export interface ConsentRecord {
 
 export const CONSENT_VERSION = contract.version
 export const CONSENT_KINDS: readonly ConsentKind[] = contract.kinds
+export const DEPLOY_ENVS: readonly DeployEnv[] = contract.envs
 export const CONSENT_QUOTE_MIN = contract.quote_min
 export const CONSENT_PRODUCER = contract.producer
 
@@ -58,6 +63,10 @@ function isRepo(value: unknown): value is string {
   return parts.length === 2 && parts.every(part => REPO_PART.test(part) && part !== '.' && part !== '..')
 }
 
+function isDeployEnv(value: unknown): value is DeployEnv {
+  return typeof value === 'string' && (contract.envs as readonly string[]).includes(value)
+}
+
 function isText(value: unknown): value is string {
   return typeof value === 'string' && value.length <= contract.text_max
 }
@@ -65,8 +74,10 @@ function isText(value: unknown): value is string {
 /** The subject `raw` holds, or undefined when it breaks the contract's shape. */
 export function parseConsentSubject(raw: unknown): ConsentSubject | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
-  const { kind, repo, pr } = raw as Record<string, unknown>
+  const { kind, repo, pr, env } = raw as Record<string, unknown>
   if (!isRepo(repo)) return undefined
+  if (kind === 'auto-deploy') return pr === undefined && isDeployEnv(env) ? { kind, repo, env } : undefined
+  if (env !== undefined) return undefined
   if (kind === 'auto-merge' || kind === 'e2e-exemption') return pr === undefined ? { kind, repo } : undefined
   if ((kind !== 'e2e-waiver' && kind !== 'norms-waiver') || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1) return undefined
   return { kind, repo, pr }
@@ -147,10 +158,11 @@ export function consentRecordOf(fields: {
   return parseConsentRecord({ v: CONSENT_VERSION, subject: fields.subject, entry: fields.entry, question: fields.question, answer, by: fields.by, at: fields.at })
 }
 
-/** Whether two subjects are the same: the same kind, repository (as GitHub compares it) and pull request. */
+/** Whether two subjects are the same: the same kind, repository (as GitHub compares it), pull request and environment. */
 export function sameSubject(a: ConsentSubject, b: ConsentSubject): boolean {
   if (a.kind !== b.kind || a.repo.toLowerCase() !== b.repo.toLowerCase()) return false
-  return !('pr' in a) || ('pr' in b && a.pr === b.pr)
+  if ('pr' in a) return 'pr' in b && a.pr === b.pr
+  return !('env' in a) || ('env' in b && a.env === b.env)
 }
 
 /**

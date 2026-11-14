@@ -13,9 +13,8 @@ test('an operator wait with no question block is refused, the refusal naming the
   expect(reason).not.toBeNull()
   expect(reason).toContain('**Question i of N**')
   expect(reason).toContain('orchestrator:decide')
-  expect(reason).toContain('waiting: tool')
-  expect(reason).toContain('waiting: deferred')
-  expect(reason).toContain('waiting: done')
+  expect(reason).toContain('declare the wait that fits')
+  expect(reason).not.toContain('waiting:')
 })
 
 test('the urgent form of an operator wait with no question block is refused', () => {

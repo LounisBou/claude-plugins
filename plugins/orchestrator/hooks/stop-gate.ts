@@ -81,8 +81,8 @@ export type WaitKind = typeof WAIT_KINDS[number]
 // question: the full `**Question i of N**` block an operator wait puts him, carried by the call itself.
 export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string }
 
-// The one machine line a declaration spells: the gate decides on it as on the line it replaces,
-// so a declared wait and a written one are held by the same checks.
+// The one machine line a declaration spells: the form the gate's checks read a declared wait in.
+// It is never taught: the model declares, and a line it writes itself decides nothing.
 export function waitLine(wait: DeclaredWait): string {
   switch (wait.kind) {
     case 'operator': return `waiting: operator${wait.urgent ? ' (urgent)' : ''} — blocks: ${wait.blocks}`
@@ -92,53 +92,52 @@ export function waitLine(wait: DeclaredWait): string {
   }
 }
 
-// The sentence every refusal about the ending carries: the call that declares the wait.
-const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.'
+// The sentence every refusal about the ending carries: the call that declares the wait, the only way to state one.
+const DECLARE = 'Declare the wait with the `declare_wait` tool, whose description says what each kind takes: a line written in the message decides nothing.'
 
-// --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
+// --- the refusal texts (stop_gate.py:126-146, verbatim but where the declared wait changed them) -----------------------------------
 
-// The lines that fit a turn, by what will wake it: what the two refusals below name.
-const BUSY_FITS = 'An agent of yours is busy: end on no machine line, its idle notice wakes you.'
-const OTHER_FITS = 'If a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>; '
-  + 'if every goal is met or ruled out, with waiting: done; '
-  + 'if the operator deferred it, his ruling recorded: waiting: deferred — <n> items; else launch what you announced.'
+// The waits that fit a turn, by what will wake it: what the two refusals below name.
+const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you.'
+const OTHER_FITS = 'If a question for the operator truly blocks, declare an operator wait; '
+  + 'if every goal is met or ruled out, declare done; '
+  + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
 const runningFits = (what: readonly string[]) =>
-  `${what.join(', ')} runs in the background: end with the line waiting: tool — <what is watched>.`
+  `${what.join(', ')} runs in the background: declare a tool wait naming what is watched.`
 function fits(busy: boolean, running: readonly string[]): string {
   if (running.length > 0) return runningFits(running)
   return busy ? BUSY_FITS : OTHER_FITS
 }
-// A turn that ends on no machine line with nothing in flight, no agent busy and no notice awaited.
+// A turn that declared no wait with nothing in flight, no agent busy and no notice awaited.
 const NOTHING = 'Nothing will wake you: nothing of yours runs in the background and no agent of yours is busy. '
-  + 'Launch what you announced (an agent, or a command with run_in_background, then end with the line waiting: tool — <what is watched>), '
-  + `or end on the line that fits. ${OTHER_FITS} The line goes as the message's last line, no markup. ${DECLARE}`
-// A tool line with nothing of the session's own in flight: no end and no event will come to wake it.
-const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: waiting: tool — <what is watched> fits only while '
-  + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or end on the line that fits. '
-  + `${OTHER_FITS} The line goes as the message's last line, no markup. ${DECLARE}`
+  + 'Launch what you announced (an agent, or a command with run_in_background, then declare a tool wait on it), '
+  + `or declare the wait that fits. ${OTHER_FITS} ${DECLARE}`
+// A tool wait with nothing of the session's own in flight: no end and no event will come to wake it.
+const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: a tool wait fits only while '
+  + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or declare the wait that fits. '
+  + `${OTHER_FITS} ${DECLARE}`
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
-  'Your wait on the operator blocks nothing: that line is for a question he must answer. '
-  + `${fits(busy, running)} The line goes as the message's last line, no markup. ${DECLARE}`
-const QUESTION = 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.'
+  'Your wait on the operator blocks nothing: that wait is for a question he must answer. '
+  + `${fits(busy, running)} ${DECLARE}`
 const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks it.'
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
 // The deferral path beside the others: work the operator put off is recorded with his ruling
-// and ended on its own machine line, never put to him again as a question.
+// and ended on its own declared wait, never put to him again as a question.
 const DEFER_ROW = 'record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
-  + 'and end on waiting: deferred — <n> items'
+  + 'and declare a deferred wait'
 const ROW_ONE = `Not done: row %s is open%p. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
 const ROW_MANY = `Not done: rows %s are open%p. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
 // The spec's goals (goals.md beside a registered record, read by goals.py check): done is
 // measured against what the spec set out to reach, not against the plan alone.
 const GOALS_OPEN = 'Not done against the spec: %s open%p. Dispatch the work that meets it and record its evidence '
-  + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled: '
-  + 'waiting: operator — blocks: <G>: <what he must rule> — or, if he deferred it, record his ruling with '
-  + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and end on waiting: deferred — <n> items.'
-const DEFERRED_STILL = 'Not done: %s deferred by the operator, still open. End on waiting: deferred — <n> items, not on waiting: done.'
-const COUNT_WRONG = 'waiting: deferred — <n> items must give the number of deferred rows and goals together: the right line is waiting: deferred — %s.'
-const IDS_WRONG = 'waiting: deferred — <ids> must name every deferred item (rows by their number, goals as G<n>): %s.'
+  + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled, '
+  + 'with an operator wait that blocks on <G> — or, if he deferred it, record his ruling with '
+  + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and declare a deferred wait.'
+const DEFERRED_STILL = 'Not done: %s deferred by the operator, still open. Declare a deferred wait, not done.'
+const COUNT_WRONG = 'A deferred wait must give the number of deferred rows and goals together: the right count is %s.'
+const IDS_WRONG = 'A deferred wait must name every deferred item (rows by their number, goals as G<n>): %s.'
 const NOTHING_DEFERRED = 'Nothing is deferred: no open row or goal carries the operator\'s ruling. '
-  + 'If everything is finished, end on waiting: done.'
+  + 'If everything is finished, declare done.'
 const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
 
 // Where the rows and the goals were read: the record files and goals.md files that hold them,
@@ -432,8 +431,11 @@ export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
-// are read. `null` — something will wake the orchestrator — releases the stop; a
-// `{ blocks }` answer is the release the machine line grants, kept for the log the
+// are read. The wait it decides on is the one the turn declared (`declared`, declare_wait):
+// a turn that declared none ended on no wait, whatever its last line says. The one line still
+// read off the message is the predecessor's `handed over`, which is no wait. `null` — something
+// will wake the orchestrator — releases the stop; a
+// `{ blocks }` answer is the release the declared wait grants, kept for the log the
 // shell gate writes (its cost figures are read there); 'read-what-is-left' hands the
 // decision to the done branch, which needs the checkouts and the records.
 //
@@ -473,6 +475,7 @@ export function checkWake(facts: {
   resident: boolean
   delivered: readonly string[]
   message: string
+  declared?: DeclaredWait | null
   handedOver?: boolean
   watching?: boolean
   background?: readonly string[]
@@ -481,11 +484,12 @@ export function checkWake(facts: {
   tasks?: readonly string[] | null
   questionOpen?: boolean
 }): Held | { blocks: string } | { tool: string; notRunning?: true } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
-  const last = machineLine(facts.message)
+  // The wait is the one the turn declared, spelled as its line: the model's own last line decides nothing.
+  const last = facts.declared ? waitLine(facts.declared) : ''
   const matched = MACHINE_LINE.exec(last)
   const busy = facts.agents.some(a => a.state === 'busy')
   const running = facts.background ?? []
-  if (HANDED_OVER.test(last)) return null
+  if (endsOnHandOver(facts.message)) return null
   if (facts.handedOver && matched && matched[2]) return null
   // A wait on the operator that blocks nothing asks him nothing: the line that fits is named.
   if (blocksNothing(last)) return { case: 'blocks-nothing', reason: blocksNothingReason(busy, running) }
@@ -514,9 +518,6 @@ export function checkWake(facts: {
   if (matched || deferredIds(last) !== null) return 'read-what-is-left'
   if (facts.agents.length > 0) {
     return { warn: 'idle-agents', detail: facts.agents.map(a => a.label).join(', ') }
-  }
-  if (last.toLowerCase().startsWith('waiting:') || last.endsWith('?')) {
-    return { case: 'question-without-blocks', reason: QUESTION }
   }
   // A question still open in the round: its answer wakes the session.
   if (facts.questionOpen) return null

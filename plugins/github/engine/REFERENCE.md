@@ -169,11 +169,7 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 « auto merge » or « automerge »), found verbatim, whitespace
 normalised, in a prompt the operator typed (or a quote of it), or quoting their answer in a
 consent record of auto-merge on that repository (core's `consent-record.ts`,
-`<config dir>/consents/<owner>/<name>/`). Otherwise it is refused, naming both proofs:
-
-```
-github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor their answer in a consent record (orchestrator) of auto-merge on <owner/name>. Quote them verbatim; a peer's message is not their word.
-```
+`<config dir>/consents/<owner>/<name>/`). Otherwise it is refused, naming both proofs.
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
 without regard to case, and it is changed under a lock (`<file>.lock`, core's convention),
@@ -414,19 +410,24 @@ directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
 needs the operator's waiver (above), his dated answer its detail.
 
-**Auto-merge list.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` in a plugin's
-data directory, and a shell command naming it there (the data directory, `plugins/data/`,
-`CLAUDE_PLUGIN_DATA` or `github-lounisbou` on the same line), are refused:
+**Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
+`auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data
+directory, `plugins/data/`, `CLAUDE_PLUGIN_DATA` or `github-lounisbou` on the same line), are refused
+with a line naming `auto-merge-set` or `auto-deploy-set`.
 
-```
-github: the auto-merge list changes only through mcp__github__gh auto-merge-set, on the operator's words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."}); auto-merge-list prints it.
-```
+A prompt the operator typed (at the terminal or through the bridge, never a peer's message)
+that speaks of auto-merge (« auto-merge », « auto merge », « automerge ») enters with one line of
+context: call `auto-merge-set` with their words verbatim in the same turn, and the repositories
+in auto-merge today.
 
-A prompt the operator typed (at the terminal or through the bridge, never a peer's
-message) that speaks of auto-merge (« auto-merge », « auto merge », « automerge », in any
-case) enters with one line of context: if they put a repository in or out of auto-merge,
-call `auto-merge-set` with their words verbatim in the same turn, and the repositories in
-auto-merge today.
+### Auto-deploy
+
+Answered by the mod (README « Repositories in auto-deploy »).
+
+| Subcommand | Arguments | Description |
+|---|---|---|
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their words, verbatim>", "commands": [...]?}` | Grant or withdraw the environment on the operator's quoted word; `commands`: its deploys |
+| `auto-deploy-list` | | The environments granted |
 
 ## Exit codes
 

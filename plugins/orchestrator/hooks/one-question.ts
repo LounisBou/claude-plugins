@@ -14,8 +14,7 @@ export const NO_QUESTION =
   + 'in the method\'s question format (method:lifecycle, references/questions.md): a block is the '
   + '`**Question i of N**` line followed by its labelled fields (`_Subject_ :`, `_Context_ :`, '
   + '`_Question_ :`, `_Choices_ :`, `_Free answer_ :`, `_Recommendation_ :`, in the operator\'s language): '
-  + 'a heading alone is refused. If you ask him nothing, end on the line that fits: '
-  + '`waiting: tool — <what is watched>`, `waiting: deferred — <n> items`, `waiting: done`, or no machine line.'
+  + 'a heading alone is refused. If you ask him nothing, declare the wait that fits (a tool, deferred or done wait), or none.'
 
 // The message without its fenced code blocks (``` or ~~~, the closing fence of the opening one's
 // marker and at least its length; one never closed runs to the end), the text the rules count

@@ -86,13 +86,26 @@ export function agentBashDecision(mode: Mode | undefined, command: string): stri
   return simpleCommands(command).every(reads) ? null : AGENT_WRITE_REFUSAL
 }
 
-const PUSH = /(^|[\s;&|(])git(\s+(-C|-c)\s+\S+|\s+--?[\w-]+(=\S+)?)*\s+push(\s|$)/
+// Whether a command line runs `git push`, read through core's shell reader: each command of a list
+// or a pipe, wrappers and assignments skipped, `sh -c` and `eval` read again. A line the reader
+// cannot read is taken for a push: the guard asks rather than lets it through.
+function runsGitPush(command: string): boolean {
+  try {
+    return simpleCommands(command).some(argv => {
+      if (argv[0] === 'eval') return runsGitPush(argv.slice(1).join(' '))
+      const at = gitSubcommand(argv)?.at
+      return at !== undefined && argv[at] === 'push'
+    })
+  } catch {
+    return true
+  }
+}
 
 export const PUSH_REFUSAL = 'norms: never push during a norms walkthrough unless the user allows it when asked. The user pushes; remind them to.'
 
 // The question a push during a walkthrough asks the user, or null when no walkthrough guards it.
 export function pushQuestion(mode: Mode | undefined, command: string): string | null {
-  if (!mode || !PUSH.test(command)) return null
+  if (!mode || !runsGitPush(command)) return null
   return `norms: push now, during /norms:${mode}? ${command.trim().slice(0, 200)}`
 }
 

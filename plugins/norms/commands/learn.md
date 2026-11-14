@@ -1,7 +1,7 @@
 ---
 description: "Use after a PR is merged or reviewed to capture reviewer feedback as reusable project code norms in CONTRIBUTING.md"
 argument-hint: "<PR-number> [PR-number...]"
-allowed-tools: ["Bash", "Glob", "Grep", "Read", "Edit", "Write", "AskUserQuestion", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
+allowed-tools: ["Bash", "Glob", "Grep", "Read", "Edit", "Write", "AskUserQuestion", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "mcp__github__gh"]
 ---
 
 # Norms Learn — Extract Rules from PR Reviews
@@ -38,16 +38,7 @@ When the PR numbers above end with a `<norms-learn>` block, the plugin has alrea
 
 ### Step 1: Prerequisites
 
-Locate the `github` plugin. The resolver reads the platform's install record; it
-never builds a cache path by hand:
-
-```bash
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-```
-
-If it exits non-zero it prints an `error:` line and a `fix:` line. Stop and show
-both to the user.
+The `github` plugin owns every GitHub call: `mcp__github__gh`. When that tool is not in the tool list, the `github:github-curl` skill runs the same commands. Neither is located by a path of this plugin.
 
 ### Step 2: Parse PR numbers
 
@@ -61,16 +52,7 @@ Example: /norms:learn 1383 1375 1380
 
 ### Step 3: Fetch resolved threads
 
-For each PR number, call the tool. Formatting is a flag now, not a second script
-in a pipe. Each Bash call is a fresh shell, so resolve `GH` again here rather
-than relying on the variables set in Step 1:
-
-```bash
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-mkdir -p /tmp/claude
-python3 "$GH" pr-threads <PR_NUMBER> --format resolved-threads > /tmp/claude/resolved-<PR_NUMBER>.json
-```
+For each PR number, call `mcp__github__gh` with command `pr-threads`, `pr` the number and `format` `resolved-threads`.
 
 Count and report: "Found X resolved threads across Y PRs."
 

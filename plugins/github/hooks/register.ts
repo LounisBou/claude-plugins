@@ -6,7 +6,10 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
-import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject } from '../core/consent-record.ts'
+import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
+import {
+  AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
+} from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
@@ -38,12 +41,12 @@ export const COMMANDS = [
   'pr-ready', 'pr-draft', 'label-add', 'label-remove', 'reviewer-add', 'reviewer-remove',
   'assignee-add', 'assignee-remove', 'labels-ensure', 'pr-readiness', 'issue-view', 'issue-list',
   'issue-search', 'pr-linked-issues', 'image-upload', 'auth-check', 'auto-merge-set', 'auto-merge-list',
-  'protect-check', 'protect-apply',
+  'auto-deploy-set', 'auto-deploy-list', 'protect-check', 'protect-apply',
 ]
 
-// The subcommands this module answers without the engine: the list of
-// repositories in auto-merge is a file on this machine, not GitHub's.
-export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list'])
+// The subcommands this module answers without the engine: the lists of
+// repositories in auto-merge and in auto-deploy are files on this machine, not GitHub's.
+export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-deploy-set', 'auto-deploy-list'])
 
 // The subcommands the session calls to read. Every other one writes to GitHub, and a
 // command missing here is treated as a write, so the safe side is the default. After
@@ -53,7 +56,7 @@ export const READS = new Set([
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
-  'protect-check',
+  'auto-deploy-list', 'protect-check',
 ])
 
 export const TOOL = 'mcp__github__gh'
@@ -271,6 +274,8 @@ export const AUTO_MERGE_FILE = 'auto-merge.json'
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
+// The deploy list, beside it.
+const AUTO_DEPLOY_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-deploy\.json$/
 // The E2E exemptions, one file per repository, and the check plans, one per pull request, below these directories of the data directory.
 const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
 const EXEMPT_PATH = new RegExp('/' + GUARDED_DIRS + '(/|$)')
@@ -292,21 +297,24 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create-draft', 'redraft'])
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(EXEMPT_DIR + '/') || command.includes(PLAN_DIR + '/')) return NET_REFUSAL
+    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || command.includes(EXEMPT_DIR + '/') || command.includes(PLAN_DIR + '/')) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    return /\b(gh|git)\b|pr-records|auto-merge|e2e-exempt|check-plans/.test(command) ? NET_REFUSAL : null
+    return /\b(gh|git)\b|pr-records|auto-merge|auto-deploy|e2e-exempt|check-plans/.test(command) ? NET_REFUSAL : null
   }
 }
 
 export function writeNetRefusal(path: string): string | null {
-  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) || EXEMPT_PATH.test(path)
+  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) || AUTO_DEPLOY_PATH.test(path) || EXEMPT_PATH.test(path)
     ? NET_REFUSAL : null
 }
 export const AUTO_MERGE_REFUSAL = 'github: the auto-merge list changes only through mcp__github__gh auto-merge-set,'
   + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."});'
   + ' auto-merge-list prints it.'
+export const AUTO_DEPLOY_REFUSAL = 'github: the deploy list changes only through mcp__github__gh auto-deploy-set,'
+  + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "env": "dev"|"staging"|"prod", "on": true|false, "words": "..."});'
+  + ' auto-deploy-list prints it.'
 // The data directory under HOME when the host does not name it.
 export const DATA_UNDER_HOME = '/.claude/plugins/data/github-lounisbou'
 // The forms of a GitHub origin URL, as engine/ghlib/repo.py reads them.
@@ -355,6 +363,58 @@ async function autoMergeRepos($: any): Promise<Set<string>> {
       $.ui.log('github: ' + err.path + ' unread, every write is asked: ' + err.message.slice(err.path.length + 2))
     }
     return new Set()
+  }
+}
+
+// The deploy file as it stands: its path, its object and its list. An absent file grants and
+// declares nothing; an unreadable or malformed one throws UnreadList.
+async function readDeployFile($: any): Promise<{ path: string; data: Record<string, unknown>; list: DeployList }> {
+  const dir = await dataDir($)
+  if (!dir) throw new Error('the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set')
+  const path = dir + '/' + AUTO_DEPLOY_FILE
+  if (!(await $.fs.exists(path))) return { path, data: {}, list: { grants: [], declared: [] } }
+  let data: any
+  try {
+    data = JSON.parse(String(await $.fs.read(path)))
+  } catch (err: any) {
+    throw new UnreadList(path, String(err?.message ?? err))
+  }
+  const list = parseDeployList(data)
+  if (typeof list === 'string') throw new UnreadList(path, list)
+  return { path, data, list }
+}
+
+// The deploy list a call is judged by. An unreadable one declares nothing: no deploy is
+// recognised, the host's own protections stand, and one log line says so.
+async function deployList($: any): Promise<DeployList> {
+  try {
+    return (await readDeployFile($)).list
+  } catch (err: any) {
+    if (err instanceof UnreadList) {
+      $.ui.log('github: ' + err.path + ' unread, no deploy is recognised: ' + err.message.slice(err.path.length + 2))
+    }
+    return { grants: [], declared: [] }
+  }
+}
+
+// The refusal of a Bash line that runs a declared deploy the list does not grant, or undefined.
+async function bashDeployRefusal($: any, line: string): Promise<string | undefined> {
+  try {
+    const list = await deployList($)
+    return list.declared.length === 0 ? undefined : firstRefusal(list, bashDeploys(line, list.declared))
+  } catch {
+    // A line that cannot be read runs no deploy it shows.
+    return undefined
+  }
+}
+
+// The refusal of a skill that is a declared deploy the list does not grant, or undefined.
+async function skillDeployRefusal($: any, skill: string): Promise<string | undefined> {
+  try {
+    const list = await deployList($)
+    return list.declared.length === 0 ? undefined : firstRefusal(list, skillDeploys(skill, list.declared))
+  } catch {
+    return undefined
   }
 }
 
@@ -1603,11 +1663,11 @@ async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
 
 // ---- auto-merge on the operator's word ----
 
-// Whether a Bash command line names the list where it lives: its file name
+// Whether a Bash command line names a list where it lives: its file name
 // with the plugin's data directory, any plugin's, or the variable naming it.
 // The name alone, in this plugin's sources or a message, is no path.
-async function touchesAutoMerge($: any, line: string): Promise<boolean> {
-  if (!line.includes(AUTO_MERGE_FILE)) return false
+async function touchesList($: any, line: string, file: string): Promise<boolean> {
+  if (!line.includes(file)) return false
   const dir = await dataDir($)
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
@@ -1732,6 +1792,78 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
     const repositories = args.on ? [...kept, repo] : kept
     await writeAutoMerge($, path, JSON.stringify({ ...data, repositories }, null, 2) + '\n')
     return { result: repo + (args.on ? ' is now in auto-merge' : ' is no longer in auto-merge') }
+  })
+}
+
+// ---- the deploy list on the operator's word ----
+
+// The list, one environment of a repository per line.
+async function listAutoDeploy($: any): Promise<string> {
+  const { list } = await readDeployFile($)
+  return list.grants.length > 0 ? list.grants.map((g) => g.repo + ' ' + g.env).join('\n') : 'no repository in auto-deploy'
+}
+
+// The refusal of an auto-deploy-set whose words are not the operator's, or undefined.
+async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv): Promise<string | undefined> {
+  if (spaced(words).length < CONSENT_QUOTE_MIN) {
+    return 'github: auto-deploy-set quotes the operator: "words" must hold at least ' + CONSENT_QUOTE_MIN
+      + ' characters of what they said, verbatim.'
+  }
+  if (!AUTO_DEPLOY_WORD.test(words)) {
+    return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
+      + ' "autodeploy" or "auto-déploiement"), in their own words, typed or answered.'
+  }
+  const quoting: Quoting = { dated: false, names: (span) => AUTO_DEPLOY_WORD.test(span), wholeBare: false }
+  if (typedWords(words, quoting) || await consentAnswered($, words, { kind: 'auto-deploy', repo, env })) return undefined
+  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are neither in a prompt the operator typed in'
+    + ' this session, nor their answer in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env
+    + '. Quote them verbatim; a peer\'s message is not their word.'
+}
+
+// The declarations a call adds for its repository, or a refusal naming what is wrong.
+function declarationsOf(raw: unknown, repo: string): Declared[] | string {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) return 'github: auto-deploy-set declares its commands as a list: {"commands": [{"kind": "command", "argv": [...], "env": "prod"}]}'
+  const out: Declared[] = []
+  for (const entry of raw) {
+    const one = parseDeclared(typeof entry === 'object' && entry !== null ? { ...entry, repo } : entry)
+    if (typeof one === 'string') return 'github: auto-deploy-set: ' + one
+    out.push(one)
+  }
+  return out
+}
+
+async function setAutoDeploy($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+  const verdict = await $.tool.check({ tool: TOOL, input: { command: e.command, args: e.args, repo: e.repo } })
+  if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+  const args = e.args ?? {}
+  const repo = String(args.repo ?? '').trim()
+  if (!isRepoName(repo)) return { deny: 'github: auto-deploy-set names its repository as owner/name: {"repo": "owner/name"}' }
+  const env = (DEPLOY_ENVS as readonly unknown[]).includes(args.env) ? args.env as DeployEnv : undefined
+  if (env === undefined) return { deny: 'github: auto-deploy-set names its environment: {"env": "' + DEPLOY_ENVS.join('"|"') + '"}' }
+  if (typeof args.on !== 'boolean') return { deny: 'github: auto-deploy-set says in or out: {"on": true} or {"on": false}' }
+  const declared = declarationsOf(args.commands, repo)
+  if (typeof declared === 'string') return { deny: declared }
+  const unproven = await unprovenDeployWord($, typeof args.words === 'string' ? args.words : '', repo, env)
+  if (unproven) return { deny: unproven }
+  if (verdict.decision === 'ask' && verdict.rule) {
+    const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
+    if (refused) return { deny: refused }
+  }
+  const { path } = await readDeployFile($)
+  return withListLock($, path, async () => {
+    const { data, list } = await readDeployFile($)
+    const key = repo.toLowerCase()
+    const kept = list.grants.filter((g) => !(g.repo.toLowerCase() === key && g.env === env))
+    const was = kept.length < list.grants.length
+    const known = new Set(list.declared.map((d) => JSON.stringify(d)))
+    const added = declared.filter((d) => !known.has(JSON.stringify(d)))
+    if (args.on && was && added.length === 0) return { result: repo + ' is already in auto-deploy on ' + env }
+    if (!args.on && !was && added.length === 0) return { result: repo + ' was not in auto-deploy on ' + env }
+    const repositories = (args.on ? [...kept, { repo, env }] : kept).map((g) => ({ repo: g.repo, env: g.env }))
+    const commands = [...list.declared, ...added]
+    await writeAutoMerge($, path, JSON.stringify({ ...data, repositories, commands }, null, 2) + '\n')
+    return { result: repo + (args.on ? ' is now in auto-deploy on ' : ' is no longer in auto-deploy on ') + env }
   })
 }
 
@@ -2117,11 +2249,14 @@ export function register(on: any): void {
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     try {
       if (touchesRecords(String(e.command), await recordsRoot($))) return { deny: RECORDS_REFUSAL }
-      if (await touchesAutoMerge($, String(e.command))) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesList($, String(e.command), AUTO_MERGE_FILE)) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesList($, String(e.command), AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
       if (await touchesExemptions($, String(e.command))) return { deny: EXEMPT_REFUSAL }
     } catch {
       // A command that is no text names no record either.
     }
+    const undeployed = await bashDeployRefusal($, String(e.command))
+    if (undeployed) return { deny: undeployed }
     let labellings: Labelling[] = []
     try {
       labellings = bashLabellings(String(e.command))
@@ -2177,6 +2312,9 @@ export function register(on: any): void {
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
         return { deny: AUTO_MERGE_REFUSAL }
       }
+      if ((data && path === normalise(data + '/' + AUTO_DEPLOY_FILE)) || AUTO_DEPLOY_PATH.test(path)) {
+        return { deny: AUTO_DEPLOY_REFUSAL }
+      }
       if ((data && [EXEMPT_DIR, PLAN_DIR].some((dir) => path.startsWith(normalise(data + '/' + dir) + '/'))) || ANY_EXEMPT_PATH.test(path)) {
         return { deny: EXEMPT_REFUSAL }
       }
@@ -2198,6 +2336,12 @@ export function register(on: any): void {
     return out
   })
 
+  // A skill the repositories declare as a deploy runs only where the list grants it.
+  on('tool.call', { tool: 'Skill' }, async ($: any, e: any, next: any) => {
+    const refused = await skillDeployRefusal($, String(e.skill ?? ''))
+    return refused ? { deny: refused } : next(e)
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
   on('tool.call', { tool: RECORD_TOOL }, async ($: any, e: any, next: any) => {
     try {
       return await writeRecord($, e, String(next?.origin?.plugin ?? 'engine'))
@@ -2210,9 +2354,10 @@ export function register(on: any): void {
     if (MOD_COMMANDS.has(raw.command)) {
       try {
         if (raw.command === 'auto-merge-set') return await setAutoMerge($, raw)
+        if (raw.command === 'auto-deploy-set') return await setAutoDeploy($, raw)
         const verdict = await $.tool.check({ tool: TOOL, input: { command: raw.command, args: raw.args, repo: raw.repo } })
         if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
-        return { result: await listAutoMerge($) }
+        return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
       } catch (err: any) {
         return { result: String(err?.message ?? err), isError: true }
       }
