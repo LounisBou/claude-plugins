@@ -302,6 +302,19 @@ test('a ready pr-ready outside auto-merge is refused, never asked', async ($, on
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
+// This was the warn phase's test, where a not-ready pr-ready in auto-merge ran with a warn line
+// in guard-warn.log. The gate now refuses it, so the act, the question and the log are asserted
+// the other way: refused with the missing conditions, nobody asked, only the gate read, no line.
+test('in auto-merge a not-ready pr-ready is refused before anyone is asked, nothing run and nothing logged', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
+  const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
+  expect(out.deny).toBe('github: pr-ready refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
+    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(seen.asked.length).toBe(0)
+  expect(commands(seen)).toEqual(['pr-gate'])
+  expect(seen.writes.some((w) => w.path === '/data/guard-warn.log')).toBe(false)
+})
+
 test('in auto-merge a not-ready merge is refused before anyone is asked, nothing run', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
