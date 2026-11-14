@@ -14,3 +14,4 @@ export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS
 export { INSTALL_TIMEOUT_MS, installPlaywright, locatePlaywright, lockfileOf, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PACKAGES, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'
 export { KILL_GRACE_MS, runInGroup, signalGroup } from './process-group.ts'
 export { cutAt, reportPathOf, shorten, VERDICT_LIMIT, verdictLine, type Shortened, type Verdict } from './verdict.ts'
+export { eventId, journalDir, JOURNAL_MAX_AGE_DAYS, JOURNAL_MAX_EVENTS, languagesOf, LEARNING_VERSION, LEARNING_WINDOW_DAYS, parseLearningEvent, prunable, type Evidence, type LearningEvent, type LearningKind, type Severity, type Trust } from './learning.ts'
