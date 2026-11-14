@@ -66,6 +66,8 @@ export type Asked = AskFields & {
   at: string
   answer: AskedAnswer | null
   delivery?: { state: 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
+  /** The session it was asked by, before a succession moved it to its successor. */
+  movedFrom?: string
   seq: number
 }
 
@@ -207,6 +209,49 @@ export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
     if (entry !== null) found.push(entry)
   }
   return found
+}
+
+/**
+ * The open questions a session asked with `ask`, each rewritten under its lock by `change` (null
+ * leaves it): what its session's end and its hand-over do to them. Answers the ids written.
+ */
+async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked): Promise<string[]> {
+  const dir = `${await stateDir($)}/round`
+  const changed: string[] = []
+  for (const entry of await readAsked($)) {
+    if (entry.status !== 'open' || entry.sender.session !== session) continue
+    try {
+      await updateOver(storeIo($), `${dir}/${entry.id}.json`, current => {
+        const fresh = current === undefined ? null : parseAsked(current)
+        if (fresh === null || fresh.status !== 'open' || fresh.sender.session !== session) return undefined
+        changed.push(fresh.id)
+        return `${JSON.stringify(change(fresh))}\n`
+      })
+    } catch (err) {
+      // One question not written leaves the others to change: said, never thrown.
+      await logLine($, 'question', `${entry.id} not changed: ${messageOf(err)}`)
+    }
+  }
+  return changed
+}
+
+/** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. */
+export async function withdrawAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, why: string, now: Date = new Date()): Promise<string[]> {
+  const at = now.toISOString()
+  const ids = await changeOpenAsked($, session, entry => ({
+    ...entry, status: 'withdrawn', answer: { text: why, by: 'sender', at, settler: entry.sender.name }, seq: entry.seq + 1,
+  }))
+  for (const id of ids) await logLine($, 'question', `${id} withdrawn by its asker: ${why}`)
+  return ids
+}
+
+/** Its session handed over to a successor it learnt: its open questions are the successor's, still open. */
+export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, successor: { session: string; name: string }): Promise<string[]> {
+  const ids = await changeOpenAsked($, session, entry => ({
+    ...entry, sender: { ...entry.sender, session: successor.session, name: successor.name }, movedFrom: session, seq: entry.seq + 1,
+  }))
+  for (const id of ids) await logLine($, 'question', `${id} moved to the successor ${successor.name}`)
+  return ids
 }
 
 /**

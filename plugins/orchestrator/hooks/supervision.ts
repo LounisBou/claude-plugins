@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { askedAsEntry, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { askedAsEntry, moveAsked, withdrawAsked, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1563,6 +1563,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const done = await withDeadline(successor
         ? moveToSuccessor($, sessionId, successor)
         : withdrawStale($, sessionId, null, "the sender's session ended").then(async settled => {
+          await withdrawAsked($, sessionId, "the sender's session ended")
           if (remote) await withdrawRemote($, remote.name, remote.held)
           return settled
         }), bound)
@@ -2705,7 +2706,10 @@ async function handOver($: any, sessionId: string): Promise<void> {
   const successor = await readSuccessor($, sessionId)
   const done = await withDeadline(successor
     ? moveToSuccessor($, sessionId, successor)
-    : withdrawStale($, sessionId, null, 'handed over to its successor'), RELAY_BOUND_MS)
+    : withdrawStale($, sessionId, null, 'handed over to its successor').then(async settled => {
+      await withdrawAsked($, sessionId, 'handed over to its successor')
+      return settled
+    }), RELAY_BOUND_MS)
   if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
   else await tellSettled($, done, until)
 }
@@ -3344,6 +3348,8 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
       await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
   }
+  // The questions asked with `ask` follow, their asker now the successor.
+  await moveAsked($, sessionId, { session, name: successor.name })
   return []
 }
 
