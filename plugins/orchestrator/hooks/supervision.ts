@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { askedAsEntry, moveAsked, withdrawAsked, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { answerAskedFromPane, askedAsEntry, moveAsked, withdrawAsked, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1880,7 +1880,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // already answered.
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
-        asked = askedGroups((await readAsked($)).filter(entry => sessionKey(entry.sender.session) in local)).flat()
+        const localAsked = (await readAsked($)).filter(entry => sessionKey(entry.sender.session) in local)
+        asked = askedGroups(localAsked).flat()
         pending += asked.length
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = questions[0]
@@ -1895,6 +1896,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         failed = drawn.filter(entry => entry.delivery?.state === 'failed' && (entry.origin
           || (entry.status !== 'withdrawn' && entry.answer?.at === entry.delivery.answerAt && !pane.forgotten.has(failedKey(entry)))))
           .map(entry => ({ entry, reason: entry.delivery!.reason ?? 'no answer' }))
+        // An answer to a question asked with `ask` not delivered, while its asker has a row here.
+        failed.push(...localAsked.filter(entry => entry.status === 'answered' && entry.delivery?.state === 'failed')
+          .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' })))
         delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
@@ -2054,13 +2058,18 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(keyOf(entry)) })).catch(() => undefined)
         },
       })
-      const focus = focusKey()
-      if (asking !== null && focus !== null && focusedFor !== keyOf(asking)) {
+      // With no card, the first question asked with `ask` takes the controls: its picker, its choices, its field.
+      const answering: Asked | null = asking === null ? asked[0] ?? null : null
+      const answeringPick = answering === null ? null : (answering.choices.find(c => c.letter === answering.recommended) ?? answering.choices[0])?.letter ?? null
+      const focus = answering === null ? focusKey()
+        : answeringPick === null ? null : picker ? `choices:${answering.id}` : `choice:${answeringPick}`
+      const focusFor = asking !== null ? keyOf(asking) : answering?.id ?? null
+      if (focusFor !== null && focus !== null && focusedFor !== focusFor) {
         // Once per question: the ring to its first choice for a pane already holding the keys,
         // and the window to it, so a question drawn below the rows shows its choice. Never
         // awaited, so the draw never waits on itself, and a refusal (the pane holds no keys yet)
         // is not an error.
-        focusedFor = keyOf(asking)
+        focusedFor = focusFor
         try {
           Promise.resolve($.ui.focus({ requestId: PANE_ID, key: focus })).catch(() => undefined)
         } catch {
@@ -2265,6 +2274,102 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         node: el.Box({ paddingLeft: line.indent, children: [rich(line.text, askedLook(line.look))] }),
         rows: rowsOf(takesRows(line.text), width - line.indent),
       }))
+      // His answer to the question asked with `ask` the controls are under, once at a time: the
+      // object answered by the pane, its asker sent the answer, the coordinator that was shown it
+      // told it is settled, as for an entry, the pane drawn again.
+      const answerAsked = (id: string, text: string): Promise<void> => {
+        if (pane.answering.has(id)) return Promise.resolve()
+        pane.answering.add(id)
+        return (async () => {
+          const shown = await shownToCoordinator($, id)
+          const done = await answerAskedFromPane($, id, text)
+          if (done === null || done.answer === null) return
+          forgetDraft(pane, id)
+          if (shown) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
+        })()
+          .catch(err => logLine($, 'supervision', `round: ${(err as Error).message}`))
+          .finally(() => {
+            pane.answering.delete(id)
+            $.ui.invalidate('ui.render')
+          })
+      }
+      // The controls under that question's lines, as the card draws its own: a picker of its letters
+      // and « Other answer » where the surface has one, a Button per choice elsewhere, then the field.
+      const askedControls = (entry: Asked): Drawn[] => {
+        const indent = 4
+        const at = width - indent
+        const pick = (letter: string) => answerAsked(entry.id, `${letter} : ${entry.choices.find(c => c.letter === letter)!.text}`)
+        const choosingAsked = entry.choices.length > 0
+        const controls: Drawn[] = []
+        if (choosingAsked && picker) {
+          controls.push({
+            node: el.Select({
+              key: `choices:${entry.id}`,
+              label: WORDS.choose,
+              options: [
+                ...entry.choices.map(c => ({ value: c.letter, label: c.letter === entry.recommended ? `${c.letter} (${WORDS.recommended})` : c.letter })),
+                { value: OTHER_VALUE, label: WORDS.otherBelow },
+              ],
+              value: answeringPick!,
+              autoFocus: true,
+              onSelect: (value: string) => {
+                if (value !== OTHER_VALUE) return pick(value)
+                pane.writing = entry.id
+                $.ui.invalidate('ui.render')
+                return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(entry.id) })).catch(() => undefined)
+              },
+            }),
+            rows: 1 + (e.props?.isFocused ? entry.choices.length + 1 : 0),
+          })
+        } else if (choosingAsked) {
+          for (const c of entry.choices) {
+            const label = `[${c.letter}] ${plainText(c.text)}${c.letter === entry.recommended ? `  ${STAR}` : ''}`
+            const key = `choice:${c.letter}`
+            controls.push({
+              node: el.Button({ key, label, hotkey: c.letter.toLowerCase(), ...(key === focus ? { autoFocus: true } : {}), onPress: () => pick(c.letter) }),
+              rows: rowsOf(label, at),
+            })
+          }
+        }
+        if (typeof el.Input === 'function') {
+          if (!(picker && choosingAsked && pane.writing !== entry.id)) {
+            const typed = pane.typed?.get(entry.id) ?? ''
+            controls.push({
+              node: el.Input({
+                key: answerKey(entry.id),
+                label: OTHER_LABEL,
+                placeholder: WORDS.otherPlaceholder,
+                submitLabel: WORDS.send,
+                rows: ANSWER_ROWS,
+                onInput: (value: string) => {
+                  if (value === '') pane.typed?.delete(entry.id)
+                  else pane.typed?.set(entry.id, value)
+                  $.ui.invalidate('ui.render')
+                },
+                onSubmit: (value: string) => (value.trim() === '' ? undefined : answerAsked(entry.id, value)),
+              }),
+              rows: ANSWER_ROWS,
+            }, ...(typed === '' ? [] : [{ node: el.Text({ children: typed }), rows: rowsOf(typed, at) }]))
+          }
+        } else {
+          const note = `type your answer in this tab, or in ${entry.sender.name}'s tab`
+          const noted = pane.other.has(entry.id)
+          controls.push({
+            node: el.Box({
+              flexDirection: 'column',
+              children: [
+                el.Button({ key: OTHER_KEY, label: WORDS.otherInSession, hotkey: OTHER_HOTKEY, onPress: () => { pane.other.add(entry.id); $.ui.invalidate('ui.render') } }),
+                ...(noted ? [el.Text({ color: 'suggestion', children: note })] : []),
+              ],
+            }),
+            rows: 1 + (noted ? rowsOf(note, at) : 0),
+          })
+        }
+        return controls.map(control => ({ node: el.Box({ paddingLeft: indent, children: [control.node] }), rows: control.rows }))
+      }
+      // The controls go right under the lines of the question they answer: its Blocks line, the first.
+      const answeredEnd = answering === null ? -1 : askedLines(asked).findIndex(line => line.look === 'label')
+      if (answering !== null && answeredEnd >= 0) askedPieces.splice(answeredEnd + 1, 0, ...askedControls(answering))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
         // Beside the questions asked with `ask`, the line still counts the orchestrators waiting with none drawn.
@@ -2280,7 +2385,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.orchestrators }), rows: rowsOf(WORDS.orchestrators, width) }
       // The key line, dim, at the foot: once the pane holds the keys, how to give them is no
       // longer said.
-      const keyLine = asking === null ? null : picker
+      const keyLine = asking === null && answering === null ? null : picker
         ? `${e.props?.isFocused ? '' : 'ctrl+x tab or a click: give the pane the keys · '}arrows: move · Enter: choose · Esc: back to the prompt`
         : 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt'
       const flow: Drawn[] = [
@@ -2293,7 +2398,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, answering?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []

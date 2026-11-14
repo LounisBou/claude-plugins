@@ -58,7 +58,7 @@ export type AskFields = {
 }
 
 /** How a question asked here was settled (settle.ts): the answer or the reason, who settled it, when, and the message's author. */
-export type AskedAnswer = { text: string; by: 'tab' | 'coordinator' | 'sender' | 'message'; at: string; settler: string; author?: string; record?: string }
+export type AskedAnswer = { text: string; by: 'tab' | 'pane' | 'coordinator' | 'sender' | 'message'; at: string; settler: string; author?: string; record?: string }
 
 /** One question in the round, as `ask` writes it, then as `settle` closes it, its answer's trip to its asker in `delivery`. */
 export type Asked = AskFields & {
@@ -505,6 +505,41 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
     said.push(made.isError ? `The work it asks is not recorded: ${made.result}` : made.result)
   }
   return { result: said.join(' ') }
+}
+
+/**
+ * His answer given in the coordinator's pane to a question asked with `ask`: the object read again
+ * and written under its lock, answered by the pane, so a question settled, withdrawn or claimed in
+ * its asker's tab meanwhile is left as it is; then its consent recorded and the answer sent to its
+ * asker at once, a send not delivered written on the object, which the pane then shows. Answers
+ * the object answered, or null when it was not.
+ */
+export async function answerAskedFromPane($: Held, id: string, text: string, now: Date = new Date()): Promise<Asked | null> {
+  const said = text.trim()
+  if (said === '') return null
+  const who = await whoAmI($)
+  const me: Me = { session: await $.session.id(), name: who?.name ?? "the coordinator's pane", role: who?.role ?? 'coordinator' }
+  const path = `${await stateDir($)}/round/${id}.json`
+  const at = now.toISOString()
+  let answered = null as Asked | null
+  try {
+    await updateOver(storeIo($), path, current => {
+      const entry = current === undefined ? null : parseAsked(current)
+      if (entry === null || entry.status !== 'open' || entry.claimed) return undefined
+      answered = { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, seq: entry.seq + 1 }
+      return `${JSON.stringify(answered)}\n`
+    })
+  } catch (err) {
+    await logLine($, 'question', `${id} not answered from the pane: ${messageOf(err)}`)
+    return null
+  }
+  const done = answered as Asked | null
+  if (done === null) return null
+  await logLine($, 'question', `${id} answered in the pane`)
+  if (done.consent) await writeConsent($, { ...done, question: done.ask } as never, said, 'pane', at)
+  const asker = { session: done.sender.session, name: done.sender.name, remote: false }
+  await deliverSettled($, path, { entry: done, asker, deliver: 'now', consentBy: 'pane', relayed: false, told: false }, me, at)
+  return done
 }
 
 // The answer sent to its asker at once — its session while it has a row here (two sessions may share
