@@ -16,6 +16,9 @@
 // dropped, never carried: each one dropped is said on stderr. At most NOTES_MAX notes of at most
 // NOTE_CHARS characters each. The brief's size is printed, the measure of the generation.
 //
+// `live` also brings the brief's takeover reading steps to the template's lean form (`leanSteps`): a
+// standing brief keeps the orders of the template it came from, and says on stderr how many it changed.
+//
 // `live` then prunes the rulings and state files the brief names (`prune.ts`): what is carried
 // out, superseded or older than the live summary moves to an archive beside each, never read at
 // takeover; and it archives the round's entries settled over a day ago (round-archive's rule). It prints what moved and the characters a takeover reads, brief and both files,
@@ -243,6 +246,35 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
   return body.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
+/**
+ * The takeover's reading steps of a standing brief, in the form the template gives them now. A
+ * standing brief is kept from one generation to the next and only its Live state is rewritten, so
+ * it keeps the reading orders of the template it came from: the whole rulings file, the whole goals
+ * table, every project's checkouts. Each stale order below is replaced by its lean form, the
+ * rulings file read by `grep -v` on its entries for one open item, the goals without their met
+ * rows, the checkouts of the brief's own project; a brief already lean is left as it is.
+ */
+export function leanSteps(brief: string, rulings: string): { readonly text: string; readonly refreshed: number } {
+  const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
+  const steps: [RegExp, string][] = [
+    ...(rulings === '' || rulings === 'none' ? [] : [[
+      /^1\. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole\.$/m,
+      `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
+    ] as [RegExp, string]]),
+    [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
+    ...(project === '' ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
+    [/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'],
+  ]
+  let text = brief
+  let refreshed = 0
+  for (const [stale, lean] of steps) {
+    const next = text.replace(stale, lean)
+    if (next !== text) refreshed++
+    text = next
+  }
+  return { text, refreshed }
+}
+
 /** The open items of the state a brief does not name: each row id, pull request, agent and question id. */
 export function missingItems(brief: string, open: OpenState): string[] {
   const live = liveSection(brief)
@@ -353,8 +385,10 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
     io.err(`succession: ${written.error}\n`)
     return 2
   }
-  writeAtomic(request.brief, written)
   const files = prunedFilesOf(written, env['HOME'] ?? '')
+  const lean = leanSteps(written, files.rulings)
+  writeAtomic(request.brief, lean.text)
+  if (lean.refreshed > 0) io.err(`succession: ${lean.refreshed} reading step(s) of the brief brought to the template's lean form\n`)
   // A ruling for rows all closed in the dispatch record is carried out: it moves as a `done` one.
   const closed = new Set(parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'closed').map(row => Number(row['id'])))
   const rulings = prune(files.rulings, (text, archive) => pruneRulings(text, archive, closed), now(), io)
@@ -362,8 +396,8 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
   const round = archiveRound(stateRoot(env), now(), io)
   // Before: the rulings file read whole. After: the part a takeover reads, its entries for one open item left out.
   const read = files.rulings === '' || files.rulings === 'none' ? 0 : readAtTakeover(readText(files.rulings) ?? '').length
-  const takeover = (side: 'before' | 'after') => written.length + (side === 'before' ? rulings.before : read) + state[side]
-  io.out(`generation=${generation} chars=${written.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
+  const takeover = (side: 'before' | 'after') => lean.text.length + (side === 'before' ? rulings.before : read) + state[side]
+  io.out(`generation=${generation} chars=${lean.text.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
   return 0
 }
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { deckOpen, FIELDS, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
+import { deckOpen, FIELDS, leanSteps, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
@@ -285,4 +285,42 @@ test('the brief carries the open questions asked with ask, their block made from
     '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
     '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
   ].join('\n'))
+})
+
+const STALE = [
+  '# Orchestrator succession brief — acme/belt',
+  '',
+  'Measure, wait and close: `references/lifecycle.md`, « Succession — the successor ».',
+  '',
+  '1. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole.',
+  '2. The Analysis above; then `dispatch-record.sh summary /r.jsonl --open --ids` and `dispatch-record.sh goals /r.jsonl status`, read whole.',
+  '3. `ListAgents`. Then `workspace.sh list`: delete no checkout before you know its phase.',
+].join('\n')
+
+test('leanSteps brings the reading orders of a standing brief to the template\'s lean form, and leaves a lean one as it is', () => {
+  const lean = leanSteps(STALE, '/b/rulings.md')
+  assert.equal(lean.refreshed, 4)
+  assert.ok(lean.text.includes("1. Read the rulings that bind now, `grep -v '\\[for: ' /b/rulings.md`, the rulebook and THIS brief, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it."))
+  assert.ok(lean.text.includes("`dispatch-record.sh goals /r.jsonl status | grep -v '| met |'`."))
+  assert.ok(lean.text.includes('Then `workspace.sh list acme/belt`: delete'))
+  assert.ok(lean.text.includes('`references/succession-successor.md`, « Succession — the successor »'))
+  assert.ok(!lean.text.includes('WHOLE') && !lean.text.includes('read whole'))
+  assert.deepEqual(leanSteps(lean.text, '/b/rulings.md'), { text: lean.text, refreshed: 0 })
+  // No rulings file to name, no rewrite of the rulings step.
+  assert.ok(leanSteps(STALE, 'none').text.includes('Read the rulings file WHOLE'))
+})
+
+test('live brings a stale standing brief\'s reading steps to the lean form and says so, a lean one silently', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, '# Rulings\n')
+  const lean = readFileSync(TEMPLATE, 'utf8').replaceAll('{{PROJECT}}', 'belt').replaceAll('{{RULINGS_FILE}}', rulings)
+  writeFileSync(w.brief, lean.replace(`1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`, '1. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole.'))
+  assert.ok(w.read().includes('Read the rulings file WHOLE'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.ok(!w.read().includes('WHOLE') && w.read().includes(`grep -v '\\[for: ' ${rulings}`))
+  assert.deepEqual(w.err, ["succession: 1 reading step(s) of the brief brought to the template's lean form\n"])
+  w.err.length = 0
+  assert.equal(w.run('live', '--next', 'y'), 0)
+  assert.deepEqual(w.err, [])
 })
