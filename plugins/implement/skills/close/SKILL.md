@@ -74,8 +74,7 @@ echo "$CODENAME ready to close, bump $BUMP, artifacts $MODE"
 Both artifact paths are tested one by one, the test inverting in `committed` mode: this
 skill deletes under one of them and trims the other, only where the repository agrees they
 are working notes. An explicit `--docs <path>` skips the test, the caller having taken the
-responsibility. Step 4 derives `MODE` again, for the same reason the path is re-exported: it
-runs in a shell of its own.
+responsibility. Step 4 derives `MODE` again, in its own shell.
 
 ---
 
@@ -132,9 +131,8 @@ git log --format=%s -E --grep='^([a-z]+(\([^)]*\))?: )?[Rr]elease' -3
 `chore: release pr-review 0.3.3` where that log reads `chore: release pr-review 0.3.2`, and
 `chore: release <version>` where it holds no release subject at all.
 
-A bump type other than `none` with none of the five files present stops the skill:
-say which five were looked for and wait. Guessing a version file is how a version
-lands in a file nothing reads.
+A bump other than `none` with none of the five files present stops the skill: name the
+five looked for, and wait. Guessing is how a version lands in a file nothing reads.
 
 ---
 
@@ -152,8 +150,8 @@ git diff --stat "$BASE"..HEAD
 ```
 
 The summary states, in the user's language: the branch, every commit since the base,
-the version if one was written, and each gate command with its exit code. It ends on
-one sentence, said once: this skill's steps end at the branch; ready and merge follow the method's gate.
+the version if written, each gate command with its exit code. It ends on one sentence,
+said once: the steps end at the branch; ready and merge follow the method's gate.
 
 ---
 
@@ -175,13 +173,11 @@ rmdir docs/features docs 2>/dev/null || true
 [ -s ROADMAP.md ] || rm -f ROADMAP.md
 ```
 
-The directory is removed only when it is there: a second run of this skill, or a
-close over a directory a caller had already taken away, is not an error. `rmdir`
-takes each parent only when the removal emptied it, and says nothing when it did
-not: a repository holding another feature, or holding documentation of its own under
-`docs`, keeps both directories. The roadmap
-goes the same way when the trim emptied it, since a file holding nothing is not a
-roadmap.
+The directory is removed only when present: a second run, or a close over a directory
+already taken away, is not an error. `rmdir` takes each parent only when the removal
+emptied it: a repository holding another feature, or documentation of its own under
+`docs`, keeps both. The roadmap goes the same way when the trim emptied it, since a file
+holding nothing is not a roadmap.
 
 In `committed` mode nothing is deleted: the design, the plan and the state are part
 of the repository and stay in it.
