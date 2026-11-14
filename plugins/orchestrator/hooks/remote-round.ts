@@ -11,7 +11,8 @@
 // on, and an acknowledgment by the entry's id. Pure on purpose: the handlers hold the $
 // (supervision.ts) and pass their reads in here.
 import { cutQuestion, RELAY_CAP } from './relay.ts'
-import { parseChoices, type RoundEntry } from './round.ts'
+import { parseChoices } from '../core/method.ts'
+import type { RoundEntry } from './round.ts'
 import { roleOf } from './session-name.ts'
 import { BLOCKS_CAP, cleanBlocks } from './remote-row.ts'
 import { parseConsentSubject } from '../core/consent-record.ts'

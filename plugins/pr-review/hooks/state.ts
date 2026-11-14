@@ -5,6 +5,7 @@
 // (no walkthrough active means no guard refuses anything).
 import type { Skill } from './policy.ts'
 import type { Finding } from './report.ts'
+import { REVIEW_ROUNDS } from '../core/readiness.ts'
 
 export type Walkthrough = {
   // The skill whose rules hold, or null when none runs.
@@ -12,7 +13,7 @@ export type Walkthrough = {
   // The user's own last prompt since the skill started: the only source of a grant.
   lastPrompt: string
   // The PR scratch directory the walkthrough wrote to, once seen.
-  scratchDir?: string
+  scratchDir?: string | undefined
 }
 
 export const walkthrough: Walkthrough = { skill: null, lastPrompt: '' }
@@ -34,27 +35,27 @@ export type Fix = { key: string; sha: string; description: string; reverted: boo
 export type Loop = {
   isActive: boolean
   pass: number
-  // The passes the loop may run: MAX_PASSES alone, ORCHESTRATED_PASSES in a session the orchestrator spawned.
+  // The passes the loop may run: MAX_PASSES alone, the pull request's check plan's rounds in a session the orchestrator spawned.
   maxPasses: number
   testCommand: string
   // The checkout the loop started in, as its top directory: the record is written for it, wherever the session's directory moves.
-  dir?: string
+  dir?: string | undefined
   // Why no checkout was read at the start, when there is none: the record then says so.
-  dirWhy?: string
+  dirWhy?: string | undefined
   seen: string[]
   lastFindings: number
   // The Critical and Important findings of the last pass, or undefined when the
   // review did not say.
-  lastBlocking?: number
+  lastBlocking?: number | undefined
   fixes: Fix[]
   // Why the loop ended: clean, max_passes, or released by the user.
-  exit?: string
+  exit?: string | undefined
   // Whether this loop's review record was attempted: one per loop.
   isRecorded: boolean
   // Whether the review record is still owed: GitHub kept failing transiently when it was written.
   isRecordPending: boolean
   // The head the checkout was at when the loop ended: the record is written at it, and no other.
-  reviewedHead?: string
+  reviewedHead?: string | undefined
   // Whether a review runs: from begin_pass to the findings the loop accepts.
   isReviewing: boolean
   // A reviewer's loop: one pass, no fix, its findings are the verdict.
@@ -79,10 +80,8 @@ export type Loop = {
   waitedAt: number
 }
 
-export const MAX_PASSES = 5
-
-// The orchestrator runs one review and one correction round itself: its agent's loop reviews once.
-export const ORCHESTRATED_PASSES = 1
+// The rounds a review runs at most: core's cap on a check plan's review rounds.
+export const MAX_PASSES: number = REVIEW_ROUNDS.cap
 
 export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 

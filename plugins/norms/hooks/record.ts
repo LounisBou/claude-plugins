@@ -50,10 +50,10 @@ let fallback: Mark | undefined
 export function asMark(value: unknown): Mark | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const v = value as Record<string, unknown>
-  if (typeof v.head !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v.head)) return undefined
-  if (typeof v.at !== 'number' || !Array.isArray(v.files) || !v.files.every(f => typeof f === 'string')) return undefined
-  if (v.dir !== undefined && (typeof v.dir !== 'string' || !v.dir.startsWith('/'))) return undefined
-  return { head: v.head, at: v.at, files: v.files as string[], ...(typeof v.dir === 'string' ? { dir: v.dir } : {}) }
+  if (typeof v['head'] !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v['head'])) return undefined
+  if (typeof v['at'] !== 'number' || !Array.isArray(v['files']) || !v['files'].every(f => typeof f === 'string')) return undefined
+  if (v['dir'] !== undefined && (typeof v['dir'] !== 'string' || !v['dir'].startsWith('/'))) return undefined
+  return { head: v['head'], at: v['at'], files: v['files'] as string[], ...(typeof v['dir'] === 'string' ? { dir: v['dir'] } : {}) }
 }
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
@@ -139,7 +139,7 @@ export type Pull = { number?: unknown; head?: { sha?: unknown }; base?: { ref?: 
 
 // A pull request asked of the github plugin, in the repository named: the pull request, none
 // (`pull` undefined), or why it could not be read. Never against the session's own directory.
-export type Lookup = { pull?: Pull } | { why: string }
+export type Lookup = { pull?: Pull | undefined } | { why: string }
 
 const NO_GITHUB = 'the github plugin is absent or older than 0.12.0'
 
@@ -163,14 +163,14 @@ async function pullList($: any, repo: string, command: string, args: Record<stri
 
 // The open pull request of `branch` in `repo`.
 export async function branchPull($: any, repo: string, branch: string): Promise<Lookup> {
-  const pulls = await pullList($, repo, 'pr-get', { branch })
+  const pulls = await pullList($, repo, 'pr-get', { branch, format: 'raw' })
   return Array.isArray(pulls) ? { pull: pulls[0] } : pulls
 }
 
 // The open pull request of `repo` whose head is `head`: a detached head names no branch to ask
 // about, its commit does. Several such pull requests are refused, naming them: none is the one.
 export async function openPullAt($: any, repo: string, head: string): Promise<Lookup> {
-  const pulls = await pullList($, repo, 'pr-list', {})
+  const pulls = await pullList($, repo, 'pr-list', { format: 'raw' })
   if (!Array.isArray(pulls)) return pulls
   const found = pulls.filter(p => p?.head?.sha === head)
   if (found.length > 1) {

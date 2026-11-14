@@ -8,7 +8,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
-  machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
+  deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
@@ -17,7 +17,8 @@ import {
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredQuestion, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
-import { entryQuestions, roundEntry } from '../round.ts'
+import { machineLine, entryQuestions } from '../../core/method.ts'
+import { roundEntry } from '../round.ts'
 import { parseWait } from '../relay.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
 import { unnamedReport } from '../relay.ts'
@@ -258,14 +259,6 @@ test('work given a deadline is cancelled at the deadline, never left to write la
 })
 
 // --- the ported parsers ------------------------------------------------------------------
-
-test('the machine line is read through whatever markup wraps it', () => {
-  expect(machineLine('a report\n`waiting: operator — blocks: the report`.')).toBe('waiting: operator — blocks: the report')
-  expect(machineLine('> waiting: done')).toBe('waiting: done')
-  expect(machineLine('- *waiting: done*')).toBe('waiting: done')
-  expect(machineLine('Waiting:  operator – blocks: x')).toBe('Waiting:  operator – blocks: x')
-  expect(machineLine('waiting: operator-blocks: stand-by')).toBe('waiting: operator-blocks: stand-by')
-})
 
 test('the listing parses the launcher rows and drops the marks', () => {
   const rows = listing('w1/t1 | /dev/ttys001 | a title | Orch: belt | self\nw1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3 | hidden\nnot a row\n')
@@ -2272,6 +2265,9 @@ test('an operator question may declare the subject it asks consent on, read by t
     { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
     { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'merge', repo: 'acme/thing' } },
   ]) expect('error' in parseDeclaration(bad)).toBe(true)
+  const deploy = { kind: 'auto-deploy', repo: 'acme/infra', env: 'staging' }
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED } })
+  expect('error' in parseDeclaration({ kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'auto-deploy', repo: 'acme/infra' } })).toBe(true)
   const declarations = new Declarations()
   declarations.turnStarted()
   expect(declaredConsent(declarations)).toBe(null)
@@ -2288,6 +2284,8 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
   await wait['session.start'](dollar, {}, (x: unknown) => x)
   expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
+  // The consent an operator question asks names the environment of an auto-deploy.
+  expect(tools[0].inputSchema.properties.consent.properties.env).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
   expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.

@@ -14,7 +14,8 @@
 // relayed again. Pure on
 // purpose: the handler holds the $ (the engine fences it to the file that received it) and
 // passes its reads in here.
-import { MACHINE_LINE, URGENT_LINE, machineLine, blocksNothing, chainEntries } from './stop-gate.ts'
+import { MACHINE_LINE, URGENT_LINE, blocksNothing, chainEntries } from './stop-gate.ts'
+import { machineLine, reportStatus } from '../core/method.ts'
 import type { SessionRow } from './supervision.ts'
 import { cutAt, shorten, VERDICT_LIMIT } from '../core/verdict.ts'
 
@@ -67,17 +68,15 @@ export function confirmsTakeover(text: string): boolean {
 }
 
 // An agent's last line, its brief's own: `status: done|blocked|question — <one line>`, or
-// `status: waiting — <what is watched>` while its own background work runs (agent-stop.ts),
-// read over the stop gate's normalisation. The text above it is its report or question.
-const STATUS_LINE = /^status:\s*(done|blocked|question|waiting)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i
+// `status: waiting — <what is watched>` while its own background work runs (agent-stop.ts), read
+// by core's reportStatus. The text above it is its report or question.
 const STATUS_KIND = { done: 'delivered', blocked: 'blocked', question: 'question', waiting: 'waiting' } as const
 
 export function parseStatus(answer: string): Wait | null {
-  const matched = STATUS_LINE.exec(machineLine(answer))
-  if (!matched) return null
+  const status = reportStatus(answer)
+  if (!status) return null
   const lines = answer.replace(/\s+$/, '').split('\n')
-  const kind = STATUS_KIND[(matched[1] ?? '').toLowerCase() as keyof typeof STATUS_KIND]
-  return { kind, blocks: (matched[2] ?? '').trim(), question: lines.slice(0, -1).join('\n').trim() }
+  return { kind: STATUS_KIND[status.status], blocks: status.reason, question: lines.slice(0, -1).join('\n').trim() }
 }
 
 // An agent's turn text held to the verdict limit before it is relayed: whole under it, else its

@@ -129,6 +129,11 @@ def build_argv(parser, request, tmpdir):
             raise errors.UsageError('missing argument "%s" for %s' % (action.dest, command))
         positionals.extend(got)
 
+    # The module's own reads parse the answer: "full" asks the object where a read has a short
+    # default, unless the request names a format or says json itself.
+    if request.get("full") is True and "format" not in args and "json" not in args:
+        flags.append("--json")
+
     argv = [command] + flags
     if repo is not None:
         argv.append("--repo=" + _scalar("repo", repo))

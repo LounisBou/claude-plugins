@@ -10,9 +10,10 @@
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
 import { fingerprint, type HeldQuestion, type Wait } from './relay.ts'
 import { answersChoice, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
+import { entryQuestions, parseChoices, questionParts, questionShape, type Choice } from '../core/method.ts'
 import { parseSessionName } from '../core/names.ts'
 
-export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
+export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
 // (`round-close`, `closed`), the operator in the sender's own tab or the sender itself — a later
 // turn waiting on something else, a newer question, its session's end or its hand-over
@@ -20,7 +21,7 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (typedWords in supervision.ts); `text` keeps the reason. An entry answered from
+// with the cut said (tabText in supervision.ts); `text` keeps the reason. An entry answered from
 // the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
 // that holds it.
 export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
@@ -54,134 +55,6 @@ export type RoundEntry = {
 // it or the send threw (`reason`), the pane's own sends written only when they fail. `answerAt` is
 // the stamp of the answer it carries, so that a later answer is never said failed by it.
 export type RoundDelivery = { state: 'pending' | 'sent' | 'acked' | 'delivered' | 'failed'; at: string; attempts: number; answerAt?: string; reason?: string }
-
-// A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`. A line
-// of that shape lettered past E is read too, so a sixth choice spoils the list instead of
-// leaving the first five looking whole.
-const CHOICE = /^\s*[-*]\s+\*\*([A-Z])\*\*\s*(?:[:.)]|—|–|-)\s*(.+?)\s*$/
-// The recommendation's line, read by its shape: an italic label, `_Recommendation_ : A`, then a
-// lone choice letter that ends the line or is followed by punctuation. The label's words are the
-// operator's language, one or several.
-const RECOMMENDATION = /^\s*_[^_\n]*[^_\s]_\s*(?::\s*)?\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
-const LETTERS = 'ABCDE'
-
-// The lettered choices of a question and its recommendation. The choices are kept only
-// when they read A, B, … in that order, two to five of them: anything else is no choice
-// the pane could offer, and the question is answered in words. The recommendation is the
-// first line that names one, kept only when its letter is among the kept choices.
-// An entry holding several numbered questions (questionParts) records its first one's: the
-// pane reads every question's own from the text (entryQuestions).
-export function parseChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
-  return readChoices(questionParts(question)[0] ?? '')
-}
-
-function readChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
-  const lines = question.split('\n')
-  const found = lines.flatMap(line => {
-    const matched = CHOICE.exec(line)
-    return matched ? [{ letter: matched[1] ?? '', text: matched[2] ?? '' }] : []
-  })
-  const lettered = found.length >= 2 && found.length <= LETTERS.length && found.every((choice, i) => choice.letter === LETTERS[i])
-  const choices = lettered ? found : []
-  const named = lines.map(line => RECOMMENDATION.exec(line)?.[1] ?? null).find(letter => letter !== null) ?? null
-  return { choices, recommendation: named !== null && choices.some(choice => choice.letter === named) ? named : null }
-}
-
-// The question as the pane shows it above its choices: the whole text, less the choice lines
-// and the recommendation's line when the choices were read, since the pane draws them below.
-export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): string {
-  if (entry.choices.length === 0) return entry.question.trim()
-  return entry.question.split('\n').filter(line => !CHOICE.test(line) && !RECOMMENDATION.test(line)).join('\n').trim()
-}
-
-// A field of a question in the decide shape, `_<label>_ : <text>`, the label in the operator's
-// language and read by its shape alone. The colon may have spaces around it or none: one with a
-// space before it is drawn « label : text », one without « label: text ».
-const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
-// The sender's own numbering: a line wholly bold holding two numbers, a word before the first and
-// a word or a slash between them, `**Question 5 of 6**`; `**Version 1.2**` is no numbering.
-const NUMBER = /^\s*\*\*([^*\n\d]*\p{L}[^*\n\d]*\d+[^*\n\d]*[\p{L}/][^*\n\d]*\d+[^*\n]*)\*\*\s*$/u
-// The sender's numbering a line holds (`Question 1 of 2`), or null: the line is no numbering.
-export function numberOfLine(line: string): string | null {
-  return NUMBER.exec(line)?.[1]?.trim() ?? null
-}
-// A field after the choices whose text starts with a lone choice letter: the recommendation.
-const NAMES_LETTER = /^\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
-
-// The questions of an entry, one text each: a turn may ask several in the decide shape, each
-// under its own numbering line (`**Question 3 of 4**`, in the sender's language). Two such lines
-// or more split the text before each, the first question keeping what precedes its own (the
-// previous answer's record, which questionShape drops). One line or none: the text whole.
-export function questionParts(question: string): string[] {
-  const lines = question.split('\n')
-  const heads = lines.flatMap((line, i) => (NUMBER.test(line) ? [i] : []))
-  if (heads.length < 2) return [question]
-  return heads.map((head, k) => lines.slice(k === 0 ? 0 : head, heads[k + 1] ?? lines.length).join('\n').trimEnd())
-}
-
-// One question of an entry as the pane presents it: its own text, the sender's numbering, its
-// choices and its recommendation. An entry of one question keeps what it recorded; one of
-// several reads each question's from its own text.
-export type QuestionPart = { question: string; number: string | null; choices: RoundChoice[]; recommendation: string | null }
-export function entryQuestions(entry: Pick<RoundEntry, 'question' | 'choices' | 'recommendation'>): QuestionPart[] {
-  const parts = questionParts(entry.question)
-  const read = parts.length < 2
-    ? [{ question: entry.question, choices: entry.choices, recommendation: entry.recommendation }]
-    : parts.map(part => ({ question: part, ...readChoices(part) }))
-  return read.map(part => ({
-    question: part.question,
-    number: questionShape(part.question, part.choices)?.number ?? null,
-    choices: part.choices,
-    recommendation: part.recommendation,
-  }))
-}
-
-export type QuestionField = { label: string; separator: string; text: string }
-export type QuestionShape = { number: string | null; fields: QuestionField[]; recommendation: QuestionField | null }
-
-// A question in the decide shape as the pane draws it: the sender's numbering, its labelled
-// fields in the order written (a field runs on until a blank line, the next field or a choice;
-// an empty one is a heading) and its recommendation, the first field after the choices that
-// names one of them. Nothing else of the turn is kept: what comes before the numbering line (the
-// previous answer's record), lines no field holds, anything after the recommendation. A question
-// with no labelled field before its choices is in an older shape: null, and the pane draws its
-// body whole (questionBody).
-export function questionShape(question: string, choices: readonly RoundChoice[]): QuestionShape | null {
-  const lines = question.split('\n')
-  const header = lines.findIndex(line => NUMBER.test(line))
-  const choiceAt = (line: string) => choices.length > 0 && CHOICE.test(line)
-  const lastChoice = lines.reduce((last, line, i) => (i > header && choiceAt(line) ? i : last), -1)
-  const fields: QuestionField[] = []
-  let recommendation: QuestionField | null = null
-  let current: QuestionField | null = null
-  for (let i = header + 1; i < lines.length; i++) {
-    const line = lines[i] ?? ''
-    if (choiceAt(line)) {
-      current = null
-      continue
-    }
-    const field = FIELD.exec(line)
-    if (field) {
-      const read = { label: (field[1] ?? '').trim(), separator: /^\s/.test(field[2] ?? '') ? ' : ' : ': ', text: field[3] ?? '' }
-      if (lastChoice >= 0 && i > lastChoice) {
-        const letter = NAMES_LETTER.exec(read.text)?.[1]
-        if (letter && choices.some(choice => choice.letter === letter)) {
-          recommendation = read
-          break
-        }
-        current = null
-        continue
-      }
-      fields.push(read)
-      current = read
-      continue
-    }
-    if (line.trim() === '') current = null
-    else if (current) current.text = current.text === '' ? line.trim() : `${current.text}\n${line.trim()}`
-  }
-  if (fields.length === 0) return null
-  return { number: header >= 0 ? NUMBER.exec(lines[header] ?? '')?.[1]?.trim() ?? null : null, fields, recommendation }
-}
 
 // The question's text as the pane draws it: the emphasis markers around a span — `**x**`,
 // `__x__`, `*x*`, `_x_` and backticks — dropped, the words kept; a marker inside a word
@@ -482,7 +355,7 @@ export function questionKey(entry: RoundEntry): string | null {
   const shape = questionShape(entry.question, entry.choices)
   const blocks = (entry.blocks ?? '').split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
   if (!shape || blocks.length === 0) return null
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : null] : null
+  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
   return JSON.stringify([
     parseSessionName(entry.from)?.subject ?? entry.from, blocks, consent,
     shape.fields.map(field => [flatText(field.label), flatText(field.text)]),

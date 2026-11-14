@@ -18,15 +18,6 @@ below, and the `args` object holds the subcommand's arguments.
   (`--comments-file`), and `comments-resolved-batch` takes `"nodes"` (an array
   of node ids). `body-file`, `comments-file` and `json_file` are refused.
 
-The tool sends `{"command", "args", "repo"}` to `gh.py --stdin-json`, which
-builds the argument vector from its own parser.
-
-Example:
-
-```json
-{ "command": "pr-comment", "args": { "pr": 12, "body": "Multi-line `markdown`" } }
-```
-
 `repo` (`owner/name`) overrides the `origin` remote.
 
 ## Subcommands
@@ -35,15 +26,15 @@ Example:
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR. An unknown number exits 4 |
-| `pr-list` | | Open PRs |
-| `pr-status` | `<pr> [--json]` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format` gives the full pull request |
-| `pr-checks` | `<pr>` | Combined commit status and check runs |
+| `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR (`pr-lines`; `--json`: the full list). An unknown number exits 4 |
+| `pr-list` | | Open PRs, a line each (`pr-lines`); `--json`: the full list |
+| `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
+| `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
-| `pr-files` | `<pr>` | Changed paths with their patches, paginated |
-| `pr-commits` | `<pr>` | Commits on the PR, paginated |
+| `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
+| `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
@@ -75,10 +66,10 @@ exits 3 naming the request's uuid if the merge fails or times out. Other errors 
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-threads` | `<pr>` | All review threads (GraphQL) |
-| `pr-comments` | `<pr>` | Inline review comments, paginated |
-| `pr-issue-comments` | `<pr>` | General PR comments, paginated |
-| `pr-reviews` | `<pr>` | Review bodies, paginated |
+| `pr-threads` | `<pr>` | Open review threads as a table (`thread-summary`); `--json`: all of them (GraphQL) |
+| `pr-comments` | `<pr>` | A line per inline review comment (`review-comments`); `--json`: the comments, paginated |
+| `pr-issue-comments` | `<pr>` | General PR comments as a table (`issue-comments-summary`); `--json`: the comments, paginated |
+| `pr-reviews` | `<pr>` | A line per review (`reviews-summary`); `--json`: the review bodies, paginated |
 | `thread-reply` | `<thread_id> --body-file P` | Reply inside a review thread |
 | `pr-comment` | `<pr> --body-file P` | Post a general PR comment |
 | `comment-edit` | `<comment_id> --body-file P` | Edit a comment |
@@ -109,7 +100,7 @@ submitting is the operator's act, on GitHub.
 | `review-pending-create` | `<pr> --comments-file P` | Open a review left PENDING with inline comments; refuses if the token's user already has one on the PR |
 | `review-pending-add` | `<pr> --review-id ID --path P --line N [--start-line N] --body-file P` | Add an inline thread to the token user's PENDING review (GraphQL `addPullRequestReviewThread`) |
 | `review-pending` | `<pr> [--author LOGIN]` | The PENDING review of a user (default: the token's) with its comments |
-| `repo-review-comments` | `[--author LOGIN] [--limit N]` | The newest review comments of the repository (one page), filtered on a login, default limit 30 |
+| `repo-review-comments` | `[--author LOGIN] [--limit N]` | The newest review comments of the repository (one page), filtered on a login, default limit 30, a line each (`review-comments`); `--json`: the comments |
 
 `--comments-file` holds a non-empty JSON array of `{path, line, body}` objects; `side`
 defaults to `RIGHT`, a range adds `start_line` (below `line`) and `start_side` (defaults
@@ -134,9 +125,9 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `issue-view` | `<number>` | One issue |
-| `issue-list` | `[--state open\|closed\|all]` | Issues in the repository |
-| `issue-search` | `<term>...` | Search within this repository |
+| `issue-view` | `<number>` | One issue: header, body, link (`issue-detail`); `--json`: the issue |
+| `issue-list` | `[--state open\|closed\|all]` | Issues in the repository, a line each (`issue-lines`); `--json`: the issues |
+| `issue-search` | `<term>...` | Search within this repository, a line each (`issue-lines`); `--json`: the search object |
 | `pr-linked-issues` | `<pr>` | Issues the PR closes |
 
 ### Assets and auth
@@ -160,14 +151,12 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "<their words, verbatim>"}` | Put the repository in auto-merge (`on: true`) or take it out (`on: false`), on the operator's quoted word |
+| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "<their recorded answer>"}` | Put the repository in auto-merge (`on: true`) or take it out (`on: false`), on the operator's quoted word |
 | `auto-merge-list` | | The repositories in auto-merge, one per line, or `no repository in auto-merge` |
 
-`auto-merge-set` needs `words` of at least 8 characters, naming auto-merge (« auto-merge »,
-« auto merge » or « automerge »), found verbatim, whitespace
-normalised, in a prompt the operator typed (or a quote of it), or quoting their answer in a
-consent record of auto-merge on that repository (core's `consent-record.ts`,
-`<config dir>/consents/<owner>/<name>/`). Otherwise it is refused, naming both proofs.
+`auto-merge-set` needs `words` naming auto-merge (« auto-merge », « auto merge » or
+« automerge ») that quote the operator's answer in a consent record of auto-merge on that
+repository (core's `consent-record.ts`, `<config dir>/consents/<owner>/<name>/`); `on: true` needs that answer to be « Accorder », the choice every consent question offers beside « Refuser ».
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
 without regard to case, and it is changed under a lock (`<file>.lock`, core's convention),
@@ -177,8 +166,9 @@ rule asks before the write.
 
 ## Formatters
 
-`--format NAME`, default `raw`. Reads leave the unprocessed JSON visible unless a
-shape is asked for.
+`--format NAME`, default: the few lines named in the command rows above (`pr-lines`, `checks-summary`,
+`review-comments`, `thread-summary`, `issue-comments-summary`, `pr-summary`, `reviews-summary`, `files-summary`, `commits-summary`, `issue-lines`, `issue-detail`),
+else `raw`. `--json` (or `--format raw`) is the full object a program parses; a format beside it wins.
 
 | Format | Input from | Output |
 |---|---|---|
@@ -188,13 +178,10 @@ shape is asked for.
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
-| `pr-summary` | `pr-status` | its default five lines |
 | `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
-| `thread-summary` | `pr-threads` | a markdown table of open threads |
 | `resolve-status` | `thread-resolve` | `resolved` or `unresolved` |
-| `issue-comments-summary` | `pr-issue-comments` | a markdown table |
 | `login` | `auth-check`, any list response | the login, or empty |
 | `pending-review-summary` | `review-pending` | `none`, or `id`, `node_id`, `state`, `comments N` and a `path | line | commit_id` table |
 | `comment-bodies` | `repo-review-comments`, `pr-comments` | the bodies only, separated by `---` |
@@ -206,9 +193,7 @@ the Contents API, using the scoped token. A file that is not a PNG, JPEG, GIF or
 first bytes is refused. The blob is named after the SHA-256 of its
 bytes, so uploading the same screenshot twice issues no write at all and reports
 `reused`. It prints both the URL and ready-to-paste markdown, as a
-`https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true` link — it goes
-through github.com, so it renders for anyone who can see the repository, private
-ones included.
+`https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true` link, which renders for anyone who can see the repository.
 
 `--title T` puts the screenshot's descriptive title above its image, as a bold line
 followed by the image with the title as alt text (`writing/pull-requests.md` « Pull request
@@ -227,23 +212,8 @@ python3 "$GH" image-upload screenshot.png --title "Login screen"
 
 `image-upload` takes several files in one call, one `--title` per file, in order.
 `markdown` joins the titled blocks with a horizontal rule; the JSON has an `images` list
-(one `{url, path, reused, title}` per file) in place of `url`/`path`/`reused`:
-
-```
-python3 "$GH" image-upload before.png after.png --title "Before" --title "After"
-# **Before**
-# ![Before](https://github.com/acme/thing/blob/pr-assets/<sha1>.png?raw=true)
-#
-# ---
-#
-# **After**
-# ![After](https://github.com/acme/thing/blob/pr-assets/<sha2>.png?raw=true)
-```
-
-A multi-file call without exactly one `--title` per file is refused as a usage error:
-each block between two rules needs its title.
-
-Requires push access to the repository.
+(one `{url, path, reused, title}` per file) in place of `url`/`path`/`reused`.
+A multi-file call without one `--title` per file is a usage error.
 
 ## Records
 
@@ -304,11 +274,12 @@ Both routes are `hooks/e2e-scope.ts`'s.
 - **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
   head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
-  `full|one-pass` (unread by the gate), each `<need>[: <reason>]`, a reason unless the first; rules
-  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR.
+  `required[: max <n>]|none` (its rounds and needs are core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
+  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;
+  `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator's words typed in the session, or a consent record
+  `exempt: false` revokes it. `detail` quotes the operator's answer in a consent record
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing.
 
@@ -407,18 +378,13 @@ needs the operator's waiver (above), his recorded answer its detail.
 directory, `plugins/data/`, `CLAUDE_PLUGIN_DATA` or `github-lounisbou` on the same line), are refused
 with a line naming `auto-merge-set` or `auto-deploy-set`.
 
-A prompt the operator typed (at the terminal or through the bridge, never a peer's message)
-that speaks of auto-merge (« auto-merge », « auto merge », « automerge ») enters with one line of
-context: call `auto-merge-set` with their words verbatim in the same turn, and the repositories
-in auto-merge today.
-
 ### Auto-deploy
 
 Answered by the mod (README « Repositories in auto-deploy »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their words, verbatim>", "commands": [...]?}` | Grant or withdraw the environment on the operator's quoted word; `commands`: its deploys |
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (« Accorder » recorded) or withdraw the environment on the operator's quoted word; `commands`: its deploys |
 | `auto-deploy-list` | | The environments granted |
 
 ## Exit codes
@@ -432,5 +398,4 @@ Answered by the mod (README « Repositories in auto-deploy »).
 | `4` | not found |
 | `5` | rate limited after retries |
 
-Every failure prints one `error:` line to stderr. A Python traceback is a bug, not
-an expected output.
+Every failure prints one `error:` line to stderr.

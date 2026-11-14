@@ -4,8 +4,9 @@
 // means are core's readiness contract (readiness.ts). Pure functions only: register.ts reads and
 // writes the file, and posts the plan on the pull request.
 
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
-import { PLAN_NEEDS, PLAN_OMITTED, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
+import { PLAN_NEEDS, PLAN_OMITTED, reviewNeed, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
 import { isRepoName } from './e2e-scope.ts'
 
 export const PLAN_DIR = 'check-plans'
@@ -14,19 +15,27 @@ export const PLAN_WRITER = { plugin: 'orchestrator', tool: 'mcp__orchestrator__r
 
 const PLANNED = Object.keys(PLAN_NEEDS) as Planned[]
 
-export type Check = { readonly need: string; readonly reason: string }
+// A required review carries the rounds it runs at most (core's `reviewNeed`).
+export type Check = { readonly need: string; readonly reason: string; readonly max?: number }
 export type Checks = Record<Planned, Check>
 export type CheckPlan = Checks & { readonly v: number; readonly repo: string; readonly pr: number; readonly at: string }
 
 // The kinds that stand without a record at the head, each with the line naming why, and the kinds the plan requires.
 export type Excused = Partial<Record<Kind, string>> & { required?: readonly Kind[] }
 
-// `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason.
+// `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason, a required
+// review its rounds in its place.
 function checkOf(kind: Planned, value: unknown): Check | string {
   const text = value === undefined ? PLAN_OMITTED[kind] : typeof value === 'string' ? value.trim() : ''
   const at = text.indexOf(':')
-  const need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
   const reason = at === -1 ? '' : text.slice(at + 1).trim()
+  let need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
+  if (kind === 'review') {
+    const review = reviewNeed(need, reason)
+    if (typeof review === 'string') return review
+    if (review.need === 'required') return { need: review.need, reason: '', max: review.max }
+    need = review.need
+  }
   if (!(PLAN_NEEDS[kind] as readonly string[]).includes(need)) return kind + ' is one of ' + PLAN_NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
   const strictest = need === PLAN_NEEDS[kind][0]
   if (!strictest && reason === '') return kind + ' ' + need + ' gives its reason: "' + need + ': <why>"'
@@ -53,7 +62,7 @@ export function parsePlan(raw: unknown): CheckPlan | undefined {
   if (v !== RECORD_VERSION || typeof repo !== 'string' || !isRepoName(repo) || !Number.isInteger(pr) || (pr as number) < 1 || typeof at !== 'string') return undefined
   const checks = planInput(Object.fromEntries(PLANNED.map((kind) => {
     const check = (raw as Record<string, any>)[kind]
-    return [kind, String(check?.need) + (check?.reason ? ': ' + check.reason : '')]
+    return [kind, String(check?.need) + (check?.max !== undefined ? ': max ' + String(check.max) : check?.reason ? ': ' + check.reason : '')]
   })))
   return typeof checks === 'string' ? undefined : { v, repo, pr: pr as number, ...checks, at }
 }
@@ -77,6 +86,7 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
   if (plan.e2e.need === 'none') excused.e2e = by + plan.e2e.reason
   if (plan.e2e.need === 'screenshots') excused.e2e = by + 'desktop and mobile screenshots in its place, ' + plan.e2e.reason
   if (plan.norms.need === 'none') excused.norms = by + plan.norms.reason
+  if (plan.review.need === 'none') excused.review = by + plan.review.reason
   return excused
 }
 
@@ -86,8 +96,6 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
  * from any channel, is the consent record of the pull request (core's consent-record.ts) whose subject names the check;
  * the newest one decides.
  */
-export const WAIVER_GRANT = 'Accorder'
-export const WAIVER_REFUSE = 'Refuser'
 export type { Waivable }
 export const WAIVED = WAIVABLE
 // The question's words for each check it waives, and the consent subject its answer is recorded under.
@@ -100,19 +108,17 @@ export function waiverQuestion(question: unknown): { check: Waivable; repo: stri
   const q = (typeof question === 'object' && question !== null ? question : {}) as Record<string, unknown>
   const match = WAIVER_QUESTION.exec(String(q['question'] ?? ''))
   const labels = Array.isArray(q['options']) ? q['options'].map((o) => String(o?.label ?? '').trim()) : []
-  if (!match || labels.length !== 2 || !labels.includes(WAIVER_GRANT) || !labels.includes(WAIVER_REFUSE) || q['multiSelect'] === true) return undefined
+  if (!match || labels.length !== 2 || !labels.includes(CONSENT_GRANT) || !labels.includes(CONSENT_REFUSE) || q['multiSelect'] === true) return undefined
   const pr = Number(match[3])
   const check: Waivable = /normes/i.test(match[1]!) ? 'norms' : 'e2e'
   return isRepoName(match[2]!) && pr > 0 ? { check, repo: match[2]!, pr } : undefined
 }
 
-/** Whether an answer to the waiver question grants it. */
-export function grants(answer: string): boolean {
-  return answer.trim().toLowerCase() === WAIVER_GRANT.toLowerCase()
-}
+/** A check's need as a plan writes it: a required review with its rounds. */
+export const needText = (check: Check): string => check.need + (check.max !== undefined ? ': max ' + check.max : '')
 
 /** The plan as the pull request shows it, in one comment. */
 export function planText(plan: Checks): string {
-  const line = (kind: Planned) => '- ' + kind + ': ' + plan[kind].need + (plan[kind].reason ? ' — ' + plan[kind].reason : '')
+  const line = (kind: Planned) => '- ' + kind + ': ' + needText(plan[kind]) + (plan[kind].reason ? ' — ' + plan[kind].reason : '')
   return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required; only the operator\'s waiver lifts one.'
 }

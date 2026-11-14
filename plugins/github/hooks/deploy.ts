@@ -166,7 +166,7 @@ export function deployRefusal(deploy: Deploy): string {
   }
   return 'github: ' + deploy.what + ' refused: ' + deploy.repo + ' is not in the deploy list for ' + deploy.env
     + '; only the operator adds it, with mcp__github__gh auto-deploy-set {"repo": "' + deploy.repo + '", "env": "' + deploy.env
-    + '", "on": true, "words": "<their words naming auto-deploy, verbatim>"}.'
+    + '", "on": true, "words": "<their recorded answer naming auto-deploy, verbatim>"}.'
 }
 
 /** The first refusal among deploys, or undefined when the list grants them all. */

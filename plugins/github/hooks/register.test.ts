@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { lint as lintWith, parsePhrases, proseLines, refusal, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
-import { PLAN_NEEDS } from '../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
   const registered: string[] = []
@@ -40,6 +40,20 @@ test('the record tool\'s plan schema names the needs core\'s readiness contract 
   const plan = schemas.record.properties.plan.properties
   expect(Object.keys(plan)).toEqual(Object.keys(PLAN_NEEDS))
   for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
+})
+
+test('the record tool\'s plan schema says a required review takes its rounds, up to core\'s cap', async ($, on) => {
+  const schemas: Record<string, any> = {}
+  on('session.start', () => ({ cwd: '/work' }))
+  on('tool.register', (_$, e) => {
+    schemas[e.name] = e.inputSchema
+    return { value: undefined }
+  })
+  on('command.register', () => ({ value: undefined }))
+
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+
+  expect(schemas.record.properties.plan.description).toContain('"required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap)
 })
 
 test('a command name another plugin owns passes through to next', async ($, on) => {
@@ -283,6 +297,8 @@ test('/prs reads each listed PR in detail and opens the pane', async ($, on) => 
   expect(opened).toEqual([{ id: 'github-prs', title: 'PRs', closeOnEscape: true }])
   expect(runs.length).toBe(5) // pr-list + (pr-checks, pr-status) x 2
   expect(runs.filter((r) => r.command === 'pr-status').map((r) => String(r.args.pr)).sort()).toEqual(['11', '12'])
+  // The module parses the pull request list: it asks the full object, as no caller of the tool does.
+  expect(runs.find((r) => r.command === 'pr-list').full).toBe(true)
   // The comment counts are fields of the full pull request: the compact answer carries none.
   expect(runs.filter((r) => r.command === 'pr-status').every((r) => r.args.json === true)).toBe(true)
 })
@@ -484,6 +500,19 @@ test('a deny verdict refuses the call without running gh.py', async ($, on) => {
   expect(JSON.stringify(out)).toContain('denied by mcp__github__gh')
   expect(out.result).toBeUndefined()
   expect(runs.length).toBe(0)
+})
+
+test('a read the model makes is not asked as the full object, which only the module asks', async ($, on) => {
+  const runs: any[] = []
+  await stubMod(on, runs, [])
+  await startSession($)
+
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-list' })
+  expect(runs.length).toBe(1)
+  expect(runs[0].full).toBeUndefined()
+  // A request the tool sends cannot carry it either: the tool's own input is the only thing it forwards.
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-list', full: true })
+  expect(runs[1].full).toBeUndefined()
 })
 
 test('an ask with no rule lets a read through without a dialog', async ($, on) => {

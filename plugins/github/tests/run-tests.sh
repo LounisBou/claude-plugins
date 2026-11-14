@@ -1209,11 +1209,11 @@ check_status "an empty body file exits 1" 1 sh -c ": > '$WORK/empty-thread.md'; 
 printf '%s' '[{"user":{"login":"other"},"body":"Merci."},{"user":{"login":"me"},"body":"Please rename this."},{"user":{"login":"me"},"body":"Second one."},{"user":null,"body":"ghost"}]' \
   > "$F4/GET_repos_acme_thing_pulls_comments__sort=created&direction=desc&per_page=100.json"
 check "repo-review-comments filters on the author" "2" \
-  "$(gh4 repo-review-comments --author me | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+  "$(gh4 repo-review-comments --author me --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "repo-review-comments honours --limit" "1" \
-  "$(gh4 repo-review-comments --author me --limit 1 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+  "$(gh4 repo-review-comments --author me --limit 1 --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "a deleted-account author does not crash the filter" "2" \
-  "$(gh4 repo-review-comments --author me | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+  "$(gh4 repo-review-comments --author me --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "repo-review-comments asks for the newest first" "1" \
   "$(: > "$F4/sent.jsonl"; gh4 repo-review-comments >/dev/null; grep -c 'sort=created&direction=desc&per_page=100' "$F4/sent.jsonl")"
 check "comment-bodies prints the bodies only" "Please rename this.|---|Second one." \
@@ -1759,6 +1759,12 @@ check "stdin json maps the mod's positional names onto argparse dests" \
 check "stdin json repeats append flags" \
   "image-upload --title=B --title=A -- a.png b.png" \
   "$(argv6 '{"command":"image-upload","args":{"file":["a.png","b.png"],"title":["B","A"]}}')"
+check "stdin json asks the full object for a request that says full" \
+  "pr-list --json" "$(argv6 '{"command":"pr-list","full":true}')"
+check "stdin json leaves a named format to a request that says full" \
+  "pr-get --format=pr-number" "$(argv6 '{"command":"pr-get","args":{"format":"pr-number"},"full":true}')"
+check "stdin json leaves full out when it is not true" \
+  "pr-list" "$(argv6 '{"command":"pr-list","full":false}')"
 check "stdin json passes pr-get's pr as its flag" \
   "pr-get --pr=12" \
   "$(argv6 '{"command":"pr-get","args":{"pr":12}}')"
@@ -2329,6 +2335,115 @@ check "record.py writes nothing on a usage error" "no" \
   "$(rm -rf "$WORK/cfgrec2"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec2" python3 "$RECORD" --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>/dev/null; [ -e "$WORK/cfgrec2/pr-records" ] && echo yes || echo no)"
 check "record.py imports nothing outside the standard library" "" \
   "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
+
+
+echo "== reads answer what the caller needs =="
+
+# Every read with a compact default answers its few lines; --json (or --format raw) answers the
+# full object, which stays what a program parses. Each case below falls when the default is the
+# object again.
+F9="$WORK/fix9"; mkdir -p "$F9"
+gh9() { env GH_FIXTURES="$F9" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+fix9() { printf '%s' "$2" > "$F9/$1.json"; }
+H9=0123456789abcdef0123456789abcdef01234567
+PULL9='{"number":7,"title":"Fix the thing\nbody","state":"open","draft":true,"merged_at":null,"head":{"ref":"feat","sha":"'$H9'"},"base":{"ref":"main","repo":{"full_name":"acme/thing"}},"labels":[{"name":"Not Ready"},{"name":"bug"}],"user":{"login":"me"},"html_url":"https://github.com/acme/thing/pull/7","_links":{"self":{"href":"x"}}}'
+fix9 GET_repos_acme_thing_pulls_7 "$PULL9"
+fix9 "GET_repos_acme_thing_pulls__state=open&per_page=100" "[$PULL9]"
+fix9 "GET_repos_acme_thing_pulls__head=acme:feat" "[$PULL9]"
+check "pr-get answers a count and one line per pull request" \
+  "1 pull request|acme/thing#7: Fix the thing [open, draft] feat -> main | labels: Not Ready, bug | me" \
+  "$(gh9 pr-get --pr 7 | paste -sd'|' -)"
+check "pr-get --json answers the full list" "7 main" \
+  "$(gh9 pr-get --pr 7 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["number"], d[0]["base"]["ref"])')"
+check "pr-list answers a count and one line per open pull request" \
+  "1 pull request|acme/thing#7: Fix the thing [open, draft] feat -> main | labels: Not Ready, bug | me" \
+  "$(gh9 pr-list | paste -sd'|' -)"
+check "pr-list --json answers the full list" "7 feat" \
+  "$(gh9 pr-list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["number"], d[0]["head"]["ref"])')"
+check "pr-list --format raw answers the full list too" "7" \
+  "$(gh9 pr-list --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"
+check "pr-get still answers its number under a format" "7" "$(gh9 pr-get --branch feat --format pr-number)"
+
+fix9 "GET_repos_acme_thing_commits_${H9}_status" '{"statuses":[{"context":"ci/legacy","state":"failure"}]}'
+fix9 "GET_repos_acme_thing_commits_${H9}_check-runs__per_page=100" '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure","app":{"id":1,"name":"a","owner":{"login":"o"}}},{"name":"test","status":"completed","conclusion":"success","app":{"id":1,"name":"a","owner":{"login":"o"}}},{"name":"build","status":"in_progress","conclusion":null}]}'
+check "pr-checks answers the verdict, the counts and the failed names" \
+  "checks: FAILURE (4 total, 1 running, 2 failed, 0 skipped)|failed: lint, ci/legacy" \
+  "$(gh9 pr-checks 7 | paste -sd'|' -)"
+check "pr-checks --json answers the statuses and the check runs" "1 3" \
+  "$(gh9 pr-checks 7 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["statuses"]["statuses"]), len(d["check_runs"]))')"
+
+fix9 "GET_repos_acme_thing_pulls_7_files__per_page=100" '[{"filename":"a.py","status":"modified","additions":3,"deletions":1,"patch":"@@ -1 +1 @@\n-x\n+y"},{"filename":"b.py","previous_filename":"c.py","status":"renamed","additions":0,"deletions":0}]'
+check "pr-files answers the totals and one line per file, no patch" \
+  "2 files, +3 -1|modified a.py +3 -1|renamed c.py -> b.py +0 -0" \
+  "$(gh9 pr-files 7 | paste -sd'|' -)"
+check "pr-files --json keeps the patches" "@@ -1 +1 @@" \
+  "$(gh9 pr-files 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["patch"].splitlines()[0])')"
+
+fix9 "GET_repos_acme_thing_pulls_7_commits__per_page=100" '[{"sha":"abcdef0123456789","author":{"login":"me"},"commit":{"message":"fix: the thing\n\nlong body","author":{"name":"Me"}}},{"sha":"1234567890abcdef","author":null,"commit":{"message":"chore: more","author":{"name":"Someone"}}}]'
+check "pr-commits answers the count and sha, author and subject" \
+  "2 commits|abcdef0 | me | fix: the thing|1234567 | Someone | chore: more" \
+  "$(gh9 pr-commits 7 | paste -sd'|' -)"
+check "pr-commits --json keeps the message body" "fix: the thing  long body" \
+  "$(gh9 pr-commits 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"]["message"].replace("\n", " ").strip())')"
+
+fix9 "GET_repos_acme_thing_pulls_7_comments__per_page=100" '[{"id":11,"pull_request_url":"https://api.github.com/repos/acme/thing/pulls/7","path":"src/a.py","line":12,"user":{"login":"rev"},"body":"Rename this.\nSecond line.","diff_hunk":"@@ big @@"},{"id":12,"pull_request_url":"https://api.github.com/repos/acme/thing/pulls/7","path":"src/b.py","line":null,"original_line":3,"user":{"login":"rev"},"body":"a | b"}]'
+check "pr-comments answers the count and one line per comment, no hunk" \
+  "2 review comments|11 | acme/thing#7 | src/a.py:12 | rev | Rename this.|12 | acme/thing#7 | src/b.py:3 | rev | a / b" \
+  "$(gh9 pr-comments 7 | paste -sd'|' -)"
+check "pr-comments --json keeps the diff hunk" "@@ big @@" \
+  "$(gh9 pr-comments 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["diff_hunk"])')"
+
+fix9 "GET_repos_acme_thing_pulls_7_reviews__per_page=100" '[{"id":21,"state":"APPROVED","user":{"login":"rev"},"body":"Looks good.\nShip it.","_links":{}}]'
+check "pr-reviews answers the count and id, state, author and first line" \
+  "1 review|21 | APPROVED | rev | Looks good." \
+  "$(gh9 pr-reviews 7 | paste -sd'|' -)"
+check "pr-reviews --json keeps the whole body" "Looks good.⏎Ship it." \
+  "$(gh9 pr-reviews 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["body"].replace("\n", "⏎"))')"
+
+fix9 "GET_repos_acme_thing_issues_7_comments__per_page=100" '[{"id":31,"user":{"login":"rev"},"body":"First line\nsecond","reactions":{"total_count":0}}]'
+check "pr-issue-comments answers a table, no object" "| id | author | first line |^|---|---|---|^| 31 | rev | First line |" \
+  "$(gh9 pr-issue-comments 7 | paste -sd'^' -)"
+check "pr-issue-comments --json keeps the whole comment" "second" \
+  "$(gh9 pr-issue-comments 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["body"].splitlines()[1])')"
+
+fix9 graphql '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_1","isResolved":false,"path":"a.py","line":4,"comments":{"nodes":[{"id":"c","body":"x","author":{"login":"rev"}}]}},{"id":"PRRT_2","isResolved":true,"path":"b.py","line":1,"comments":{"nodes":[]}}]}}}}'
+check "pr-threads answers the open threads as a table" \
+  "| thread | file | line | author |^|---|---|---|---|^| PRRT_1 | a.py | 4 | rev |" \
+  "$(gh9 pr-threads 7 | paste -sd'^' -)"
+check "pr-threads --json keeps the resolved thread and the comments" "2 PRRT_2" \
+  "$(gh9 pr-threads 7 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d), d[1]["id"])')"
+
+ISSUE9='{"number":3,"title":"An issue","state":"open","user":{"login":"me"},"labels":[{"name":"bug"}],"repository_url":"https://api.github.com/repos/acme/thing","html_url":"https://github.com/acme/thing/issues/3","body":"The body.\nMore.","reactions":{"total_count":0}}'
+fix9 GET_repos_acme_thing_issues_3 "$ISSUE9"
+fix9 "GET_repos_acme_thing_issues__state=open&per_page=100" "[$ISSUE9]"
+fix9 "GET_search_issues__q=repo%3Aacme%2Fthing%20bug" '{"total_count":40,"items":['"$ISSUE9"']}'
+check "issue-view answers the header, the body and the link" \
+  "acme/thing#3: An issue [open] me | labels: bug^^The body.^More.^https://github.com/acme/thing/issues/3" \
+  "$(gh9 issue-view 3 | paste -sd'^' -)"
+check "issue-view --json answers the full issue" "3 0" \
+  "$(gh9 issue-view 3 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["number"], d["reactions"]["total_count"])')"
+check "issue-list answers a count and one line per issue" \
+  "1 issue|acme/thing#3: An issue [open] me | labels: bug" \
+  "$(gh9 issue-list | paste -sd'|' -)"
+check "issue-search answers how many of how many, then one line per issue" \
+  "1 issue of 40|acme/thing#3: An issue [open] me | labels: bug" \
+  "$(gh9 issue-search bug | paste -sd'|' -)"
+check "issue-search --json answers the search object" "40" \
+  "$(gh9 issue-search bug --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_count"])')"
+
+fix9 "GET_repos_acme_thing_pulls_comments__sort=created&direction=desc&per_page=100" '[{"id":41,"pull_request_url":"https://api.github.com/repos/acme/thing/pulls/9","path":"x.py","line":2,"user":{"login":"me"},"body":"Please rename.","diff_hunk":"@@"},{"id":42,"pull_request_url":"https://api.github.com/repos/acme/thing/pulls/9","path":"y.py","line":5,"user":{"login":"other"},"body":"No."}]'
+check "repo-review-comments answers the count and one line per comment" \
+  "1 review comment|41 | acme/thing#9 | x.py:2 | me | Please rename." \
+  "$(gh9 repo-review-comments --author me | paste -sd'|' -)"
+
+# The default keeps a read well under the object it replaces.
+check "a compact default is under a tenth of its object" "yes" \
+  "$(a=$(gh9 pr-list | wc -c); b=$(gh9 pr-list --json | wc -c); [ $((a * 4)) -lt "$b" ] && echo yes || echo "$a of $b")"
+
+# --json takes the place of --format raw, and loses to a format named beside it.
+check "--json after the subcommand is read as before it" "7" \
+  "$(gh9 --json pr-list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"
+check "a format named beside --json wins" "7" "$(gh9 pr-get --branch feat --json --format pr-number)"
 
 
 echo
