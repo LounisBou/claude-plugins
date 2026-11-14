@@ -40,7 +40,7 @@ import { moduleDirOf } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from './unanswered-question.ts'
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
-import { MODE_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
+import { MODE_DIALOG_DENY, WAITED_ON_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
 import { unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
@@ -427,17 +427,21 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
-  // The mode question is never a dialog: an orchestrator's dialog that offers `build` and
-  // `investigate` is denied with the way to ask it. A dialog in the session's own tab reaches
-  // neither the coordinator's pane nor a `waiting:` line, so nothing tells the operator the
-  // session is blocked on him. The session's role is read only for a call that asks the mode.
+  // A dialog in the session's own tab reaches neither the coordinator's pane nor a `waiting:` line,
+  // so nothing tells the operator the session is blocked on him. The mode question is never a
+  // dialog: an orchestrator's that offers `build` and `investigate` is denied with the way to ask
+  // it. While a coordinator runs, an orchestrator and the coordinator are waited on: any dialog of
+  // theirs is denied, the question going to the round.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: (e: any) => any) => {
-    if (!asksTheMode(e)) return next(e)
     const sessionId = await $.session.id()
-    const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
-    if (roleOf(name) !== 'orchestrator') return next(e)
-    await logLine($, 'guards', 'mode dialog denied: the mode is asked in the question format, never by dialog')
-    return { deny: MODE_DIALOG_DENY }
+    const role = roleOf((await readName($, await transcriptPathOf($, sessionId), sessionId)).name)
+    if (role === 'orchestrator' && asksTheMode(e)) {
+      await logLine($, 'guards', 'mode dialog denied: the mode is asked in the question format, never by dialog')
+      return { deny: MODE_DIALOG_DENY }
+    }
+    if ((role !== 'orchestrator' && role !== 'coordinator') || !(await coordinatorAddress($))) return next(e)
+    await logLine($, 'guards', `dialog denied: a ${role} is waited on while a coordinator runs`)
+    return { deny: WAITED_ON_DIALOG_DENY }
   }).catch(async ($: any, e: any, next: any) => {
     // A guard that could not read lets the dialog through, and the log says why.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
