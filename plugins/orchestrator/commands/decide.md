@@ -20,8 +20,8 @@ The first says in three to five sentences what you work on, for its round of its
 your questions come together.
 Its pane shows each one, the coordinator's tab when the pane is closed;
 declare it with `declare_wait` and `urgent: true` only for what step 1 calls urgent.
-Its answer, verbatim and dated, is his ruling, recorded as step 4 says. Each question is
-written in full in your own chat too.
+His answer there is his ruling, recorded by the module (step 4). Each question is written in
+full in your own chat too.
 
 ## 1. Collect first, then announce the count
 
@@ -69,10 +69,10 @@ fact that changes a question still to come updates it before it is presented.
 ## 4. On the answer, in the same turn and in this order
 
 1. « Recorded: <the ruling in one line> » — the user sees their decision written back.
-2. Write the ruling first to the orchestration's rulings file, verbatim and dated
-   (`references/lifecycle.md`, « Prune the state file before you hand over »), then where
-   it applies: the state file or memory, the register entry, the plan — never only the
-   chat, or the next session relitigates it. Only the user's ruling is written there. A ruling that rules out a goal is written with
+2. His answer in the round is the module's dated record, which answers the same question asked
+   again, a successor's too: never copy it. By hand, only what binds beyond it (a standing order
+   in the rulings file, `references/lifecycle.md` item 0; the plan; the register) and, with no
+   coordinator, the ruling there, verbatim and dated. A ruling that rules out a goal is written with
    `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, so the stop gate
    reads it. A ruling that defers work (« later, when I say so ») is recorded with
    `dispatch-record.sh defer <record> <id> --ruling "<his words, dated>"` for a row and
