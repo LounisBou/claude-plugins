@@ -5386,7 +5386,7 @@ help_has() { sed -n 's/^# \{0,1\}//p' "$1" | tr '\n' ' ' | tr -s ' ' | grep -qF 
 check "the orchestrator skill arms one background watch per pull request, and the script says what each line asks" "yes|yes|yes|yes" \
   "$(spells "$ORCH_REFS/ci-watch.md" 'start `ci-watch.sh <n>`')|$(spells "$ORCH_REFS/ci-watch.md" 'with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two')|$(spells "$ORCH_REFS/ci-watch.md" '« What the caller does »')|$(help_has "$CWSCRIPT" 'moved: re-arm on the new head')"
 check "and reads each ending: red, no checks, closed, unread" "yes|yes|yes|yes" \
-  "$(help_has "$CWSCRIPT" 'dispatch the correction at once, to a fresh session')|$(help_has "$CWSCRIPT" 'no-checks: ready on the suite')|$(help_has "$CWSCRIPT" 'closed: stop the work on it')|$(help_has "$CWSCRIPT" 'unread: re-arm once, then report')"
+  "$(help_has "$CWSCRIPT" 'send the correction at once to the')|$(help_has "$CWSCRIPT" 'no-checks: ready on the suite')|$(help_has "$CWSCRIPT" 'closed: stop the work on it')|$(help_has "$CWSCRIPT" 'unread: re-arm once, then report')"
 check "a merged pull request's base branch run is followed, and a red one never left standing" "yes|yes|yes|yes" \
   "$(help_has "$CWSCRIPT" 'closed MERGED with --no-base, or merged by hand: start the watch again')|$(help_has "$CWSCRIPT" 'a red base branch is never left standing')|$(help_has "$CWSCRIPT" 'fixed at once in its own pull request, dispatched to a fresh session')|$(help_has "$CWSCRIPT" 'base-no-run filtered=0: nothing')"
 check "a filter that matches nothing is reported as a misnamed workflow" "yes" \
