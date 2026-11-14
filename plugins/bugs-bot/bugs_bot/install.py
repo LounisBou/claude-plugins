@@ -23,7 +23,7 @@ from bugs_bot.doctor import (
 from bugs_bot.errors import BugsError
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-PM2_CONFIG = PLUGIN_ROOT / "pm2.config.js"
+PM2_CONFIG = PLUGIN_ROOT / "pm2.config.cjs"
 PM2_TIMEOUT = 60
 # The PM2 program; tests point it at a fake, so no test ever reaches the machine's own PM2.
 PM2_COMMAND = "pm2"

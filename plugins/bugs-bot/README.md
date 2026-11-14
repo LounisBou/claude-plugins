@@ -36,7 +36,7 @@ on one machine.
 2. installs the fixed launcher `~/.local/bin/bugs-bot`. PM2 runs that launcher, not a path inside the
    plugin's versioned directory, so a plugin update does not break the saved process;
 3. leaves exactly one Pull, `bugs-bot-pull`, under PM2 (never two: Telegram hands a bot's updates to one
-   consumer), started from `pm2.config.js` with the home directory as its working directory, then runs
+   consumer), started from `pm2.config.cjs` with the home directory as its working directory, then runs
    `pm2 save`. Run again, it restarts that one on the new launcher; a record on a versioned path or in
    another directory is replaced; a Pull running outside PM2 is reported, not doubled. It needs PM2
    (`npm install -g pm2`);

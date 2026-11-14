@@ -133,3 +133,5 @@ Some coverage grows one step at a time: the TypeScript under the strict check
 and the duplicate ceiling (`ci/prompts.json`).
 A ratchet only tightens. A pull request that loosens one is refused unless it says why in its
 description and the operator accepts it.
+A pull request that touches a hooks file not yet under the strict check makes it pass and adds it to
+`include` in `tsconfig.json`.
