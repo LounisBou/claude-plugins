@@ -22,6 +22,7 @@ import datetime
 import json
 import os
 import re
+import signal
 import statistics
 import subprocess
 import sys
@@ -157,15 +158,25 @@ def substituted(words, base_sha):
 
 
 def execute(words, timeout, log):
-    """(exit code or None on a timeout, seconds): the words run as a program, no shell, its output to the log."""
+    """(exit code or None on a timeout, seconds): the words run as a program, no shell, its output to the log.
+    The program leads a session of its own, so a timeout ends it and every process it started, not the program
+    alone (npm, pest --parallel and docker leave children behind)."""
     started = time.monotonic()
     try:
-        done = subprocess.run(words, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=False)
-        code = done.returncode
-    except subprocess.TimeoutExpired:
-        code = None
+        proc = subprocess.Popen(words, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     except OSError as exc:
         raise Failure("cannot run %s: %s" % (words[0], exc))
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        code = None
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
     return code, time.monotonic() - started
 
 

@@ -2499,6 +2499,16 @@ sleep 1
 lcproject '{"command": ["python3", "-c", "import time; time.sleep(5)"], "timeoutSeconds": 1}'
 lcrun >/dev/null 2>&1
 check "light_ci run records a run past its timeout as a failure" "1" "$(lcrecord | grep -c '^fail light-ci .* — timed out after 1s')"
+# A timeout ends the command's children with it: the command starts a grandchild and waits; the grandchild must be gone.
+printf 'import subprocess, sys, time\nopen(sys.argv[1], "w").write(str(subprocess.Popen(["sleep", "30"]).pid))\ntime.sleep(30)\n' > "$LC/spawn.py"
+lcproject '{"command": ["python3", "'"$LC"'/spawn.py", "'"$LC"'/grandchild.pid"], "timeoutSeconds": 1}'
+sleep 1
+lcrun >/dev/null 2>&1
+grandchild=$(cat "$LC/grandchild.pid")
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$grandchild" 2>/dev/null || break; sleep 0.3; done
+alive=$(kill -0 "$grandchild" 2>/dev/null && echo alive || echo gone)
+kill "$grandchild" 2>/dev/null
+check "light_ci run's timeout ends the command's grandchild too, and records the failure" "gone 1" "$alive $(lcrecord | grep -c '^fail light-ci .* — timed out after 1s')"
 n=$(lccount)
 lcproject '{"command": ["python3", "-c", "import time; time.sleep(5)"], "timeoutSeconds": 30}'
 check "light_ci run cut by its budget writes nothing and says to run it from Bash" "1 1 $n" \
@@ -2508,7 +2518,7 @@ check "light_ci run writes nothing when prepare fails" "1 1 $n" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'prepare python3 -c import sys; sys.exit(1) exited 1, no tests run, nothing recorded' "$LC/err") $(lccount)")"
 check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
 check "light_ci.py imports nothing outside the standard library and the engine" "" \
-  "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|base64|datetime|json|os|re|statistics|subprocess|sys|tempfile|time|urllib\.parse|record|ghlib)( |$)')"
+  "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|base64|datetime|json|os|re|signal|statistics|subprocess|sys|tempfile|time|urllib\.parse|record|ghlib)( |$)')"
 
 # status: the project file, then the facts of the invitation.
 lcproject '{"command": ["npx", "jest"], "decided": {"at": "2026-11-14T18:30:00Z", "words": "A"}}'
