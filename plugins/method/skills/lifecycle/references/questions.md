@@ -24,3 +24,6 @@ _Recommendation_ : A — <why it beats the others>
 - A host dialog takes the same parts: choices as options, the recommended first and marked,
   the free answer as « Other ».
 - The answer is recorded, dated, where the work keeps its decisions.
+- Never ask what the spec, the plan or the code answers. Answer him first, check the premise
+  after. Asked again for what you failed to deliver, say you failed, answer, offer the hand-over
+  to a fresh session.

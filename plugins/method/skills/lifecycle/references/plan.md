@@ -2,12 +2,12 @@
 
 ## The spec
 
-Free prose, plus one section the plan and the review read:
+Free prose, plus the one section the plan and the review read:
 
 ```
 ## Goals
 
-1. <one outcome, measurable: what is true once it is done>
+1. <one outcome, measurable>
 2. ...
 ```
 
@@ -20,8 +20,6 @@ One file per phase, each naming:
 - the tests that prove it, written first;
 - its definition of done, every figure with the command that measures it;
 - for each step (sub-phase), the same, smaller.
-
-A question the plan leaves open is asked before the phase starts, not decided during it.
 
 ## The state file
 
@@ -38,11 +36,8 @@ row per phase:
 
 | phase | title | status | milestone |
 |---|---|---|---|
-| 01 | <title> | done | <last commit of the phase> |
-| 02 | <title> | doing | <commit the current step started from> |
-| 03 | <title> | todo |  |
+| 01 | <title> | doing | <commit the current step started from> |
 ```
 
-Status is `todo`, `doing` or `done`; a `todo` row leaves the milestone empty. Core parses and
-writes it (`parseState`, `markRow`, `nextRow`); a role edits it through them, or by hand in
-exactly this shape.
+Status is `todo`, `doing` or `done`; a `todo` row leaves the milestone empty. Core parses and writes
+it; edit it through core or in this shape.

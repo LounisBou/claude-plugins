@@ -1471,8 +1471,9 @@ check "review.md item 14 keys the E2E on the check plan, and the review brief fo
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
 # question, once, in the host's question tool, his choice the consent.
-check "review.md asks one E2E waiver question through the round, whoever presents the round puts it to him" "yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator:')|$(spells "$RV" 'whoever presents the round puts it to him with the question tool')|$(spells "$RV" '« Accorder » / « Refuser »')"
+PRW="$ROOT/../github/engine/writing/pull-requests.md"
+check "review.md asks one waiver question through the round, worded by pull-requests.md, which holds Accorder / Refuser" "yes|yes|yes|yes|yes" \
+  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator,')|$(spells "$RV" '`consent` naming the waiver')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
@@ -5440,7 +5441,7 @@ check "a relayed ruling is dated by a command, pasted, never from memory" "yes|n
 # Topic 6.3 of the rules review, the operator's ruling of 2026-10-31: each ruling is relayed at
 # once, nothing is shown between two questions, and the wave launches and reports at its end.
 check "a decision round asks its questions back to back, relays each ruling at once, and never stops the work its questions do not block" "yes|yes|yes|yes|no|no" \
-  "$(spells "$ROOT/commands/decide.md" 'A question blocks only the work that depends on its answer')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
+  "$(spells "$ROOT/commands/decide.md" 'A question never stops the rest of the work')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
 check "a decision round shows nothing between a ruling and the next question" "no" \
   "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
 # Topic 6.3: the coordinator's module relays a ruling as soon as round-close returns.
