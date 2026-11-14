@@ -3071,6 +3071,33 @@ test('answers that cross: the tab\'s, first at the owner, wins; the pane\'s is a
   expect([settled.status, settled.delivery?.state, settled.delivery?.reason]).toEqual(['closed', 'failed', 'already answered in its own tab'])
 })
 
+test('answers that cross by the old line: the tab\'s, first at the owner, wins; the pane\'s is not acked delivered but said failed on the pane', async () => {
+  DECLARATIONS.turnStarted()
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE)))
+  // Entered by the old line alone: an entry of an older sender, or one stored before this release.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAsks(sender)[0].text))
+  const [entry] = entries(coordinator)
+  expect(entry.origin?.line).toBeUndefined()
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', coordinator.sent.filter(s => s.to === SENDER_AT).at(-1)!.text))
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'B, wait'))
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const line = coordinator.sent.at(-1)!
+  expect(parseOldAnswer(line.text)?.id).toBe(entry.id)
+  const before = sender.sent.length
+  const received = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line.text))
+  expect(typeof received.consumed).toBe('string')
+  expect(received.text).toBeUndefined()
+  const [ack] = sender.sent.slice(before)
+  expect(sender.sent.slice(before).length).toBe(1)
+  expect(ack.text).not.toBe(oldAnswerAckLine(entry.id, entry.since))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', ack.text))
+  const settled = JSON.parse(coordinator.files.get(`${ROUND}/${entry.id}.json`)!) as RoundEntry
+  expect([settled.status, settled.delivery?.state, settled.delivery?.reason]).toEqual(['closed', 'failed', 'already answered in its own tab'])
+})
+
 test('answers that cross: the pane\'s, first at the owner, is applied; the tab typed after it settles nothing more', async () => {
   DECLARATIONS.turnStarted()
   const { chains, sender, coordinator, entry, stored } = await enteredRemotely()

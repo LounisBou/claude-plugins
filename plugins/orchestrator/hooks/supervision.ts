@@ -3556,7 +3556,10 @@ async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<type
     const from = peerAddress(delivery)
     if (!from) await logLine($, 'supervision', `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
     else {
-      const ack = byEvent ? qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) }) : answerAckLine(answer.id, answer.since)
+      // « Already » rides on the event line's acknowledgment alone: an old line's answer that crossed
+      // the tab's is acked by it too, never as delivered, so the pane says it failed. A coordinator of
+      // an older release reads no such acknowledgment: its answer stays unacked and fails there.
+      const ack = byEvent || already ? qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) }) : answerAckLine(answer.id, answer.since)
       const sent = await $.session.send({ to: from, text: ack })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
     }
