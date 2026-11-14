@@ -384,7 +384,7 @@ Answered by the mod (README « Repositories in auto-deploy »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (their newest recorded answer is « Accorder »; `words` is not read) or withdraw (`words` names auto-deploy and quotes their answer) the environment; `commands`: its deploys |
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (« Accorder » recorded) or withdraw the environment on the operator's quoted word; `commands`: its deploys |
 | `auto-deploy-list` | | The environments granted |
 
 ## Exit codes
