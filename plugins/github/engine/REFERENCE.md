@@ -114,7 +114,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready (« Guards ») |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included; else refused with `Missing: …` (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
@@ -305,12 +305,12 @@ on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, 
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
 ready at its head (core's readiness contract, « Records » above), CI included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
-`pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
+`pr-merge --sha` other than that head is not ready either. A `Ready` label put by `label-add` or in the shell is no
 act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
 still carrying `Ready` goes back to `Not Ready`. Opening out of draft is refused, and a
 readiness `pr-gate` could not read with `github: readiness of <owner/name>#<n> unverified:
-<error>`. A shell merge, undraft or `Ready` label naming no repository (`-R`, `--repo` or a
+<error>`. A shell merge or undraft naming no repository (`-R`, `--repo` or a
 URL) is refused; a GraphQL merge or undraft names no pull request and is always refused, with
 the tool call to run. A GraphQL query the command does not show (`-F query=@file`, `--input`, a
 shell variable or substitution) is refused outside auto-merge, an unverified readiness inside

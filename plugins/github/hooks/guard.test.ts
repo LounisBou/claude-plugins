@@ -320,6 +320,54 @@ test('in auto-merge a not-ready pr-ready is refused before anyone is asked, noth
   expect(seen.writes.some((w) => w.path === '/data/guard-warn.log')).toBe(false)
 })
 
+test('pr-readiness ready on a pull request the gate reads not ready is refused with what is missing, no label put', async ($, on) => {
+  const seen = await world($, on, NO_RECORDS)
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
+    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(seen.asked.length).toBe(0)
+  expect(commands(seen)).toEqual(['pr-gate'])
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready on a Ready pull request the gate reads not ready refuses and takes Ready off', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('pr-readiness refused on acme/thing#12')
+  expect(seen.runs.filter((r) => r.command === 'pr-readiness').every((r) => r.args.state === 'not-ready')).toBe(true)
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready whose CI is not green is refused, CI named', async ($, on) => {
+  const seen = await world($, on, { ci: { result: 'PENDING', running: 1 } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: CI still running.' + REFUSAL_END)
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready on a pull request the gate reads ready puts Ready', async ($, on) => {
+  const seen = await world($, on)
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBeUndefined()
+  expect(commands(seen)).toContain('pr-readiness')
+  expect(seen.pull?.labels).toEqual(['Ready'])
+})
+
+test('pr-readiness ready whose gate cannot be read is refused as unverified', async ($, on) => {
+  const seen = await world($, on, { gateFails: 'error: rate limited' })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: readiness of acme/thing#12 unverified: error: rate limited')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness not-ready is let through with the gate unread', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'not-ready' }))
+  expect(out.deny).toBeUndefined()
+  expect(commands(seen)).toEqual(['pr-readiness'])
+  expect(gates(seen)).toBe(0)
+})
+
 test('in auto-merge a not-ready merge is refused before anyone is asked, nothing run', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
@@ -1645,7 +1693,6 @@ test('a Ready label put by hand on a pull request not ready runs, on every route
   const seen = await world($, on, { ci: { result: 'FAILURE', failed: ['test'] }, gateFails: 'error: never read' })
   for (const call of [
     gh('label-add', { pr: 12, label: ['Ready'] }),
-    gh('pr-readiness', { pr: 12, state: 'ready' }),
     bash('gh pr edit 12 --add-label Ready'),
     bash('gh issue edit 12 -R acme/thing --add-label ready'),
     bash('gh api --method POST repos/acme/thing/issues/12/labels -f \'labels[]=Ready\''),
@@ -1657,7 +1704,7 @@ test('a Ready label put by hand on a pull request not ready runs, on every route
   }
   expect(seen.bash.length).toBe(5)
   // No pr-gate: the label reads no readiness.
-  expect(commands(seen).filter((c) => !c.startsWith('git '))).toEqual(['label-add', 'pr-readiness'])
+  expect(commands(seen).filter((c) => !c.startsWith('git '))).toEqual(['label-add'])
 })
 
 test('a push still puts Not Ready back on a pull request the gate made Ready', async ($, on) => {
