@@ -23,7 +23,7 @@ const row = (role: string, name: string) =>
 type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string> }
 
 function world(options: Options = {}) {
-  const [role, name] = options.me ?? ['orchestrator', 'Orch: Claude plugins [08eb0d]']
+  const [role, name] = options.me ?? ['orchestrator', 'Orch: billing [ref-1]']
   const files = new Map<string, string>([
     [`${MODULE}/store/sessions/s-me`, row(role, name)],
     [`${MODULE}/store/sessions/s-coord`, row('coordinator', 'Coord: general')],
@@ -71,19 +71,19 @@ const listOf = (files: Map<string, string>, name: string) => todoItems(files.get
 
 test('add records his words, dated, in the caller\'s own list, named for the session without its reference', async () => {
   const { dollar, files, sent, writes } = world()
-  const answered = await call(dollar, { action: 'add', words: 'merge claude-code#46 once ready', said_at: SAID })
+  const answered = await call(dollar, { action: 'add', words: 'merge acme/app#46 once ready', said_at: SAID })
   expect(answered.isError).toBe(undefined)
   expect(answered.result).toContain('1')
-  const items = listOf(files, 'Orch: Claude plugins')
-  expect(items.map(item => [item.id, item.state, item.words, item.said_at, item.from])).toEqual([[1, 'open', 'merge claude-code#46 once ready', SAID, 'Orch: Claude plugins']])
+  const items = listOf(files, 'Orch: billing')
+  expect(items.map(item => [item.id, item.state, item.words, item.said_at, item.from])).toEqual([[1, 'open', 'merge acme/app#46 once ready', SAID, 'Orch: billing']])
   expect(items[0]?.opened).toBe('2026-11-14T15:00:00Z')
   // The write is one rename under the store's lock, and the lock is gone.
-  expect(writes).toEqual([`${LISTS}/Orch: Claude plugins.jsonl`])
+  expect(writes).toEqual([`${LISTS}/Orch: billing.jsonl`])
   expect([...files.keys()].filter(path => path.endsWith('.lock'))).toEqual([])
   expect(sent).toEqual([])
   const second = await call(dollar, { action: 'add', words: 'another', label: 'the other' })
   expect(second.isError).toBe(undefined)
-  expect(listOf(files, 'Orch: Claude plugins').map(item => [item.id, item.label, item.said_at])).toEqual([[1, 'merge claude-code#46 once ready', SAID], [2, 'the other', '2026-11-14T15:00:00Z']])
+  expect(listOf(files, 'Orch: billing').map(item => [item.id, item.label, item.said_at])).toEqual([[1, 'merge acme/app#46 once ready', SAID], [2, 'the other', '2026-11-14T15:00:00Z']])
 })
 
 test('add with to writes the recipient\'s list first, then sends the message the module drafts, in the same call', async () => {
@@ -91,14 +91,14 @@ test('add with to writes the recipient\'s list first, then sends the message the
   const { dollar, files, sent } = world({
     send: () => { order.push(`sent while the list holds ${listOf(files, 'Coord: general').length} item`); return { isDelivered: true } },
   })
-  const answered = await call(dollar, { action: 'add', words: 'run the audit', said_at: SAID, to: 'Coord: general [7952fb]' })
+  const answered = await call(dollar, { action: 'add', words: 'run the audit', said_at: SAID, to: 'Coord: general [ref-2]' })
   expect(answered.isError).toBe(undefined)
   expect(order).toEqual(['sent while the list holds 1 item'])
-  expect(listOf(files, 'Coord: general').map(item => [item.id, item.words, item.from])).toEqual([[1, 'run the audit', 'Orch: Claude plugins']])
-  expect(listOf(files, 'Orch: Claude plugins')).toEqual([])
-  expect(sent.map(message => message.to)).toEqual(['Coord: general [7952fb]'])
+  expect(listOf(files, 'Coord: general').map(item => [item.id, item.words, item.from])).toEqual([[1, 'run the audit', 'Orch: billing']])
+  expect(listOf(files, 'Orch: billing')).toEqual([])
+  expect(sent.map(message => message.to)).toEqual(['Coord: general [ref-2]'])
   const text = sent[0]?.text ?? ''
-  for (const part of ['run the audit', SAID, 'Orch: Claude plugins', '2026-11-14T15:00:00Z']) expect(text).toContain(part)
+  for (const part of ['run the audit', SAID, 'Orch: billing', '2026-11-14T15:00:00Z']) expect(text).toContain(part)
   expect(text).toContain('To-do 1')
 })
 
@@ -114,19 +114,19 @@ test('a send that fails leaves the item written, and the answer says so', async 
 
 test('add to the caller\'s own name records once and sends nothing', async () => {
   const { dollar, files, sent } = world()
-  const answered = await call(dollar, { action: 'add', words: 'mine', to: 'Orch: Claude plugins [08eb0d]' })
+  const answered = await call(dollar, { action: 'add', words: 'mine', to: 'Orch: billing [ref-1]' })
   expect(answered.isError).toBe(undefined)
-  expect(listOf(files, 'Orch: Claude plugins')).toHaveLength(1)
+  expect(listOf(files, 'Orch: billing')).toHaveLength(1)
   expect(sent).toEqual([])
 })
 
 test('add to a session on another machine sends the message and says it is not recorded there', async () => {
   const remote = JSON.stringify({ name: 'Orch: elsewhere', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'iznoserver', repo: null, prs: [], held: null })
   const { dollar, files, sent } = world({ files: { [`${MODULE}/store/remote/Orch__elsewhere`]: remote } })
-  const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [abc123]' })
+  const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [ref-3]' })
   expect(answered.isError).toBe(undefined)
   expect(answered.result).toContain('not recorded there')
-  expect(sent.map(message => message.to)).toEqual(['Orch: elsewhere [abc123]'])
+  expect(sent.map(message => message.to)).toEqual(['Orch: elsewhere [ref-3]'])
   expect(sent[0]?.text).toContain('rebase it')
   expect([...files.keys()].filter(path => path.startsWith(LISTS))).toEqual([])
 })
@@ -146,7 +146,7 @@ test('done closes an item with its outcome; drop and defer take his words; list 
   expect((await call(dollar, { action: 'done', id: 1, outcome: 'row 170' })).isError).toBe(undefined)
   expect((await call(dollar, { action: 'drop', id: 2, words: 'forget it, he said, 2026-11-14' })).isError).toBe(undefined)
   expect((await call(dollar, { action: 'defer', id: 3, words: 'after the release, 2026-11-14' })).isError).toBe(undefined)
-  const items = listOf(files, 'Orch: Claude plugins')
+  const items = listOf(files, 'Orch: billing')
   expect(items.map(item => [item.id, item.state, item.verdict, item.deferred ?? ''])).toEqual([
     [1, 'closed', 'row 170', ''],
     [2, 'closed', 'dropped: forget it, he said, 2026-11-14', ''],
@@ -241,7 +241,7 @@ test('an item he put off holds a done but takes a deferred wait; a closed one ho
   await call(dollar, { action: 'defer', id: 1, words: 'after the release, 2026-11-14' })
   expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
   expect((await declare(dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(undefined)
-  await call(dollar, { action: 'done', id: 1, outcome: 'claude-plugins#230' })
+  await call(dollar, { action: 'done', id: 1, outcome: 'acme/app#230' })
   expect((await declare(dollar, { kind: 'done' })).isError).toBe(undefined)
 })
 
@@ -264,7 +264,7 @@ function ender() {
 test('/coordinator-end lists the coordinator\'s open to-dos and refuses to end while one is neither closed nor put off', async () => {
   const { run, handlers } = ender()
   expect(Object.keys(handlers).sort()).toEqual(['coordinator-end', 'orchestrator:coordinator-end'])
-  const { dollar } = world({ me: ['coordinator', 'Coord: general [7952fb]'] })
+  const { dollar } = world({ me: ['coordinator', 'Coord: general [ref-2]'] })
   expect(await run(dollar)).toEqual({ passed: { command: 'orchestrator:coordinator-end', args: '' } })
   await call(dollar, { action: 'add', words: 'relay the order to the billing orchestrator', said_at: SAID })
   await call(dollar, { action: 'add', words: 'ask for the numbers' })
@@ -289,7 +289,7 @@ test('/coordinator-end from another session than the coordinator runs as it alwa
 
 test('status shows each session\'s open to-do count beside its row, and nothing for a session with none', async () => {
   const sessions: Record<string, SessionRow> = {
-    'sessions/a': { role: 'orchestrator', name: 'Orch: Claude plugins [08eb0d]', repo: null, context_percent: 5, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() },
+    'sessions/a': { role: 'orchestrator', name: 'Orch: billing [ref-1]', repo: null, context_percent: 5, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() },
     'sessions/b': { role: 'coordinator', name: 'Coord: general', repo: null, context_percent: 4, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() },
   }
   const { dollar } = world()
@@ -299,7 +299,7 @@ test('status shows each session\'s open to-do count beside its row, and nothing 
   await call(dollar, { action: 'done', id: 1, outcome: 'x' })
   const counts = await todoCounts(dollar)
   const lines = statusText(sessions, counts).split('\n')
-  expect(lines.find(line => line.includes('Orch: Claude plugins'))).toContain('2 to-dos')
+  expect(lines.find(line => line.includes('Orch: billing'))).toContain('2 to-dos')
   expect(lines.find(line => line.includes('Coord: general'))).not.toContain('to-do')
   expect(statusText(sessions)).not.toContain('to-do')
 })

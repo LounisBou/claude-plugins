@@ -2686,7 +2686,7 @@ test('the stop of an orchestrator ending on done is refused while its list holds
   const held = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect((held.answer as any).block).toContain('to-do 1 (item 1) is open')
   expect((held.answer as any).block).not.toContain('item 2')
-  const closed = fakeDollar({ todos: todoLine(1, { state: 'closed', verdict: 'claude-plugins#230' }) })
+  const closed = fakeDollar({ todos: todoLine(1, { state: 'closed', verdict: 'acme/app#230' }) })
   const passed = await stop(handlers['classic.Stop'], closed.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(passed.answer).toBe(passed.passed)
 })
