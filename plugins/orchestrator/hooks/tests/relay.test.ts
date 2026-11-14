@@ -521,6 +521,18 @@ for (const [label, setup, kind] of [
   })
 }
 
+// A coordinator's and an auditor's operator question is withdrawn at their own prompt as an
+// orchestrator's is (row 161-bis).
+for (const [name, role] of [['Coord: ops [abc]', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a composer prompt in a ${role} holding a question withdraws it at prompt submit, by the tab`, async () => {
+    const { chains, fx } = await relayedQuestion({ name, role })
+    expect(entries(fx).map(e => e.status)).toEqual(['open'])
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+    const [entry] = entries(fx)
+    expect([entry.status, entry.answer?.by, entry.answer?.text]).toEqual(['withdrawn', 'tab', "answered in the sender's own tab"])
+  })
+}
+
 for (const text of ['/orchestrator:status', '  /x']) {
   test(`a composer prompt that is a slash command (${JSON.stringify(text)}) withdraws nothing`, async () => {
     const { chains, fx } = await relayedQuestion()
@@ -2377,8 +2389,22 @@ test('the orchestrator withdraws its own open question when it acts on an answer
   expect((await toolHandler()(fx.dollar, { author: 'x', agentId: 'a' })).isError).toBe(true)
 })
 
-test('a tool call from a session that is no orchestrator withdraws nothing', async () => {
-  const fx = fake({ name: 'Coord: ops [abc]', role: 'coordinator' })
+// A coordinator's and an auditor's question is closed by the tool as an orchestrator's is (row 161-bis).
+for (const [name, role] of [['Coord: ops [abc]', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a tool call from a ${role} marks its open question answered by message`, async () => {
+    const chains = mounted()
+    const fx = fake({ name, role })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    const [asked] = entries(fx)
+    const call = await toolHandler()(fx.dollar, { author: 'Coord: other [def]' })
+    expect(call.isError).toBeUndefined()
+    const [now] = entries(fx)
+    expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord: other [def]'])
+  })
+}
+
+test('a tool call from a session that is no orchestrator, coordinator or auditor withdraws nothing', async () => {
+  const fx = fake({ name: 'Agent: belt-p3', role: 'agent' })
   const asked = { ...roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, 'T', 'T') }
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   expect((await toolHandler()(fx.dollar, { author: 'x' })).isError).toBe(true)

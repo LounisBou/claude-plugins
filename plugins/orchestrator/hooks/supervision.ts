@@ -2358,6 +2358,12 @@ async function dropMark($: any): Promise<void> {
   if (now?.typed) await writeWait($, sessionId, withoutMark(now))
 }
 
+// Whether a session of this role puts its operator questions into the round: an orchestrator, a
+// coordinator and an auditor do, as one rule for the turn's end, the prompt and the answered tool.
+export function entersRound(role: string | null): boolean {
+  return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
+}
+
 // A turn's end, read and reported. The role comes from the session's row (the measure's
 // walk named it), else from a walk of its own. An orchestrator's machine line goes to the
 // coordinator: an entry of its round when it runs on this machine, a message when it runs
@@ -2397,8 +2403,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     }
   }
   const role = roleOf(name)
-  // A coordinator and an auditor put their operator questions as an orchestrator does: into the round.
-  const orchestrating = role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
+  const orchestrating = entersRound(role)
   if (!name || (!orchestrating && role !== 'agent')) return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   if (role === 'agent') answer = heldReport(answer)
@@ -2581,7 +2586,7 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
     const walked = await walkWithinBound($, sessionId)
     if (walked.known) name = walked.name
   }
-  if (!name || roleOf(name) !== 'orchestrator') return
+  if (!name || !entersRound(roleOf(name))) return
   const coordinator = await coordinatorAddress($)
   if (!coordinator) return
   const prior = await readWait($, sessionId)
@@ -3087,10 +3092,15 @@ export function withdrawnText(entry: RoundEntry, evidence: string): string {
   return `[module] The coordinator withdrew your question since ${entry.since}, settled meanwhile: ${evidence} (blocks: ${entry.blocks})`
 }
 
-// Whether the session is an orchestrator: the name its row holds, else the name its walk reads.
-export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+// The role of the session: the name its row holds, else the name its walk reads.
+async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null) === 'orchestrator'
+  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null)
+}
+
+// Whether the session is an orchestrator.
+export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+  return (await sessionRole($, sessionId)) === 'orchestrator'
 }
 
 // The message for an entry the coordinator closed: a withdrawal when its answer carries the
@@ -3099,13 +3109,13 @@ function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): s
   return typeof entry.answer?.evidence === 'string' ? withdrawnText(entry, entry.answer.evidence) : coordinatorAnswerText(entry, answer, at)
 }
 
-// The orchestrator acted on an answer that reached it by a message (a relay from another session):
+// The session acted on an answer that reached it by a message (a relay from another session):
 // its open operator entries, or only `only` when named, are marked `answered`, by `message`, with
 // the message's author. Answers the ids still open, for the tool's reply, or null for a session
-// that is no orchestrator.
+// that is no orchestrator, coordinator or auditor.
 export async function answerByMessage($: any, author: string, only: string | null): Promise<string[] | null> {
   const sessionId = await $.session.id()
-  if (!(await isOrchestratorSession($, sessionId))) return null
+  if (!entersRound(await sessionRole($, sessionId))) return null
   await tellSettled($, await withdrawStale($, sessionId, null, `answered by a message from ${author}`,
     entry => entry.kind !== 'operator' || (only !== null && entry.id !== only), { author }))
   return (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open').map(({ entry }) => entry.id)
