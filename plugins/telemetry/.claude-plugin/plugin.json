@@ -1,7 +1,7 @@
 {
   "name": "telemetry",
   "description": "Records what every session does (role, model, effort, turns, context, tokens, cost, tools, refusals, questions, spawns, dispatches) as redacted JSON lines, one file per day, and exports them on demand to a private repository named by the environment.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"
