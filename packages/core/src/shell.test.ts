@@ -34,6 +34,13 @@ describe('simpleCommands', () => {
     assert.deepEqual(commands('{ ls; }'), [['ls']])
   })
 
+  it('keeps a brace inside a word, and groups only a brace standing alone', () => {
+    assert.deepEqual(commands('gh api repos/{owner}/x'), [['gh', 'api', 'repos/{owner}/x']])
+    assert.deepEqual(commands('echo {a,b} x{y z}'), [['echo', '{a,b}', 'x{y', 'z}']])
+    assert.deepEqual(commands('echo a}; { ls;}'), [['echo', 'a}'], ['ls']])
+    assert.deepEqual(commands('{ git push; } | cat'), [['git', 'push'], ['cat']])
+  })
+
   it('skips arithmetic and the targets of redirections and here-strings', () => {
     assert.deepEqual(commands('echo $((1 << 2)) 2>&1 > out <<< in; (cd x && ls)'), [['echo', '', '2'], ['cd', 'x'], ['ls']])
   })

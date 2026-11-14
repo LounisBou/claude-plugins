@@ -421,9 +421,10 @@ function tokenize(command: string): ShellCommand[] {
       while (/[<>&|]/.test(at(i))) i++
       sk[d] = 1
     }
-    // `{}` is a word (`xargs -I {} kill {}`, `find -exec rm {} ;`); a lone brace groups.
+    // `{}` is a word (`xargs -I {} kill {}`, `find -exec rm {} ;`); a brace standing alone groups,
+    // one inside a word (`repos/{owner}/x`, `{a,b}`) stays part of it.
     else if (c === '{' && n1 === '}') { cur += '{}'; started = 1; i += 2 }
-    else if (c === '{' || c === '}') { flushWord(); i++ }
+    else if ((c === '{' || c === '}') && !started && /^[\s;&|()<>]?$/.test(n1)) { i++ }
     else { cur += c; started = 1; i++ }
   }
   flushWord(); flushCmd()
