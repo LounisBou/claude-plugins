@@ -368,7 +368,7 @@ The E2E exemption and check plan files are refused alike (`github: an E2E exempt
 `record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
 directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs the operator's waiver (above), his recorded answer its detail.
+needs his waiver: his answer as recorded, or for E2E its free text quoted in `detail`.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

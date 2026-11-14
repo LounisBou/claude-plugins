@@ -20,6 +20,10 @@
 //   a push to main   every plugin on Linux, but the release-only ones
 //   the night        every plugin on macOS
 //
+// A push to main leaves out the cells a pull request run of the same tree already passed: the
+// workflow's `tested` step (scripts/tested-tree.ts) names them, as a JSON list of cell keys, in
+// TESTED_CELLS. Empty or unreadable, nothing is left out.
+//
 // A release-only plugin (RELEASE_ONLY) leaves the default matrix: a pull request runs its suite only
 // when it changes `plugins/<name>/`, a push to main never, the release and the night as any plugin.
 //
@@ -144,6 +148,30 @@ export function mainCells(matrix: readonly Cell[], releaseOnly: readonly string[
   return matrix.filter(cell => cell.os === 'ubuntu-latest' && !releaseOnly.includes(cell.plugin))
 }
 
+/** What names a cell apart from the others, and what a job's name gives back: plugin, platform, part. */
+export function cellKey(cell: Pick<Cell, 'plugin' | 'os' | 'shard'>): string {
+  return `${cell.plugin}|${cell.os}|${cell.shard ?? ''}`
+}
+
+/**
+ * The cells of `matrix` that a run of the same tree has not already passed, by their `cellKey`.
+ * Every cell covered leaves the cell without a suite, which passes: a matrix with no cell fails the job.
+ */
+export function withoutCovered(matrix: readonly Cell[], covered: ReadonlySet<string>): Cell[] {
+  const left = matrix.filter(cell => !covered.has(cellKey(cell)))
+  return left.length > 0 || matrix.length === 0 ? left : [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }]
+}
+
+/** The keys in TESTED_CELLS: a JSON list; anything else names none, so that every cell runs. */
+export function coveredCells(raw: string | undefined): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
 /** The cells of the night: every plugin on macOS. */
 export function nightlyCells(matrix: readonly Cell[]): Cell[] {
   return matrix.filter(cell => cell.os === 'macos-latest')
@@ -160,7 +188,7 @@ export function run(root: string, args: readonly string[], io: Io): number {
       .split('\n').filter(line => line !== '')
     matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins, consumers(root), RELEASE_ONLY), isRelease(changed))
   } else if (mode === '--main') {
-    matrix = mainCells(matrix, RELEASE_ONLY)
+    matrix = withoutCovered(mainCells(matrix, RELEASE_ONLY), coveredCells(io.env['TESTED_CELLS']))
   } else if (mode === '--nightly') {
     matrix = nightlyCells(matrix)
   } else if (mode !== undefined) {

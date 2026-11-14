@@ -4,6 +4,7 @@
   "include": [
     "scripts/**/*.ts",
     "packages/*/src/**/*.ts",
+    "plugins/bugs-bot/hooks/*.ts",
     "plugins/cloudflare/hooks/register.ts",
     "plugins/cloudflare/types/*.d.ts",
     "plugins/implement/hooks/core.ts",

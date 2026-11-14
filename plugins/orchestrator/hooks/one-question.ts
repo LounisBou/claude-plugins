@@ -24,8 +24,46 @@ export function operatorWaitRefusal(message: string): string | null {
   const line = machineLine(message)
   // A wait that blocks nothing asks him nothing: the gate's own refusal of it names the line that fits.
   if (!MACHINE_LINE.exec(line)?.[1] || blocksNothing(line)) return null
-  const asked = entryQuestions({ question: outsideFences(message), choices: [], recommendation: null })
-  return asked.some(part => part.number !== null) ? null : NO_QUESTION
+  return holdsQuestionBlock(message) ? null : NO_QUESTION
+}
+
+// Whether a text shows a numbered question block outside its fences.
+function holdsQuestionBlock(text: string): boolean {
+  return entryQuestions({ question: outsideFences(text), choices: [], recommendation: null }).some(part => part.number !== null)
+}
+
+// Whether the turn the transcript's end belongs to already put the operator a question: read from the
+// transcript's last line backwards, one line at a time, up to the turn's own start, the operator's
+// prompt (a user entry the host did not inject: its stop-hook feedback and reminders are `isMeta`,
+// a tool's result carries no text). The question is a numbered block in a text the model wrote in the
+// turn, or in the `question` of a `declare_wait` it called in it. A turn that asked it once is not
+// refused for asking it no more in its last message. Handed to scanTail as its matcher: it answers
+// true on the line that settles the reading, and `asked()` says what the reading found.
+export function turnQuestionReader(): { matches: (line: string) => boolean; asked: () => boolean } {
+  let found = false
+  const matches = (line: string): boolean => {
+    let entry: any
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      return false
+    }
+    const content = entry?.message?.content
+    if (entry?.type === 'user') {
+      if (entry.isMeta === true) return false
+      const prompted = typeof content === 'string' || (Array.isArray(content) && content.some((block: any) => block?.type === 'text'))
+      return prompted
+    }
+    if (entry?.type !== 'assistant' || !Array.isArray(content)) return false
+    for (const block of content) {
+      const text = block?.type === 'text' ? block.text
+        : block?.type === 'tool_use' && /declare_wait$/.test(String(block.name ?? '')) ? block.input?.question
+          : null
+      if (typeof text === 'string' && holdsQuestionBlock(text)) found = true
+    }
+    return found
+  }
+  return { matches, asked: () => found }
 }
 
 export const QUESTION_BY_MESSAGE =
