@@ -31,13 +31,11 @@ user in the user's language; write every artifact in English.
   done, in order, to the end of the plan. `N` is written on two digits everywhere it
   is interpolated: `implement:phase 3` reads row `03` and `plan/phase-03-*.md`.
 - `--docs <path>` — the feature directory. Without it the path is derived from the
-  branch name (`feat/<codename>` or `fix/<codename>`). A worktree does not see an
-  ignored directory of the main checkout: whoever starts the run there gives the
-  path.
+  branch name (`feat/<codename>` or `fix/<codename>`). In a worktree the main checkout's
+  ignored directory is not seen: pass the path.
 
-When `--docs <path>` was given, `export DOCS_OVERRIDE=<path>` before EVERY block
-below, not only the first: each block is its own shell and inherits nothing from the
-one before it.
+With `--docs <path>`, `export DOCS_OVERRIDE=<path>` before EVERY block below: each
+block is its own shell.
 
 When the `mcp__implement__state` tool is listed, `get` (with `docs` when `--docs` was
 given) answers these values and the parsed state file in one call; a verdict other than
@@ -86,8 +84,8 @@ sub-phases, the files, the tests and the definition of done.
 Then, for each sub-phase of that file, in its order. Before the first line of one is
 written, record where it starts: its row keeps the status `doing` and its milestone
 column takes the current head. That sha is the base of the range step 5 checks, and
-it is written before the work rather than after it so that a run taken up again
-checks a sub-phase it did not itself begin.
+it is written before the work, so that a run taken up again checks a sub-phase it did
+not begin.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
@@ -189,9 +187,9 @@ NEVER report an exit code that was not read, or skip the gate because the change
 NEVER mark a phase done while its check is red or its gate is untested
 ```
 
-Read-only search subagents and the self-review's lens readers are the exceptions, and they read; they do not write.
+Read-only subagents (search, the self-review's lens readers) are the exceptions: they only read.
 
-With this plugin's hooks module loaded, the first line is also held at the call: a
+With the hooks module loaded, the first line is also held at the call: a
 subagent other than `Explore` runs only on the user's Allow; in an orchestrated build the
 orchestrator decides and releases the guard with `/implement:release-guard`. The guard lasts
 from this skill's start until another implement skill starts, the turn is interrupted, or that
