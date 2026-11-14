@@ -111,6 +111,8 @@ A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is
 from it. A pull request raises no version. The release pull request (`npm run release`) raises
 the version of every plugin changed since its last release, because the host caches by version.
 A release is its merge: the host installs the version the catalogue names, and no tag is made.
+The release pull request also asks the operator whether to re-run the outcome measure (cap
+`measure` of `evals/outcome/caps.json`); nothing runs without their yes.
 
 ## What CI holds
 
