@@ -1380,8 +1380,8 @@ check "review.md item 14 keys the E2E on the check plan, and the review brief fo
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
 # question, once, in the host's question tool, his choice the consent.
-check "review.md asks one E2E waiver question through the round, its own tab only without a coordinator" "yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator;')|$(spells "$RV" 'only when no coordinator runs, with `AskUserQuestion` in your own tab')|$(spells "$RV" '« Accorder » / « Refuser »')"
+check "review.md asks one E2E waiver question through the round, whoever presents the round puts it to him" "yes|yes|yes" \
+  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator:')|$(spells "$RV" 'whoever presents the round puts it to him with the question tool')|$(spells "$RV" '« Accorder » / « Refuser »')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
