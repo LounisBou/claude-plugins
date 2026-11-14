@@ -40,4 +40,4 @@ row per phase:
 ```
 
 Status is `todo`, `doing` or `done`; a `todo` row leaves the milestone empty. Core parses and writes
-it; edit it through core or in this shape.
+it; keep this shape.

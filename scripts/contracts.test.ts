@@ -30,6 +30,25 @@ describe('pull request records: github writes, core reads', () => {
     }
   })
 
+  it('reads the tests record of the light CI, and takes it from no other producer', () => {
+    const config = mkdtempSync(join(tmpdir(), 'records-tests-'))
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: config }
+    const write = (producer: string, result: string): string =>
+      execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'Owner/Name', '--pr', '7', '--head', 'a'.repeat(40), '--producer', producer, '--session', 's', '--kind', 'tests', '--result', result, '--detail', 'npm test — exit 0 — 3s — 12 tests'],
+        { env, encoding: 'utf8', stdio: 'pipe' }).trim()
+    for (const result of ['pass', 'fail']) {
+      const path = write('light-ci', result)
+      const record = parsePrRecord(JSON.parse(readFileSync(path, 'utf8')))
+      assert.ok(record && accepts(record) === (result === 'pass'), path)
+      assert.deepEqual([record.kind, record.producer, record.result, record.repo, record.head], ['tests', 'light-ci', result, 'owner/name', 'a'.repeat(40)])
+    }
+    // Another producer: record.py refuses to write it, and core's reader accepts one written by hand no more.
+    assert.throws(() => write('pr-review', 'pass'))
+    const forged = parsePrRecord({ ...JSON.parse(readFileSync(write('light-ci', 'pass'), 'utf8')), producer: 'pr-review' })
+    assert.ok(forged && !accepts(forged))
+    rmSync(config, { recursive: true, force: true })
+  })
+
   it('and github refuses what the contract refuses', () => {
     assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'review', '--result', 'waived'], { stdio: 'pipe' }))
     const none = ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--result', 'not-applicable']

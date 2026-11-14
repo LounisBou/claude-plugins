@@ -14,10 +14,14 @@
       "holder": "gate",
       "means": "passed or waived where the check plan requires it; a failed run at the head blocks anyway"
     },
+    "tests": {
+      "holder": "gate",
+      "means": "a stacked pull request only (its base the head branch of another open pull request): the light CI's tests record passed at its head, or its checks green there; none where the operator turned light CI off for the repository; a failed run at the head blocks anyway"
+    },
     "ci": {
       "holder": "github",
       "check": "ci",
-      "means": "the required status check of the default branch, green"
+      "means": "the required status check of the default branch, green; on a stacked pull request the tests condition stands for it, and only a failed check blocks, held by the gate"
     }
   },
   "blocking": [

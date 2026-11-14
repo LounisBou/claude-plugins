@@ -230,19 +230,3 @@ deviations: what departs from what the user confirmed, and why
 open questions: what the design leaves for a phase to settle
 status:    done|blocked|question — <one line>
 ```
-
----
-
-## Quick Reference
-
-```
-1. Preflight, then the preconditions block (main branch, clean tree, MODE, prepared list)
-2. A prepared feature? WAIT for a name or "new"
-3. superpowers:brainstorming, architectural path, for the design and the title
-4. The one question: codename, title, branch type, bump type. WAIT
-5. git checkout -b <type>/<codename> from the main branch
-6. superpowers:writing-plans on DESIGN.md, output under plan/
-7. IMPLEMENTATION.md in the exact shape: six header lines, one row per phase, todo
-8. committed mode only: one commit "Start <title>", no trailer
-9. Summary, then /implement:phase. Write no code, push nothing
-```

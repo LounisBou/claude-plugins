@@ -129,16 +129,3 @@ deviations: what departs from what the user confirmed, and why
 open questions: what the design leaves for a phase to settle
 status:    done|blocked|question — <one line>
 ```
-
----
-
-## Quick Reference
-
-```
-1. Preflight, then MODE and the check-ignore guard on both paths. No branch is read
-2. superpowers:brainstorming, architectural path, for the design and the title
-3. The one question: codename, title, bump type. WAIT. No branch type
-4. superpowers:writing-plans on DESIGN.md, output under plan/
-5. Append "- <codename> — <title> (<bump>)" to ROADMAP.md
-6. Write no IMPLEMENTATION.md, create no branch, commit nothing in local mode
-```

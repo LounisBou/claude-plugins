@@ -46,6 +46,31 @@ describe('readiness', () => {
     assert.deepEqual(conditions(evidence({ latest: failed, carried: new Set(['e2e']), excused: new Set(['e2e']) })), ['e2e:fail'])
   })
 
+  it('asks the tests condition of a stacked pull request only: its record passed, or its checks green, and no green CI', () => {
+    const passed = new Map<Kind, PrRecord>([['review', record('review', 'pass')], ['e2e', record('e2e', 'pass')]])
+    const tests = (result: string, producer = 'light-ci') => new Map<Kind, PrRecord>([...passed, ['tests', record('tests', result, producer)]])
+    // The bottom pull request: unchanged, its CI held by GitHub, a tests record read as nothing.
+    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: false })), ['ci'])
+    // Stacked: the tests record passed, CI pending.
+    assert.deepEqual(conditions(evidence({ latest: tests('pass'), ciGreen: false, stacked: true })), [])
+    // Stacked: no record, the checks green.
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: true, stacked: true })), [])
+    // Stacked: neither, a failed run, a record from another producer.
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, stacked: true })), ['tests'])
+    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: true, stacked: true })), ['tests:fail'])
+    assert.deepEqual(conditions(evidence({ latest: tests('pass', 'session-e2e'), ciGreen: false, stacked: true })), ['tests:pass'])
+    // Stacked: a record of an earlier head of the same diff carries.
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, stacked: true, carried: new Set(['tests']) })), [])
+    // Stacked: a failed check blocks, held by the gate, over a passed record.
+    const failed = evidence({ latest: tests('pass'), ciGreen: false, ciFailed: true, stacked: true })
+    assert.deepEqual(conditions(failed), ['ci'])
+    assert.deepEqual(heldBy(missingEvidence(failed), 'gate').map((m) => m.condition), ['ci'])
+    // Stacked in a repository the operator turned light CI off for: the review alone, a failed check still blocks.
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, stacked: true, lightCiOff: true })), [])
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, ciFailed: true, stacked: true, lightCiOff: true })), ['ci'])
+    assert.deepEqual(conditions(evidence({ latest: new Map(), ciGreen: false, stacked: true, lightCiOff: true })), ['review', 'e2e'])
+  })
+
   it('says which findings block a review, and which records cross to a head of the same diff', () => {
     assert.deepEqual(['critical', 'Important', 'suggestion'].map(blocks), [true, true, false])
     assert.ok(carriesAcross(record('review', 'pass')) && !carriesAcross(record('review', 'fail')))

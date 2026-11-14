@@ -15,8 +15,8 @@ status:    done|blocked|question — <one line>
 ```
 
 - `done`: delivered. `blocked`: it cannot go on without what the line
-  names. `question`: a decision only the operator can take.
-- An exit code is the one read from the run, never inferred. A section with nothing to say
-  says `none`.
+  names. `question`: a decision only the operator can take. `waiting`, never a report's
+  end: background work runs.
+- An exit code is the one read from the run. A section with nothing to say says `none`.
 - A role may add lines it owns (a pull request, an `E2E:` line) after `files:`, never drop one.
 - The last line is parsed by code (`reportStatus` in core): nothing follows it.

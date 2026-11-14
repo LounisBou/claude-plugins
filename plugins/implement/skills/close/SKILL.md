@@ -43,13 +43,10 @@ name (`feat/<codename>` or `fix/<codename>`). When `--docs <path>` was given,
 `export DOCS_OVERRIDE=<path>` before EVERY block below, not only the first: each
 block is its own shell and inherits nothing from the one before it.
 
-When the `mcp__implement__state` tool is listed, one call replaces the derivation:
-`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
-the codename, the artifacts path and mode, the ignore-guard verdict, the head,
-whether the tree is clean, and the parsed state file with its next phase. A verdict
-other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
-is not a stop. The bump, the base and every row are in the state it returns. Without
-the tool, the blocks below are the path, and they compute the same values.
+When the `mcp__implement__state` tool is listed, `get` (with `docs` when `--docs` was
+given) answers these values, the bump, the base and every row in one call; a verdict
+other than `ok` is the stop it names, `artifacts path given, ignore guard skipped` is
+not one. Without the tool, the blocks below compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
@@ -194,12 +191,7 @@ of the repository and stay in it.
 
 | Situation | The one line |
 |---|---|
-| No `IMPLEMENTATION.md` under the derived path | `no IMPLEMENTATION.md under <docs>: pass --docs <path>` |
-| The tree is dirty | `the tree is not clean` |
-| A row is still `todo` or `doing` | `a phase is not done` |
-| `docs/features` or `ROADMAP.md` is not ignored in local mode | `docs/features and ROADMAP.md must be ignored in local mode: add them to the excludes, or set artifacts to committed in .implement.json` |
-| Either of them is ignored in committed mode | `docs/features and ROADMAP.md must not be ignored in committed mode` |
-| The state file carries no `Base` line | `no Base line in <docs>/IMPLEMENTATION.md` |
+| A precondition block above refuses (no state file, dirty tree, a phase not done, ignore guard), or Step 3 finds no `Base` line | the line it prints |
 | A gate command came back non-zero | `<command> exit <code>` and the first lines of its output |
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
 | The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `question` |
@@ -222,22 +214,4 @@ checks:    every phase row done, tree clean before and after
 deviations: what departs from the plan or the bump type the feature declared
 open questions: what the branch leaves open
 status:    done|blocked|question — <one line>
-```
-
----
-
-## Quick Reference
-
-```
-1. Preflight, then derive BRANCH, CODENAME, DOCS, BUMP, MODE, and guard both
-   artifact paths (--docs exports DOCS_OVERRIDE and skips the guard)
-2. Refuse on a dirty tree, a missing state file, or a row not done
-3. Full-project gate, every command with its exit code. Red stops, nothing repaired
-4. Bump none: skip. Otherwise the first of VERSION, pyproject.toml, package.json,
-   composer.json, .claude-plugin/plugin.json, then the same gate again, then one
-   commit in the shape the repository's last release subject gives
-5. Summary: branch, commits since the base, version, gate codes, the closing sentence
-6. local mode: delete the feature directory, the parents it empties and its roadmap
-   line. committed: keep all
-7. The steps end at the branch; ready and merge belong to the gate
 ```

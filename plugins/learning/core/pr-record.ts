@@ -6,7 +6,7 @@
 
 export const PR_RECORD_CONTRACT = {
   version: 1,
-  kinds: ['review', 'norms', 'e2e'],
+  kinds: ['review', 'norms', 'e2e', 'tests'],
   results: ['pass', 'fail', 'waived', 'not-applicable', 'accepted'],
   // The kinds the operator's waiver lifts, once a pull request's check plan requires them.
   waivable: ['e2e', 'norms'],
@@ -25,6 +25,10 @@ export const PR_RECORD_CONTRACT = {
     norms: [{ plugin: 'norms', tool: '/norms:check' }],
   },
   open: 'e2e',
+  // The kind a script alone writes: the local test run of a stacked pull request, by github's light CI
+  // (mcp__github__light_ci), its producer's slug and the only results it writes. No waiver lifts it and
+  // mcp__github__record never writes it; a record of it from another producer passes nothing.
+  scripted: { kind: 'tests', plugin: 'github', tool: 'mcp__github__light_ci', producer: 'light-ci', results: ['pass', 'fail'] },
   detail_max: 500,
   patterns: {
     head: '^[0-9a-fA-F]{40}$',
@@ -35,7 +39,7 @@ export const PR_RECORD_CONTRACT = {
 
 const contract = PR_RECORD_CONTRACT
 
-export type Kind = 'review' | 'norms' | 'e2e'
+export type Kind = 'review' | 'norms' | 'e2e' | 'tests'
 export type Result = 'pass' | 'fail' | 'waived' | 'not-applicable' | 'accepted'
 
 export interface PrRecord {
@@ -55,6 +59,7 @@ export const KINDS: readonly Kind[] = contract.kinds.filter(isKind)
 export const RECORD_VERSION = contract.version
 export const DETAIL_MAX = contract.detail_max
 export const ACCEPTANCE = contract.acceptance
+export const SCRIPTED = contract.scripted
 
 /** The kind a caller of mcp__github__record writes: the one its plugin produces, the open kind otherwise. */
 export function kindFor(origin: string): Kind {
@@ -72,7 +77,7 @@ const PRODUCER = new RegExp(contract.patterns.producer)
 const REPO_PART = new RegExp(contract.patterns.repo_part)
 
 function isKind(value: unknown): value is Kind {
-  return value === 'review' || value === 'norms' || value === 'e2e'
+  return value === 'review' || value === 'norms' || value === 'e2e' || value === 'tests'
 }
 
 function isResult(value: unknown): value is Result {
@@ -103,9 +108,11 @@ export function parsePrRecord(raw: unknown): PrRecord | undefined {
 
 /**
  * Whether a record lets its kind pass the ready gate: a pass, a waiver or a not applicable where one
- * is allowed, or the orchestrator's acceptance of a review.
+ * is allowed, or the orchestrator's acceptance of a review. A record of the scripted kind passes only
+ * from its script.
  */
 export function accepts(record: PrRecord): boolean {
+  if (record.kind === SCRIPTED.kind && record.producer !== SCRIPTED.producer) return false
   return record.result === 'pass' || (record.result === 'waived' && (contract.waivable as readonly Kind[]).includes(record.kind))
     || (record.result === 'not-applicable' && record.kind === contract.not_applicable)
     || isAcceptance(record)

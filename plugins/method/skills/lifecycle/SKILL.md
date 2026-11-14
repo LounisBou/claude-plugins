@@ -24,7 +24,7 @@ sessions.
 ## Done means ready
 
 A pull request is done when the github ready gate puts `Ready` at its head; core's readiness
-contract (github's `core/readiness.ts`) alone says what that needs, and `pr-readiness` names what is missing.
+contract (`core/readiness.ts`) alone says what that needs, and `pr-readiness` names what is missing.
 
 ## Consent
 
@@ -34,7 +34,7 @@ Outside auto-merge, leaving draft, after their review, and the merge need it; `R
 
 ## Reports
 
-A unit of work ends with a report as in `references/report.md`, which explains its last line, `status: done|blocked|question — <one line>`.
+A unit of work ends with a report as in `references/report.md`, its last line `status: done|blocked|question — <one line>`.
 
 ## Questions to the operator
 

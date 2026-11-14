@@ -36,7 +36,7 @@ Measure, wait and close: `references/succession-successor.md`, « Succession —
    {{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    {{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
-5. Once the predecessor is closed, settle each open question by its round entry; one to ask again is asked verbatim at the end of this turn. Then announce in one message: state inherited, agents re-identified, predecessor terminated, next step, open questions found, kept, asked again, the `goals met=m/n … open=…` line, and your two figures, never a later reading, on one line: « first turn » and « at takeover confirmed ». END THE TURN: dispatch on your next one.
+5. Once the predecessor is closed, settle each open question by its round entry; one to ask again is asked verbatim at the end of this turn. Then announce in one message: state inherited, agents re-identified, predecessor terminated, the open rows with no agent, open questions found, kept, asked again, the `goals met=m/n … open=…` line, and your two figures, never a later reading, on one line: « first turn » and « at takeover confirmed ». END THE TURN: dispatch on your next one. It takes every row of that list the rule allows (`references/succession-successor.md`, « The first dispatch »).
 
 # Source
 

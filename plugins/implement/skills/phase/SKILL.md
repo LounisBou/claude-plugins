@@ -10,7 +10,7 @@ description: Use to run the plan's phases, continue a feature already branched a
 Runs every phase of the plan that is not done, in order, without pausing between
 them; given a number, that phase only, then stops and reports. Each sub-phase is
 written here, inline: failing tests first, the code, the project's own gate, one
-commit, then a check of what the commit range produced. Read-only search subagents
+commit, then `implement:check <base>..HEAD --phase <N> --docs <path when given>` on its range. Read-only search subagents
 are welcome; the work itself is never handed to one.
 
 **Preflight:** when this text opens on a `Preflight: passed` line, the check already
@@ -39,14 +39,11 @@ When `--docs <path>` was given, `export DOCS_OVERRIDE=<path>` before EVERY block
 below, not only the first: each block is its own shell and inherits nothing from the
 one before it.
 
-When the `mcp__implement__state` tool is listed, one call replaces the derivation:
-`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
-the codename, the artifacts path and mode, the ignore-guard verdict, the head,
-whether the tree is clean, and the parsed state file with its next phase. A verdict
-other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
-is not a stop. `mark` (`phase`, `status`, `milestone: "HEAD"`) writes one row of the
-table, resolving the sha itself: it replaces the hand edits of the loop below.
-Without the tool, the blocks below are the path, and they compute the same values.
+When the `mcp__implement__state` tool is listed, `get` (with `docs` when `--docs` was
+given) answers these values and the parsed state file in one call; a verdict other than
+`ok` is the stop it names, `artifacts path given, ignore guard skipped` is not one.
+`mark` (`phase`, `status`, `milestone: "HEAD"`) writes one row of the table, resolving
+the sha itself. Without the tool, the blocks below compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
@@ -66,9 +63,6 @@ elif ! git check-ignore -q docs/features/probe || ! git check-ignore -q ROADMAP.
 fi
 echo "$CODENAME on $BRANCH, artifacts $MODE, state $DOCS/IMPLEMENTATION.md"
 ```
-
-Both artifact paths are tested one by one, the test inverting in `committed` mode. An
-explicit `--docs <path>` skips it: the caller took the responsibility for that directory.
 
 `IMPLEMENTATION.md` is the only source of truth for progress, in the method's
 state-file shape: a header, then one row per phase, status `todo`, `doing` or `done`.
@@ -124,10 +118,8 @@ git log --format=%s -10
    imperative subjects mean plain imperative prose. A body only when the reason is
    not obvious from the subject. No trailer of any kind, whatever the convention.
 
-5. **The check.** `implement:check <recorded sha>..HEAD --phase <N> --docs <path
-   when given>`, where the recorded sha is the one the milestone column took when
-   this sub-phase started and the path is the one `--docs` carried, when it carried
-   one. A `FAIL` is repaired
+5. **The check.** `implement:check <recorded sha>..HEAD --phase <N> --docs <path when given>`,
+   the sha being the milestone column's from the start of this sub-phase. A `FAIL` is repaired
    inline and re-checked once. A second `FAIL` stops the phase `blocked`, with the
    table and the verdict quoted in the report.
 
@@ -158,9 +150,7 @@ left, say that `implement:close` is next.
 
 | Situation | The one line |
 |---|---|
-| No `IMPLEMENTATION.md` under the derived path | `no IMPLEMENTATION.md under <docs>: run implement:feature first, or pass --docs <path>` |
-| `docs/features` or `ROADMAP.md` is not ignored in local mode | `docs/features and ROADMAP.md must be ignored in local mode: add them to the excludes, or set artifacts to committed in .implement.json` |
-| Either of them is ignored in committed mode | `docs/features and ROADMAP.md must not be ignored in committed mode` |
+| The preflight block above refuses (no `IMPLEMENTATION.md`, ignore guard) | the line it prints |
 | A gate still red after two fixes | `gate red after two fixes: <command> exit <code>` — status `blocked` |
 | A second `FAIL` on the same sub-phase | `check failed twice on <sub-phase>: <the failing rows>` — status `blocked` |
 | The plan does not settle a scope question | the question in one line — status `question` |
@@ -220,20 +210,3 @@ This skill's own steps end at the branch; consent, ready and merge are `method:l
 | "This neighbouring file obviously needs the same fix" | Drift. The plan names the files; anything else is a decision to bring back. |
 | "The check is nearly green, the last row is cosmetic" | Rows are not weighted here. Repair it or report it, do not round it up. |
 | "I will summarise the phases at the end" | The report is per phase, written when the phase closes. Later means never. |
-
----
-
-## Quick Reference
-
-```
-1. Preflight, then derive BRANCH, CODENAME, DOCS, MODE (--docs exports DOCS_OVERRIDE)
-2. IMPLEMENTATION.md: phase N, else the first row not done. Mark it doing, and record
-   each sub-phase's starting sha in its milestone column before writing that sub-phase
-3. Read plan/phase-NN-<slug>.md in full
-4. Per sub-phase: failing test, code, gate with exit codes (two fixes at most)
-5. Commit in the convention read from git log --format=%s -10, no trailer
-6. implement:check <base>..HEAD --phase N --docs <path when given>; one fix, then stop
-7. End of phase: row done, milestone = the phase's last commit; committed mode commits it
-8. With N: stop and report. Without: the next row, no pause, no narration
-9. No row left: implement:close is next
-```
