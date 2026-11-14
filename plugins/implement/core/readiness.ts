@@ -25,13 +25,16 @@ export const READINESS_CONTRACT = {
   // `omitted` need. Only `required` requires; the operator's waiver alone lifts a required E2E or
   // norms check (pr-record's `waivable`). With no plan, the E2E and the review are owed and norms
   // are on demand. A required review runs at most `max` rounds, `required: max <n>` from 1 to the
-  // cap, the review loop's own limit; a plan silent on them runs `omitted`. A former review need
-  // reads as a required review of its rounds.
+  // cap, the review loop's own limit; a plan silent on them runs `omitted`. No plan excuses the
+  // review: `one-pass`, for a mechanical pull request, is one round by an independent reviewer with
+  // no correction round expected, and still needs its record at the head. A review need other than
+  // `required` reads as a required review of its rounds: `one-pass` one, a former `none` the same
+  // (never no review) and a former `full` the cap.
   plan: {
-    needs: { e2e: ['required', 'none', 'screenshots'], norms: ['required', 'none'], review: ['required', 'none'] },
+    needs: { e2e: ['required', 'none', 'screenshots'], norms: ['required', 'none'], review: ['required', 'one-pass'] },
     omitted: { e2e: 'none: not in the plan', norms: 'none: not in the plan', review: 'required' },
     rounds: { omitted: 3, cap: 3 },
-    former: { review: { full: 3, 'one-pass': 1 } },
+    former: { review: { full: 3, 'one-pass': 1, none: 1 } },
   },
   // A new head starts with no record; one whose own diff is an earlier head's (same commit count,
   // same patch fingerprint) carries every record that passes there. The operator's waiver stands
@@ -68,8 +71,8 @@ export const REVIEW_ROUNDS = READINESS_CONTRACT.plan.rounds
 export const WAIVABLE = PR_RECORD_CONTRACT.waivable
 export type Waivable = (typeof WAIVABLE)[number]
 
-/** A plan's review need, the rounds a required review runs at most. */
-export type ReviewNeed = { readonly need: 'required'; readonly max: number } | { readonly need: 'none' }
+/** A plan's review need, the rounds a required review runs at most; a one-pass review is one round. */
+export type ReviewNeed = { readonly need: 'required'; readonly max: number }
 
 const FORMER_REVIEW: Readonly<Record<string, number>> = READINESS_CONTRACT.plan.former.review
 const ROUNDS = /^max\s+(\d+)$/i
@@ -79,7 +82,6 @@ export function reviewNeed(need: string, rest: string): ReviewNeed | string {
   const word = need.trim().toLowerCase()
   const former = Object.hasOwn(FORMER_REVIEW, word) ? FORMER_REVIEW[word] : undefined
   if (former !== undefined) return { need: 'required', max: former }
-  if (word === 'none') return { need: 'none' }
   if (word !== 'required') return 'review is one of ' + PLAN_NEEDS.review.join(', ') + ', got: ' + (need.trim() || 'nothing')
   const text = rest.trim()
   if (text === '') return { need: 'required', max: REVIEW_ROUNDS.omitted }

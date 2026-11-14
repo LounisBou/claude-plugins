@@ -320,6 +320,54 @@ test('in auto-merge a not-ready pr-ready is refused before anyone is asked, noth
   expect(seen.writes.some((w) => w.path === '/data/guard-warn.log')).toBe(false)
 })
 
+test('pr-readiness ready on a pull request the gate reads not ready is refused with what is missing, no label put', async ($, on) => {
+  const seen = await world($, on, NO_RECORDS)
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
+    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(seen.asked.length).toBe(0)
+  expect(commands(seen)).toEqual(['pr-gate'])
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready on a Ready pull request the gate reads not ready refuses and takes Ready off', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('pr-readiness refused on acme/thing#12')
+  expect(seen.runs.filter((r) => r.command === 'pr-readiness').every((r) => r.args.state === 'not-ready')).toBe(true)
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready whose CI is not green is refused, CI named', async ($, on) => {
+  const seen = await world($, on, { ci: { result: 'PENDING', running: 1 } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: CI still running.' + REFUSAL_END)
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness ready on a pull request the gate reads ready puts Ready', async ($, on) => {
+  const seen = await world($, on)
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBeUndefined()
+  expect(commands(seen)).toContain('pr-readiness')
+  expect(seen.pull?.labels).toEqual(['Ready'])
+})
+
+test('pr-readiness ready whose gate cannot be read is refused as unverified', async ($, on) => {
+  const seen = await world($, on, { gateFails: 'error: rate limited' })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toBe('github: readiness of acme/thing#12 unverified: error: rate limited')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('pr-readiness not-ready is let through with the gate unread', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'not-ready' }))
+  expect(out.deny).toBeUndefined()
+  expect(commands(seen)).toEqual(['pr-readiness'])
+  expect(gates(seen)).toBe(0)
+})
+
 test('in auto-merge a not-ready merge is refused before anyone is asked, nothing run', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
@@ -1646,7 +1694,6 @@ test('a Ready label put by hand on a pull request not ready runs, on every route
   const seen = await world($, on, { ci: { result: 'FAILURE', failed: ['test'] }, gateFails: 'error: never read' })
   for (const call of [
     gh('label-add', { pr: 12, label: ['Ready'] }),
-    gh('pr-readiness', { pr: 12, state: 'ready' }),
     bash('gh pr edit 12 --add-label Ready'),
     bash('gh issue edit 12 -R acme/thing --add-label ready'),
     bash('gh api --method POST repos/acme/thing/issues/12/labels -f \'labels[]=Ready\''),
@@ -1658,7 +1705,7 @@ test('a Ready label put by hand on a pull request not ready runs, on every route
   }
   expect(seen.bash.length).toBe(5)
   // No pr-gate: the label reads no readiness.
-  expect(commands(seen).filter((c) => !c.startsWith('git '))).toEqual(['label-add', 'pr-readiness'])
+  expect(commands(seen).filter((c) => !c.startsWith('git '))).toEqual(['label-add'])
 })
 
 test('a push still puts Not Ready back on a pull request the gate made Ready', async ($, on) => {
@@ -2582,12 +2629,25 @@ test('a plan that needs no norms check and screenshots in place of E2E leaves th
     + ' one CSS line), no E2E needed (check plan, 2026-11-14: desktop and mobile screenshots in its place, a colour change) and green CI hold at its head.'])
 })
 
-test('a plan that gives the review none is Ready with no review record, its line naming the plan\'s reason', async ($, on) => {
+test('a plan that gives the review one pass is Not Ready with no review record', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 1 } }
+  const seen = await world($, on, { records: OTHERS_PASSED, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('a plan that gives the review one pass is Ready once the review record passes', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 1 } }
+  const seen = await world($, on, { records: { ...OTHERS_PASSED, ...ONLY_REVIEW }, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a plan file that still gives the review none leaves it owed', async ($, on) => {
   const plan = { ...planOf({ need: 'required' }), review: { need: 'none', reason: 'a typo' } }
   const seen = await world($, on, { records: OTHERS_PASSED, plan })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-  expect(seen.logs).toEqual(['github: acme/thing#12 Ready at 0123456: no review needed (check plan, 2026-11-14: a typo), passed E2E and green CI hold at its head.'])
+  expect(readinessRuns(seen)).toEqual([])
 })
 
 test('a plan that requires a review of two rounds stays Not Ready with no review record', async ($, on) => {
@@ -2645,7 +2705,7 @@ test('pr-plan reads a former full plan file as a required review of the cap\'s r
 
 test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
-  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'none' }, []]) {
+  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'maybe' }, []]) {
     expect((await planned($, plan)).deny).toContain('github: a check plan is')
   }
   expect(seen.files[PLAN]).toBeUndefined()
