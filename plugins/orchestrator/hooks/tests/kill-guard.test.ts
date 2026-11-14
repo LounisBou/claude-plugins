@@ -711,6 +711,32 @@ test('a mark as last read decides the fallback: closed when marked, open when th
   expect(guardFallback(null, 'pkill -f vite', 'x')).toBeNull()
 })
 
+// A line the reader cannot read (a brace expansion past its limit) may hide a kill: it is refused
+// where a kill by pattern is.
+const UNREADABLE = ['{pkill,-f}{1..1001} vite', 'echo ok; kill $(pgrep x){1..100000}', 'echo {1..100000}']
+
+test('a line the reader cannot read is read as a kill, with its reason', () => {
+  for (const c of UNREADABLE) expect(detectPatternKills(c), c).toEqual(['a line the reader cannot read'])
+})
+
+test('a marked session refuses a line the reader cannot read, an unmarked one does not', () => {
+  for (const c of UNREADABLE) {
+    expect(killDecision('1', c)?.deny, c).toContain(`${DENY_START}`)
+    expect(killDecision('1', c)?.deny, c).toContain('Seen: a line the reader cannot read.')
+    expect(killDecision(undefined, c), c).toBeNull()
+  }
+})
+
+test('a mark never read refuses a line the reader cannot read, and a mark as read decides otherwise', () => {
+  for (const c of UNREADABLE) {
+    const d = guardFallback(undefined, c, 'the marker cannot be read')
+    expect(d?.deny, c).toContain('kill refused')
+    expect(d?.deny, c).toContain('Seen: a line the reader cannot read.')
+    expect(guardFallback('1', c, 'x')?.deny, c).toContain(DENY_START)
+    expect(guardFallback(null, c, 'x'), c).toBeNull()
+  }
+})
+
 // The wiring half: the whole of the reduced $ faked.
 const HOME = '/tmp/h'
 
@@ -774,6 +800,16 @@ test("a marked session's wide kill is denied, the tool never asked", async () =>
     const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
     expect((answer as any).deny, c).toContain(DENY_START)
     expect((answer as any).deny, c).toContain('Seen: kill of all processes or a process group.')
+    expect(passedThrough, c).toBeNull()
+  }
+})
+
+test("a marked session's line the reader cannot read is denied, the tool never asked", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ spawned: '1' })
+  for (const c of UNREADABLE) {
+    const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
+    expect((answer as any).deny, c).toContain(DENY_START)
     expect(passedThrough, c).toBeNull()
   }
 })
@@ -844,6 +880,16 @@ test("the net refuses a spawned session's kill by pattern when the guard could n
   expect(refused.deny).toContain(DENY_START)
   const e = bashCall('kill 1234')
   expect(await net(marked.dollar, e, failed)).toBe(e)
+})
+
+test("the net refuses a spawned session's line the reader cannot read when the guard could not finish", async () => {
+  const { body, net } = mountedNet()
+  const marked = fakeDollar({ spawned: '1' })
+  await callBash(body, marked.dollar, bashCall('git status'))
+  const failed: any = (x: unknown) => x
+  failed.called = false
+  failed.error = { kind: 'budget', message: 'the hook ran past its budget' }
+  for (const c of UNREADABLE) expect((await net(marked.dollar, bashCall(c), failed)).deny, c).toContain(DENY_START)
 })
 
 test("the net lets an operator's own session kill by pattern when the guard could not finish", async () => {
