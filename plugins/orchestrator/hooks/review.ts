@@ -6,7 +6,8 @@
 // at the head of the clean checkout it reads: the caller's plugin, a session that did not push
 // that head, and no pass over a failed review there. In place of a verdict, the same tool writes the pull
 // request's check plan (github's check-plan.ts), which github takes from this plugin only.
-import { ACCEPTANCE, acceptanceDetail } from '../core/pr-record.ts'
+import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
+import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -17,6 +18,14 @@ type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs'>
 export const REVIEW_TOOL = 'review'
 const RECORD_TOOL = 'mcp__github__record'
 const VERDICTS = ['pass', 'fail', ACCEPTANCE.result] as const
+
+// A finding as the tool takes it: its point, and its file, line and severity when known.
+const FINDING = {
+  point: { type: 'string' },
+  file: { type: 'string', description: 'its repository path' },
+  line: { type: 'integer' },
+  severity: { type: 'string', enum: [...AUDIT_CONTRACT.finding_severities] },
+}
 
 export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review verdict or a check plan: the review round and the scope are its own.'
 
@@ -34,15 +43,51 @@ export function verdictCall(input: Record<string, unknown>): { tool: string } & 
   }
   const verdict = text(input['verdict'])
   if (!VERDICTS.some((v) => v === verdict)) return 'verdict is pass, fail or ' + ACCEPTANCE.result
-  const raw = input['set_asides']
-  const setAsides = Array.isArray(raw) ? raw.map((s) => ({ point: text(s?.point), reason: text(s?.reason) })) : []
-  if (verdict === ACCEPTANCE.result && (setAsides.length === 0 || setAsides.some((s) => !s.point || !s.reason))) {
+  const setAsides = itemsOf(input['set_asides'], 'set_asides')
+  const kept = itemsOf(input['kept'], 'kept')
+  if (typeof setAsides === 'string') return setAsides
+  if (typeof kept === 'string') return kept
+  if (verdict === ACCEPTANCE.result && (setAsides.length === 0 || setAsides.some((s) => !s.reason))) {
     return 'set_asides lists each point set aside with its one-line reason: [{"point": "...", "reason": "..."}]'
   }
-  if (verdict !== ACCEPTANCE.result && raw !== undefined) return 'set_asides goes with the verdict ' + ACCEPTANCE.result + ' only'
-  const detail = verdict === ACCEPTANCE.result ? acceptanceDetail(setAsides) : text(input['detail'])
+  if (verdict === 'pass' && input['set_asides'] !== undefined) return 'set_asides goes with the verdict ' + ACCEPTANCE.result + ' or fail only'
+  if (setAsides.some((s) => !s.reason)) return 'each point set aside carries its one-line reason'
+  if (verdict !== 'fail' && input['kept'] !== undefined) return 'kept goes with the verdict fail only: the findings its correction round fixes'
+  const set = setAsides.length > 0 ? acceptanceDetail(setAsides) : ''
+  const detail = verdict === ACCEPTANCE.result ? set : [text(input['detail']), set].filter(Boolean).join('; ').slice(0, DETAIL_MAX)
   const dir = text(input['dir']) ? { dir: text(input['dir']) } : {}
   return { tool: RECORD_TOOL, pr, ...repo, ...dir, kind: ACCEPTANCE.kind, result: verdict, detail }
+}
+
+// A finding the verdict names: its point and reason for the record's line, and what the audit trail
+// keeps of it — its file, line and severity when the orchestrator gives them, never its words.
+type Finding = { point: string; reason: string; file: string | null; line: number | null; severity: FindingSeverity | null }
+
+// The findings of `kept` or `set_asides`, none when absent, or the line that says what is wrong.
+function itemsOf(raw: unknown, name: string): Finding[] | string {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) return `${name} is a list: [{"point": "...", ...}]`
+  const items: Finding[] = []
+  for (const item of raw) {
+    const fields = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>
+    const point = text(fields['point'])
+    if (!point) return `each item of ${name} names its point`
+    const { file, line, severity } = fields
+    if (file !== undefined && typeof file !== 'string') return `file is the finding's repository path`
+    if (line !== undefined && !(typeof line === 'number' && Number.isInteger(line) && line >= 1)) return 'line is a line number, from 1'
+    if (severity !== undefined && !AUDIT_CONTRACT.finding_severities.some((s) => s === severity)) return `severity is ${AUDIT_CONTRACT.finding_severities.join(', ')}`
+    items.push({ point, reason: text(fields['reason']), file: text(file) || null, line: typeof line === 'number' ? line : null, severity: (severity as FindingSeverity | undefined) ?? null })
+  }
+  return items
+}
+
+// The orchestrator's decision on each finding a valid verdict names: kept, then set aside.
+export function findingsOf(input: Record<string, unknown>): { decision: Decision; file: string | null; line: number | null; severity: FindingSeverity | null }[] {
+  const decided = (raw: unknown, decision: Decision) => {
+    const items = itemsOf(raw, '')
+    return typeof items === 'string' ? [] : items.map(({ file, line, severity }) => ({ decision, file, line, severity }))
+  }
+  return [...decided(input['kept'], 'kept'), ...decided(input['set_asides'], 'set-aside')]
 }
 
 // The record tool's answer as the tool's own: its text, an error when it refused or failed.
@@ -69,8 +114,13 @@ export function register(on: On<Held>): void {
             verdict: { type: 'string', enum: [...VERDICTS] },
             set_asides: {
               type: 'array',
-              description: 'accepted: each point set aside with its one-line reason',
-              items: { type: 'object', properties: { point: { type: 'string' }, reason: { type: 'string' } }, required: ['point', 'reason'] },
+              description: 'accepted, or fail: each point set aside with its one-line reason',
+              items: { type: 'object', properties: { ...FINDING, reason: { type: 'string' } }, required: ['point', 'reason'] },
+            },
+            kept: {
+              type: 'array',
+              description: 'fail: each finding the correction round fixes',
+              items: { type: 'object', properties: FINDING, required: ['point'] },
             },
             detail: { type: 'string', description: 'pass or fail: one line on what was reviewed or found' },
             plan: {

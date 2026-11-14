@@ -7,6 +7,7 @@
 // reads the figure through the gauge's own module memory — mounted after it,
 // the row would carry one measure behind. The moving comes after the supervision, whose receive
 // handler passes a marked move message on and leaves the moving to consume it.
+import { register as registerAudit } from './audit.ts'
 import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
 import { register as registerWait } from './wait.ts'
@@ -28,6 +29,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
     })
+  // First: the audit trail reads what every later handler answered, after it decided.
+  registerAudit(on)
   registerGauge(on)
   // Before the guards and the supervision: the stop gate and the turn's end read the declared wait it hands on.
   registerWait(on)
