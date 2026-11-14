@@ -1162,8 +1162,11 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   expect(fx.sent.length).toBe(1)
+  // The ask again is of a new start: a clock that has not moved would give it the first one's.
+  await new Promise(resolve => setTimeout(resolve, 5))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
-  expect(fx.sent.length).toBe(2)
+  // The same wait asked again: its ask, and the row that says it is held open again.
+  expect(fx.sent.length).toBe(3)
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
   // The withdrawal first, then the same wait asked again (nothing is held yet: its ack is not
@@ -1173,6 +1176,7 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
     ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')],
     ['Coord: ops [abc]', 'ask: phase 3'],
+    ['Coord: ops [abc]', 'row: phase 3'],
     ['Coord: ops [abc]', 'ask: phase 4'],
     ['Coord: ops [abc]', 'row: phase 4'],
   ])

@@ -160,7 +160,7 @@ export function cutQuestion(question: string): string {
 }
 
 // The wait file as the withdrawal reads it: the wait, and the fingerprint last delivered.
-export type RelayedWait = PriorWait & { relayed?: string | null }
+export type RelayedWait = PriorWait & { relayed?: string | null; pending_key?: string | null }
 
 // The question the coordinator holds, if any: an operator wait (the current one, or the
 // one a turn's start cleared) whose own fingerprint, plain or urgent, was delivered. Its blocks
@@ -174,12 +174,34 @@ export function heldQuestion(prior: RelayedWait | null): { blocks: string; since
   return { blocks, since: prior!.waiting_since ?? null }
 }
 
+// An operator question a sender holds open: the start and the blocks that name its wait.
+export type HeldQuestion = { since: string; blocks: string }
+
+// The operator questions a sender's wait file vouches for, the one source of what its row says it
+// holds open whatever the session is doing: the held question, delivered or sent and not yet
+// acknowledged. A file whose wait is on something else than the operator (a closing proposal, none
+// ever) says nothing of the questions beside it: null, unknown, never « none open ».
+export function openQuestions(prior: RelayedWait | null): HeldQuestion[] | null {
+  if ((prior?.waiting ?? prior?.last_waiting ?? null) !== 'operator') return null
+  const held = heldQuestion(prior) ?? heldQuestion({ ...prior, relayed: prior?.pending_key ?? null })
+  return held && held.since !== null ? [{ since: held.since, blocks: held.blocks }] : []
+}
+
 // The report that the operator answered in the orchestrator's own tab: a report, never an
 // order, and nothing is to be sent back.
 export function withdrawalText(name: string, blocks: string, since: string | null, said?: string): string {
   const words = said ? ` (he typed: "${said.replace(/\s*\n\s*/g, ' ')}")` : ''
   return `[module] ${name} withdraws its question for the operator since ${since ?? '?'} — blocks: ${blocks}\n`
     + `the operator answered it in ${name}'s own tab${words}: nothing to send back`
+}
+
+// A withdrawal as withdrawalText wrote it, read back by the coordinator's module: who withdraws,
+// the wait's start (null for « ? »), what it blocks and the words the operator typed, when kept.
+const WITHDRAWAL = /^\[module\] (.+?) withdraws its question for the operator since (\S+) — blocks: (.*)\nthe operator answered it in .*'s own tab(?: \(he typed: "(.*)"\))?: nothing to send back$/
+export function parseWithdrawal(body: string): { name: string; since: string | null; blocks: string; said: string | null } | null {
+  const matched = WITHDRAWAL.exec(body.trim())
+  if (!matched) return null
+  return { name: matched[1] ?? '', since: matched[2] === '?' ? null : matched[2] ?? null, blocks: matched[3] ?? '', said: matched[4] ?? null }
 }
 
 // An agent's measure crossing the gate its session runs under, the one line sent to its

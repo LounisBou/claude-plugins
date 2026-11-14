@@ -8,7 +8,7 @@
 // reads the round with `coordinator.sh round` when the operator speaks to it, and closes an
 // entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
-import { fingerprint, type Wait } from './relay.ts'
+import { fingerprint, type HeldQuestion, type Wait } from './relay.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
 
 export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
@@ -281,6 +281,27 @@ export function prPieces(text: string, owners: ReadonlyMap<string, string>): (st
 // slash between them, the same in every language: `Question 3 / 4`.
 export function numberLabel(number: string): string {
   return number.replace(/(\d+)\D+?(\d+)/, '$1 / $2')
+}
+
+// The sender's latest row as the reconciliation reads it: when its reading was made and the operator
+// questions it holds open, whatever the session is doing; null when the row does not say (a row of an
+// older release, a wait file that vouches for nothing): unknown, never « none open ».
+export type SenderState = { at: string; held: readonly HeldQuestion[] | null }
+
+// How old an entry is before a row can drop it: the sender writes the entry, then its wait file, and a
+// reading made between the two holds nothing yet.
+export const SETTLE_MS = 5000
+
+// An open operator question its sender's latest row no longer holds: the row is newer than the entry,
+// says what it holds, and the question is not among it. An entry moved to a successor is the
+// successor's by construction, and a question with choices stands beside another the sender holds
+// (a wait that asks nothing never withdraws it, supervision.ts supersede).
+export function droppedBy(entry: RoundEntry, sender: SenderState | null, now: number): boolean {
+  if (!sender?.held || entry.status !== 'open' || entry.kind !== 'operator' || entry.movedFrom !== undefined) return false
+  const [placed, read] = [Date.parse(entry.at), Date.parse(sender.at)]
+  if (!Number.isFinite(placed) || !Number.isFinite(read) || read <= placed || now - placed < SETTLE_MS) return false
+  if (sender.held.some(held => held.since === entry.since && held.blocks === (entry.blocks ?? ''))) return false
+  return !(carriesChoices(entry) && sender.held.length > 0)
 }
 
 // The fingerprint of the wait an entry was written for, as the sender's wait file keeps it.
