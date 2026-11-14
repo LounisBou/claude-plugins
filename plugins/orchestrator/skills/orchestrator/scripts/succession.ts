@@ -52,6 +52,7 @@ export const FIELDS = {
   agents: '- Agents running (',
   questions: "- The operator's open questions",
   next: '- The next step:',
+  owners: '- Row owners (',
   notes: '- Notes of judgment (',
 } as const
 
@@ -105,7 +106,7 @@ export interface Question {
 
 /** What the state holds open for this orchestrator. */
 export interface OpenState {
-  readonly rows: readonly { readonly id: string; readonly line: string }[]
+  readonly rows: readonly { readonly id: string; readonly line: string; readonly label?: string; readonly ruling?: string }[]
   readonly prs: readonly string[]
   readonly agents: readonly string[]
   readonly questions: readonly Question[]
@@ -182,7 +183,7 @@ export function readOpen(request: Request, env: Env): OpenState {
   const round = join(state, 'round')
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
-    rows: rows.map(row => ({ id: String(row['id']), line: openLine(row) })),
+    rows: rows.map(row => ({ id: String(row['id']), line: openLine(row), label: String(row['label'] ?? ''), ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '' })),
     prs,
     agents,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
@@ -212,6 +213,26 @@ export function notesOf(brief: string): Note[] {
 
 const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.join('; '))
 
+const alnum = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/**
+ * Who works each open row, from the facts the state holds: the agents of the deck carry the row's
+ * label word as their name (`Agent: takeoverlean` for `TAKEOVERLEAN: …`, listed without its role prefix), no record names the
+ * agent of a row. A deferred row reads « ruling », an open row with neither a live agent nor a
+ * ruling reads « NO OWNER », so that it is seen at takeover, not found idle later.
+ */
+export function ownersOf(open: OpenState): string[] {
+  return open.rows.map(row => {
+    if ((row.ruling ?? '') !== '') return `${row.id} ruling`
+    const word = alnum(/^[A-Za-z0-9]+/.exec(row.label ?? '')?.[0] ?? '')
+    const agent = word.length < 3 ? undefined : open.agents.find(name => {
+      const own = alnum(name.replace(/^Agent:\s*/, ''))
+      return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
+    })
+    return `${row.id} ${agent === undefined ? 'NO OWNER' : agent.replace(/^Agent:\s*/, '')}`
+  })
+}
+
 /** The Live state's lines, generated: each field the template names, the notes last. */
 export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number): Map<string, string> {
   const questions = open.questions.map(q => `[${q.id}] ${q.text}`)
@@ -221,6 +242,7 @@ export function liveLines(open: OpenState, next: string, notes: readonly Note[],
     [FIELDS.agents, `- Agents running (name and reference, brief path): ${list(open.agents)}`],
     [FIELDS.questions, `- The operator's open questions, each verbatim (its \`Question i of N\` block whole), with its round entry id, or \`none\`: ${questions.length === 0 ? 'none' : questions.join('\n\n')}`],
     [FIELDS.next, `- The next step: ${next}`],
+    [FIELDS.owners, `- Row owners (an open row's live agent by its label word, « ruling » for a deferred one, « NO OWNER » for neither): ${list(ownersOf(open))}`],
     [FIELDS.notes, `- Notes of judgment (generation ${generation}, at most ${NOTES_MAX}; each is promoted into an artifact or dropped at the next succession): ${notes.length === 0 ? 'none' : notes.map(n => `[g${n.generation}] ${n.text}`).join(' · ')}`],
   ])
 }

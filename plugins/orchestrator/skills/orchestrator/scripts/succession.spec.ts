@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { deckOpen, FIELDS, leanSteps, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
+import { deckOpen, FIELDS, leanSteps, ownersOf, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
@@ -333,4 +333,22 @@ test('live brings a stale standing brief\'s reading steps to the lean form and s
   w.err.length = 0
   assert.equal(w.run('live', '--next', 'y'), 0)
   assert.deepEqual(w.err, [])
+})
+
+test('ownersOf names each open row\'s live agent by its label word, a deferred row\'s ruling, and flags a row with neither', () => {
+  const rows = [
+    { id: '1', line: '', label: 'TAKEOVERLEAN: a takeover reads less' },
+    { id: '2', line: '', label: 'QREDESIGN PR4: remove the old path' },
+    { id: '3', line: '', label: 'AUDIT: nobody works it' },
+    { id: '4', line: '', label: 'LATER: parked', ruling: 'ruling 9' },
+    { id: '5', line: '', label: 'A: one letter names nothing' },
+  ]
+  const agents = ['Agent: takeoverlean', 'Agent: qredesign-removal-2', 'Agent: ab']
+  assert.deepEqual(ownersOf({ rows, prs: [], agents, questions: [] }), ['1 takeoverlean', '2 qredesign-removal-2', '3 NO OWNER', '4 ruling', '5 NO OWNER'])
+})
+
+test('live writes the row owners into the brief', () => {
+  const w = world()
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.read(), /- Row owners \(.*\): 2 api; 3 ruling\n/)
 })
