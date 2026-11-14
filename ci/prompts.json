@@ -4,15 +4,15 @@
     "bugs-bot": 14387,
     "cloudflare": 8282,
     "drift": 406,
-    "github": 11037,
-    "implement": 12755,
+    "github": 10900,
+    "implement": 12671,
     "learning": 101,
-    "method": 1471,
+    "method": 1421,
     "norms": 23485,
-    "orchestrator": 65140,
-    "pr-review": 24185,
+    "orchestrator": 64625,
+    "pr-review": 24172,
     "statusbar": 775,
     "telemetry": 273
   },
-  "duplicates": 64
+  "duplicates": 63
 }
