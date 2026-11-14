@@ -37,7 +37,7 @@ import {
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, droppedBy, PANE_CLOSED, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, droppedBy, PANE_CLOSED, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -242,7 +242,6 @@ const WORDS = {
   noOrchestrator: 'no live orchestrator',
   status: 'Status',
   blocks: 'Blocks',
-  waitsInTab: 'Waits in its tab',
   other: 'Other answer',
   otherBelow: 'Other answer: type it below',
   otherInSession: 'Other answer: in the session',
@@ -1123,47 +1122,6 @@ async function clockNow($: any): Promise<number> {
   }
 }
 
-// What the coordinator's pane took in and left out, module memory the render and the round's
-// wake share, so each line below is written once in the module's life: the open operator entries a
-// render showed (`shown`), each entry left out with its reason (`left`, `<id> <reason>`), the
-// entries the wake found never shown (`unseen`), and when the last render ran (`lastRender`, ISO).
-// The 2026-11-04 case: a question in neither the pane nor the coordinator's tab, and no line
-// saying which step lost it.
-export type PaneTrace = { shown: Set<string>; left: Set<string>; unseen: Set<string>; lastRender: string | null }
-let trace: PaneTrace = { shown: new Set(), left: new Set(), unseen: new Set(), lastRender: null }
-
-// Why an open entry of this machine is not drawn: the session it names, its row's drop reason
-// this read gave, or no row at all.
-function leftOutReason(entry: RoundEntry, dropped: ReadonlyMap<string, string>, remote: Record<string, SessionRow>): string {
-  if (entry.origin) {
-    const known = remote[remoteKey(entry.from)]
-    return known ? `its sender's remote row is on ${known.machine ?? 'another machine'}, not ${entry.origin.machine}` : `no live remote row for ${entry.from} on ${entry.origin.machine}`
-  }
-  if (entry.session === '') return 'names no session'
-  const reason = dropped.get(sessionKey(entry.session))
-  return reason ? `its sender's row ${entry.session} was dropped: ${reason}` : `no row for its sender ${entry.session}`
-}
-
-// One render's trace: each open operator entry it took in, logged once at its first drawing, and
-// each one it left out, logged once per reason. `taken` is the render's own list: a question in
-// its card or its count, a wait that asks nothing on its sender's row.
-async function traceRender($: any, read: readonly RoundEntry[], taken: ReadonlySet<string>, reasonOf: (entry: RoundEntry) => string): Promise<void> {
-  for (const entry of read) {
-    if (entry.status !== 'open' || entry.kind !== 'operator') continue
-    if (taken.has(entry.id)) {
-      if (trace.shown.has(entry.id)) continue
-      trace.shown.add(entry.id)
-      await logLine($, 'supervision', `pane: shown ${entry.id}`)
-      continue
-    }
-    const reason = reasonOf(entry)
-    const key = `${entry.id} ${reason}`
-    if (trace.left.has(key)) continue
-    trace.left.add(key)
-    await logLine($, 'supervision', `pane: ${entry.id} not drawn: ${reason}`)
-  }
-}
-
 // The open entries moved to a successor at a succession (`movedFrom`) whose session has no row yet
 // but that the host runs: its registry (`<config>/sessions/<pid>.json`) names the session, and
 // that pid is live in the read's process table. A successor's first row is written at its first
@@ -1257,7 +1215,6 @@ async function wakeForDue($: any): Promise<void> {
   const paneOpen = await paneIsOpen($)
   const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
-  if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
   const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
@@ -1302,20 +1259,6 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
     }
   } catch (err) {
     await logLine($, 'supervision', `round told: ${(err as Error).message}`)
-  }
-}
-
-// With the pane open, each open operator entry ROUND_WAKE_MS old that no render of this module
-// showed is one line, once: the render was not raised, or did not take it in, and the line gives
-// the last render's time to tell which. With the pane closed the question is due in the tab and
-// no render is owed. An entry's age is from when the module wrote it, else from its wait's start.
-async function traceUnseen($: any, read: readonly RoundEntry[], now: number): Promise<void> {
-  for (const entry of read) {
-    if (entry.status !== 'open' || entry.kind !== 'operator' || trace.shown.has(entry.id) || trace.unseen.has(entry.id)) continue
-    const at = Number.isFinite(Date.parse(entry.at)) ? Date.parse(entry.at) : Date.parse(entry.since)
-    if (!Number.isFinite(at) || now - at < ROUND_WAKE_MS) continue
-    trace.unseen.add(entry.id)
-    await logLine($, 'supervision', `round wake: ${entry.id} open ${Math.floor((now - at) / 1000)} s, never drawn by the pane (last render ${trace.lastRender ?? 'none'})`)
   }
 }
 
@@ -1462,7 +1405,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The coordinator's round read for questions just due, armed by a start or a turn end that
   // finds it the recorded coordinator (registerWake).
   wake = { timer: null, generation: 0 }
-  trace = { shown: new Set(), left: new Set(), unseen: new Set(), lastRender: null }
 
   // The engine allows one no-matcher registration per event, and the gauge
   // owns session.measure's and session.end's: this domain observes the same
@@ -1818,7 +1760,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // alone and never in another plugin's.
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
     const started = await clockNow($)
-    trace.lastRender = new Date(started).toISOString()
     try {
       // The store at draw time: the gauge's invalidate after every measure and
       // the pane's own clock re-raise this render. Display only.
@@ -1832,8 +1773,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let pending = 0
       // The open questions asked with `ask` (question.ts), drawn from their fields under the round's card.
       let asked: Asked[] = []
-      // The sessions whose open wait asks nothing, each with the line its row carries.
-      const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
       let ownUnattended: string | null = null
@@ -1860,15 +1799,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ? merged[remoteKey(entry.from)]?.machine === entry.origin.machine
           : sessionKey(entry.session) in local || hosted.has(entry.id))
         const questions = paneQuestions(drawn)
-        for (const wait of waitsInTab(drawn)) if (!tabWaits.has(rowKeyOf(wait))) tabWaits.set(rowKeyOf(wait), waitSummary(wait))
-        // What this render takes in, for its trace: every question it counts, and each wait that
-        // asks nothing whose sender's row it draws, the line being on that row.
-        const rowKeys = new Set(blocks.map(block => block.key))
-        const taken = new Set([...questions, ...waitsInTab(drawn).filter(wait => rowKeys.has(rowKeyOf(wait)))].map(entry => entry.id))
-        const remote = Object.fromEntries(Object.entries(merged).filter(([key]) => !(key in local)))
-        await traceRender($, read.map(found => found.entry), taken, entry => drawn.includes(entry)
-          ? `its wait asks nothing and its sender ${entry.from} has no orchestrator row in the pane`
-          : leftOutReason(entry, store.dropped, remote))
         // Each question counts, those of an entry that asks several one by one, less those
         // already answered.
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
@@ -1985,10 +1915,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ],
         })
         const textWidth = width - 2 - WAIT_LABEL_COLUMN
-        // The line of a wait that asks nothing, one text wrapping under its own start: no label
-        // column, the label being longer than the one Status and Blocks share.
-        const tabWait = tabWaits.get(row.key)
-        const tabLine = `${WORDS.waitsInTab}: ${tabWait ?? ''}`
         return {
           node: el.Box({
             flexDirection: 'column',
@@ -1997,7 +1923,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
-              ...(tabWait !== undefined ? [el.Box({ paddingLeft: 2, children: [el.Text({ children: tabLine })] })] : []),
               ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, children: [rich(row.unattended, { color: 'warning' })] })] : []),
             ],
           }),
@@ -2005,15 +1930,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
-            + (tabWait !== undefined ? rowsOf(plainText(tabLine), width - 2) : 0)
             + (row.unattended !== null ? rowsOf(takesRows(row.unattended), width - 2) : 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      // A waiting row with its line in the pane, or whose question asked with `ask` the pane draws, is
-      // not one the operator is left without.
+      // A waiting row whose question asked with `ask` the pane draws is not one the operator is left
+      // without.
       const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key) && !askedHere.has(row.key)).length
+      const waiting = blocks.filter(row => row.waiting === 'operator' && !askedHere.has(row.key)).length
       const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
       const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
       // The question the card asks: an entry that asks several presents them one at a time, the
@@ -2399,7 +2323,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, answering?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, answering?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []

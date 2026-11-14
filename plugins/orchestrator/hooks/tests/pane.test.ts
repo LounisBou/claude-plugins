@@ -11,7 +11,7 @@
 import { expect, test } from 'claude-code/testing'
 import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { settle } from '../question.ts'
-import { paneQuestions, waitsInTab, roundEntry, entryFingerprint, type RoundEntry } from '../round.ts'
+import { roundEntry, entryFingerprint, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { withdrawalText } from '../relay.ts'
@@ -1631,46 +1631,6 @@ test('a question without choices never hides one that has them, and the count is
 const REPORT = 'Takeover done.\n\n| PR | state |\n|---|---|\n| speculoos#53 | ready |\n| speculoos#54 | ready |'
 const BLOCKS = 'line 239 (merge of speculoos#53) and the next ready PRs'
 
-test('a wait that asks nothing is no card and no pending question: its row says it waits in its tab, with what it blocks', async () => {
-  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  expect(roundLines([report])).toEqual([])
-  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }) }, [report])
-  const [section, , block] = tree.props.children
-  expect(texts(section)).toEqual(['Questions for you', 'none', '─'.repeat(40)])
-  expect(findAll(section, n => n.type === 'Input').length).toBe(0)
-  expect(JSON.stringify(tree)).not.toContain('Takeover done')
-  expect(JSON.stringify(tree)).not.toContain('none in the pane')
-  const [, status, blocks, waits] = block.props.children
-  expect(pieces(status)[1].text).toMatch(/^waiting for the operator since \d\d:\d\d$/)
-  expect(pieces(blocks)).toEqual([{ text: 'Blocks:', bold: false }, { text: BLOCKS, bold: false }])
-  expect(pieces(waits).map(p => p.text).join('')).toBe(`Waits in its tab: ${BLOCKS}`)
-})
-
-test('a wait that asks nothing and blocks nothing shows the first line of its text on its row', async () => {
-  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: '' })
-  const tree = await paneTree({ w: orch('Orch: w') }, [report])
-  const block = tree.props.children[2]
-  expect(pieces(block.props.children.at(-1)).map(p => p.text).join('')).toBe('Waits in its tab: Takeover done.')
-})
-
-test('only the row of the session that waits carries the line, and a row with a card or a plain wait carries none', async () => {
-  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  const tree = await paneTree({ w: orch('Orch: w'), v: orch('Orch: v') }, [report])
-  expect(JSON.stringify(tree).match(/Waits in its tab/g)?.length).toBe(1)
-  const asked = entry('Orch: v', '2026-10-18T10:04:00.000Z', { session: 'v', choices: CHOICES })
-  expect(JSON.stringify(await paneTree({ v: orch('Orch: v') }, [asked]))).not.toContain('Waits in its tab')
-})
-
-test('the none line counts only the waiting rows that have neither a card nor the line', async () => {
-  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  const rows = {
-    w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }),
-    v: orch('Orch: v', { waiting: 'operator', waiting_since: SINCE, blocks: 'phase 4' }),
-  }
-  expect(texts((await paneTree(rows, [report])).props.children[0])).toContain('none in the pane — 1 orchestrator waits for you: ask the coordinator')
-  expect(JSON.stringify(await paneTree({ w: rows.w }, [report]))).not.toContain('none in the pane')
-})
-
 test('a question in the old shape with lettered choices is still drawn and counted', async () => {
   const asked = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: 'Merge it?', choices: CHOICES, recommendation: 'B' })
   const tree = await paneTree({ w: orch('Orch: w') }, [asked])
@@ -1685,24 +1645,6 @@ test('a labelled question without choices is still drawn and counted, beside a w
   const drawn = texts((await paneTree({ w: orch('Orch: w') }, [open, report])).props.children[0])
   expect(drawn).toEqual(['Questions for you — 1 pending', 'Orch: w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
   expect(drawn.join('\n')).not.toContain('Takeover done')
-})
-
-test('the waits that ask nothing are no pane question, the others in the order of choices first', () => {
-  const report = entry('Orch: a', '2026-10-18T10:01:00.000Z', { question: REPORT })
-  const labelled = entry('Orch: b', '2026-10-18T10:02:00.000Z', { question: '_Question_ : Rename it?' })
-  const asked = entry('Orch: c', '2026-10-18T10:03:00.000Z', { choices: CHOICES })
-  expect(paneQuestions([report, labelled, asked]).map(e => e.from)).toEqual(['Orch: c', 'Orch: b'])
-  expect(waitsInTab([report, labelled, asked]).map(e => e.from)).toEqual(['Orch: a'])
-})
-
-test('a prose question ending with a question mark is drawn as a card and counted, a status text ending with a full stop stays a line', async () => {
-  const prose = entry('Orch: p', '2026-10-18T10:01:00.000Z', { session: 'p', question: 'The staging is ready.\n\nJe lance la campagne de test ?\n' })
-  const status = entry('Orch: s', '2026-10-18T10:02:00.000Z', { session: 's', question: 'Takeover done, nothing left to rule.' })
-  expect(paneQuestions([prose, status]).map(e => e.from)).toEqual(['Orch: p'])
-  expect(waitsInTab([prose, status]).map(e => e.from)).toEqual(['Orch: s'])
-  const drawn = texts((await paneTree({ p: orch('Orch: p'), s: orch('Orch: s') }, [prose, status])).props.children[0])
-  expect(drawn[0]).toBe('Questions for you — 1 pending')
-  expect(drawn).toContain('The staging is ready.\n\nJe lance la campagne de test ?')
 })
 
 test('a wait that asks nothing beside a question with choices is not counted: the choice answers, then the pane is empty of questions', async () => {
@@ -3322,103 +3264,8 @@ test('a question asked with ask claimed by his prompt in its asker\'s tab is nei
   expect(fx.submitted.length).toBe(1)
 })
 
-// --- what the pane leaves out, and what it shows, said in its log ---------------------------------
-
-// The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on
-// disk saying which step lost it. Each open question a render leaves out is logged once with its
-// reason, each one it takes in is logged once at its first drawing, and the wake says which one no
-// render showed.
-const loggedLines = (fx: Fx, line: string) => fx.written.filter(l => l.endsWith(`| supervision | ${line}`)).length
+// A render driven again on the same handlers.
 const redraw = (fx: Fx, handlers: Record<string, Function>) => handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
-
-test('an open question whose sender has no row is logged once as not drawn, with its reason', async () => {
-  const fx = fakeDollar({ launchName: 'Coord: main' })
-  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: live' })) + '\n')
-  // Idle for two hours with no pid: stale by the old rule, removed, and its sender not judged gone.
-  fx.files.set(`${SESSIONS}/idle`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: idle', updated_at: minutesAgo(120) })) + '\n')
-  fx.files.set(`${SESSIONS}/half`, '{"role": "orchestr')
-  const shown = entry('Orch: live', '2026-11-04T15:20:00.000Z', { session: 'live', choices: CHOICES })
-  const orphan = entry('Orch: orphan', '2026-11-04T15:21:00.000Z', { session: 'nobody' })
-  const idle = entry('Orch: idle', '2026-11-04T15:22:00.000Z', { session: 'idle' })
-  const half = entry('Orch: half', '2026-11-04T15:23:00.000Z', { session: 'half' })
-  const nameless = entry('Orch: old', '2026-11-04T15:24:00.000Z', { session: '' })
-  const answered = entry('Orch: gone', '2026-11-04T15:25:00.000Z', { session: 'gone', status: 'answered' })
-  const done = entry('Orch: done', '2026-11-04T15:26:00.000Z', { session: 'gone', kind: 'done', blocks: null })
-  for (const e of [shown, orphan, idle, half, nameless, answered, done]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
-  const { handlers } = mounted(registerSupervision)
-  await coordinatorRender(fx, handlers)
-  await redraw(fx, handlers)
-  expect(loggedLines(fx, `pane: ${orphan.id} not drawn: no row for its sender nobody`)).toBe(1)
-  expect(loggedLines(fx, `pane: ${idle.id} not drawn: its sender's row idle was dropped: stale, no pid and no measure for an hour`)).toBe(1)
-  expect(loggedLines(fx, `pane: ${half.id} not drawn: its sender's row half was dropped: unreadable`)).toBe(1)
-  expect(loggedLines(fx, `pane: ${nameless.id} not drawn: names no session`)).toBe(1)
-  // The idle row was removed by the first read: the second says so, once, in its own words.
-  expect(loggedLines(fx, `pane: ${idle.id} not drawn: no row for its sender idle`)).toBe(1)
-  expect(fx.written.filter(l => l.includes('not drawn')).length).toBe(5)
-  for (const quiet of [shown, answered, done]) expect(fx.written.some(l => l.includes(`${quiet.id} not drawn`))).toBe(false)
-})
-
-test('a stale row with a pid is named by its pid and tty when its question is left out', async () => {
-  const fx = fakeDollar({ launchName: 'Coord: main' })
-  fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: dead' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
-  const asked = entry('Orch: dead', '2026-11-04T15:20:00.000Z', { session: 'dead' })
-  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
-  // The entry is withdrawn by the sweep of its dead sender: the pane leaves nothing open unsaid.
-  const fresh = fakeDollar({ launchName: 'Coord: main' })
-  fresh.files.set(`${SESSIONS}/half`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: half' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
-  fresh.dollar.process.run = ((run: Function) => async (argv: readonly string[], init?: object) =>
-    // A read that keeps the entry open: the sweep's round write fails, as an unwritable round does.
-    argv[0] === 'mv' && String(argv[3]).startsWith(ROUND) ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init))(fresh.dollar.process.run)
-  fresh.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...asked, session: 'half' }) + '\n')
-  await coordinatorRender(fresh)
-  expect(loggedLines(fresh, `pane: ${asked.id} not drawn: its sender's row half was dropped: stale pid 4242: not running on /dev/ttys004`)).toBe(1)
-  await coordinatorRender(fx)
-  expect(JSON.parse(String(fx.files.get(`${ROUND}/${asked.id}.json`))).status).toBe('withdrawn')
-})
-
-test('a question drawn for the first time is logged once as shown, never at a redraw', async () => {
-  const first = entry('Orch: low', '2026-11-04T15:20:00.000Z', { session: 'low', choices: CHOICES })
-  const second = entry('Orch: low', '2026-11-04T15:21:00.000Z', { session: 'low' })
-  const { fx, render, handlers } = await askingPane([first, second])
-  await render()
-  await render()
-  expect(loggedLines(fx, `pane: shown ${first.id}`)).toBe(1)
-  // The second is in the count the title draws, so it is shown too.
-  expect(loggedLines(fx, `pane: shown ${second.id}`)).toBe(1)
-  const third = entry('Orch: low', '2026-11-04T15:22:00.000Z', { session: 'low' })
-  fx.files.set(`${ROUND}/${third.id}.json`, JSON.stringify(third) + '\n')
-  await redraw(fx, handlers)
-  await redraw(fx, handlers)
-  expect(loggedLines(fx, `pane: shown ${third.id}`)).toBe(1)
-  expect(fx.written.filter(l => l.includes('pane: shown')).length).toBe(3)
-})
-
-test('a question no render showed within 30 s is logged by the wake once, with the last render\'s time', async () => {
-  const unseen = entry('Orch: a', '2026-11-04T15:23:00.000Z', { session: 'sa', at: new Date(Date.now() - 31000).toISOString() })
-  const young = entry('Orch: b', '2026-11-04T15:24:00.000Z', { session: 'sb', at: new Date(Date.now() - 5000).toISOString() })
-  const { fx, handlers, tick } = await wakingCoordinator([unseen, young])
-  await tick()
-  expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id} open `)).length).toBe(1)
-  expect(fx.written.find(l => l.includes(`round wake: ${unseen.id} open `))).toMatch(/open 3\d s, never drawn by the pane \(last render none\)$/)
-  expect(fx.written.some(l => l.includes(`round wake: ${young.id}`))).toBe(false)
-  await tick()
-  expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id}`)).length).toBe(1)
-  // A render that showed the question: the wake never names it.
-  const shownOne = entry('Orch: c', '2026-11-04T15:25:00.000Z', { session: 'sc', at: new Date(Date.now() - 40000).toISOString() })
-  fx.files.set(`${ROUND}/${shownOne.id}.json`, JSON.stringify(shownOne) + '\n')
-  fx.files.set(`${SESSIONS}/sc`, JSON.stringify(row({ role: 'orchestrator', name: shownOne.from })) + '\n')
-  await redraw(fx, handlers)
-  // A render that left one out: the wake gives that render's time.
-  const left = entry('Orch: d', '2026-11-04T15:26:00.000Z', { session: 'sd', at: new Date(Date.now() - 40000).toISOString() })
-  fx.files.set(`${ROUND}/${left.id}.json`, JSON.stringify(left) + '\n')
-  await tick()
-  expect(fx.written.some(l => l.includes(`round wake: ${shownOne.id}`))).toBe(false)
-  expect(fx.written.find(l => l.includes(`round wake: ${left.id} open `))).toMatch(/never drawn by the pane \(last render \d{4}-\d\d-\d\dT[\d:.]+Z\)$/)
-  // With the pane closed the question is due in the tab: no render is owed, nothing is said.
-  const closed = await wakingCoordinator([{ ...unseen, id: 'closed-pane' }], { paneClosed: true })
-  await closed.tick()
-  expect(closed.fx.written.some(l => l.includes('never drawn'))).toBe(false)
-})
 
 // --- a question moved to a successor not measured yet ------------------------------------------
 
@@ -3434,12 +3281,10 @@ test('an entry moved to a successor not measured yet is drawn', async () => {
   }
   const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' })
   expect(live.tree).toContain('Questions for you — 1 pending')
-  expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
   // The host's record of a process that no longer runs, or of another session, is no successor.
   for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-other', name: 'Orch: belt-2' }, null]) {
-    const { fx, tree } = await drawnWith(record)
+    const { tree } = await drawnWith(record)
     expect(tree).not.toContain('pending')
-    expect(loggedLines(fx, `pane: ${moved.id} not drawn: no row for its sender s-two`)).toBe(1)
   }
   // An entry no successor took, its session with no row, is not drawn on a live record alone.
   const fx = fakeDollar({ launchName: 'Coord: main' })
@@ -3462,7 +3307,6 @@ test('an entry moved to a successor by its name alone is drawn while a live sess
   }
   const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' })
   expect(live.tree).toContain('Questions for you — 1 pending')
-  expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
   for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-old', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-two', name: 'Orch: other' }, null]) {
     const { tree } = await drawnWith(record)
     expect(tree).not.toContain('pending')

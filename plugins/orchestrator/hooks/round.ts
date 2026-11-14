@@ -294,8 +294,7 @@ export function carriesChoices(entry: RoundEntry): boolean {
 // first, in the round's order among themselves, then those without. A question the operator can
 // only answer in its session never hides one he can answer from the pane. A wait that asks
 // nothing, with no lettered choice, no labelled field and no closing « ? », is no question: it has
-// no card and is not counted, `waitsInTab` lists it for the line of its orchestrator's row. An entry that asks
-// several questions is read by its first.
+// no card and is not counted. An entry that asks several questions is read by its first.
 export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
   const read = openEntries(entries)
     .filter(isPaneQuestion)
@@ -304,21 +303,6 @@ export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
     ...read.filter(({ first }) => (first?.choices.length ?? 0) > 0),
     ...read.filter(({ first }) => (first?.choices.length ?? 0) === 0),
   ].map(({ entry }) => entry)
-}
-
-// The open operator waits that ask nothing, in the round's order: the pane draws none as a card,
-// and keeps the operator informed that the orchestrator waits on him, in its tab, with one line
-// on that orchestrator's row (the open wait missing from the pane left the operator before an
-// empty pane, his report of 2026-10-25).
-export function waitsInTab(entries: readonly RoundEntry[]): RoundEntry[] {
-  return openEntries(entries).filter(entry => entry.kind === 'operator' && !isPaneQuestion(entry))
-}
-
-// What the row's line says of such a wait: what it blocks, or the first line of its text.
-export function waitSummary(entry: Pick<RoundEntry, 'blocks' | 'question'>): string {
-  const blocks = (entry.blocks ?? '').trim()
-  if (blocks !== '') return blocks
-  return plainText(entry.question.split('\n').find(line => line.trim() !== '') ?? '').trim()
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
