@@ -140,3 +140,20 @@ jobs:
           if [ "$BLOCKING" = true ]; then exit 1; fi
           last=$(tail -n 1 "$RUNNER_TEMP/suite.log")
           echo "::warning title=${{ matrix.plugin }} on ${{ matrix.os }}::the suite fails here, its last line: ${last}; it does not block until it is green (ci/plugins.json)"
+
+  # The one check GitHub requires on the default branch (core's readiness contract, `conditions.ci`):
+  # green only when the repository rules and every plugin cell passed. A cell not yet blocking
+  # passes with a warning, so only a blocking failure turns it red.
+  ci:
+    name: ci
+    needs: [repository, plugin]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: the repository rules and every blocking suite passed
+        env:
+          RESULTS: ${{ needs.repository.result }} ${{ needs.plugin.result }}
+        run: |
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "::error::a job the ci check needs ended $result: $RESULTS"; exit 1; }
+          done

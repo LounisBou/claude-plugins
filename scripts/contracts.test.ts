@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
+import { CI_CHECK } from '../packages/core/src/readiness.ts'
 
 describe('pull request records: github writes, core reads', () => {
   it('reads every record github engine writes', () => {
@@ -78,5 +79,32 @@ describe('session names: core owns the shape, the launcher reads it', () => {
       ['orchestrator', true, 'Lead: abc'], ['agent', true, 'Hand: ab'], ['coordinator', false, 'Desk: abcd'], [null, false, 'Orch: abc'],
     ])
     rmSync(plugin, { recursive: true, force: true })
+  })
+})
+
+describe('readiness: the CI check GitHub requires is the workflow\'s aggregator job', () => {
+  // The workflow's jobs, by id: each job's `name`, `needs` and `if`, read from its two-space block.
+  const jobs = (text: string): Map<string, { name?: string; needs: string[]; when?: string }> => {
+    const found = new Map<string, { name?: string; needs: string[]; when?: string }>()
+    const block = text.slice(text.indexOf('\njobs:\n') + 7)
+    let current: { name?: string; needs: string[]; when?: string } | undefined
+    for (const line of block.split('\n')) {
+      const id = /^ {2}([\w-]+):\s*$/.exec(line)
+      if (id) found.set(id[1]!, current = { needs: [] })
+      const field = /^ {4}(name|needs|if):\s*(.*)$/.exec(line)
+      if (!current || !field) continue
+      if (field[1] === 'name') current.name = field[2]!.trim()
+      if (field[1] === 'if') current.when = field[2]!.trim()
+      if (field[1] === 'needs') current.needs = field[2]!.replace(/[[\]]/g, '').split(',').map((n) => n.trim()).filter(Boolean)
+    }
+    return found
+  }
+
+  it('names the check core\'s contract gives, needs every other job, and runs whatever they ended', () => {
+    const all = jobs(readFileSync('.github/workflows/ci.yml', 'utf8'))
+    const [id, aggregator] = [...all].find(([, job]) => job.name === CI_CHECK) ?? []
+    assert.ok(id && aggregator, 'no job named ' + CI_CHECK)
+    assert.deepEqual([...aggregator.needs].sort(), [...all.keys()].filter((other) => other !== id).sort())
+    assert.equal(aggregator.when, 'always()')
   })
 })
