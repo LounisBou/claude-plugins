@@ -113,14 +113,18 @@ def _latest_runs(runs, workflows, suite_runs=None):
     return kept
 
 
-def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
+def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None):
     """CI at one head, as the ready guard reads it. Only the latest run of each
     check counts, and none skipped or neutral in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is not green either: CI has not started on that head, so the result
-    is PENDING."""
+    is PENDING. A check the base branch requires (required: its contexts) that
+    has not reported at the head, as a run or a status, is running: its workflow
+    may start after another check has passed. A read of the required checks that failed
+    (unverified: what it read and why) leaves the result at best PENDING: a check the
+    base requires may be missing from the runs, so green cannot be told."""
     commit_statuses = (statuses or {}).get("statuses") or []
     runs = _latest_runs(runs, workflows, suite_runs)
     passing = ("success",) if draft else ("success", "neutral")
@@ -133,9 +137,12 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
         status for status in commit_statuses if status.get("state") == "pending"
     ]
     skipped = [run.get("name", "?") for run in completed if run.get("conclusion") in unproven]
+    reported = {run.get("name") for run in runs} | {status.get("context") for status in commit_statuses}
+    unreported = sorted(set(required or ()) - reported)
+    running += unreported
     if failed:
         result = "FAILURE"
-    elif running or skipped or not (runs or commit_statuses):
+    elif running or skipped or unverified or not (runs or commit_statuses):
         result = "PENDING"
     else:
         result = "SUCCESS"
@@ -144,7 +151,8 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
         "failed": failed,
         "running": len(running),
         "skipped": skipped,
-        "total": len(runs) + len(commit_statuses),
+        "total": len(runs) + len(commit_statuses) + len(unreported),
+        "unverified": list(unverified or ()),
     }
 
 
@@ -159,6 +167,8 @@ def _checks_status(obj):
         bool(obj.get("draft")),
         obj.get("workflows"),
         obj.get("workflow_runs"),
+        obj.get("required"),
+        obj.get("unverified"),
     )
     return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
 
