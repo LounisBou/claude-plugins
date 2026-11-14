@@ -25,28 +25,26 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds } from './stop-gate.ts'
-import { entryQuestions, machineLine, questionBody, questionShape, type Choice } from '../core/method.ts'
-import { typedByOperator } from './models-guard.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf } from './stop-gate.ts'
+import { entryQuestions, questionBody, questionShape, type Choice } from '../core/method.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
-import { DECLARATIONS } from './wait.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, droppedBy, PANE_CLOSED, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import {
-  CONSENT_REPO_CAP, askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
+  askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
   qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
@@ -371,7 +369,7 @@ export function parseSessionRow(text: string): SessionRow | null {
 // yet, with the fingerprint its acknowledgment keeps (`pending_key`): an outbox, never drawn or
 // answered from here (remote-round.ts). `relayed_id` is the id of the entry that acknowledgment
 // kept, so the answer to it forgets `relayed` as forgetRelayed does on the coordinator's machine.
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null; said?: string; withdrawn?: boolean; told?: string[] } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
@@ -1017,16 +1015,6 @@ async function shownToCoordinator($: any, id: string): Promise<boolean> {
 // The reason an entry withdrawn by the operator's prompt in its sender's own tab records.
 const TAB_ANSWER = "answered in the sender's own tab"
 
-// What the operator typed in the tab, kept beside that reason (`answer.typed`): trimmed, and cut
-// past this many characters with the cut said, as cutQuestion says its own. Empty when he typed
-// nothing but blanks. It only quotes the text; the consent a tab answer may write is
-// writeTabConsent's.
-const TAB_TEXT_CAP = 500
-function tabText(text: string): string {
-  const said = text.trim()
-  return said.length > TAB_TEXT_CAP ? `${said.slice(0, TAB_TEXT_CAP)}\n[cut at ${TAB_TEXT_CAP} of ${said.length} characters]` : said
-}
-
 // Two questions are the same when their text is, whatever the spacing between the words.
 const sameQuestion = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
 
@@ -1050,14 +1038,6 @@ export function settledText(entry: RoundEntry, answer: RoundAnswer): string {
     : ['', reason.replace(/\s*\n\s*/g, ' ').trim() || 'withdrawn by its sender']
   return `[module] Settled${where ? ` ${where}` : ''}: ${entry.from}'s question since ${entry.since} (entry ${entry.id}) — ${how}. `
     + 'Already closed: drop it, never ask or relay it again, present the next.'
-}
-
-// The notice that an entry told settled is open again: its sender's turn ended on the same wait
-// the operator's typed prompt had withdrawn. It stands for the settled notice before it, which no
-// longer holds. One line, no command to run, no operator text.
-export function reopenedText(entry: RoundEntry): string {
-  return `[module] Reopened: ${entry.from}'s question since ${entry.since} (entry ${entry.id}) — its turn ended on the same wait. `
-    + 'Open again: the settled notice before it no longer holds, present it as any open question.'
 }
 
 // Whether the entry is closed by the module when settled: the coordinator on this machine was
@@ -1090,17 +1070,6 @@ export async function tellSettled($: any, settled: readonly Settled[], until = I
     } catch (err) {
       await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
-  }
-}
-
-// The coordinator on this machine told that an entry it was told closed is open again: one log
-// line when the notice is refused or throws, and the turn's end is never held on it.
-async function tellReopened($: any, to: CoordinatorTo, entry: RoundEntry): Promise<void> {
-  try {
-    const sent = await sendToCoordinator($, to, reopenedText(entry))
-    if (!sent?.isDelivered) await logLine($, 'supervision', `round: the reopened notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
 }
 
@@ -1568,11 +1537,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     const sessionId = e.sessionId ?? await $.session.id()
     // Read before the row goes: the successor's file goes with it.
     let successor: LearntSuccessor | null = null
-    // Read before the wait file goes: the question a coordinator elsewhere holds or was sent.
-    let remote: { name: string; held: { blocks: string; since: string | null } } | null = null
     try {
       stopWake(wake)
-      remote = await remoteQuestion($, sessionId)
       successor = await readSuccessor($, sessionId)
       await deleteSession($, sessionId)
       await recordPaneClosed($)
@@ -1593,7 +1559,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         ? moveToSuccessor($, sessionId, successor)
         : withdrawStale($, sessionId, null, "the sender's session ended").then(async settled => {
           const asked = await withdrawAsked($, sessionId, "the sender's session ended")
-          if (remote) await withdrawRemote($, remote.name, remote.held)
           return [...settled, ...await shownAsked($, asked, "the sender's session ended")]
         }), bound)
       if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${bound} ms`)
@@ -1616,23 +1581,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // rather than at classic.Stop: a stop the gate refuses goes on in the same turn, so
   // the message a stop carries is not always the turn's last word, and the gate's own
   // deadline is not this report's to spend; turn.complete fires once the turn is over,
-  // with its final answer. Bounded, and never holds the turn's end. The consent the turn declared is
-  // read before the first await: a message queued for the session starts its next turn as this one
-  // ends, and that start makes the declaration stale while the relay still reads its files.
+  // with its final answer. Bounded, and never holds the turn's end.
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
-    const declared = e.agentId ? null : DECLARATIONS.current()
-    const consent = declared?.kind === 'operator' ? declared.consent ?? null : null
-    const onAsked = declared?.kind === 'operator'
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent, onAsked), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
         if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
-      } else if (!e.agentId) {
-        // A turn that ended without an answer (interrupted, failed) still ends the mark's turn.
-        await dropMark($)
       }
     } catch (err) {
       await logLine($, 'supervision', `relay: ${(err as Error).message}`)
@@ -1668,23 +1625,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
     } catch (err) {
       await logLine($, 'supervision', `relay: ${(err as Error).message}`)
-    }
-    return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
-
-  // The operator types in an orchestrator whose question the coordinator holds: he answered it
-  // in this tab, so the question is withdrawn — its round entry marked, or a coordinator elsewhere
-  // told (withdrawOnTyped). prompt.submit runs
-  // before turn.start, so the wait is usually still on. Never adds context, never holds the prompt.
-  on('prompt.submit', {}, async ($: any, e: any, next: (e: any) => any) => {
-    try {
-      const done = await withDeadline(withdrawOnTyped($, String(e.origin?.kind ?? ''), String(e.text ?? '')), RELAY_BOUND_MS)
-      if (isDegradedPass(done)) await logLine($, 'supervision', `withdraw: did not finish within ${RELAY_BOUND_MS} ms`)
-    } catch (err) {
-      await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
@@ -2501,20 +2441,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
-// The wait record without the mark of a typed prompt, which belongs to one turn and is never written back.
-function withoutMark(record: WaitRecord): WaitRecord {
-  const { typed: _mark, ...rest } = record
-  return rest
-}
-
-// The mark cleared at the end of a turn that gave no answer: prompt.submit runs before turn.start,
-// so the turn's start cannot clear it without erasing the mark of its own prompt.
-async function dropMark($: any): Promise<void> {
-  const sessionId = await $.session.id()
-  const now = await readWait($, sessionId)
-  if (now?.typed) await writeWait($, sessionId, withoutMark(now))
-}
-
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
 // coordinator and an auditor do, as one rule for the turn's end and the prompt.
 export function entersRound(role: string | null): boolean {
@@ -2534,20 +2460,9 @@ export function entersRound(role: string | null): boolean {
 // is kept only once the entry is in place or the send is delivered. Nobody to send to: nothing
 // is sent. A write that fails or a send refused is one log line; the turn's end is never held
 // on it. The row itself is never written here: the measure is its one writer.
-// A prompt the operator typed while a question was held withdrew it at once and left a mark
-// (withdrawOnTyped). The turn that ends on the same wait enters it again, open and with a new start,
-// in the pane and to the coordinator, a coordinator on this machine that was told it closed being
-// told it is open again. Any other end leaves it withdrawn as answered in the tab (a withdrawal
-// that failed at the prompt is tried again here), and only such a turn withdraws the session's
-// other open entries as answered there.
-// A turn that ends on an operator wait whose text asks nothing is entered as its own entry and
-// never withdraws its session's open question with choices.
-// `consent` is the subject the turn's operator question declared it asks consent on, read when the
-// turn ended. It rides with the entry wherever the entry goes: into the round on this machine, on
-// the ask line to a coordinator elsewhere; with no coordinator at all, one log line names it.
-// `onAsked`: the turn's operator wait waits on questions asked with `ask`, already in the round as
-// their own objects: its wait is written, so its row shows it waiting, and no entry is entered or sent.
-export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null, onAsked = false): Promise<void> {
+// An operator wait waits on questions asked with `ask`, already in the round as their own objects:
+// its wait is written, so its row shows it waiting, and no entry is entered or sent.
+export async function relayTurnEnd($: any, answer: string, turnId: unknown): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2567,57 +2482,27 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   if (role === 'agent') answer = heldReport(answer)
   const wait = orchestrating ? parseWait(answer) : parseStatus(answer)
-  // The ending of a turn whose open work the operator deferred (`waiting: deferred — <n> items`): no
-  // wait, nothing entered or sent, the wait cleared like a tool wait's.
-  const deferred = orchestrating && deferredIds(machineLine(answer)) !== null
-  // The mark of a prompt the operator typed while a question was held (withdrawOnTyped): it
-  // belongs to this turn alone and is never written back. The question is withdrawn already,
-  // unless that failed, and a fingerprint the withdrawal forgot stays forgotten.
-  const typed = orchestrating ? (await readWait($, sessionId))?.typed ?? null : null
-  let forgotten = false
-  let heldKey: string | null = null
-  let swept = false
-  const sameWait = !!typed && wait?.kind === 'operator' && wait.blocks === typed.blocks
-  if (typed) {
-    heldKey = (await readWait($, sessionId))?.relayed ?? null
-    if (!sameWait) {
-      // Withdrawn already at prompt.submit, unless that withdrawal failed: tried again here.
-      forgotten = typed.withdrawn ? false : await withdrawHeld($, sessionId, name, typed, consent) !== null
-      // He answered in this tab: a turn ending on another machine line, a wait or done, leaves
-      // none of the session's other open entries waiting either.
-      // A deferred ending is no wait, but it leaves none of them standing either.
-      if (wait || deferred) {
-        await tellSettled($, await withdrawStale($, sessionId, wait ? roundEntryId(sessionId, wait) : null, TAB_ANSWER))
-        swept = true
-      }
-    }
-  }
-  const read = await readWait($, sessionId)
-  const before = read ? withoutMark(read) : null
-  // A wait rewritten while the withdrawal was sent keeps the fingerprint it was written with.
-  const relayed = forgotten && (before?.relayed ?? null) === heldKey ? null : before?.relayed ?? null
+  const before = await readWait($, sessionId)
+  const relayed = before?.relayed ?? null
   // The id of the entry a remote coordinator acknowledged, kept while its fingerprint is.
-  const relayedId = relayed !== null && relayed === (before?.relayed ?? null) ? before?.relayed_id ?? null : null
+  const relayedId = relayed !== null ? before?.relayed_id ?? null : null
   // A turn that ends on « handed over »: the successor holds the work, and the questions.
   if (!wait && role === 'orchestrator' && handsOver(answer)) await handOver($, sessionId)
   if (!wait && orchestrating) {
-    if (before?.waiting || typed) await writeWait($, sessionId, { ...clearedWait(before!), relayed, relayed_id: relayedId, name, pid })
+    if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), relayed, relayed_id: relayedId, name, pid })
     return
   }
-  // The same wait asked again once its withdrawal was done is a new ask, of a new start: the
-  // coordinator that was told it withdrawn takes it for what it is, never for the first one again.
-  const reasked = sameWait && typed?.withdrawn === true
   const patch = wait
-    ? waitPatch(reasked && before ? { ...before, waiting_since: null } : before, wait, new Date().toISOString())
+    ? waitPatch(before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
-  if (onAsked && wait?.kind === 'operator') return
+  if (orchestrating && wait?.kind === 'operator') return
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
     // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
     // message, which forgets nothing) or archived blocks nothing: only an entry still open does.
-    if (!orchestrating || !wait || (wait.kind !== 'operator' && wait.kind !== 'done')) return
+    if (!orchestrating || !wait || wait.kind !== 'done') return
     coordinator = await coordinatorAddress($)
     if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return
   } else if (orchestrating) {
@@ -2626,28 +2511,9 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   // A coordinator on this machine reads its round: the wait is entered there, and its model
   // is not woken for it. The fingerprint is kept once the entry is in place, as a delivery's.
   if (coordinator?.local && wait && patch) {
-    const asked = orchestrating && wait.kind === 'operator' ? consent : null
-    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), asked)
-    const kept = entry.kind === 'operator' && entry.choices.length === 0 ? await keptChoices($, entry) : null
-    if (kept) {
-      // The same wait, its text now a note: the entry keeps its choices and takes the urgent mark
-      // or its absence, urgent, it is due at once.
-      await takeUrgent($, kept, entry)
-      await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
-      return
-    }
-    const record = entry.kind === 'operator' ? recordedAnswer(await readRecords($), entry) : null
-    if (record) {
-      await answerFromRecord($, entry, record)
-      await writeWait($, sessionId, { ...patch, relayed: null, name, pid })
-      return
-    }
+    const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     await changeEntry($, roundPath(await stateDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
-    // A coordinator told this entry closed at the prompt is told it is open again.
-    if (sameWait && typed?.told?.includes(entry.id)) await tellReopened($, coordinator.to, entry)
-    // A turn the operator typed in withdrew the session's older open entries already, above.
-    if (!swept) await supersede($, entry)
     return
   }
   const to = orchestrating
@@ -2655,19 +2521,13 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     : await orchestratorOn($, tty, name, 'relay')
   if (!to) {
     if (role === 'agent') await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    else if (consent && wait?.kind === 'operator') await logLine($, 'supervision', `relay: no coordinator to enter the question of ${name} that asks consent (${subjectLabel(consent)}), no consent can be recorded`)
     return
   }
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
   // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
   // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
   if (orchestrating && wait && patch) {
-    // The consent rides on the ask line, unless its repository is longer than the line holds: then
-    // the ask goes without it, and the log names it.
-    const asked = wait.kind === 'operator' ? consent : null
-    const carried = asked && asked.repo.length <= CONSENT_REPO_CAP ? asked : null
-    if (asked && !carried) await logLine($, 'supervision', `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
-    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
+    const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
     const machine = await machineOf($)
     const sent = await sendToCoordinator($, to, qAskLine(entry, machine))
@@ -2690,197 +2550,6 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
-  }
-}
-
-// A question its project's record already answers (recordedAnswer) never reaches him: its entry is
-// written answered with that answer, its channel and its date, naming the entry that holds it, and
-// the asking session, this one, is told at once.
-async function answerFromRecord($: any, entry: RoundEntry, record: NonNullable<ReturnType<typeof recordedAnswer>>): Promise<void> {
-  const answer: RoundAnswer = { text: recordedChoice(record.answer), by: record.answer.by, at: record.answer.at, record: record.entry.id }
-  await changeEntry($, roundPath(await stateDir($), entry.id), () => ({ ...entry, status: 'answered', answer }))
-  await logLine($, `round: ${entry.id} answered from the record ${record.entry.id}`)
-  const taken = await $.prompt.submit({ text: recordedText(entry, record) })
-  if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, `round: the host dropped the record's answer to ${entry.id}: ${String(taken.drop)}`)
-}
-
-// The most archived entries the record is read from, the newest: the read runs within the turn's
-// relay bound.
-const ARCHIVE_READ = 300
-
-// The entries the record is read from: the round's, and the newest its archive keeps
-// (`coordinator.sh round-archive`). An archive never written, or unreadable, holds none.
-async function readRecords($: any): Promise<RoundEntry[]> {
-  const dir = `${await stateDir($)}/round/archive`
-  const archived: RoundEntry[] = []
-  try {
-    const files = (await $.fs.list(dir) as { name: string; kind: string; mtimeMs?: number }[])
-      .filter(file => file && file.kind === 'file' && file.name.endsWith('.json') && !isTemporary(file.name))
-      .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
-      .slice(0, ARCHIVE_READ)
-    for (const file of files) {
-      const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
-      if (entry) archived.push(entry)
-    }
-  } catch {
-    // No archive: the round alone.
-  }
-  return [...(await readRound($)).map(({ entry }) => entry), ...archived]
-}
-
-// The operator typed a prompt (composer or bridge) in an orchestrator whose relayed question
-// is still on him. What he typed is taken as the answer: the question is withdrawn at once, as
-// answered in the tab, and its fingerprint forgotten, so the pane stops showing it while the turn
-// runs. The session's wait file keeps a mark of it for the turn's end (relayTurnEnd), which enters
-// it again when the turn ends on the same wait. The mark is written before the withdrawal is
-// sent, as not done: the bound may abandon this work, and a turn that ends meanwhile reads it and
-// tries again. It is updated once the withdrawal is done, unless the turn's end has taken the mark
-// by then: a mark written after the turn would outlive it. Anything else does nothing, a slash
-// command included: it starts no turn, so nothing would read the mark. Without a coordinator
-// nothing is withdrawn. A wait file that holds no question (the last turn ended on done) leaves
-// the round's own open entry of the session to be withdrawn, the earliest when several, when the
-// coordinator runs on this machine, but only for the first prompt of a turn: a second one finds
-// the first one's mark and has no other entry of the session to withdraw. The wait is re-read
-// before it is written back, a turn's start may have written it.
-export async function withdrawOnTyped($: any, kind: string, text: string): Promise<void> {
-  if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return
-  // Read before the first await: the turn this prompt starts makes the declaration stale.
-  const declared = DECLARATIONS.current()
-  const consent = declared?.kind === 'operator' ? declared.consent ?? null : null
-  const sessionId = await $.session.id()
-  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  let name = row?.name ?? null
-  if (!row?.role) {
-    const walked = await walkWithinBound($, sessionId)
-    if (walked.known) name = walked.name
-  }
-  if (!name || !entersRound(roleOf(name))) return
-  const coordinator = await coordinatorAddress($)
-  if (!coordinator) return
-  const prior = await readWait($, sessionId)
-  const held = heldQuestion(prior) ?? (coordinator.local && !prior?.typed ? await openQuestion($, sessionId) : null)
-  if (!held) return
-  const heldKey = prior?.relayed ?? null
-  const said = tabText(text)
-  const mark = { ...held, ...(said ? { said } : {}) }
-  if (prior) await writeWait($, sessionId, { ...prior, typed: { ...mark, withdrawn: false } })
-  const told = await withdrawHeld($, sessionId, name, mark, consent)
-  const now = await readWait($, sessionId)
-  if (!now?.typed) return
-  // The fingerprint is forgotten with the withdrawal, as the turn's end did: the same question
-  // asked again is relayed again. A wait rewritten while the withdrawal was sent keeps its own.
-  const relayed = told !== null && (now.relayed ?? null) === heldKey ? null : now.relayed ?? null
-  await writeWait($, sessionId, { ...now, relayed, typed: { ...mark, withdrawn: told !== null, told: told ?? [] } })
-}
-
-// The session's open operator entry in the round, the earliest when several: the question a
-// later turn's wait left open and the wait file no longer names (it ended on done, say).
-async function openQuestion($: any, sessionId: string): Promise<{ blocks: string; since: string | null } | null> {
-  const open = (await readRound($))
-    .map(({ entry }) => entry)
-    .filter(entry => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open' && !!entry.blocks)
-    .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
-  return open.length > 0 ? { blocks: open[0].blocks!, since: open[0].since } : null
-}
-
-// The held question withdrawn as the operator types in the tab (or at the end of the turn he
-// typed in, when that failed): answered in the sender's own tab. An entry in the round of a
-// coordinator on this machine is marked, a coordinator elsewhere is sent the withdrawal. Null
-// when it is not done, a send refused being one log line and the fingerprint kept; else the ids
-// of the entries the coordinator on this machine was told closed, so the question asked again is
-// relayed again, and the coordinator told when it is open again (tellReopened). `consent` is the
-// subject the caller read before its own awaits: the declaration is stale once the next turn starts.
-async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }, consent: ConsentSubject | null): Promise<string[] | null> {
-  const coordinator = await coordinatorAddress($)
-  if (!coordinator) return null
-  try {
-    if (coordinator.local) {
-      const settled = await withdrawEntry($, sessionId, name, held)
-      await tellSettled($, settled)
-      return settled.map(({ entry }) => entry.id)
-    }
-    await answeredInTab($, sessionId, held.since)
-    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since, held.said))
-    if (sent?.isDelivered) {
-      // The round of a coordinator elsewhere is not this machine's: no consent record is written
-      // here for the words typed, and the log keeps a trace of it.
-      if (consent) await logLine($, 'supervision', `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
-      return []
-    }
-    await logLine($, 'supervision', `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
-    return null
-  } catch (err) {
-    await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
-    return null
-  }
-}
-
-// The question a coordinator elsewhere holds for this wait, settled here first by what the operator
-// typed in this tab: kept as the last answer taken (answeredKey), so the pane's answer crossing it
-// is told « already answered » (receiveAnswer), the owner's first settlement winning.
-async function answeredInTab($: any, sessionId: string, since: string | null): Promise<void> {
-  const wait = await readWait($, sessionId)
-  const id = wait?.relayed_id ?? wait?.pending ?? null
-  if (!id || !since) return
-  await writeAtomic($, `${await storeOf($)}/${answeredKey(sessionId)}`, JSON.stringify({ id, since, by: 'tab' }) + '\n')
-}
-
-// The question of a session's wait that a coordinator elsewhere holds (acknowledged: `relayed`) or
-// was sent and has not yet acknowledged (`pending`), with the name it was asked under. Null when
-// the wait holds none, or names no one to withdraw it as.
-async function remoteQuestion($: any, sessionId: string): Promise<{ name: string; held: { blocks: string; since: string | null } } | null> {
-  const wait = await readWait($, sessionId)
-  if (!wait) return null
-  const sent = (wait.waiting ?? wait.last_waiting ?? null) === 'operator' && !!wait.pending && typeof wait.blocks === 'string' && wait.blocks !== ''
-    ? { blocks: wait.blocks, since: wait.waiting_since ?? null }
-    : null
-  const held = heldQuestion(wait) ?? sent
-  const name = wait.name ?? parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))?.name ?? null
-  return held && name ? { name, held } : null
-}
-
-// The marked withdrawal of a session that ended, sent to the coordinator on another machine (the
-// one on this machine reads the round the session end withdrew). A send not delivered is one log
-// line: the session has no other chance to say it.
-async function withdrawRemote($: any, name: string, held: { blocks: string; since: string | null }): Promise<void> {
-  const coordinator = await coordinatorAddress($)
-  if (!coordinator || coordinator.local) return
-  try {
-    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
-    if (!sent?.isDelivered) await logLine($, 'supervision', `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
-  } catch (err) {
-    await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
-  }
-}
-
-// The session's open question with choices that this very wait holds, the same blocks since the
-// same start: a text without choices under it is a note on that question, never a new one.
-async function keptChoices($: any, entry: RoundEntry): Promise<{ path: string; entry: RoundEntry } | null> {
-  return (await readRound($)).find(({ entry: open }) =>
-    open.session === entry.session && open.kind === 'operator' && open.status === 'open'
-    && open.blocks === entry.blocks && open.since === entry.since && open.choices.length > 0) ?? null
-}
-
-// The stored entry of a wait asked again takes the urgent mark of the new one, or its absence, and
-// the consent subject the new one asks, when it asks one (a note that declares none leaves the
-// stored question's own), and nothing else of it: written only when one of them changes.
-async function takeUrgent($: any, kept: { path: string; entry: RoundEntry }, entry: RoundEntry): Promise<void> {
-  const differs = (current: RoundEntry) => Boolean(current.urgent) !== Boolean(entry.urgent)
-    || (!!entry.consent && JSON.stringify(current.consent) !== JSON.stringify(entry.consent))
-  if (!differs(kept.entry)) return
-  await changeEntry($, kept.path, current => {
-    if (!current || !differs(current)) return null
-    const { urgent: _, ...plain } = current
-    return withConsent(entry.urgent ? { ...plain, urgent: true } : plain, entry.consent ?? null)
-  })
-}
-
-// The urgent mark of a wait that asks nothing, copied onto its session's open questions with
-// choices: they stay open beside it (the operator's report of 2026-10-25), and its urgency is theirs.
-async function markUrgent($: any, sessionId: string): Promise<void> {
-  for (const { path, entry } of await readRound($)) {
-    if (entry.session !== sessionId || entry.status !== 'open' || entry.urgent || !carriesChoices(entry)) continue
-    await changeEntry($, path, current => current && current.status === 'open' && !current.urgent ? { ...current, urgent: true } : null)
   }
 }
 
@@ -2929,11 +2598,6 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
   }
   if (direct.length === 0) await logLine($, 'supervision', `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
-}
-
-// The entry with the subject its question asks consent on, when its sender declared one.
-export function withConsent(entry: RoundEntry, consent: RoundEntry['consent'] | null): RoundEntry {
-  return consent ? { ...entry, consent } : entry
 }
 
 // The operator's answer to an entry that asks his consent, written as that subject's consent
@@ -3259,7 +2923,7 @@ async function entryIsOpen($: any, id: string): Promise<boolean> {
 // still holds that entry's own fingerprint (a later wait may have replaced it).
 export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   const now = await readWait($, entry.session)
-  if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...withoutMark(now), relayed: null })
+  if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
 
 // The message the asking orchestrator receives: a report of the operator's choice, never more.
@@ -3600,19 +3264,6 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
 }
 
-// A new question is what its session waits on now: its older open entries are not, a closing
-// proposal withdrawing none. A wait that asks nothing never withdraws its session's open
-// question with choices, which only copies its urgent mark. An entry moved here from a
-// predecessor is the operator's question still, whatever this session asks next: only its
-// answer, a settle, the tab's typed answer or this session's own end settles it.
-async function supersede($: any, entry: RoundEntry): Promise<void> {
-  if (entry.kind !== 'operator') return
-  const silent = asksNothing(entry)
-  if (silent && entry.urgent) await markUrgent($, entry.session)
-  const standing = (open: RoundEntry) => open.movedFrom !== undefined || (silent && carriesChoices(open))
-  await tellSettled($, await withdrawStale($, entry.session, entry.id, `superseded by ${entry.id}`, standing))
-}
-
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
 // session alone, one that passes every check is entered in the round with where it came from, its
 // session's older entries superseded as a local one's are, and acknowledged to its sender. The same
@@ -3644,18 +3295,11 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
     if (known?.since === asked.entry.since && known.origin && (known.origin.line === 'q') !== byEvent) {
       return { consumed: 'orchestrator: a remote question received by its other line, ignored' }
     }
-    if (known?.since === asked.entry.since) {
-      if (known.status === 'open') {
-        step = 'the urgent mark'
-        await takeUrgent($, { path, entry: known }, asked.entry)
-      }
-    } else {
+    if (known?.since !== asked.entry.since) {
       const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from, ...(byEvent ? { line: 'q' as const } : {}) } }
       step = 'the entry write'
       await changeEntry($, path, () => entry)
       await logLine($, 'supervision', `round: entered from ${asked.machine}: ${entry.id}`)
-      step = 'the supersede'
-      await supersede($, entry)
       step = 'the deck refresh'
       await refreshDeck($)
       step = 'the pane redraw'
