@@ -33,7 +33,7 @@ import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type 
 import { recordNamedIn } from './lib/record-paths.ts'
 import { auditRun, pointerOf, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { prRefsOf } from '../../../core/learning.ts'
-import { archiveSettled } from '../../coordinator/scripts/round.ts'
+import { archiveSettled } from './lib/round-archive.ts'
 
 export const USAGE =
   'usage: succession.sh live|check <brief> [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
@@ -286,8 +286,8 @@ function prune(path: string, how: (text: string, archive: string) => Pruned, now
   return result
 }
 
-// The round's entries settled over a day ago, moved to its archive as `coordinator.sh round-archive`
-// moves them: a move that fails is said, and the succession goes on.
+// The round's entries settled over a day ago, moved to its archive as `round-archive` moves them:
+// a move that fails is said, and the succession goes on.
 function archiveRound(state: string, now: Date, io: Io): number {
   try {
     return archiveSettled(join(state, 'round'), now)
