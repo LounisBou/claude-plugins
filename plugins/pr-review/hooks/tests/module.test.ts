@@ -290,15 +290,17 @@ test('a loop started in a session the orchestrator spawned runs the rounds its p
   expect(stubs.ghCalls?.find((c) => c.command === 'pr-plan')).toEqual({ command: 'pr-plan', args: { pr: 12 }, repo: 'LounisBou/claude-review' })
 })
 
-test('with a former one-pass plan, a loop the orchestrator spawned runs one pass', async ($, on) => {
-  wireRecord(on, { records: [], prCalls: 0, plan: planAnswer({ need: 'one-pass', reason: 'a typo' }) })
-  spawnedEnv(on, '1')
-  expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 1')
-})
+for (const need of ['one-pass', 'none']) {
+  test('with a stored ' + need + ' plan, a loop the orchestrator spawned runs one pass', async ($, on) => {
+    wireRecord(on, { records: [], prCalls: 0, plan: planAnswer({ need, reason: 'a typo' }) })
+    spawnedEnv(on, '1')
+    expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 1')
+  })
+}
 
 for (const [label, plan] of [
   ['a plan silent on the review', planAnswer({ need: 'required', reason: '' })],
-  ['a review given none', planAnswer({ need: 'none', reason: 'a typo' })],
+  ['a review given a word no plan holds', planAnswer({ need: 'maybe', reason: 'a typo' })],
   ['no plan', { result: 'no check plan for LounisBou/claude-review#12' }],
   ['a github without pr-plan', { deny: 'unknown command pr-plan' }],
 ] as const) {

@@ -129,7 +129,7 @@ export function register(on: On<Held>): void {
             detail: { type: 'string', description: 'pass or fail: one line on what was reviewed or found' },
             plan: {
               type: 'object',
-              description: 'in place of the verdict: each "<need>" or "<need>: <reason>"; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
+              description: 'in place of the verdict: each "<need>" or "<need>: <reason>"; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap + '; the review is never skipped, "one-pass" for a mechanical pull request is one round with no correction round',
               properties: {
                 e2e: { type: 'string', description: needsOf('e2e') },
                 norms: { type: 'string', description: needsOf('norms') },
