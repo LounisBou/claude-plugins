@@ -2517,6 +2517,18 @@ lcproject '{"command": ["python3", "-c", "print(1)"], "prepare": ["python3", "-c
 check "light_ci run writes nothing when prepare fails" "1 1 $n" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'prepare python3 -c import sys; sys.exit(1) exited 1, no tests run, nothing recorded' "$LC/err") $(lccount)")"
 
+# prepare then command, each with {base} replaced by the merge base; the command's record is the run's.
+printf 'import sys\nprint(sys.argv[1], sys.argv[3], file=open(sys.argv[2], "a"))\n' > "$LC/step.py"
+rm -f "$LC/order.txt"
+lcproject '{"prepare": ["python3", "'"$LC"'/step.py", "prepare", "'"$LC"'/order.txt", "{base}"], "command": ["python3", "'"$LC"'/step.py", "command", "'"$LC"'/order.txt", "{base}"]}'
+sleep 1
+lcrun >/dev/null 2>&1; code=$?
+check "light_ci run runs prepare then the command, {base} replaced by the merge base in both" "0 prepare ${BASESHA}⏎command ${BASESHA}⏎" \
+  "$code $(joinlines < "$LC/order.txt")"
+check "light_ci run records the command of a run that had a prepare, by light-ci, as a pass" "pass light-ci 1" \
+  "$(lcrecord | python3 -c 'import sys; r=sys.stdin.read().split(" ", 2); print(r[0], r[1], 1 if r[2].startswith("python3 ") and "step.py command " in r[2] else r[2])')"
+n=$(lccount)
+
 # The guards of a run: a pull request no longer open, a head that moves while the tests run, a record that cannot be written.
 lcproject '{"command": ["python3", "-c", "print(1)"]}'
 lcpull_as() { printf '%s' '{"number":12,"state":"'"$1"'","merged_at":'"$2"',"head":{"sha":"'"$LCHEAD"'","ref":"feat-b"},"base":{"ref":"feat-a"}}' > "$LC/fix/GET_repos_acme_thing_pulls_12.json"; }
