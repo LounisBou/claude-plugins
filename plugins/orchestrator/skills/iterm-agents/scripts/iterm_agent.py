@@ -4760,8 +4760,9 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
-                    "left of its caller, reads \"Audit: <subject>\", runs on the caller's "
-                    "model and effort and comes up under remote control" % flag)
+                    "left of its caller, reads \"Audit: <subject>\", runs on the pair given "
+                    "with --model and --effort, else on its caller's, and comes up under "
+                    "remote control" % flag)
         if bool(args.model) != bool(args.effort):
             die("spawn: refused: an auditor takes --model and --effort together, or neither "
                 "(the caller's pair): half a pair is a guess at the other half")

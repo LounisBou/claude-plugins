@@ -685,7 +685,7 @@ mode_check=skipped
 program=/bin/sh -l <launch-file>
 exit=0
 ### auditor, tier refused
-ERROR: spawn: refused: --tier is not an auditor's: an auditor lands immediately left of its caller, reads "Audit: <subject>", runs on the caller's model and effort and comes up under remote control
+ERROR: spawn: refused: --tier is not an auditor's: an auditor lands immediately left of its caller, reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control
 exit=1
 ### coordinator successor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
