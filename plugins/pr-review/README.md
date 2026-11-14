@@ -63,7 +63,7 @@ context when there is enough to justify it. A reviewer asking for a change is no
 its own a reason to make it.
 
 **`/pr-review:auto-fix-loop`** — the autonomous counterpart: review, fix, re-review,
-until clean or until a pass limit. Use it when you want the cycle run for you rather
+until no Critical or Important finding is left, or until a pass limit. Use it when you want the cycle run for you rather
 than presented to you. Its reviewer mode (`review_only`), run by a session that did not
 write the code (implement's `/implement:review` launches one), makes one pass and fixes
 nothing: its findings are the verdict.
@@ -113,7 +113,7 @@ and every skill keeps its own route.
   runs — answering the open items, the counts, the tier and the line to announce.
 - **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
   findings and fix log, held outside the model's memory. While a loop runs and
-  neither exit condition (a clean review, the pass limit) is met, a stop is refused once,
+  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop is refused once,
   naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
@@ -122,7 +122,7 @@ and every skill keeps its own route.
   the module reads them. An agent the host runs in the background is read from its own
   hand-back (its `SubagentHandback` call, else its last answer); until every one has
   answered, `findings` asks to wait and a stop is let through. A clean exit needs every
-  agent of the pass to report none, and a reviewer's verdict needs at least one agent;
+  agent of the pass to report no Critical or Important finding, and a reviewer's verdict needs at least one agent;
   a background agent whose hand-back has no block is asked for it once (`findings` names
   its agentId for a SendMessage, and keeps its place); an agent still without a readable
   block (or one that fails) leaves the severity unknown, and the record's detail and
@@ -130,9 +130,7 @@ and every skill keeps its own route.
   turn ends in error or aborted is silent at once, and a stop is held while an agent
   without its block waits to be asked again. Every agent launched during a pass is a
   reader of it, whatever its type, but a norms agent (`norms:…`), left as it is.
-  A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
-  the last review's agents reported nothing Critical or Important, and `fail`
-  otherwise, or when the severity is unknown. A reviewer's loop (`review_only`) ends
+  A clean review writes `pass`. A loop stopped by the pass limit writes `fail`. A reviewer's loop (`review_only`) ends
   after its one pass and records its findings' verdict. A `fail` is judged by the
   orchestrator, through its review tool, which can accept it at the same head; the loop
   lifts nothing itself. github refuses a review record written by the session that pushed

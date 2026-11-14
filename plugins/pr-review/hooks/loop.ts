@@ -21,8 +21,8 @@ export const LOOP_DESCRIPTION =
   'pr-review: the state of /pr-review:auto-fix-loop. Actions: start {test_command, review_only} once before '
   + 'the first pass (review_only: a reviewer\'s loop, one pass and no fix, its first findings end it with exit reviewed); begin_pass before each review (answers the pass number, or exit max_passes); '
   + 'findings {keys} after each review, one key per finding as "<file>::<summary>" (answers which '
-  + 'keys are new and which were seen; an empty list answers exit clean when every review agent '
-  + 'reported none, and the Critical and Important count is read from the agents\' own blocks); fixed {key, sha, '
+  + 'keys are new and which were seen; an empty list, or keys whose agents reported no Critical or Important finding, answers exit clean, '
+  + 'the count being read from the agents\' own blocks); fixed {key, sha, '
   + 'description} after each commit; reverted {key, sha} after a revert; status for the summary. '
   + 'The answer that carries an exit also carries a record line: the review record left for the '
   + 'github plugin\'s ready guard, or why none was.'
@@ -133,6 +133,12 @@ export function act(e: any, dir?: { dir: string } | { why: string }, maxPasses =
       loop.exit = 'reviewed'
       return { exit: 'reviewed', ...summary() }
     }
+    // Suggestions alone do not hold the loop: it ends on a pass with no Critical or Important finding.
+    if (loop.lastBlocking === 0) {
+      loop.isActive = false
+      loop.exit = 'clean'
+      return { exit: 'clean', ...summary() }
+    }
     const seen = keys.filter((k) => loop.seen.includes(k))
     const fresh = keys.filter((k) => !loop.seen.includes(k))
     loop.seen.push(...fresh)
@@ -186,7 +192,7 @@ export function stopReason(stopHookActive: boolean): string | null {
   }
   if (loop.isReviewing && loop.awaiting.size > 0) return null
   return `pr-review auto-fix-loop: pass ${loop.pass}/${loop.maxPasses}, and the last review reported ${loop.lastFindings} finding(s). `
-    + `The loop ends only on a review with zero findings or after pass ${loop.maxPasses}: call mcp__pr-review__loop begin_pass and run the review again.`
+    + `The loop ends only on a review with no Critical or Important finding or after pass ${loop.maxPasses}: call mcp__pr-review__loop begin_pass and run the review again.`
 }
 
 export function releaseLoop(): void {
@@ -274,7 +280,10 @@ function repoOf(url: string): string | undefined {
 
 // The review record's result and detail for the exit the loop just reached.
 export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string } | null {
-  if (exit === 'clean') return { result: 'pass', detail: `clean at pass ${loop.pass}, ${loop.reports.length} review agents reporting no finding` }
+  if (exit === 'clean') {
+    const none = loop.lastFindings === 0 ? 'no finding' : 'no Critical or Important finding'
+    return { result: 'pass', detail: `clean at pass ${loop.pass}, ${loop.reports.length} review agents reporting ${none}` }
+  }
   if (exit === 'reviewed') {
     const found = `${loop.lastFindings} findings`
     if (loop.lastBlocking === 0) return { result: 'pass', detail: `reviewed: ${found}, none Critical or Important` }
@@ -283,7 +292,6 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
   }
   if (exit !== 'max_passes') return null
   const left = `${loop.lastFindings} findings left after ${loop.pass} passes`
-  if (loop.lastBlocking === 0) return { result: 'pass', detail: `${left}, none Critical or Important` }
   if (loop.lastBlocking === undefined) return { result: 'fail', detail: `${left}, ${unknownSeverity()}`.slice(0, 500) }
   return { result: 'fail', detail: `${left}, ${loop.lastBlocking} Critical or Important` }
 }
