@@ -155,6 +155,20 @@ test('the repository omitted is read from the checkout\'s origin, and unknown it
   expect(roundsOf(none.files)).toEqual({ 1: 1, 2: 0 })
 })
 
+test('with no dir the checkout is the session\'s own cwd, and with neither the repository is said unknown', async () => {
+  const { repo: _repo, dir: _dir, ...bare } = VERDICT
+  const seen: (string | undefined)[] = []
+  const fx = fake()
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: { cwd?: string }) => { if (argv[0] === 'git') seen.push(init?.cwd); return run(argv, init) }
+  await handler()(fx.dollar, { ...bare, cwd: '/work/session' })
+  expect(seen).toEqual(['/work/session'])
+  expect(roundsOf(fx.files)).toEqual({ 1: 1, 2: 1 })
+  const none = fake()
+  expect((await handler()(none.dollar, bare)).result).toContain('the repository of the pull request is not known')
+  expect(roundsOf(none.files)).toEqual({ 1: 1, 2: 0 })
+})
+
 test('a record that cannot be written is said in the answer and the log, and the verdict stands', async () => {
   const fx = fake({ readOnly: true })
   const out = await handler()(fx.dollar, VERDICT)
