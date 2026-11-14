@@ -182,10 +182,14 @@ malformed one declares nothing and says so in one transcript line.
 
 The file changes only through the tool, on the operator's word:
 `auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "<their recorded answer>", "commands": [...]}`
-grants or withdraws one environment under a lock on the file, when `words` names auto-deploy
-(« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement ») and quotes their answer
-in a consent record of auto-deploy on that repository and environment (core's `consent-record.ts`); `on: true` needs that answer to be « Accorder ». `commands` adds declarations for the repository
-(`repo` implied) and needs the same words; the tool never removes one. `auto-deploy-list` prints
+grants or withdraws one environment under a lock on the file. `on: true` rests on the consent
+record of auto-deploy on that repository and environment (core's `consent-record.ts`): it passes
+when their newest recorded answer is « Accorder », whatever `words` says. `on: false` needs `words`
+to name auto-deploy (« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement »,
+« déploiement automatique » or « déploiement continu ») and to quote their answer in such a record.
+`commands` adds declarations for the repository (`repo` implied) and needs what the call's `on` needs (the newest « Accorder » for `true`, the words and the quote for `false`); the
+tool never removes one. A withdrawal writes no consent record: the answer « Accorder » stays the newest
+until the operator answers « Refuser », and a later `on: true` passes on it. `auto-deploy-list` prints
 each granted environment. A Write, an Edit or a shell command on the file is refused.
 
 ## Ready pull requests

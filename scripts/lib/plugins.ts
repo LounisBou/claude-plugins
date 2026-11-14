@@ -1,6 +1,6 @@
 // The plugins of the repository, read from their own manifests: the one source of a plugin's
 // name, version and description. Everything that lists plugins goes through here.
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -89,8 +89,13 @@ function requireString(record: Record<string, unknown>, key: string, origin: str
   return value
 }
 
-/** True when the module at `moduleUrl` is the script node was started with. */
+/** True when the module at `moduleUrl` is the script node was started with, even through a symbolic link. */
 export function isEntry(moduleUrl: string): boolean {
   const script = process.argv[1]
-  return script !== undefined && moduleUrl === pathToFileURL(script).href
+  if (script === undefined) return false
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(script)).href
+  } catch {
+    return moduleUrl === pathToFileURL(script).href
+  }
 }

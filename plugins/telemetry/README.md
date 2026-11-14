@@ -32,6 +32,15 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 - `telemetry.ts check --config <dir>`: the same scan, alone.
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.
+- `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
+  report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It
+  prints the spend of the tool against the products' and the unattributed (by repository, from the
+  events, a session's directory naming its repository), with the tool's share held to its 20 % cap, each pull request merged with its delay
+  (`gh`) and the cost of the sessions that name only it, questions and refusals per day (the round
+  files, the events), and the nine figures of the target: those no source holds (agents on every
+  runnable line, merge to service, code per release) print `n/a` and why, never an estimate. The tool
+  is the repository of the working directory unless `--tool` names it. It reads the orchestrator's
+  record registry, round and measure files (`docs/contracts.md`, « Weekly report reads »).
 
 ## Retention
 

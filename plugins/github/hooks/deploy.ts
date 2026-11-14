@@ -8,8 +8,9 @@ import { simpleCommands } from '../core/shell.ts'
 
 // The list's file, in the plugin's data directory beside auto-merge.json.
 export const AUTO_DEPLOY_FILE = 'auto-deploy.json'
-// Auto-deploy as the operator writes it: « auto-deploy », « auto deploy », « autodeploy », « auto-déploiement ».
-export const AUTO_DEPLOY_WORD = /auto[-\s]?(deploy|d[ée]ploi)/i
+// Auto-deploy as the operator writes it: « auto-deploy », « auto deploy », « autodeploy », « auto-déploiement »,
+// « déploiement automatique » or « déploiement continu », in any case, with or without the accents.
+export const AUTO_DEPLOY_WORD = /auto[-\s]?(deploy|d[ée]ploi)|d[ée]ploiement\s+(automatique|continu)/i
 
 // One entry of the list: the repository may be deployed to the environment.
 export type Grant = { repo: string; env: DeployEnv }
