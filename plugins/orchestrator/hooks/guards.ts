@@ -35,7 +35,6 @@ import {
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
-import { agentStopNudge } from './agent-stop.ts'
 import { machineLine } from '../core/method.ts'
 import { moduleDirOf } from './module-log.ts'
 import { launcherOf } from '../core/orchestration.ts'
@@ -535,10 +534,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           await logLine($, 'guards', `stop gate: an agent's report of ${short.length} characters names no report file`)
           return refuse(unnamedReport(short.length))
         }
-        const nudge = agentStopNudge(String(e.last_assistant_message ?? ''), hostTasks(e.background_tasks, e.session_crons))
-        if (nudge === null) return next(e)
-        await logLine($, 'guards', 'stop gate: agent told what to end on')
-        return refuse(nudge)
+        return next(e)
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {

@@ -100,7 +100,7 @@ const DECLARE = 'Declare the wait with the `declare_wait` tool, whose descriptio
 
 // The waits that fit a turn, by what will wake it: what the two refusals below name.
 const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you.'
-const OTHER_FITS = 'If a question for the operator truly blocks, declare an operator wait; '
+const OTHER_FITS = 'If only an irreversible or outward act waits for the operator\'s answer, declare an operator wait; '
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
 const runningFits = (what: readonly string[]) =>

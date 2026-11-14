@@ -66,7 +66,9 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # launched session is started with `--disallowedTools` naming the tools no session has
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings, and, for any
     # title but `Orch:` and `Coord:`, the three that move an orchestrator between machines
-    # (mcp__orchestrator__move_send, move_probe, end_session); an `Orch:` title also loses the
+    # (mcp__orchestrator__move_send, move_probe, end_session); an `Agent:` title also loses the four
+    # only an orchestrator calls (mcp__orchestrator__review, supervision, answered-by-message,
+    # declare_wait); an `Orch:` title also loses the
     # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement). --keep-tool removes a name from
     # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
     # permission pattern to it. Both repeat, take one name each, and are honoured by every path
