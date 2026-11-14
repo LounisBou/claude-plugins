@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { lint as lintWith, parsePhrases, proseLines, refusal, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
-import { PLAN_NEEDS } from '../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
   const registered: string[] = []
@@ -40,6 +40,20 @@ test('the record tool\'s plan schema names the needs core\'s readiness contract 
   const plan = schemas.record.properties.plan.properties
   expect(Object.keys(plan)).toEqual(Object.keys(PLAN_NEEDS))
   for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
+})
+
+test('the record tool\'s plan schema says a required review takes its rounds, up to core\'s cap', async ($, on) => {
+  const schemas: Record<string, any> = {}
+  on('session.start', () => ({ cwd: '/work' }))
+  on('tool.register', (_$, e) => {
+    schemas[e.name] = e.inputSchema
+    return { value: undefined }
+  })
+  on('command.register', () => ({ value: undefined }))
+
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+
+  expect(schemas.record.properties.plan.description).toContain('"required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap)
 })
 
 test('a command name another plugin owns passes through to next', async ($, on) => {
