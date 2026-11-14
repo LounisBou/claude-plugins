@@ -17,8 +17,8 @@ Python launcher.
 | `store/sessions/<id>` | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
 | `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | the session's own hooks | one writer, one rename (gates: a plain write) |
 | `store/remote/<name>` | the receiving session; any reader removes a stale row | one rename, no read-modify-write |
-| `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); `coordinator.sh round-close` and `round-archive` | read-modify-write under the entry's lock |
-| `store/waits/<id>` | the session's own relay; the coordinator's hooks and `round-close`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
+| `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); the coordinator's `settle` (hooks too), `round-archive` and `succession.sh live` | read-modify-write under the entry's lock |
+| `store/waits/<id>` | the session's own relay; the coordinator's hooks and its `settle`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
 | `chains/<tty>.jsonl` | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |
 | `round-woken.json`, `round-told.json` | the coordinator's hooks (two at a succession) | ids added under the file's lock, the list read again first |
 | `store/coordinator-learnt` | every orchestrator's hooks | replaced whole, one rename: the last coordinator learnt |
@@ -30,7 +30,7 @@ Python launcher.
 | `store/moves/<move>/` | the session that receives the move, its messages one at a time | one rename per file (the manifest, each chunk, each acknowledgment); a file's chunks removed once it landed |
 | `briefs/<subject>/<file>` landed by a move, and a dispatch record kept elsewhere landed at its path | the receiving session | under the landed path's lock, one rename; a file already there with other content is refused and left alone |
 | module log, `close.log`, `store/moves/probes.jsonl` | every process | appends |
-| `<config dir>/consents/<owner>/<name>/<entry>.json`, outside the state root: the consent record contract the github plugin reads (the repository's contracts document) | the hooks of the session whose pane takes the operator's answer to a question that asked his consent, or `coordinator.sh round-close` relaying it | one file per question, one rename |
+| `<config dir>/consents/<owner>/<name>/<entry>.json`, outside the state root: the consent record contract the github plugin reads (the repository's contracts document) | the hooks of the session whose pane takes the operator's answer to a question that asked his consent, or the `settle` of the session it answered in | one file per question, one rename |
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).

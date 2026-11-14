@@ -21,10 +21,6 @@
 #                            counting the answered and the withdrawn ones it leaves out;
 #                            --all prints those too, the answered then the withdrawn
 #                            (--by-urgency prints the same order)
-#   coordinator.sh round-close <id> --answer "<text>"   closes one entry with the answer relayed;
-#                            prints "closed <id>"
-#   coordinator.sh round-close <id> --withdraw "<evidence>"   closes one entry settled meanwhile,
-#                            on the evidence read on the artifact; prints "closed <id>"
 #   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
 #
@@ -89,15 +85,8 @@
 # and any other withdrawal on « withdrawn by <who> at <UTC time>: <why> »: every reason recorded
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
-# round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
-# in one rename, and refuses an id with no entry. With --withdraw the answer's text is
-# « withdrawn: settled meanwhile — <evidence> » and the answer also holds the evidence, so the
-# module tells the sender its question was withdrawn, with the evidence, never that it was answered. An entry still open and of kind operator, whose sender waits on that
-# answer, also gets its delivery pending, stamped as the answer ({state "pending", at, attempts 0},
-# with answerAt for a sender on this machine): the coordinator's
-# hooks module sends the answer as soon as that round-close has run in the coordinator's session,
-# and any answer still pending at its next round reading, and writes the outcome there, so the
-# close is the one gesture.
+# An entry is closed with the hooks module's `settle` tool (hooks/question.ts), which writes the
+# answer, records the consent and sends the answer to its sender in the same call.
 # round-archive moves each entry file of <state>/round/ settled over a day ago — closed, answered
 # or withdrawn, at its answer's time (else its start), its delivery absent or delivered — into
 # <state>/round/archive/, a withdrawn one into <state>/round/archive/withdrawn/ (created when
@@ -180,10 +169,10 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# register, clear, lookup, sleep, sleeping, wake-done, drop, round-close and round-archive are
+# register, clear, lookup, sleep, sleeping, wake-done, drop and round-archive are
 # coordinator.ts's, run by node as the plugin's other TypeScript is: same command line, output and exit codes.
 case "${1:-}" in
-    register|clear|lookup|sleep|sleeping|wake-done|drop|round-close|round-archive)
+    register|clear|lookup|sleep|sleeping|wake-done|drop|round-archive)
         command -v node >/dev/null 2>&1 || { echo "coordinator: node is required" >&2; exit 1; }
         exec node --experimental-strip-types --no-warnings "$here/coordinator.ts" "$@" ;;
 esac
@@ -732,7 +721,7 @@ cmd_owners() {
 }
 
 cmd="${1:-}"
-[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-close|round-archive} ... (see header)"
+[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-archive} ... (see header)"
 shift
 case "$cmd" in
     register) cmd_register "$@" ;;
@@ -745,5 +734,5 @@ case "$cmd" in
     wake-done) cmd_wake_done "$@" ;;
     drop) cmd_drop "$@" ;;
     round) cmd_round "$@" ;;
-    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round, round-close or round-archive)" ;;
+    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round or round-archive)" ;;
 esac

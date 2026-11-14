@@ -3871,11 +3871,11 @@ check "the round puts the urgent first, then groups its questions by the orchest
 # round's own order.
 check "the skill and the design say the pane draws the questions with choices first, in the round's order" "yes|no|yes|no" \
   "$(spells "$COORDSKILL" 'the pane draws those with lettered choices first, each set in that order')|$(spells "$COORDSKILL" 'in the pane and with `--by-urgency` alike')|$(spells "$ROOT/docs/design.md" 'the pane drawing those with lettered choices first, each set in that order')|$(spells "$ROOT/docs/design.md" "the round's and the pane's own")"
-# Topic 6.3, the operator's ruling of 2026-10-31: the answer a round-close leaves pending is sent
-# once that command has run in the coordinator's session (hooks/supervision.ts registerCloseRelay),
-# the round's next reading taking only what it left; the script's header and the design say so.
-check "the header and the design send a closed answer once round-close has run, not at the next reading" "yes|no|yes|no" \
-  "$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "hooks module sends the answer as soon as that round-close has run in")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "the coordinator's hooks module sends the answer at")|$(spells "$ROOT/docs/design.md" 'sends that answer as soon as the command has run in its session')|$(spells "$ROOT/docs/design.md" 'sends that answer at its next round reading')"
+# Topic 6.3, the operator's ruling of 2026-10-31: the answer the coordinator settles is sent in the
+# same call (the settle tool, hooks/question.ts), never at the round's next reading; the script's
+# header and the design say so.
+check "the header and the design send a closed answer in the settle call, not at the next reading" "yes|no|yes|no" \
+  "$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "answer, records the consent and sends the answer to its sender in the same call")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "the coordinator's hooks module sends the answer at")|$(spells "$ROOT/docs/design.md" 'then sends that answer in the same call')|$(spells "$ROOT/docs/design.md" 'sends that answer at its next round reading')"
 check "coordinator-decide orders its round as the skill does, never across senders" "yes|no" \
   "$(spells "$ROOT/commands/coordinator-decide.md" 'the urgent level first, then within each level the questions grouped by')|$(spells "$ROOT/commands/coordinator-decide.md" 'with no grouping by orchestrator')"
 check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes|yes" \
@@ -10886,7 +10886,7 @@ check "a remote pull request absent from its repository's open list is not print
 
 # The round: the hooks module writes one entry per wait of an orchestrator on this machine
 # under <state>/round/ (hooks/round.ts), and the coordinator reads it with `round` and closes
-# an entry with `round-close`. The entries' shapes are the module's own; a file that does not
+# an entry with the module's `settle`. The entries' shapes are the module's own; a file that does not
 # parse is skipped, never repaired.
 CROUND="$CS/round"
 mkdir -p "$CROUND"
@@ -10933,98 +10933,6 @@ round a-gone | operator | from Orch: a | since 2026-10-18T09:00:00.000Z | blocks
   "$(COORDINATOR_NOW=$ROUND_NOW coord round --all 2>&1)"
 check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord_status round)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round 2>&1)|$(mkdir -p "$WORK/coord-empty-round/round" && ORCHESTRATOR_STATE_DIR="$WORK/coord-empty-round" bash "$COORD" round 2>&1)"
-out=$(coord round-close b-early --answer 'A, ship it — on 2026-10-18' 2>&1); code=$?
-check "round-close says what it closed" "closed b-early|exit 0" "$out|exit $code"
-check "round-close writes the status and the operator's answer, by the coordinator, stamped in UTC" \
-  "closed|A, ship it — on 2026-10-18|coordinator|1|Ship it?|Orch: b" \
-  "$(jq -r '[.status, .answer.text, .answer.by, (.answer.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") | if . then 1 else 0 end), .question, .from] | join("|")' "$CROUND/b-early.json")"
-check "round-close leaves no temporary file, and round no longer lists the closed entry but still the others" "0|0|1" \
-  "$(find "$CROUND" -name 'b-early.json.tmp-*' | wc -l | tr -d ' ')|$(COORDINATOR_NOW=$ROUND_NOW coord round | grep -c '^round b-early ')|$(COORDINATOR_NOW=$ROUND_NOW coord round | grep -c '^round b-late ')"
-check "a withdrawn entry is closed the same way" "closed a-gone|closed" \
-  "$(coord round-close a-gone --answer 'withdrawn: answered in its own tab' 2>&1)|$(jq -r .status "$CROUND/a-gone.json")"
-check "round-close refuses an unknown id, a path, an unreadable entry and a missing answer, writing nothing" \
-  "exit 1|exit 1|exit 1|exit 1|exit 1|{\"id\": \"half" \
-  "$(coord_status round-close nobody --answer x)|$(coord_status round-close ../coordinator --answer x)|$(coord_status round-close broken --answer x)|$(coord_status round-close a-one)|$(coord_status round-close)|$(cat "$CROUND/broken.json")"
-check "the refusal of an unknown id names it" "coordinator: round-close: no entry nobody in $CROUND" \
-  "$(coord round-close nobody --answer x 2>&1 >/dev/null)"
-# round-close is the one gesture: an open entry's answer is left pending for the coordinator's
-# module, which sends it to the sender; a withdrawn one, whose sender waits on nothing, is not.
-check "round-close leaves an open entry's delivery pending, stamped as its answer, for the module to send" "pending|0|1|1" \
-  "$(jq -r '[.delivery.state, .delivery.attempts, (.delivery.at == .answer.at | if . then 1 else 0 end), (.delivery.answerAt == .answer.at | if . then 1 else 0 end)] | join("|")' "$CROUND/b-early.json")"
-check "round-close leaves no delivery on an entry that was not open" "null" "$(jq -c .delivery "$CROUND/a-gone.json")"
-DROUND="$WORK/coord-done/round"
-mkdir -p "$DROUND"
-jq -n '{id:"d-open", from:"Orch: d", session:"s-d", kind:"done", since:"2026-10-18T10:02:00.000Z", blocks:null,
-  question:"Everything merged.", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null}' > "$DROUND/d-open.json"
-check "round-close closes an open done entry but leaves it no delivery to send" "closed d-open|closed|null" \
-  "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-done" bash "$COORD" round-close d-open --answer ok 2>&1)|$(jq -r .status "$DROUND/d-open.json")|$(jq -c .delivery "$DROUND/d-open.json")"
-FROUND="$WORK/coord-far/round"
-mkdir -p "$FROUND"
-jq -n '{id:"r-far", from:"Orch: r", session:"s-r", kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
-  question:"Ship it far?", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null,
-  origin:{machine:"far", address:"uds:/tmp/cc-socks/far.sock"}}' > "$FROUND/r-far.json"
-check "round-close leaves an entry from another machine pending as the module's remote answers are, with no answer stamp" "closed r-far|pending|0|null" \
-  "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-far" bash "$COORD" round-close r-far --answer B 2>&1)|$(jq -r '[.delivery.state, .delivery.attempts, (.delivery.answerAt | tostring)] | join("|")' "$FROUND/r-far.json")"
-
-# round-close --withdraw: a question settled meanwhile is withdrawn by the coordinator on the
-# evidence it read on the artifact, and its sender is told (the operator's ruling 6.1 of
-# 2026-10-31). The entry is closed as an answer closes it, the evidence kept in the answer beside
-# its text, and its delivery left pending for the module, which tells the sender it was withdrawn.
-WROUND="$WORK/coord-withdraw/round"
-mkdir -p "$WROUND"
-for wid in w-open w-again w-both; do
-  jq -n --arg id "$wid" '{id:$id, from:"Orch: w", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
-    question:"Merge #12?", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null}' > "$WROUND/$wid.json"
-done
-wcoord() { ORCHESTRATOR_STATE_DIR="$WORK/coord-withdraw" bash "$COORD" "$@"; }
-check "round-close --withdraw closes an open entry with its evidence, by the coordinator, its delivery pending as an answer's" \
-  "closed w-open|closed|withdrawn: settled meanwhile — #12 merged at 10:04Z|coordinator|#12 merged at 10:04Z|pending|0|1" \
-  "$(wcoord round-close w-open --withdraw '#12 merged at 10:04Z' 2>&1)|$(jq -r '[.status, .answer.text, .answer.by, .answer.evidence, .delivery.state, .delivery.attempts, (.delivery.answerAt == .answer.at | if . then 1 else 0 end)] | join("|")' "$WROUND/w-open.json")"
-check "round-close --answer writes no evidence" "null" \
-  "$(wcoord round-close w-again --answer A >/dev/null 2>&1; jq -c .answer.evidence "$WROUND/w-again.json")"
-check "round-close refuses --withdraw with no evidence, and beside --answer, writing nothing" \
-  "exit 1|exit 1|exit 1|exit 1|open" \
-  "$(wcoord round-close w-both --withdraw >/dev/null 2>&1; echo "exit $?")|$(wcoord round-close w-both --withdraw '' >/dev/null 2>&1; echo "exit $?")|$(wcoord round-close w-both --withdraw x --answer A >/dev/null 2>&1; echo "exit $?")|$(wcoord round-close w-both --answer A --withdraw x >/dev/null 2>&1; echo "exit $?")|$(jq -r .status "$WROUND/w-both.json")"
-# The coordinator is told to withdraw on evidence, or no coordinator ever runs --withdraw.
-check "the coordination skill closes a question settled meanwhile with round-close --withdraw and its evidence" "yes" \
-  "$(flat_has "$ROOT/skills/coordination/SKILL.md" 'is withdrawn on that evidence and never put to him: `coordinator.sh round-close <id> --withdraw "<the evidence read on the artifact>"`')"
-
-# round-close also forgets the sender's fingerprint, as the module's forgetRelayed does, so the
-# same question asked again is entered again: the wait file's `relayed` is nulled when it is the
-# closed entry's own fingerprint, whatever the entry's kind, blocks, mark and characters, and kept
-# when it is not. The expected fingerprints are the module's own (hooks/relay.ts fingerprint).
-CWAITS="$CLAUDE_CONFIG_DIR/claude-orchestrator/store/waits"
-mkdir -p "$CWAITS"
-fp_entry() {  # <id> <kind> <blocks or -> <urgent 0|1> <question>
-  jq -n --arg id "$1" --arg kind "$2" --arg blocks "$3" --argjson urgent "$4" --arg q "$5" \
-    '{id:$id, from:"Orch: f", session:("s-" + $id), kind:$kind, since:"2026-10-18T10:00:00.000Z",
-      blocks:(if $kind == "operator" then $blocks else null end), question:$q, choices:[], recommendation:null,
-      status:"open", at:"2026-10-18T10:00:00.000Z", answer:null} + (if $urgent == 1 then {urgent:true} else {} end)' > "$CROUND/$1.json"
-}
-fp_wait() {  # <id> <relayed>
-  jq -n -c --arg r "$2" '{waiting:"operator", blocks:"phase 3", waiting_since:"2026-10-18T10:00:00.000Z", relayed:$r, name:"Orch: f", pid:"1", typed:{blocks:"phase 3", since:null}}' > "$CWAITS/s-$1"
-}
-fp_entry fp-plain operator 'phase 3' 0 'Ship it?';        fp_wait fp-plain 17-fdd599a1
-fp_entry fp-text operator '' 0 'Ship it? 🚀 Café';          fp_wait fp-text 26-6c02a0af
-fp_entry fp-urgent operator 'phase 3' 1 'Ship it?';       fp_wait fp-urgent 24-fd010f64
-fp_entry fp-done done - 0 'Everything merged. 🚀';         fp_wait fp-done 27-c971227f
-fp_entry fp-other operator 'phase 3' 0 'Ship it?';        fp_wait fp-other 17-00000000
-fp_entry fp-nowait operator 'phase 3' 0 'Ship it?'
-fp_entry fp-broken operator 'phase 3' 0 'Ship it?';       printf '{"relayed": "half' > "$CWAITS/s-fp-broken"
-out=$(coord round-close fp-plain --answer A 2>&1); code=$?
-check "round-close says only that it closed when it forgot the fingerprint" "closed fp-plain|exit 0" "$out|exit $code"
-for id in fp-text fp-urgent fp-done fp-other fp-nowait fp-broken; do coord round-close $id --answer A >"$WORK/fp-$id.out" 2>"$WORK/fp-$id.err"; echo "exit $?" >> "$WORK/fp-$id.out"; done
-check "round-close nulls the relayed fingerprint it matches, a plain one, a non-ASCII one, an urgent one and a done one, and the turn's mark with it" \
-  "null|null|null|null|false" \
-  "$(jq -r '.relayed' "$CWAITS/s-fp-plain")|$(jq -r '.relayed' "$CWAITS/s-fp-text")|$(jq -r '.relayed' "$CWAITS/s-fp-urgent")|$(jq -r '.relayed' "$CWAITS/s-fp-done")|$(jq 'has("typed")' "$CWAITS/s-fp-plain")"
-check "round-close keeps the rest of the wait file, and leaves no temporary file" "operator|phase 3|Orch: f|0" \
-  "$(jq -r '[.waiting, .blocks, .name] | join("|")' "$CWAITS/s-fp-plain")|$(find "$CWAITS" -name '*.tmp-*' | wc -l | tr -d ' ')"
-check "round-close keeps a fingerprint that is not the closed entry's, a later wait's" "17-00000000|closed" \
-  "$(jq -r .relayed "$CWAITS/s-fp-other")|$(jq -r .status "$CROUND/fp-other.json")"
-check "round-close still closes with no wait file, saying nothing, and with one that does not parse, saying so on stderr" \
-  "exit 0|exit 0|closed|closed|0|1|{\"relayed\": \"half" \
-  "$(tail -1 "$WORK/fp-fp-nowait.out")|$(tail -1 "$WORK/fp-fp-broken.out")|$(jq -r .status "$CROUND/fp-nowait.json")|$(jq -r .status "$CROUND/fp-broken.json")|$(wc -l < "$WORK/fp-fp-nowait.err" | tr -d ' ')|$(wc -l < "$WORK/fp-fp-broken.err" | tr -d ' ')|$(cat "$CWAITS/s-fp-broken")"
-
 # round-archive moves the entries settled over a day ago into round/archive/, the withdrawn into
 # its withdrawn/; round reads no archive, so an entry planted there open is neither printed nor counted.
 AROUND="$WORK/coord-archive"
@@ -11057,7 +10965,6 @@ check "round-archive refuses an argument and moves nothing" "exit 1|0" \
 arch_entry z-hidden open; mv "$AROUND/round/z-hidden.json" "$AROUND/round/archive/z-hidden.json"
 check "round prints nothing from the archive, even an entry there with the status open" "0|1" \
   "$(acoord round | grep -c 'z-hidden\|z-closed')|$(acoord round | grep -c '^round z-open ')"
-check "round-close does not find an archived entry" "exit 1" "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-close z-hidden --answer x >/dev/null 2>&1; echo "exit $?")"
 
 # A sender that has ended leaves its question in the round: it is still printed, and its header
 # says the sender is gone, so the coordinator does not relay a question nobody can answer.
@@ -11257,10 +11164,10 @@ check "with no pane open every open question is due, a closing proposal still no
   "4|0|4|4" \
   "$(mv "$DSTATE/pane.json" "$WORK/coord-due-pane"; dround | grep -c ' | open | due$')|$(dround | grep -c '^round zdone .* | due')|$(printf '{"session":"s-coord","pid":"4243"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')|$(printf '{"session":"s-coord"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')"
 # An entry answered in the pane is never due, pane open or not, and once the coordinator closes
-# it with round-close it is never listed again: the tab never presents it.
-check "an entry answered in the pane is never due, and once closed with round-close is never listed again" \
-  "0|closed xu|0|0" \
-  "$(dround | grep -c '^round xu .* | due')|$(ORCHESTRATOR_STATE_DIR="$DSTATE" bash "$COORD" round-close xu --answer 'answered from the pane: A : ship it' 2>&1)|$(dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
+# it (the module's settle writes it closed) it is never listed again: the tab never presents it.
+check "an entry answered in the pane is never due, and once closed is never listed again" \
+  "0|0|0" \
+  "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
 check "round refuses a pinned clock that is no UTC time" "exit 1|coordinator: round: COORDINATOR_NOW is no UTC time: soon" \
   "$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round >/dev/null 2>&1; echo "exit $?")|$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round 2>&1)"
 # round --by-urgency lists the same lines, due marked the same, each set ordered urgent first,
@@ -12704,7 +12611,7 @@ leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
 # The tools only an orchestrator calls: an implementer agent is never given them.
-LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait"
+LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
 check "an agent loses the five unused tools, the three that move an orchestrator and the four only an orchestrator calls" "$LEANBASE $LEANMOVE $LEANAGENT" \
@@ -12717,7 +12624,7 @@ check "an auditor loses the five and the three, and keeps the four only an orche
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
-check "--keep-tool brings one of the four back to an agent" "$LEANBASE $LEANMOVE mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait" \
+check "--keep-tool brings one of the four back to an agent" "$LEANBASE $LEANMOVE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
   "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
