@@ -267,6 +267,24 @@ test('a question its project already had answered is answered from the newest re
   expect(shown).toEqual([])
 })
 
+test('words typed in a tab are a record only when they name one choice: free prose newer than a lettered answer is passed over', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const [first] = stored(before.files)
+  const typed = (id: string, text: string, at: string) =>
+    JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text, by: 'tab', at, settler: 'x' } })
+  const { dollar, files } = world({
+    files: {
+      [`${ROUND}/q-lettered.json`]: typed('q-lettered', 'b', '2026-11-10T10:00:00.000Z'),
+      [`${ROUND}/q-prose.json`]: typed('q-prose', 'hold on, look at the logs first', '2026-11-12T10:00:00.000Z'),
+    },
+  })
+  await ask(dollar, fields)
+  const mine = stored(files).find(entry => entry.sender.session === 's-me')!
+  expect(mine.answer).toMatchObject({ text: 'b', by: 'tab', record: 'q-lettered' })
+})
+
 // His answer typed in the asker's own tab (§ 4.3): the prompt claims its open questions, which leave
 // the pane at once; the turn's end answers each with his words, unless its operator wait keeps it.
 test('a prompt he types claims the asker\'s open questions; the turn\'s end answers them with his words, but those its wait keeps', async () => {

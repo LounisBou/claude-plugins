@@ -391,8 +391,8 @@ export function askedKey(entry: Pick<Asked, 'sender' | 'blocks' | 'consent' | 's
   ])
 }
 
-// The answers that are the operator's own: given in the asker's tab, in the pane or through the
-// coordinator. An answer relayed by a message, or a withdrawal, records nothing.
+// The answers that are the operator's own: given in the asker's tab (naming one choice), in the pane
+// or through the coordinator. An answer relayed by a message, or a withdrawal, records nothing.
 const OWN_ANSWERS: readonly string[] = ['tab', 'pane', 'coordinator']
 
 /** The newest answer of his own to a question asking the same, in the round or its archive; null when none. */
@@ -409,6 +409,8 @@ export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promis
   for (const other of [...await readAsked($), ...archived]) {
     if (other.status !== 'answered' || other.answer === null || !OWN_ANSWERS.includes(other.answer.by) || other.answer.record !== undefined) continue
     if (askedKey(other) !== key) continue
+    // Words typed in a tab are his answer only when they name one choice unambiguously, as the relay's record holds.
+    if (other.answer.by === 'tab' && !answersChoice(other.answer.text, other.choices)) continue
     if (found === null || other.answer.at > (found.answer?.at ?? '')) found = other
   }
   return found
