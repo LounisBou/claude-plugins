@@ -348,7 +348,10 @@ test('the band draws the phase run, and nothing outside one', async ($, on) => {
   await start($)
   await skill($, 'phase')
   const ui = await $.ui.mount({ ...BAND_SITE } as any)
-  const pieces = await ui.findAll({ type: 'Text' })
+  // The band's own node, so the texts of other components (the engine's band) stay out.
+  const band = await ui.find({ type: 'Box', key: 'implement' })
+  expect(band).toBeDefined()
+  const pieces: any[] = band.children.map((c: any) => ({ text: c.children.join(''), props: c.props }))
   expect(pieces.map(t => t.text).join('')).toBe('implement:phase demo · phase 02/03 doing: the core · base 9f31a0c · head fedcba9')
   const piece = (text: string) => pieces.find(t => t.text.startsWith(text))!.props
   expect(piece('implement:phase demo').bold).toBe(true)
@@ -358,6 +361,7 @@ test('the band draws the phase run, and nothing outside one', async ($, on) => {
   await $.command.run({ command: 'implement:release-guard', args: '' })
   const quiet = await $.ui.mount({ ...BAND_SITE } as any)
   expect(await quiet.find({ type: 'Text', text: /implement:phase/ })).toBeUndefined()
+  expect(await quiet.find({ type: 'Box', key: 'implement' })).toBeUndefined()
   expect(await quiet.find({ type: 'Text', text: 'the engine band' })).toBeDefined()
   await quiet.unmount()
 })
