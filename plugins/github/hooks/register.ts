@@ -11,6 +11,7 @@ import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
+import { PLAN_NEEDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
@@ -2103,10 +2104,10 @@ export function register(on: any): void {
             plan: {
               type: 'object',
               description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
-              properties: {
-                e2e: { type: 'string', description: 'required, none or screenshots' }, norms: { type: 'string', description: 'required or none' },
-                review: { type: 'string', description: 'full or one-pass (one review_only pass)' },
-              },
+              // The needs each check may be given are core's readiness contract's alone.
+              properties: Object.fromEntries(
+                Object.entries(PLAN_NEEDS).map(([check, needs]) => [check, { type: 'string', description: needs.join(', ') }]),
+              ),
             },
             dir: { type: 'string', description: 'absolute path of that checkout (default: the session\'s directory)' },
           },
