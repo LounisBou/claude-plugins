@@ -262,7 +262,7 @@ Requires push access to the repository.
 `python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates the sha shape, the kind, `waived` and `not-applicable` for `e2e` only (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
+- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
 - It writes under a temporary name in the same directory, then renames; prints the path; exits 2 on a usage error. Standard library only.
 
 ### Fields (one JSON object per file)
@@ -277,8 +277,8 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest; named in the `Ready` line; a `fail` still holds.
+- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass` or `waived`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in the `Ready` line; a `fail` holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
 - Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
@@ -292,7 +292,7 @@ names no consumer.
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
-| orchestrator `mcp__orchestrator__review` | review | `{pr, repo?, dir?, verdict: pass\|fail\|accepted, set_asides?, detail?}` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
+| orchestrator `mcp__orchestrator__review` | review | `{pr, repo?, dir?, verdict: pass\|fail\|accepted, kept?, set_asides?, detail?}` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason and files with no runtime (below) |
 
 A review record is refused from the session that pushed the head it reviews.
@@ -408,9 +408,7 @@ The E2E exemption and check plan files are refused alike (`github: an E2E exempt
 `record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
 directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs a detail found verbatim in a prompt the operator typed, or in dated quotes of it naming
-the waiver, or quoting their answer (8 characters at least) in a consent record of an E2E
-waiver of that pull request, carrying a date.
+needs the operator's waiver (above), his dated answer its detail.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

@@ -24,13 +24,15 @@
 // `check` refuses (exit 1) a brief that misses an open item of the state: an open row, an open
 // pull request, a running agent or a pending question, each one it misses named.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { readText, writeAtomic } from '../../../core/store.ts'
 import type { Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type PruneResult } from './prune.ts'
 import { recordNamedIn } from './lib/record-paths.ts'
+import { auditRun, pointerOf, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
+import { prRefsOf } from '../../../core/learning.ts'
 
 export const USAGE =
   'usage: succession.sh live|check <brief> [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
@@ -260,7 +262,7 @@ function prune(path: string, how: (text: string, archive: string) => Pruned, now
   return result
 }
 
-export function main(argv: readonly string[], env: Env, io: Io, now: () => Date = () => new Date()): number {
+export function main(argv: readonly string[], env: Env, io: Io, now: () => Date = () => new Date(), journal?: Journal): number {
   const parsed = parseArgs(argv)
   if ('error' in parsed) {
     io.err(`succession: ${parsed.error}\n`)
@@ -285,6 +287,11 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
       return 0
     }
     for (const item of missing) io.err(`succession: the brief misses ${item}: run succession.sh live\n`)
+    // A brief that would hand over less than the state holds: the method's failure, counted, its words left out.
+    const pointer = pointerOf(resolve(parsed.brief), env)
+    writeAudit(journal, auditRun(env, now()), 'failure', 'orchestrator.succession.lost-state',
+      { failure: 'succession-lost-state', count: missing.length, prs: prRefsOf(missing.join(' ')) },
+      { evidence: pointer === null ? [] : [{ type: 'record', path: pointer }] })
     return 1
   }
   const generation = generationOf(brief) + 1
@@ -323,4 +330,4 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
 }
 
 /* node:coverage ignore next */
-if (isEntry(import.meta.url)) process.exitCode = main(process.argv.slice(2), process.env, processIo)
+if (isEntry(import.meta.url)) process.exitCode = main(process.argv.slice(2), process.env, processIo, () => new Date(), scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)))
