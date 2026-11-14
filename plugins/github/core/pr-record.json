@@ -4,7 +4,8 @@
   "kinds": [
     "review",
     "norms",
-    "e2e"
+    "e2e",
+    "tests"
   ],
   "results": [
     "pass",
@@ -43,6 +44,16 @@
     ]
   },
   "open": "e2e",
+  "scripted": {
+    "kind": "tests",
+    "plugin": "github",
+    "tool": "mcp__github__light_ci",
+    "producer": "light-ci",
+    "results": [
+      "pass",
+      "fail"
+    ]
+  },
   "detail_max": 500,
   "patterns": {
     "head": "^[0-9a-fA-F]{40}$",
