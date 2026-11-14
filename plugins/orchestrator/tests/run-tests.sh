@@ -479,6 +479,21 @@ check "the lifecycle closes a predecessor started by hand like any other" "1|0" 
 # the one rule; the squash-merge of a lower branch is replayed around, never through.
 check "the rebase voids no record by itself and names the squash-merge trap" "0|1|1" \
   "$(grep -c "rebase comes BEFORE the ready" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
+# One owner per rule (the conformity audit of 2026-11-14, proposals 4, 5, 10 and 12). The rounds are
+# review.md's: under orchestration pr-review is one pass (`review_only`), and no template or
+# routing text speaks of a second round. E2E and norms are owed as the check plan says, said in
+# github's check-plan.ts and pointed to, never restated. Ready is the github gate's, and the
+# orchestrator's pre-check prints no label command. A mechanical rebase goes to an agent.
+check "review.md owns the rounds: pr-review runs as review_only, one pass" "yes" \
+  "$(spells "$ORCH_REFS/review.md" 'the `pr-review` loop it runs is `review_only` (one pass, no fix)')"
+check "no template or routing text speaks of a second round or a round number" "no|no|no|no|no" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" 'second corrective round')|$(spells "$ROOT/skills/model-routing/SKILL.md" 'survives one corrective round')|$(spells "$ROOT/templates/agent-rotation-brief.md" 'the round it failed')|$(spells "$ROOT/templates/agent-rotation-brief.md" 'survived the previous round')|$(spells "$ROOT/templates/agent-review-brief.md" '{{ROUND}}')"
+check "the proofs owed are the check plan's, pointed to in the briefs, the review reference and the templates" "yes|yes|yes|yes|yes|no" \
+  "$(spells "$ORCH_REFS/briefs.md" "github's \`check-plan.ts\` owns that rule")|$(spells "$ORCH_REFS/briefs.md" "the proofs the check plan requires over the whole diff")|$(spells "$ORCH_REFS/review.md" 'only where the plan requires `norms`')|$(spells "$ROOT/templates/agent-phase-brief.md" "owed as the pull request's check plan requires")|$(spells "$ROOT/templates/agent-review-brief.md" 'what is owed is the check plan')|$(spells "$ORCH_REFS/briefs.md" 'norms review of the full diff')"
+check "Ready is the github gate's: no pre-check label command, none of it restated, the phase brief points to the gate" "no|no|no|no|yes" \
+  "$(spells "$ORCH_REFS/review.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the github ready gate's")"
+check "a rebase is never the orchestrator's: a mechanical one goes to an agent" "yes|no|no" \
+  "$(spells "$ORCH_REFS/review.md" 'One whose conflicts are mechanical (no behaviour decided) goes to a rebase agent')|$(spells "$ORCH_REFS/review.md" 'and never by a spawned session')|$(spells "$ORCH_REFS/briefs.md" '(§30 of the design)')"
 # The rationalizations table left review.md (rule 169 of the rules review): each row repeated a
 # rule kept elsewhere, the ready and the rebase --onto pinned just above.
 check "the review reference carries no rationalizations table" "0|0" \
@@ -583,8 +598,9 @@ check "the standing rules no longer copy the « under load » rule" "no" \
 check "the phase brief template reads « under load » as emulated throttling" "yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" '« Under load » means emulated throttling, never real load on the machine')"
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
-check "the directives rule and the guard live in the briefs reference" "yes|yes" \
-  "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
+# The orchestrator writes no guard, not even over its own directives (the freeze of 2026-11-14).
+check "the directives rule lives in the briefs reference, and the orchestrator writes no guard" "yes|no" \
+  "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" 'the one instrument you may write yourself')"
 check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
@@ -1160,18 +1176,18 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review before its verdict » was written
-# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
-# actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
+# The record. `review` records what a round actually read, and `fixed` the correction the orchestrator
+# verified. Whether a pull request is ready at its head is the github ready gate's: `ready` reads the
+# surface and the screenshots' audit only, whatever the heads and whatever the row's reviews.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
 check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
 check "and names the subcommand that records it" "1" \
   "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
 bash "$REC" surface "$G" "$g1" --none >/dev/null
-check_status "ready refuses a row no review has touched, as the github gate does" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
-check "and names what is missing" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
+check_status "ready does not read a review: a row no review has touched passes the surface" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+check "and prints no review refusal and no label command" "0|0" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')|$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'pr-readiness')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
@@ -1179,11 +1195,11 @@ check "a review records the head it read and its norms check" "aaa1111|tool" \
 check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
 check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 
-# The head moves on every corrective round, and the review that read the previous one says
-# nothing about this one. This is the case the orchestrator talked itself past.
-check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222
-check "and names both heads" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
+# The head moves on every corrective round and on a rebase: the head a review read is the github
+# gate's to compare, so `ready` neither refuses a head no review read nor names one.
+check_status "ready does not refuse a head no review has read" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
+check "and names no head a review read" "0" \
+  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
 check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
@@ -1201,11 +1217,9 @@ bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
 check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
 bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
 check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456
-check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
-check "and are named" "1" \
-  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 2>&1 | grep -c "last review read $full, head is fedcba9")"
-check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
-check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
+check_status "two heads sharing no prefix are not refused: the gate compares heads, not this pre-check" 0 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
+check_status "a head is read only to compare an audit: a six-character head on a row with no image is not refused" 0 bash "$REC" ready "$G" "$g2" --head 012345
+check "and says nothing of its length" "0" "$(bash "$REC" ready "$G" "$g2" 2>&1 --head 012345 | grep -c 'too short')"
 
 # The operator's process: ONE review round, the orchestrator's triage, ONE correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
@@ -1230,13 +1244,13 @@ bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
 check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
-check "and says which reading it rests on" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
+check "and says the surface it read, not a reading of the heads" "1|0" \
+  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c '^ready: row 3: no frontend surface$')|$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'corrected and verified')"
 check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef
 check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333
-check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
-check "and names all three heads" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
+check_status "ready does not refuse a head neither reviewed nor fixed" 0 bash "$REC" ready "$G" "$g3" --head eee5555
+check "and names no head" "0" \
+  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'its correction')"
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
@@ -1293,7 +1307,7 @@ srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
 srec audit "$S" "$s1" --head aaa1111 --images 1 >/dev/null
 check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
 check "and is counted on the ready line" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
+  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c '^ready: row 1: 1 screenshot(s) on acme/front#12')"
 srec surface "$S" "$s1" --ui acme/front#13 >/dev/null
 check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111
 srec review "$S" "$s1" --head bbb2222 --norms tool >/dev/null
@@ -1308,7 +1322,7 @@ check "a minor ruling passes and prints its reason for the operator" "1" \
   "$(srec ready "$S" "$s1" --head bbb2222 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
 s2=$(srec open "$S" --class behaviour-phase --tier standard --label "no review yet")
 srec surface "$S" "$s2" --ui acme/front#11 >/dev/null
-check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
+check_status "a row with no review does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
 check_status "surface without a kind is an error" 1 bash "$REC" surface "$S" "$s1"
 check_status "surface with two kinds is an error" 1 bash "$REC" surface "$S" "$s1" --none --minor x
 check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1" --ui 1520
@@ -1345,7 +1359,7 @@ check "a new audit replaces the last, defects included" "aaa1111|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111
 check "and says the images were audited clean" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c '^ready: row 1: 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
 srec audit "$A" "$a1" --head aaa1111 --images 3 >/dev/null
 check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111
 srec fixed "$A" "$a1" --head bbb2222 >/dev/null
@@ -1365,13 +1379,13 @@ srec audit "$A" "$a1" --head ccc3333 --images 2 >/dev/null
 check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333
 a2=$(srec open "$A" --class behaviour-phase --tier standard --label "audit, no review")
 srec surface "$A" "$a2" --ui acme/front#14 >/dev/null
-check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "a row with no review does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head eee5555 --images 2 >/dev/null
 check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
 check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
-check_status "with no review, a clean audit at the head in front is still refused: the gate needs a review" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "with no review, a clean audit at the head in front passes: the review is the gate's" 0 srec ready "$A" "$a2" --head ddd4444
 a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
 srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
 srec surface "$A" "$a3" --minor "a label wording" >/dev/null
@@ -1461,12 +1475,12 @@ check_status "and so is the session exemption" 1 bash "$REC" exempt "$E" --e2e "
 # backend test against a container, a frontend Playwright test committed, the `E2E: none —
 # <reason>` line, silence a finding, nothing in the pull request's description.
 BR="$ORCH_REFS/briefs.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review.md"
-check "briefs.md carries the E2E rule for every phase, and no pointer to item 14" "yes|yes|yes|yes|yes|yes|no" \
-  "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')"
+check "briefs.md owes the E2E as the check plan requires, states no rule of its own, and has no pointer to item 14" "yes|yes|yes|yes|yes|yes|no|no" \
+  "$(spells "$BR" "**The E2E a pull request owes is the one its check plan requires**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')|$(spells "$BR" 'Every pull request carries an E2E')"
 check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
   "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. The line goes in your report')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
-check "the review brief replays the test or judges the reason, and flags silence" "yes|yes|yes|yes" \
-  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+check "the review brief replays the test, flags one the plan requires and the report lacks, and flags silence" "yes|yes|yes|yes" \
+  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise, the plan requiring one or there being no plan, it is a finding.')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
@@ -5456,8 +5470,8 @@ check "the re-run is the failed jobs, once, after the failing job's cause is nam
   "$(help_has "$CWSCRIPT" 're-run the failed jobs once with `gh run rerun <run-id> --failed`')|$(help_has "$CWSCRIPT" 'after naming the failing job'"'"'s cause in one line, read in its log')"
 check "the design carries the re-run of a red outside what the pull request touches" "yes|yes" \
   "$(spells "$ROOT/docs/design.md" 'a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed')|$(spells "$ROOT/docs/design.md" 'a second red, or a red in what it touches, is reported and corrected')"
-check "a mechanical base merge is the orchestrator's, in place; one that decides behaviour is a correction" "yes|yes" \
-  "$(spells "$ORCH_REFS/review.md" 'conflicts are mechanical (no behaviour decided) is yours, done in place in a checkout and never by a spawned session')|$(spells "$ORCH_REFS/review.md" 'one that decides behaviour goes to a correction session')"
+check "a mechanical base merge goes to a rebase agent, never the orchestrator; one that decides behaviour is a correction" "yes|yes" \
+  "$(spells "$ORCH_REFS/review.md" 'A rebase or merge of the base is never yours')|$(spells "$ORCH_REFS/review.md" 'one that decides behaviour to a correction session')"
 check "succession prunes the state file and archives the finished journal" "yes|yes" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/lifecycle.md" 'the finished journal, dated before it, moves to an archive file')"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
@@ -12847,9 +12861,8 @@ check "both manifests carry the plugin's version" "yes|2" \
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
-# opening it); the orchestrator's « ready » puts Ready. brief-lint refuses an implementer
-# brief whose delivery opens a pull request without one of the two; `dispatch-record.sh
-# ready` prints the command to run and never calls the network. The github plugin's commands
+# opening it); the github ready gate puts Ready. brief-lint refuses an implementer
+# brief whose delivery opens a pull request without one of the two. The github plugin's commands
 # are cited by name only: they do not exist on every machine, so nothing here calls them.
 LBL_LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
 LB="$WORK/label-briefs"; mkdir -p "$LB"
@@ -12876,30 +12889,23 @@ check "the lint header describes the check" "yes" "$(spells "$LBL_LINT" 'Check 1
 LR="$WORK/label-ready/dispatch.jsonl"; mkdir -p "$WORK/label-ready"
 bash "$REC" goals "$LR" init --spec none >/dev/null
 export SURFACE_BODIES="$WORK/surface-bodies"
+# The `Ready` label is the github ready gate's: `ready` prints no command for it, on a row that
+# names its pull request, on one that names none, or on one the review and its correction read.
 lr1=$(srec open "$LR" --class behaviour-phase --tier standard --label "ui")
 srec review "$LR" "$lr1" --head aaa1111 --norms tool >/dev/null
 srec surface "$LR" "$lr1" --ui acme/front#12 >/dev/null
 srec audit "$LR" "$lr1" --head aaa1111 --images 1 >/dev/null
-check "ready on a row that names its pull request prints the command to run" "1" \
-  "$(srec ready "$LR" "$lr1" --head aaa1111 2>/dev/null | grep -c '^pr-readiness 12 ready on acme/front$')"
 lr2=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr2" --head bbb2222 --norms tool >/dev/null
 srec surface "$LR" "$lr2" --none >/dev/null
-check "ready on a row that names none prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr2" --head bbb2222 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
-check "a refused ready prints no label command" "0" \
-  "$(srec ready "$LR" "$lr2" --head ccc3333 2>&1 | grep -c 'pr-readiness')"
 lr3=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr3" --head ddd4444 --norms tool >/dev/null
 srec fixed "$LR" "$lr3" --head eee5555 >/dev/null
 srec surface "$LR" "$lr3" --none >/dev/null
-check "ready on a row corrected and verified at the head prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr3" --head eee5555 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
 lr4=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec surface "$LR" "$lr4" --none >/dev/null
-check_status "ready on a row with no review recorded is refused" 1 srec ready "$LR" "$lr4" --head fff6666
-check "and it prints no label command" "0" \
-  "$(srec ready "$LR" "$lr4" --head fff6666 2>&1 | grep -c 'pr-readiness')"
+check "ready prints no label command, whatever the row" "0|0|0|0|0" \
+  "$(srec ready "$LR" "$lr1" --head aaa1111 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr2" --head bbb2222 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr3" --head eee5555 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr4" --head fff6666 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr2" --head ccc3333 2>&1 | grep -c 'pr-readiness')"
 unset SURFACE_BODIES
 check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
 
