@@ -1,4 +1,4 @@
-// Pull of the bug inboxes, one process per machine: `pm2 start pm2.config.js && pm2 save`.
+// Pull of the bug inboxes, one process per machine: `pm2 start pm2.config.cjs && pm2 save`.
 // `pull --watch` long-polls Telegram: each getUpdates request is held open (50 s) until a message
 // arrives, then the next round starts at once, so a report lands in the inbox within a second or
 // two instead of up to 15 minutes later. The script loops by itself and exits only when PM2 stops

@@ -398,7 +398,7 @@ def test_an_interrupted_one_shot_command_prints_one_line_not_a_traceback(run, bo
 
 
 def test_pm2_config_loops_instead_of_cron():
-    text = (REPO_ROOT / "pm2.config.js").read_text()
+    text = (REPO_ROOT / "pm2.config.cjs").read_text()
 
     assert "cron_restart" not in text.split("module.exports", 1)[1]
     assert "autorestart: true" in text

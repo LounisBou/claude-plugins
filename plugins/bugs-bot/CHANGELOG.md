@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Changed
+
+- `pm2.config.js` is now `pm2.config.cjs`, and the plugin's `package.json` (`"type": "commonjs"`) is gone, so the
+  hooks compile as ES modules under the repository's strict check. PM2 reads `.config.cjs` as it read `.js`;
+  `/bugs-bot:install` starts the new name. A process already saved by PM2 keeps running its launcher.
+
 ### Security
 
 - `deployed` runs the deploy check as a command split into words, never through a shell: `;`, `&&`, `|`,

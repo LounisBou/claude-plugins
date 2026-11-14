@@ -229,7 +229,7 @@ def test_watch_and_every_are_mutually_exclusive(run, bound):
 
 
 def test_pm2_config_runs_the_long_poll_form():
-    text = (REPO_ROOT / "pm2.config.js").read_text()
+    text = (REPO_ROOT / "pm2.config.cjs").read_text()
 
     assert "pull --watch" in text and "--every" not in text.split("module.exports", 1)[1]
     assert "kill_timeout" in text
