@@ -116,13 +116,13 @@ export async function writeLine($: any, pr: { repo: string; pr: number }, now: D
 }
 
 // The call goes through; its answer is read for a creation and the line written within the bound.
-async function afterCall($: any, e: any, next: (e: any) => any, now: () => Date): Promise<unknown> {
+async function afterCall($: any, e: any, next: (e: any) => any, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
   const created = createdPr(e, result)
   if (created === null) return result
   try {
-    const done = await withDeadline(signal => writeLine($, created, now(), signal), LEDGER_BOUND_MS)
-    if (isDegradedPass(done)) await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} did not finish within ${LEDGER_BOUND_MS} ms`)
+    const done = await withDeadline(signal => writeLine($, created, now(), signal), bound)
+    if (isDegradedPass(done)) await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} did not finish within ${bound} ms`)
   } catch (err) {
     await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} not written: ${(err as Error).message}`)
   }
@@ -134,7 +134,7 @@ async function net($: any, e: any, next: any): Promise<unknown> {
   return next(e)
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, now: () => Date = () => new Date()) {
-  on('tool.call', { tool: 'mcp__github__gh' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now)).catch(net)
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now)).catch(net)
+export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, now: () => Date = () => new Date(), bound: number = LEDGER_BOUND_MS) {
+  on('tool.call', { tool: 'mcp__github__gh' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now, bound)).catch(net)
+  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now, bound)).catch(net)
 }

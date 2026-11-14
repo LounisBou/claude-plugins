@@ -239,3 +239,37 @@ test('a Bash command that only names or lists `gh pr create` is no creation', ()
 test('a command line the shell reader cannot read is no creation, and throws nothing', () => {
   expect(createdPr({ tool: 'Bash', command: 'echo {1..5000}; gh pr create' }, { result: 'https://github.com/o/r/pull/30' })).toBe(null)
 })
+
+// The registrations with their safety nets, and the write's bound set short enough to wait for.
+function mountedWithNets(bound: number) {
+  const handlers: Record<string, Function> = {}
+  const nets: Record<string, Function> = {}
+  register(((...args: unknown[]) => {
+    const tool = String((args[1] as { tool?: string })?.tool)
+    handlers[tool] = args[args.length - 1] as Function
+    return { catch: (net: Function) => { nets[tool] = net } }
+  }) as never, () => new Date('2026-11-14T10:15:00.400Z'), bound)
+  return { handlers, nets }
+}
+
+test('a write that never settles is given up at the bound: the answer goes on, one line says so, nothing is written', async () => {
+  const { dollar, files, logged } = fake()
+  dollar.session.id = () => new Promise<string>(() => undefined)
+  const answer = created('https://github.com/acme/app/pull/40')
+  const before = files.get(RECORD)
+  expect(await call(mountedWithNets(20).handlers, dollar, github(), answer)).toEqual(answer)
+  expect(files.get(RECORD)).toBe(before)
+  expect(logged.some(l => l.includes('ledger') && l.includes('acme/app#40') && l.includes('did not finish within 20 ms'))).toBe(true)
+})
+
+test('a tool call that throws is caught by the hook\'s net: one log line, the call handed on as it was', async () => {
+  const { dollar, logged } = fake()
+  const { handlers, nets } = mountedWithNets(20)
+  const e = github()
+  await expect(handlers['mcp__github__gh']!(dollar, e, async () => { throw new Error('boom') })).rejects.toThrow('boom')
+  const passed: unknown[] = []
+  const next = Object.assign((x: unknown) => { passed.push(x); return { passed: x } }, { called: false, error: { kind: 'failure', message: 'boom' } })
+  expect(await nets['mcp__github__gh']!(dollar, e, next)).toEqual({ passed: e })
+  expect(passed).toEqual([e])
+  expect(logged.some(l => l.includes('ledger') && l.includes('unhandled (failure): boom'))).toBe(true)
+})
