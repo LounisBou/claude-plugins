@@ -305,7 +305,7 @@ export function register(on: On<Held>): void {
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
           + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as declare_wait takes them, and offers choice_a "Accorder", choice_b "Refuser". '
-          + 'For an orchestrator, a coordinator or an auditor.',
+          + 'For a coordinator or an auditor; an orchestrator asks as orchestrator:decide says, until declare_wait takes a question asked here.',
         inputSchema: {
           type: 'object',
           properties: {

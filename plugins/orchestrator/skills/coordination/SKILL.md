@@ -124,10 +124,8 @@ only gives the pane the keys, never answers —, the recommended letter first, i
 leading to an « Other answer » text field (the questions without choices come after, and an
 answer not delivered on one line at the section's foot). An entry that asks several questions
 is presented one at a time, the next one named under the card, and its answers reach the sender
-together, each after its number. Every `<repo>#<n>` drawn is a link to that pull request when
-the repository's owner is known. The pane opens with the keys; a key
-line and, when it scrolls, a position track stay in view. Below a rule, each orchestrator on one
-line, a blank line between two, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
+together, each after its number. Below a rule, each orchestrator on one
+line, a blank line between two, with `Status:`
 and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
 With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
@@ -209,6 +207,8 @@ and present the next one in full in the same message; a superseded one makes <id
    « as above ».
 7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling
    and the sender told.
+
+**A question of your own** for him is one `ask` call each: the module stores it, draws it in the pane and writes its block in your tab; write none.
 
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts
