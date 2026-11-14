@@ -37,8 +37,8 @@ is its contract, read it before its first use in a session:
 - `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`,
   `blocks` and question, after a line counting the settled ones; `--all` prints those too, the ones
   he answered from the pane (with the answer sent), then the withdrawn ones;
-  `round-close <id> --answer "<text>"` closes one with his answer, which the module then sends to
-  its sender (« Relaying questions to the operator »).
+  the module's `settle` closes one with his answer and sends it to its sender (« Relaying
+  questions to the operator »).
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows
   two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
@@ -133,7 +133,7 @@ With no such question it reads « none in the pane » with the number of orchest
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round --all` lists it with that answer, and you send
 nothing for it: close it with
-`coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"` — unless you
+`settle` (`answered-here`, answer « answered from the pane: <the answer> ») — unless you
 were shown it: then the module has closed it already, and tells you so (below). When the
 pane says an answer could not be delivered, he may give it in your tab instead, and you relay
 it to the sender as you relay any other answer of his. **At every turn the
@@ -154,7 +154,7 @@ message from a session on this machine is not presented: ask its sender to ask i
 in the pane before it is due is never presented: `round --all` lists it, close it as answered from
 the pane. One you
 presented and he then answered in the pane is closed by the module, and one he answered in your
-tab while the pane still showed it, by one `round-close`; neither is presented again. Besides,
+tab while the pane still showed it, by one `settle`; neither is presented again. Besides,
 the module writes one line in your conversation for each new question, pane open or not,
 computed from the round, with no turn of yours: a notice, never a question to present before it is due. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
@@ -162,10 +162,6 @@ he lifts that hold: they stay open, in the pane and in the round; an urgent one 
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
 all, `/coordinator-decide` runs one round over every orchestrator's questions. The orchestrator
 that asked does not repeat it either: it stays open in the round until he answers it.
-
-A question settled meanwhile, its artifact already showing the outcome (the pull request merged,
-the branch gone), is withdrawn on that evidence and never put to him: `coordinator.sh round-close
-<id> --withdraw "<the evidence read on the artifact>"`, and the module tells its sender why.
 
 **A question settled elsewhere leaves your tab at once.** `round` records each open entry it
 prints, and the module, for an entry you were shown so (or woken for), closes it itself the
@@ -196,19 +192,20 @@ and present the next one in full in the same message; a superseded one makes <id
    block verbatim, whatever fields it gave. Re-verify
    the item on its artifact immediately before
    presenting it; one found settled on its artifact is withdrawn on that evidence:
-   `coordinator.sh round-close <id> --withdraw "<evidence>"`, which tells its sender it was
+   `settle` (`withdrawn`, reason: the evidence), which tells its sender it was
    withdrawn, never « the operator answered »; it leaves the count, and the next question is
    presented in full instead. Then wait: you pick nothing for him.
 6. **On his answer, in the same turn:** « Recorded: <his ruling> »; for an entry of the round,
-   run `coordinator.sh round-close <id> --answer "<his words>"` alone, never a SendMessage
-   beside it: your module sends it to the sender, dated, as soon as `round-close` returns,
-   and writes the outcome on the entry
+   call `settle` (`answered-here`, answer: his words) alone, never a SendMessage
+   beside it: it sends the answer to the sender, dated, in the same call
    (a failure the pane shows); mark it sent; then present the next question IN FULL in the
    same message.
    After any interruption, the question he must answer is presented again in full, never
    « as above ».
 7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling
    and the sender told.
+
+**A question of your own** for him is one `ask` call each: the module stores it, draws it in the pane and writes its block in your tab; write none.
 
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts

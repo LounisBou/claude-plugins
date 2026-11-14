@@ -9,6 +9,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   ASK_MARKER, ACK_MARKER, ASK_LINE_CAP, CONSENT_REPO_CAP, askLine, parseAsk, ackLine, parseAck,
   ANSWER_MARKER, ANSWER_ACK_MARKER, ANSWER_LINE_CAP, answerLine, parseAnswer, answerAckLine, parseAnswerAck,
+  Q_MARKER, Q_ACK_MARKER, qAskLine, qAnswerLine, parseQ, qAckLine, parseQAck, seqOf, isQ, isQAck,
 } from '../remote-round.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { RELAY_CAP, cutQuestion } from '../relay.ts'
@@ -186,4 +187,46 @@ test('the answer\'s acknowledgment names it by its id and since, and is refused 
     `${ANSWER_ACK_MARKER}{"id":"${id}","since":"${since}","more":1}`, `${ANSWER_ACK_MARKER}{"id":"../x","since":"${since}"}`,
     `${ANSWER_ACK_MARKER}${'x'.repeat(400)}`, `${ANSWER_ACK_MARKER}[]`,
   ]) expect([bad, parseAnswerAck(bad)]).toEqual([bad, null])
+})
+
+// --- the event line that replaces the four, and its acknowledgment ----------------------------
+
+test('an event line carries an ask or an answer, each read back whole under its id and seq', () => {
+  const entry = asked({ urgent: true })
+  const ask = qAskLine(entry, 'far')
+  expect(isQ(ask) && ask.startsWith(Q_MARKER)).toBe(true)
+  expect(parseQ(ask)).toEqual({ id: entry.id, seq: seqOf(SINCE), event: { kind: 'ask', entry, machine: 'far' } })
+  const answer = qAnswerLine(entry.id, SINCE, 'A : merge it', AT, 'The operator answered.\nA : merge it')
+  expect(answer.includes('\n')).toBe(false)
+  expect(parseQ(answer)).toEqual({ id: entry.id, seq: seqOf(SINCE), event: { kind: 'answer', since: SINCE, text: 'A : merge it', at: AT, readable: 'The operator answered.\nA : merge it' } })
+  // Neither old line is read as an event, nor an event as an old line.
+  expect(parseQ(askLine(entry, 'far'))).toBeNull()
+  expect(parseAsk(ask)).toBeNull()
+})
+
+test('an event line is refused whole: another id than its entry, an unknown kind, a field more, an event failing its old check', () => {
+  const entry = asked()
+  const o = () => JSON.parse(qAskLine(entry, 'far').slice(Q_MARKER.length))
+  const sent = (edit: (x: any) => void) => { const x = o(); edit(x); return Q_MARKER + JSON.stringify(x) }
+  expect(parseQ(sent(x => { x.id = 's-remote-9-abc' }))).toBeNull()
+  expect(parseQ(sent(x => { x.event.kind = 'withdraw' }))).toBeNull()
+  expect(parseQ(sent(x => { x.more = 1 }))).toBeNull()
+  expect(parseQ(sent(x => { x.seq = 'one' }))).toBeNull()
+  expect(parseQ(sent(x => { x.event.entry.status = 'answered' }))).toBeNull()
+  expect(parseQ(sent(x => { x.event.entry.from = 'Agent: x' }))).toBeNull()
+  expect(parseQ(sent(x => { x.event = { kind: 'ask', entry: x.event.entry, more: 1 } }))).toBeNull()
+  const answer = JSON.parse(qAnswerLine(entry.id, SINCE, 'A', AT, 'readable').slice(Q_MARKER.length))
+  expect(parseQ(Q_MARKER + JSON.stringify({ ...answer, event: { ...answer.event, readable: ' ' } }))).toBeNull()
+  expect(parseQ(Q_MARKER + JSON.stringify({ ...answer, event: { ...answer.event, text: '' } }))).toBeNull()
+  expect(parseQ(`${Q_MARKER}{`)).toBeNull()
+})
+
+test('the acknowledgment names the event it takes, and « already » alone as true', () => {
+  const ack = qAckLine({ id: 's-remote-9-abc', seq: 5, of: 'answer', already: true })
+  expect(isQAck(ack) && ack.startsWith(Q_ACK_MARKER)).toBe(true)
+  expect(parseQAck(ack)).toEqual({ id: 's-remote-9-abc', seq: 5, of: 'answer', already: true })
+  expect(parseQAck(qAckLine({ id: 's-remote-9-abc', seq: 5, of: 'ask' }))).toEqual({ id: 's-remote-9-abc', seq: 5, of: 'ask' })
+  for (const bad of [{ id: 's-remote-9-abc', seq: 5, of: 'withdraw' }, { id: 'nope', seq: 5, of: 'ask' }, { id: 's-remote-9-abc', seq: 5, of: 'ask', already: false }, { id: 's-remote-9-abc', seq: 5, of: 'ask', more: 1 }]) {
+    expect(parseQAck(Q_ACK_MARKER + JSON.stringify(bad))).toBeNull()
+  }
 })

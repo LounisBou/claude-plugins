@@ -54,7 +54,7 @@ will check it next time.
 ## 4. The end
 
 Tell the operator, in this tab, and the session that launched you, the report's path, verdict and cost. Then stop:
-answer his questions, apply nothing. Relaying a proposal is his word. He closes this tab; if you succeed, your successor does.
+answer his questions, apply nothing; a question of yours for him is one `ask` call, no block written. Relaying a proposal is his word. He closes this tab; if you succeed, your successor does.
 
 Kept on past the report for a follow-up, at your gate you succeed instead of stopping, by the steps of
 the « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read then,

@@ -289,7 +289,7 @@ const asked = (session: string, from: string, question = SHAPED, blocks = 'pane 
   roundEntry(session, from, { kind: 'operator', blocks, question }, '2026-11-14T08:00:00.000Z', '2026-11-14T08:00:00.000Z')
 const answered = (entry: RoundEntry, answer: RoundEntry['answer'], status: RoundEntry['status'] = 'answered'): RoundEntry => ({ ...entry, id: `${entry.id}-done`, status, answer })
 
-test('his own answer an entry holds: the pane\'s, round-close\'s, a choice typed in the tab; nothing else', () => {
+test('his own answer an entry holds: the pane\'s, the coordinator\'s settle, a choice typed in the tab; nothing else', () => {
   const entry = asked('s-pred', 'Orch: belt')
   const at = '2026-11-14T08:05:00.000Z'
   expect(operatorAnswer(answered(entry, { text: 'B : celle du pane — elle compte la file', by: 'pane', at }))).toEqual({ letter: 'B', text: 'celle du pane — elle compte la file', by: 'pane', at })

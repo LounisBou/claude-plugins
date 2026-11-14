@@ -183,7 +183,7 @@ MOVE_ROLES = (ORCH, COORD)
 # The tools only an orchestrator calls, registered in every session too: an implementer agent
 # is never given them, a title of no role being read as an agent's.
 ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
-              "mcp__orchestrator__answered-by-message", "mcp__orchestrator__declare_wait")
+              "mcp__orchestrator__settle", "mcp__orchestrator__declare_wait")
 ORCH_TOOLS_KEPT = (ORCH, COORD, AUDIT)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
