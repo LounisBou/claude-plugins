@@ -282,7 +282,7 @@ Requires push access to the repository.
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` is on demand, only a failed one is.
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest; named in the `Ready` line; a `fail` still holds.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest, and the operator's waiver (method `lifecycle`; the newest consent record of subject `e2e-waiver`, a dialog's recorded here) at every head with no E2E record; named in the `Ready` line; a `fail` holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
 - Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
@@ -412,9 +412,7 @@ The E2E exemption and check plan files are refused alike (`github: an E2E exempt
 `record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
 directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs a detail found verbatim in a prompt the operator typed, or in dated quotes of it naming
-the waiver, or quoting their answer (8 characters at least) in a consent record of an E2E
-waiver of that pull request, carrying a date.
+needs the operator's waiver (above), his dated answer its detail.
 
 **Auto-merge list.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` in a plugin's
 data directory, and a shell command naming it there (the data directory, `plugins/data/`,

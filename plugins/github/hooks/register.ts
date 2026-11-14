@@ -6,16 +6,16 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
-import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
+import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject } from '../core/consent-record.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, type CheckPlan, type Excused } from './check-plan.ts'
+import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, WAIVER_GRANT, WAIVER_REFUSE, type CheckPlan, type Excused } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
@@ -278,6 +278,10 @@ const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DI
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
   + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
+export function waiverRefusal(repo: string, pr: number): string {
+  return 'github: an E2E waiver is the operator\'s « ' + WAIVER_GRANT + ' » to one question, « Dispense d\'E2E pour ' + repo + '#' + pr
+    + ' : <why> », choices « ' + WAIVER_GRANT + ' » / « ' + WAIVER_REFUSE + ' », by AskUserQuestion or in the round: none is recorded.'
+}
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
 // from the call alone (no state can be read once the hook has thrown); the rest goes through.
@@ -825,7 +829,10 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
   const { found, unread } = await earlierRecords($, gate, root)
-  const waiver = wanted.includes('e2e') && !unread ? durableWaiver(gate, found) : undefined
+  const granted = wanted.includes('e2e') && !unread ? await grantedWaiver($, gate.repo, Number(gate.pr)) : undefined
+  const waiver = wanted.includes('e2e') && !unread
+    ? durableWaiver(gate, found) ?? (granted ? consentWaiver(gate, found, granted.at, granted.by) : undefined)
+    : undefined
   // The waiver stands beside what the same diff carries, or alone.
   const withWaiver = (carried: Carried[]): Carried[] => (waiver && !carried.some((c) => c.kind === 'e2e') ? [...carried, waiver] : carried)
   // A line on the kinds not carried leaves out the E2E the waiver stands for.
@@ -1511,24 +1518,16 @@ function typedWords(text: string, quoting: Quoting): boolean {
   })
 }
 
-// An E2E waiver of a pull request: each quoted span names the waiver or the pull request.
-function waiverQuoting(pr: number): Quoting {
-  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|waiv|(?<![\\d])' + pr + '(?![\\d])', 'i')
-  return { dated: true, names: (span) => names.test(span), wholeBare: true }
-}
-
 // The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
 const CONSENT_READ = 200
 
-// True when some consent record of the subject, written for the operator's answer to the
-// question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
-// itself says what `carries` asks of the operator's words. A directory or a file that cannot be
-// read matches nothing.
-async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
+// The consent records of a repository, the newest files first; a directory or a file that cannot be read holds none.
+async function consentRecords($: any, repo: string): Promise<ConsentRecord[]> {
+  const records: ConsentRecord[] = []
   try {
     const dir = await configDir($)
-    if (!dir) return false
-    const root = consentDir(dir, subject.repo)
+    if (!dir) return records
+    const root = consentDir(dir, repo)
     const dated: Array<{ path: string; mtime: number }> = []
     for (const entry of await $.fs.list(root)) {
       const name = String(entry?.name ?? '')
@@ -1536,22 +1535,68 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject, c
       try {
         dated.push({ path: root + '/' + name, mtime: Number((await $.fs.stat(root + '/' + name)).mtimeMs) })
       } catch {
-        // Not a match.
+        // Not a record.
       }
     }
     dated.sort((a, b) => b.mtime - a.mtime)
     for (const { path } of dated.slice(0, CONSENT_READ)) {
       try {
         const record = parseConsentRecord(JSON.parse(String(await $.fs.read(path))))
-        if (record && quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer)))) return true
+        if (record) records.push(record)
       } catch {
-        // Not a match.
+        // Not a record.
       }
     }
   } catch {
-    // No records: no match.
+    // No records.
   }
-  return false
+  return records
+}
+
+// True when some consent record of the subject, written for the operator's answer to the
+// question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
+// itself says what `carries` asks of the operator's words.
+async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
+  return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
+}
+
+// The operator's waiver of a pull request's E2E: his newest answer to the waiver question, from any
+// channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
+async function grantedWaiver($: any, repo: string, pr: number): Promise<ConsentRecord | undefined> {
+  const subject: ConsentSubject = { kind: 'e2e-waiver', repo, pr }
+  const answers = (await consentRecords($, repo)).filter((record) => sameSubject(record.subject, subject))
+  const newest = answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
+  return newest && grants(newest.answer) ? newest : undefined
+}
+
+// The operator's answer to a waiver question put by dialog, recorded as the round's answers are
+// (core's consent-record.ts, `by: 'tab'`, the asking session's own), dated by the module.
+async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
+  const answers = out?.result?.answers
+  if (typeof answers !== 'object' || answers === null) return
+  for (const question of Array.isArray(e.questions) ? e.questions : []) {
+    const asked = waiverQuestion(question)
+    const answer = String(answers[String(question?.question ?? '')] ?? '').trim()
+    if (!asked || (answer !== WAIVER_GRANT && answer !== WAIVER_REFUSE)) continue
+    const dir = await configDir($)
+    if (!dir) return
+    const now = Number(await $.clock.now())
+    const session = String(await $.session.id() ?? '').replace(/[^A-Za-z0-9._-]/g, '')
+    const record: ConsentRecord = {
+      v: CONSENT_VERSION, subject: { kind: 'e2e-waiver', repo: asked.repo.toLowerCase(), pr: asked.pr },
+      entry: 'dialog-' + (session || 'session') + '-' + now, question: String(question.question), answer, by: 'tab',
+      at: new Date(now).toISOString().replace(/\.\d+Z$/, 'Z'),
+    }
+    const path = consentPath(dir, record)
+    try {
+      await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(record) + '\n'))
+    } catch (err: any) {
+      note($, 'github: the waiver answer of ' + asked.repo + '#' + asked.pr + ' is not recorded: ' + String(err?.message ?? err).trim())
+      continue
+    }
+    const { line } = await followGate($, asked.repo, asked.pr, undefined, true)
+    if (line) note($, line)
+  }
 }
 
 // ---- auto-merge on the operator's word ----
@@ -1870,12 +1915,10 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (planned && planned.need !== 'required') {
     return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no E2E (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
   }
-  if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
-    return {
-      deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
-        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
-    }
-  }
+  const granted = result === 'waived' ? await grantedWaiver($, repo, pr) : undefined
+  if (result === 'waived' && !granted) return { deny: waiverRefusal(repo, pr) }
+  // The waiver's detail is the operator's answer as recorded, dated by the module that recorded it.
+  const written = granted ? 'operator: ' + granted.answer + ' (' + granted.by + ', ' + granted.at + ')' : detail
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
@@ -1916,7 +1959,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   }
   const argv = [
     'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
-    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', detail, '--session', session,
+    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', written, '--session', session,
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
@@ -2000,7 +2043,7 @@ export function register(on: any): void {
         isDeferred: false,
         description:
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
-          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived. '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived once the operator granted it. '
           + '{repo, exempt, paths?, labels?} exempts a repository\'s pull requests for good (false revokes) and '
           + 'quotes the operator\'s dated words, typed here or in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
@@ -2140,6 +2183,17 @@ export function register(on: any): void {
       return refusal === null ? next(e) : { deny: refusal }
     })
   }
+
+  // The operator's answer to a waiver question put by dialog becomes its consent record.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: any) => {
+    const out = await next(e)
+    try {
+      await recordWaiverAnswers($, e, out)
+    } catch (err: any) {
+      note($, 'github: a waiver answer could not be read: ' + String(err?.message ?? err).trim())
+    }
+    return out
+  })
 
   on('tool.call', { tool: RECORD_TOOL }, async ($: any, e: any, next: any) => {
     try {

@@ -145,8 +145,8 @@ of auto-merge reminds the session to call `auto-merge-set`.
 ## Ready pull requests
 
 A pull request is ready when three things hold at its current head commit: a
-clean review, passed end-to-end tests (or a waiver the operator dated in their
-own words) and green CI, but for what the pull request's check plan does not
+clean review, passed end-to-end tests (or the operator's waiver) and green
+CI, but for what the pull request's check plan does not
 require. A norms check is on demand: it blocks only when it ran at the head and
 failed. The `Ready` label, leaving
 draft and a merge need the three; a draft opens with `Not Ready`, and a push to

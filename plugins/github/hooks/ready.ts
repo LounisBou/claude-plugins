@@ -566,8 +566,9 @@ export function recordPrs(files: RecordFile[]): number[] {
   return [...prs]
 }
 
-// A record of an earlier head of the pull request, counted at its head as their diffs are the same.
-export type Carried = { kind: Kind; from: string }
+// A record of an earlier head of the pull request, counted at its head as their diffs are the same, or
+// the operator's E2E waiver (`waived`: who recorded his answer, and when).
+export type Carried = { kind: Kind; from: string; waived?: string }
 
 // The kinds with no record of the pull request at its head: the ones an earlier head may carry. A
 // kind a file that does not parse may hold is none of them: that file may be its newest failure.
@@ -599,6 +600,18 @@ export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
     if (record && (!newest || record.at > newest.record.at)) newest = { record, from: head }
   }
   return newest?.record.result === 'waived' ? { kind: 'e2e', from: newest.from } : undefined
+}
+
+// The operator's answer to the waiver question, granted at `at` (ISO) and recorded by `by`, standing for the
+// E2E of every head that has no E2E record, unless a run failed after it at an earlier head, or a record file
+// there that may be that failure does not parse.
+export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>, at: string, by: string): Carried | undefined {
+  for (const [head, files] of found) {
+    if (unreadableRecords(files).some((file) => file.kinds.includes('e2e'))) return undefined
+    const failed = [...headRecordsRead(gate, files, head.toLowerCase()).read.values()].some((r) => r.kind === 'e2e' && r.result === 'fail' && r.at > at)
+    if (failed) return undefined
+  }
+  return { kind: 'e2e', from: '', waived: by + ', ' + at }
 }
 
 // What a pull request misses to be ready at its head: the three conditions,
@@ -664,7 +677,7 @@ export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' 
 
 // The records counted at the head from an earlier head of the same diff, as the lines name them.
 export function carriedText(carried: Carried[]): string {
-  return carried.map((c) => c.kind + ' carried from ' + head7(c.from)).join(', ')
+  return carried.map((c) => (c.waived ? c.kind + ' waived by the operator (' + c.waived + ')' : c.kind + ' carried from ' + head7(c.from))).join(', ')
 }
 
 const tail = (missing: string[], carried: Carried[] = []) =>
