@@ -5,6 +5,7 @@ import { expect, test } from 'claude-code/testing'
 import { register as registerCheck, resetCache, SKILL_MATCHER } from '../check.ts'
 import { register as registerRecord, repoOf, asMark, repositoryDir } from '../record.ts'
 import { register as registerGuards } from '../guards.ts'
+import { REPORT_REQUEST, agentText, reportOf } from '../findings.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, HEAD, type FakeSetup } from './fakes.ts'
 
 const NEW_HEAD = 'c'.repeat(40)
@@ -34,6 +35,21 @@ function setup(github: Github = {}, runs: FakeSetup['runs'] = {}, calls: any[] =
   })
 }
 
+// An agent's answer: prose, then its findings block.
+const block = (findings: unknown[]) => 'Reviewed.\n```json\n' + JSON.stringify({ findings }) + '\n```'
+const finding = (severity: string, n = 0) => ({ severity, file: 'src/a.ts', summary: `finding ${n}` })
+
+// The findings the figures of a check_done account for: one per finding counted. An automatic
+// check's passed findings are WARNINGs, the others ERRORs.
+function accounted(input: any): unknown[] {
+  const n = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0)
+  const blocking = n(input.open) + n(input.fixed) + n(input.setAside)
+  return [
+    ...Array.from({ length: blocking }, (_, i) => finding('error', i)),
+    ...Array.from({ length: n(input.passed) }, (_, i) => finding(input.auto === true ? 'warning' : 'error', blocking + i)),
+  ]
+}
+
 function mounted() {
   const hooks = mount(on => {
     registerCheck(on)
@@ -41,9 +57,19 @@ function mounted() {
     // The module's one session.end hook, which clears the mark, is the guards'.
     registerGuards(on)
   })
+  // An agent's answer through the Agent tool's hook, as the host hands it back.
+  const agent = (d: any, name: string, answer: unknown) =>
+    hook(hooks, 'tool.call', { tool: 'Agent' }).handler(d, { tool: 'Agent', subagent_type: name }, async () => answer)
+  const raw = (d: any, input: any) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' }).handler(d, input)
   return {
     scope: (d: any) => hook(hooks, 'command.run', { command: 'norms:check' }).handler(d, { args: '' }, nextOf().next),
-    done: (d: any, input: any) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' }).handler(d, input),
+    agent,
+    raw,
+    // The figures given account for the findings the agents reported: the way these tests state them.
+    done: async (d: any, input: any) => {
+      await agent(d, 'norms:norms-diff-scope', { result: block(accounted(input)) })
+      return raw(d, input)
+    },
     hooks,
   }
 }
@@ -686,4 +712,180 @@ test('outside a session the orchestrator spawned, the answer is the record line 
   const m = mounted()
   await m.scope($)
   expect((await m.done($, { open: 0, fixed: 3, passed: 2 })).result).toBe('record: ' + WRITTEN)
+})
+
+// The pass is computed from the findings the agents reported.
+
+const NAMING = 'norms:norms-variable-naming'
+const SCOPE_AGENT = 'norms:norms-diff-scope'
+const reply = (findings: unknown[]) => ({ result: block(findings) })
+
+test('a check that left findings unaccounted for records nothing: open 0 is no pass the model can give', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([finding('error', 1), finding('error', 2)]))
+  await m.agent($, SCOPE_AGENT, reply([finding('warning', 3)]))
+  calls.length = 0
+  const lie = await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(lie.isError).toBe(true)
+  expect(lie.result).toContain('the agents reported 3 finding(s) and open + fixed + passed + setAside add up to 0')
+  expect(calls).toEqual([])
+  // Too many accounted for is as wrong.
+  expect((await m.raw($, { open: 0, fixed: 2, passed: 2 })).isError).toBe(true)
+  expect(calls).toEqual([])
+})
+
+test('the figures that account for every finding record the pass or the fail they make', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([finding('error', 1), finding('error', 2)]))
+  await m.agent($, SCOPE_AGENT, reply([finding('warning', 3)]))
+  await m.raw($, { open: 0, fixed: 2, passed: 1 })
+  await m.raw($, { open: 1, fixed: 1, passed: 1 })
+  await m.raw($, { open: 0, fixed: 1, passed: 1, setAside: 1, reason: 'not critical' })
+  expect(recordCalls(calls).map(c => c.result)).toEqual(['pass', 'fail', 'pass'])
+})
+
+test('a check whose agents reported nothing at all records nothing', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  calls.length = 0
+  const out = await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(out).toEqual({ result: 'norms: no norms agent has reported its findings since /norms:check began: run the check\'s agents first', isError: true })
+  expect(calls).toEqual([])
+})
+
+test('an agent whose answer holds no readable findings block leaves the count unknown, until it runs again', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([]))
+  await m.agent($, SCOPE_AGENT, { result: 'COMPLIANT: all good, and no block' })
+  const out = await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(out.isError).toBe(true)
+  expect(out.result).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  expect(recordCalls(calls)).toEqual([])
+  await m.agent($, SCOPE_AGENT, reply([]))
+  await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('an agent that fails, runs in the background or is refused leaves its findings unknown; the answer reaches the session as it came', async () => {
+  resetCache()
+  const { $ } = setup()
+  const m = mounted()
+  await m.scope($)
+  const answers = [
+    { isError: true, result: 'the agent failed' },
+    { deny: 'refused' },
+    { result: { status: 'async_launched', agentId: 'a1' } },
+  ]
+  for (const answer of answers) {
+    await m.agent($, NAMING, reply([]))
+    expect(await m.agent($, NAMING, answer)).toBe(answer)
+    expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain(`${NAMING} returned no readable findings block`)
+  }
+  // An agent whose call throws is answered with the error, and runs once.
+  let runs = 0
+  const thrown = await hook(m.hooks, 'tool.call', { tool: 'Agent' }).handler($, { tool: 'Agent', subagent_type: NAMING }, async () => { runs++; throw new Error('boom') })
+  expect(thrown).toEqual({ result: 'boom', isError: true })
+  expect(runs).toBe(1)
+  expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain('returned no readable findings block')
+})
+
+test('an agent of another plugin is not a norms agent: its answer is passed on unread', async () => {
+  resetCache()
+  const { $ } = setup()
+  const m = mounted()
+  await m.scope($)
+  const answer = reply([finding('error')])
+  expect(await m.agent($, 'general-purpose', answer)).toBe(answer)
+  expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain('no norms agent has reported')
+})
+
+test('an agent that runs again replaces its report, and a new scope forgets every report', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([finding('error')]))
+  await m.agent($, NAMING, reply([]))
+  await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(recordCalls(calls).length).toBe(1)
+  await m.scope($)
+  expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain('no norms agent has reported')
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('the end of the session forgets the reports', async () => {
+  resetCache()
+  const { $, state } = setup()
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([]))
+  await endSession(m.hooks, $)
+  // A mark again, with no scope computed: only the reports tell whether the agents ran.
+  state.set('norms/scopeMark', { head: HEAD, at: 1, files: [] })
+  expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain('no norms agent has reported')
+})
+
+test('an automatic check passes only WARNING and INFO findings: an ERROR is open, fixed or set aside', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.agent($, NAMING, reply([finding('error', 1), finding('info', 2)]))
+  const refused = await m.raw($, { open: 0, fixed: 0, passed: 2, auto: true })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toBe('norms: an automatic check passes only WARNING and INFO findings: 1 reported, 2 passed')
+  expect(recordCalls(calls)).toEqual([])
+  await m.raw($, { open: 1, fixed: 0, passed: 1, auto: true })
+  expect(recordCalls(calls).map(c => c.result)).toEqual(['fail'])
+  // An interactive walkthrough lets the user pass an ERROR: the choice is theirs.
+  await m.raw($, { open: 0, fixed: 0, passed: 2 })
+  expect(recordCalls(calls).map(c => c.result)).toEqual(['fail', 'pass'])
+})
+
+test('the agents\' prompts end with the request for the findings block', async () => {
+  resetCache()
+  const { $ } = fakeDollar({ runs: gitRuns(['src/a.ts'], [], { 'src/a.ts': '+a\n' }), dirs: { '.': [] } })
+  const hooks = mount(registerCheck)
+  const { next, seen } = nextOf()
+  await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
+  expect(String(seen[0].prompt).endsWith(REPORT_REQUEST)).toBe(true)
+})
+
+test('a findings block is read from the last fenced json block, case aside, and nothing else is a report', () => {
+  expect(reportOf('x\n```json\n{"findings":[{"severity":"ERROR","file":"a","summary":"s"}]}\n```\ntail')).toEqual([{ severity: 'error', file: 'a', summary: 's' }])
+  const two = '```json\n{"findings":[{"severity":"error"}]}\n```\n```json\n{"findings":[]}\n```'
+  expect(reportOf(two)).toEqual([])
+  for (const text of ['no block', '```json\nnot json\n```', '```json\n{"findings": 3}\n```', '```json\n{"findings":[{"severity":"critical"}]}\n```', '```json\nnull\n```']) {
+    expect(reportOf(text), text).toBeNull()
+  }
+})
+
+test('an agent\'s text is its completed record\'s content or hand-back report, never a launch', () => {
+  expect(agentText({ result: 'plain' })).toBe('plain')
+  expect(agentText({ text: 'plain' })).toBe('plain')
+  expect(agentText({ result: [{ text: 'a' }, 'b', { other: 1 }] })).toBe('a\nb\n')
+  expect(agentText('direct')).toBe('direct')
+  expect(agentText(undefined)).toBe('')
+  const done = { status: 'completed', content: [{ text: 'one' }, { text: 'two' }] }
+  expect(agentText({ result: done })).toBe('one\ntwo')
+  expect(agentText({ result: { ...done, handback: 'send', handbackReport: { text: 'delivered' } } })).toBe('delivered')
+  expect(agentText({ result: { ...done, handback: 'withheld' } })).toBe('')
+  expect(agentText({ result: { status: 'async_launched', agentId: 'a' } })).toBe('')
 })

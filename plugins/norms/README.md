@@ -75,7 +75,10 @@ mechanical work the markdown would otherwise hand the model:
 - `/norms:check` leaves a norms record at its end, through the `check_done` tool
   and the `github` plugin's record tool (0.12.0 or later), for the `github`
   plugin's ready guard: `pass` when no finding is left open, `fail` otherwise,
-  at the head commit the check ended on. Commits made after the check may only
+  at the head commit the check ended on. The findings are the ones the check's
+  agents reported, each ending its answer with a JSON block the module reads:
+  the call is refused when no agent reported, when one gave no readable block,
+  or when its figures do not account for every finding once. Commits made after the check may only
   touch the files it read. It leaves none, and says why on a `record:` line of
   the report, when `/norms:check` did not compute its scope in the session, the
   branch has no pull request, tracked files have changes, a later commit touches

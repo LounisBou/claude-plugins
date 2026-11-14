@@ -281,6 +281,10 @@ test('a push during a Skill-armed walkthrough asks the user, and is refused with
   expect(seen).toEqual([])
 })
 
+// The check's agent has reported no finding: the figures of a check_done then account for all.
+const noFindings = (hooks: Hook[], $: any) => hook(hooks, 'tool.call', { tool: 'Agent' })
+  .handler($, { tool: 'Agent', subagent_type: 'norms:norms-diff-scope' }, async () => ({ result: '```json\n{"findings": []}\n```' }))
+
 // A $ where check_done can write its record: the scope is marked in the state and the
 // checkout is clean, unless `marked` or `dirty` say otherwise.
 function recordable(over: { marked?: boolean; dirty?: boolean } = {}) {
@@ -303,8 +307,11 @@ test('a check run through the Skill tool ends its mode at the main loop\'s check
     registerRecord(on)
   })
   const { $ } = recordable()
-  const done = (agentId?: string) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
-    .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0, agentId })
+  const done = async (agentId?: string) => {
+    await noFindings(hooks, $)
+    return hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
+      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0, agentId })
+  }
   await skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
   await done('agent-1')
   expect(guardState().mode).toBe('check')
@@ -324,8 +331,11 @@ test('a check_done that is refused or leaves no record keeps the Skill-armed mod
     registerRecord(on)
   })
   const arm = ($: any) => skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
-  const done = ($: any) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
-    .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0 })
+  const done = async ($: any) => {
+    await noFindings(hooks, $)
+    return hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
+      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0 })
+  }
 
   // No scope marked: the call is refused, the walkthrough goes on.
   const unmarked = recordable({ marked: false }).$
