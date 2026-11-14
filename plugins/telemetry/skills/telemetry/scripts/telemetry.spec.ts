@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { backfillEvent, enrich, readSecrets, realGit, run, transcriptPointer, type Deps } from './telemetry.ts'
+import { backfillEvent, enrich, readSecrets, realGit, run, type Deps } from './telemetry.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const FIXTURE = fileURLToPath(new URL(`../../../tests/fixtures/${S}.jsonl`, import.meta.url))
@@ -120,7 +120,7 @@ function withLogs(config: string, deps: Deps): { remote: string; env: Deps['env'
   }
 }
 
-test('export --auto --foreground pushes the day files and the index, the manifest pointing at the transcript by its path under the config', () => {
+test('export --auto --foreground pushes the day files, the index and the redacted transcript, the manifest pointing at its copy in the repository', () => {
   harness((config, deps, setStdin) => {
     mkdirSync(join(config, 'projects', '-w'), { recursive: true })
     cpSync(FIXTURE, join(config, 'projects', '-w', `${S}.jsonl`))
@@ -129,9 +129,10 @@ test('export --auto --foreground pushes the day files and the index, the manifes
     const logs = withLogs(config, deps)
     const withRepo = { ...deps, env: logs.env, now: () => Date.parse('2026-11-14T09:00:00Z') }
     assert.equal(run(['export', '--auto', '--foreground', '--config', config], withRepo), 0)
-    assert.equal(deps.outs.at(-1), 'export: 1 day file(s) of box pushed to the logs repository')
+    assert.equal(deps.outs.at(-1), 'export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository')
     const manifest = JSON.parse(logs.show('index/box/2026-11-13.json')) as { sessions: { session: string; role: string; transcript: string }[] }
-    assert.deepEqual(manifest.sessions.map(({ session, role, transcript }) => ({ session, role, transcript })), [{ session: S, role: 'orchestrator', transcript: `projects/-w/${S}.jsonl` }])
+    assert.deepEqual(manifest.sessions.map(({ session, role, transcript }) => ({ session, role, transcript })), [{ session: S, role: 'orchestrator', transcript: `machines/box/transcripts/${S}.jsonl` }])
+    assert.ok(logs.show(`machines/box/transcripts/${S}.jsonl`).length > 0)
     assert.ok(logs.show('index/README.md').length > 0)
     assert.deepEqual(deps.detached, [])
   })
@@ -195,14 +196,5 @@ test('a plain export waits its turn behind a running one, and exits 1 saying so 
     assert.equal(deps.outs.at(-1), 'export: another export is running, nothing pushed')
     rmSync(lock)
     assert.equal(run(['export', '--config', config], { ...deps, env: logs.env }), 0)
-  })
-})
-
-test('the transcript pointer is relative to the config directory, undefined when there is none', () => {
-  harness(config => {
-    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
-    cpSync(FIXTURE, join(config, 'projects', '-w', `${S}.jsonl`))
-    assert.equal(transcriptPointer(config, S), `projects/-w/${S}.jsonl`)
-    assert.equal(transcriptPointer(config, '70ed5626-9879-4041-892a-5db0ff0bad69'), undefined)
   })
 })

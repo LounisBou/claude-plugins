@@ -13,7 +13,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
-import { basename, join, relative } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeEvent, type Event } from '../../../hooks/collect.ts'
 import { runAuto } from './lib/auto.ts'
@@ -70,12 +70,6 @@ export function enrich(line: string, config: string): string {
   }
 }
 
-/** Where a session's transcript is, relative to the configuration directory; undefined when it is gone. */
-export function transcriptPointer(config: string, session: string): string | undefined {
-  const path = transcriptOf(config, session)
-  return path === undefined ? undefined : relative(config, path)
-}
-
 /** Whether a line to append is a session's end. */
 function endsSession(line: string): boolean {
   const event = parseEvent(line)
@@ -113,7 +107,7 @@ export function run(args: readonly string[], deps: Deps): number {
     repo: logsRepo(deps.env, secrets),
     machine: machineName(deps.env['TELEMETRY_MACHINE'] || hostname()),
     git: deps.git,
-    transcript: (session: string) => transcriptPointer(config, session),
+    transcript: (session: string) => transcriptOf(config, session),
   })
   switch (sub) {
     case 'append': {
