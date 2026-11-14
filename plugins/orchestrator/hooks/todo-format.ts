@@ -1,10 +1,11 @@
+// hooks/todo-format.ts
 // The to-do list of a session, owned by the orchestrator: what the operator asked of it that does
 // not end within the turn, or that is for another session. One file per holder, `<state>/todo/<name>.jsonl`,
 // one line per item, in the grammar of the dispatch record's rows (`id`, `opened`, `label`, `state`,
 // `deferred`, `verdict`) plus `words`, `said_at` and `from`. Written by the orchestrator's hooks module
 // alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
-import { ROLES } from './names.ts'
+import { ROLES } from '../core/names.ts'
 
 /** The version a line carries, and where the lists live under the state directory. */
 export const TODO_CONTRACT = { version: 1, dir: 'todo', suffix: '.jsonl' } as const

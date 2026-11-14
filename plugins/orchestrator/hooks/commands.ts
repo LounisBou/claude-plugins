@@ -31,7 +31,7 @@ import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
 import { openFor, todoCounts, whoAmI } from './todo.ts'
-import { todoFile, todoName } from '../core/todo.ts'
+import { todoFile, todoName } from './todo-format.ts'
 
 // The nouns the commands hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>

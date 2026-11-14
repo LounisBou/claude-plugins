@@ -1,6 +1,6 @@
 // hooks/todo.ts
 // The `todo` tool: what the operator asks of a session that will not be done within the turn, or that
-// is for another session, recorded in the holder's own list (core's todo.ts, docs/contracts.md). The
+// is for another session, recorded in the holder's own list (todo-format.ts, docs/contracts.md). The
 // model judges that a request is one and records it; code keeps the list, under the store's lock, and
 // holds the session's « done » while an item is open (the declared wait, the stop gate, the
 // coordinator's end). A request for another session is written into that session's list first, then
@@ -9,7 +9,7 @@
 import { updateOver } from '../core/store-io.ts'
 import {
   addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
-} from '../core/todo.ts'
+} from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, storeOf } from './supervision.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
@@ -136,7 +136,7 @@ export async function callTodo($: Held, e: Record<string, unknown>, now: Date = 
   return closing($, me, action, e, now)
 }
 
-/** The count of open items in each list, by the list's file name (core's todoFile of the holder). */
+/** The count of open items in each list, by the list's file name (todo-format.ts's todoFile of the holder). */
 export async function todoCounts($: Held): Promise<Map<string, number>> {
   const dir = `${await stateDir($)}/${TODO_CONTRACT.dir}`
   const counts = new Map<string, number>()

@@ -4,7 +4,7 @@
 // and sent after, in one call; one for a session on another machine only sent, and said not recorded.
 import { expect, test } from 'claude-code/testing'
 import { TODO_TOOL, callTodo, register as registerTodo } from '../todo.ts'
-import { todoItems } from '../../core/todo.ts'
+import { todoItems } from '../todo-format.ts'
 import { register as registerWait, Declarations, WAIT_TOOL } from '../wait.ts'
 import { registerEnd, statusText } from '../commands.ts'
 import type { SessionRow } from '../supervision.ts'

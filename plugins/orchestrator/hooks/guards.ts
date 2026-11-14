@@ -47,7 +47,7 @@ import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
-import { todoName } from '../core/todo.ts'
+import { todoName } from './todo-format.ts'
 
 export function roleLine(role: string, root = ''): string {
   // Verbatim from hooks/context-gate.sh:57-63 — the four role answers. The
