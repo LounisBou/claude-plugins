@@ -3392,6 +3392,18 @@ test('a push sent after the timer was armed is sent again 30 s on: the tick that
   expect(objectAt(sender, second).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
 })
 
+test('his « Accorder » in the pane on a replica asking consent is the consent record at the owner, none at the coordinator', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
+  expect(objectAt(sender, id).consent).toEqual(DEPLOY)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'A : Accorder')
+  expect(consentFiles(coordinator)).toEqual([])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(objectAt(sender, id)).toMatchObject({ status: 'answered', answer: { text: 'A : Accorder', by: 'pane' } })
+  const records = consentFiles(sender).map(p => parseConsentRecord(JSON.parse(sender.files.get(p)!))!)
+  expect(records.map(r => [r.subject, r.entry, r.answer, r.by])).toEqual([[DEPLOY, id, 'Accorder', 'pane']])
+})
+
 test('a reply from another address than the coordinator\'s is refused: no answer, no consent, no acknowledgment', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
