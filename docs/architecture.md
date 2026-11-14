@@ -11,14 +11,15 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
                                   reader, shared environment names, the plugin locator, the pinned
                                   Playwright's install, and the typed contracts (the method's
-                                  formats, PR records, consent records)
+                                  formats, PR records, consent records, readiness)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
 ci/plugins.json                   where each plugin's suite blocks the build
 ci/prompts.json                   the prompt budgets and the duplicate ceiling
 ci/scenarios.json                 what each kind of session loads, summed by `npm run context`
-.github/workflows/ci.yml          the one workflow: the repository rules, then the plugin suites
+.github/workflows/ci.yml          the one workflow: the repository rules, the plugin suites, then `ci`,
+                                  the one check GitHub requires (core's readiness contract)
 docs/                             architecture, conventions, contracts, migration, decisions, specs
 ```
 
@@ -130,6 +131,7 @@ The release pull request also asks the operator whether to re-run the outcome me
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
+| the repository rules and every blocking cell passed, as one check the default branch requires (`/github:protect apply ci`, once that job runs on `main`) | the `ci` job, named by `packages/core/src/readiness.ts` |
 
 A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
 runs every plugin, a change of documentation alone (`docs/`, a Markdown file at the root) none.
