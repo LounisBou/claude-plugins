@@ -12,11 +12,11 @@ const added = (text: string | undefined, words: string, change: Record<string, u
   addTodo(text ?? '', { words, said_at: SAID, from: 'Coord: general', ...change }, NOW)
 
 test('belongs to the holder\'s name, without its reference and in the current shape', () => {
-  expect(holderOf('Orch: Claude plugins [08eb0d]')).toBe('Orch: Claude plugins')
-  expect(holderOf('Orch : Claude plugins')).toBe('Orch: Claude plugins')
-  expect(holderOf('Orch:Claude plugins [abc]')).toBe('Orch: Claude plugins')
+  expect(holderOf('Orch: Billing app [a1b2c3]')).toBe('Orch: Billing app')
+  expect(holderOf('Orch : Billing app')).toBe('Orch: Billing app')
+  expect(holderOf('Orch:Billing app [abc]')).toBe('Orch: Billing app')
   expect(holderOf('  Coord: general  ')).toBe('Coord: general')
-  expect(todoPath('/state', 'Orch: Claude plugins [08eb0d]')).toBe('/state/todo/Orch: Claude plugins.jsonl')
+  expect(todoPath('/state', 'Orch: Billing app [a1b2c3]')).toBe('/state/todo/Orch: Billing app.jsonl')
   expect(todoPath('/state', 'Audit: a/b..c')).toBe('/state/todo/Audit: a_b..c.jsonl')
   expect(todoPath('/state', 'Orch: x [1]')).toBe(todoPath('/state', 'Orch: x [2]'))
   expect(todoFile('Orch: x [1]')).toBe('Orch: x.jsonl')
@@ -37,7 +37,7 @@ test('adds an item with his words as given, dated, numbered after the last, open
 
 test('numbers after the highest id, a closed item\'s included', () => {
   const one = added(undefined, 'a')
-  const closed = closeTodo(one.text, 1, 'claude-plugins#1', NOW)
+  const closed = closeTodo(one.text, 1, 'acme/app#1', NOW)
   expect('item' in closed).toBe(true)
   expect(added('item' in closed ? closed.text : '', 'b').item.id).toBe(2)
 })
