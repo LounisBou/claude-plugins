@@ -505,6 +505,15 @@ check "a rebase is never the orchestrator's: a mechanical one goes to an agent" 
 # the one question per repository live in phases.md; the tool is github's, named, never restated.
 check "phases.md carries the stack rules and the light CI's one question per repository" "yes|yes|yes|yes|yes" \
   "$(spells "$ORCH_REFS/phases.md" 'Merge top-down with merge commits, the bottom last.')|$(spells "$ORCH_REFS/phases.md" 'Re-merge the base into a stacked branch only on a conflict or when the files overlap')|$(spells "$ORCH_REFS/phases.md" 'mcp__github__light_ci status {repo}')|$(spells "$ORCH_REFS/phases.md" 'ONE question for the repository in the Q4-A shape')|$(spells "$ORCH_REFS/phases.md" 'mcp__github__light_ci run {pr}')"
+# Parallel by itself (the operator's word of 2026-11-14, « pourquoi attendre plutôt que de faire avancer le projet au
+# plus vite ? »): every open row whose files collide with no running agent's is dispatched now, dependent work is
+# stacked, never queued « after » another pull request, and a successor reads the predecessor's next step as a set.
+check "phases.md dispatches every row that can run now, stacks the rest, and names the only waits" "yes|yes|yes|yes|yes" \
+  "$(spells "$ORCH_REFS/phases.md" '**Dispatch every row that can run, now.**')|$(spells "$ORCH_REFS/phases.md" 'An open row whose files collide with no running agent'"'"'s is dispatched this turn')|$(spells "$ORCH_REFS/phases.md" 'never queued « after » another pull request')|$(spells "$ORCH_REFS/phases.md" '« After the series » and « one after the other » are never a reason to wait.')|$(spells "$ORCH_REFS/phases.md" 'The only waits: a file collision with a running writer, the operator'"'"'s consent, a release a removal requires.')"
+check "phases.md no longer queues a dispatch because a repository is busy" "0" \
+  "$(grep -c 'If a repository is busy, queue the next dispatch' "$ORCH_REFS/phases.md")"
+check "the successor's reference dispatches every allowed row on its next turn and reads the next step as a set" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/succession-successor.md" '**The first dispatch.** The announcement lists the open rows with no agent; your next turn dispatches every one')|$(spells "$ORCH_REFS/succession-successor.md" 'the dependent ones stacked')|$(spells "$ORCH_REFS/succession-successor.md" '« next step » is read as a set of rows, never an order')"
 # The rationalizations table left the review references (rule 169 of the rules review): each row repeated a
 # rule kept elsewhere, the ready and the rebase --onto pinned just above.
 check "the review reference carries no rationalizations table" "0|0" \
@@ -5459,10 +5468,10 @@ two_lines_only() {
     | xargs grep -LF -- 'waiting: tool' | sed "s#^$ROOT/##"
 }
 check "no text offers only the wait on the operator and done" "" "$(two_lines_only)"
-# The question of a decision round ends on a declared wait on the operator: the stop gate refuses
-# a turn that ends on a bare question.
-check "a decision round's question ends on a declared operator wait" "yes" \
-  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`')"
+# The question of a decision round is asked with `ask` and ends on a declared wait on the operator
+# that names no question of its own: the stop gate refuses a turn that ends on a bare question.
+check "a decision round's question ends on a declared operator wait" "yes|yes" \
+  "$(spells "$ROOT/commands/decide.md" 'with one `ask` call')|$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator"})`, without `question`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 # The operator's time: a round is a wave of questions back to back, nothing relayed or launched
@@ -5490,6 +5499,8 @@ check "a mechanical base merge goes to a rebase agent, never the orchestrator; o
   "$(spells "$ORCH_REFS/rebase.md" 'A rebase or merge of the base is never yours')|$(spells "$ORCH_REFS/rebase.md" 'one that decides behaviour to a correction session')"
 check "succession prunes the state file and archives the finished journal" "yes|yes" \
   "$(spells "$ORCH_REFS/succession-predecessor.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/succession-predecessor.md" 'the finished journal, dated before it, moves to an archive file')"
+check "the predecessor's prune says live archives the settled round" "yes" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" "and archives the round's entries settled over a day ago")"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
 # them. Rule 203: move_send refuses a checkout that is not clean and pushed on its own
 # (hooks/tests/moving.test.ts « a dirty or an unpushed checkout refuses the move »). Rule 207
@@ -5670,6 +5681,8 @@ check "step 4 sends « takeover confirmed » alone on its message's first line" 
   "$(succ4_has '"takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line')"
 check "step 5 ends the turn after the announcement, and the dispatch waits for the next one" "1|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'END THE TURN: dispatch on your next one.' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | awk '{ a = index($0, "announce in one message"); e = index($0, "END THE TURN"); print (a > 0 && e > a) ? "yes" : "no" }')"
+check "the succession brief's announcement lists the open rows with no agent, and the next turn takes every row of that list" "1|0|1" \
+  "$(printf '%s' "$SUCC5" | grep -cF 'predecessor terminated, the open rows with no agent, open questions found')|$(printf '%s' "$SUCC5" | grep -cF 'predecessor terminated, next step')|$(printf '%s' "$SUCC5" | grep -cF 'END THE TURN: dispatch on your next one. It takes every row of that list the rule allows (`references/succession-successor.md`, « The first dispatch »).')"
 check "the template points at the lifecycle for the measure, the wait and the close" "yes|yes" \
   "$(spells "$SUCC" '`references/succession-successor.md`, « Succession — the successor »')|$(grep -qx "### Succession — the successor" "$ORCH_REFS/succession-successor.md" && echo yes || echo no)"
 # The successor reads its own file of the succession, never the predecessor's.
@@ -11171,7 +11184,7 @@ check "with no pane open every open question is due, a closing proposal still no
 # it (the module's settle writes it closed) it is never listed again: the tab never presents it.
 check "an entry answered in the pane is never due, and once closed is never listed again" \
   "0|0|0" \
-  "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
+  "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
 check "round refuses a pinned clock that is no UTC time" "exit 1|coordinator: round: COORDINATOR_NOW is no UTC time: soon" \
   "$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round >/dev/null 2>&1; echo "exit $?")|$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round 2>&1)"
 # round --by-urgency lists the same lines, due marked the same, each set ordered urgent first,

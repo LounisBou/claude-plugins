@@ -17,7 +17,7 @@ const ROUND = `${MODULE}/round`
 const SESSIONS = `${MODULE}/store/sessions`
 const NOW = new Date('2026-11-14T15:00:00Z')
 const ASKER = 'Orch: acme [a1b2c3]'
-const COORD = 'Coord: general [d4e5f6]'
+const COORD = 'Coord: general'
 
 const row = (role: string, name: string) =>
   JSON.stringify({ role, name, repo: null, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() })
