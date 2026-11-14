@@ -37,7 +37,7 @@
       ],
       "review": [
         "required",
-        "none"
+        "one-pass"
       ]
     },
     "omitted": {
@@ -52,7 +52,8 @@
     "former": {
       "review": {
         "full": 3,
-        "one-pass": 1
+        "one-pass": 1,
+        "none": 1
       }
     }
   },
