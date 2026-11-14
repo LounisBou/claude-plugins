@@ -4,8 +4,9 @@
 // version that the relay's entries do not carry, its block written to the transcript by the module;
 // and the lines the pane draws from those objects, grouped by asker.
 import { expect, test } from 'claude-code/testing'
-import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, parseAsk, parseAsked, questionBlock, shownLines, register as registerQuestion, type Asked } from '../question.ts'
+import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settleClaimed, shownLines, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
+import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/ask-home'
@@ -239,6 +240,85 @@ test('« Question i of N » counts this turn\'s questions only: one asked in a l
   expect(shown.filter(line => /^Question \d+ of \d+/.test(line)).slice(2).map(line => line.slice(0, 14))).toEqual(['Question 2 of ', 'Question 3 of '])
 })
 
+// The operator's answer already recorded (§ 4.7 d): a question of the same project asking the same,
+// answered by him in a tab, the pane or through the coordinator, is answered from it and not asked again.
+test('a question its project already had answered is answered from the newest record, not asked again; a message or a withdrawal is no record', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const [first] = stored(before.files)
+  const answered = (id: string, by: string, at: string, over: Record<string, unknown> = {}) =>
+    JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text: `B from ${id}`, by, at, settler: 'x' }, ...over })
+  const { dollar, files, shown } = world({
+    files: {
+      [`${ROUND}/q-old.json`]: answered('q-old', 'tab', '2026-11-10T10:00:00.000Z'),
+      [`${ROUND}/archive/q-newer.json`]: answered('q-newer', 'coordinator', '2026-11-12T10:00:00.000Z'),
+      [`${ROUND}/q-message.json`]: answered('q-message', 'message', '2026-11-13T10:00:00.000Z'),
+      [`${ROUND}/q-moot.json`]: answered('q-moot', 'sender', '2026-11-13T11:00:00.000Z', { status: 'withdrawn' }),
+      [`${ROUND}/q-other.json`]: answered('q-other', 'tab', '2026-11-13T12:00:00.000Z', { blocks: 'another thing' }),
+    },
+  })
+  const answer = await ask(dollar, fields)
+  const mine = stored(files).find(entry => entry.sender.session === 's-me')!
+  expect(mine.status).toBe('answered')
+  expect(mine.answer).toEqual({ text: 'B from q-newer', by: 'coordinator', at: '2026-11-12T10:00:00.000Z', settler: 'Coord: general [a1b2c3]', record: 'q-newer' })
+  expect(answer.result).toContain('Answered from the record, not asked again')
+  expect(answer.result).toContain('B from q-newer')
+  expect(shown).toEqual([])
+})
+
+test('words typed in a tab are a record only when they name one choice: free prose newer than a lettered answer is passed over', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const [first] = stored(before.files)
+  const typed = (id: string, text: string, at: string) =>
+    JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text, by: 'tab', at, settler: 'x' } })
+  const { dollar, files } = world({
+    files: {
+      [`${ROUND}/q-lettered.json`]: typed('q-lettered', 'b', '2026-11-10T10:00:00.000Z'),
+      [`${ROUND}/q-prose.json`]: typed('q-prose', 'hold on, look at the logs first', '2026-11-12T10:00:00.000Z'),
+    },
+  })
+  await ask(dollar, fields)
+  const mine = stored(files).find(entry => entry.sender.session === 's-me')!
+  expect(mine.answer).toMatchObject({ text: 'b', by: 'tab', record: 'q-lettered' })
+})
+
+// His answer typed in the asker's own tab (§ 4.3): the prompt claims its open questions, which leave
+// the pane at once; the turn's end answers each with his words, unless its operator wait keeps it.
+test('a prompt he types claims the asker\'s open questions; the turn\'s end answers them with his words, but those its wait keeps', async () => {
+  const { dollar, files } = world()
+  await ask(dollar, { ...FULL, urgent: undefined })
+  await ask(dollar, { ...FULL, urgent: undefined, subject: 'tag order' })
+  const [first, second] = stored(files).sort((a, b) => (a.subject < b.subject ? -1 : 1))
+  // A model's own prompt, or a command, claims nothing.
+  expect(await claimAsked(dollar, 'model', 'B')).toEqual([])
+  expect(await claimAsked(dollar, 'composer', '/compact')).toEqual([])
+  expect((await claimAsked(dollar, 'composer', '  B, and tag it after  ', NOW)).sort()).toEqual([first.id, second.id].sort())
+  expect(stored(files).every(entry => entry.status === 'open' && entry.claimed?.typed === 'B, and tag it after')).toBe(true)
+  expect(askedGroups(stored(files))).toEqual([])
+  await settleClaimed(dollar, [second.id], new Date('2026-11-14T15:01:00Z'))
+  const after = new Map(stored(files).map(entry => [entry.id, entry]))
+  expect(after.get(first.id)).toMatchObject({ status: 'answered', answer: { text: 'B, and tag it after', by: 'tab', at: '2026-11-14T15:01:00.000Z', settler: 'Coord: general [a1b2c3]' } })
+  expect(after.get(first.id)!.claimed).toBeUndefined()
+  expect(after.get(second.id)).toMatchObject({ status: 'open' })
+  expect(after.get(second.id)!.claimed).toBeUndefined()
+})
+
+test('a consent question answered « Accorder » in the asker\'s tab is recorded as that consent; other words record none', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const records = async (typed: string) => {
+    const { dollar, files } = world()
+    await ask(dollar, { ...FULL, urgent: undefined, ...consent })
+    await claimAsked(dollar, 'composer', typed, NOW)
+    await settleClaimed(dollar, [], NOW)
+    return [...files.keys()].filter(p => p.includes('/consents/acme/app/'))
+  }
+  expect((await records('A')).length).toBe(1)
+  expect((await records('let me think')).length).toBe(0)
+})
+
 test('a subagent\'s call is refused', async () => {
   const { dollar, files } = world()
   expect((await ask(dollar, { ...FULL, agentId: 'agent-1' })).isError).toBe(true)
@@ -284,6 +364,25 @@ test('the tool is registered with flat fields only, and answers its calls', asyn
   expect(Object.keys(properties).sort()).toEqual(['blocks', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'choice_e', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'context', 'question', 'recommended', 'subject', 'urgent', 'why'])
   await handlers[`tool.call:mcp__orchestrator__${ASK_TOOL}`](dollar, FULL)
   expect(stored(files).length).toBe(1)
+})
+
+test('his prompt in the tab claims through the hook, and the turn\'s end answers, keeping what its declared operator wait waits on', async () => {
+  const { dollar, files } = world()
+  await ask(dollar, { ...FULL, urgent: undefined })
+  const [entry] = stored(files)
+  const handlers = mounted()
+  const next = async (x: unknown) => x
+  await handlers['prompt.submit'](dollar, { origin: { kind: 'composer' }, text: 'B' }, next)
+  expect(stored(files)[0].claimed?.typed).toBe('B')
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: entry.blocks, asked: [entry.id] })
+  await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'Noted.' }, next)
+  expect(stored(files)[0]).toMatchObject({ status: 'open' })
+  expect(stored(files)[0].claimed).toBeUndefined()
+  await handlers['prompt.submit'](dollar, { origin: { kind: 'composer' }, text: 'B' }, next)
+  DECLARATIONS.turnStarted()
+  await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'Merging acme/app#2 first.' }, next)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered', answer: { text: 'B', by: 'tab' } })
 })
 
 // --- the pane's lines ---------------------------------------------------------------------------

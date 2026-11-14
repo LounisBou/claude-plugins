@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1200,10 +1200,13 @@ async function traceRender($: any, read: readonly RoundEntry[], taken: ReadonlyS
 // successor's name, other than its predecessor's, stands for it. A process table that could not be
 // read judges no record dead, as the store's read keeps its rows. One moved by name alone that no
 // live record takes is closed (closeUnhosted). The answer is the entries' ids.
-async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive']): Promise<Set<string>> {
+async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive'], asked: ReadonlySet<string> = new Set()): Promise<Set<string>> {
   const wanted = entries.filter(entry => entry.status === 'open' && entry.movedFrom && !entry.origin && !(entry.session !== '' && sessionKey(entry.session) in rows))
   const hosted = new Set<string>()
   if (wanted.length === 0) return hosted
+  // A question asked with `ask` moved by name alone takes the session of the record that hosts it.
+  const named = new Map<string, string>()
+  const sessionOf = new Map<string, string>()
   const takes = (entry: RoundEntry, record: { sessionId: string; name?: unknown }) => entry.session !== ''
     ? record.sessionId === entry.session
     : record.name === entry.from && record.sessionId !== entry.movedFrom
@@ -1216,6 +1219,7 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
       const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
       if (typeof record?.sessionId !== 'string' || record.sessionId === '' || !/^\d+$/.test(String(record.pid ?? ''))) continue
       const ids = wanted.filter(entry => takes(entry, record)).map(entry => entry.id)
+      for (const id of ids) if (asked.has(id)) sessionOf.set(id, record.sessionId)
       if (ids.length > 0) pids.set(String(record.pid), [...(pids.get(String(record.pid)) ?? []), ...ids])
     } catch { /* a record being written, or gone: not this one */ }
   }
@@ -1224,7 +1228,13 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
     : pids.size === 0 ? new Map()
     : livePids(await $.process.run(livePidsArgv([...pids.keys()])!, { timeoutMs: 5000 }).catch(() => null))
   for (const [pid, ids] of pids) if (table === null || runsLive(table, pid)) for (const id of ids) hosted.add(id)
-  if (listed !== null) await closeUnhosted($, wanted.filter(entry => entry.session === '' && !hosted.has(entry.id)))
+  for (const entry of wanted) if (entry.session === '' && hosted.has(entry.id) && sessionOf.has(entry.id)) named.set(entry.id, sessionOf.get(entry.id) as string)
+  try {
+    await nameMovedAsked($, named)
+  } catch (err) {
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+  }
+  if (listed !== null) await closeUnhosted($, wanted.filter(entry => entry.session === '' && !hosted.has(entry.id)), asked)
   return hosted
 }
 
@@ -1233,15 +1243,27 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
 // withdrawn here, by the sender, as a gone sender's are. Judged only on a registry listed: a
 // listing that failed closes nothing, and a process table that could not be read takes every
 // record of that name as live.
-async function closeUnhosted($: any, orphans: readonly RoundEntry[]): Promise<void> {
+async function closeUnhosted($: any, orphans: readonly RoundEntry[], asked: ReadonlySet<string> = new Set()): Promise<void> {
   if (orphans.length === 0) return
   try {
     const ids = new Set(orphans.map(entry => entry.id))
-    const settled = await withdrawStale($, '', null, "the sender's session ended", entry => !ids.has(entry.id))
-    await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
+    const why = "the sender's session ended"
+    const settled = await withdrawStale($, '', null, why, entry => !ids.has(entry.id))
+    const gone = await withdrawAskedIds($, orphans.filter(entry => asked.has(entry.id)).map(entry => entry.id), why)
+    await tellSettled($, [...settled, ...await shownAsked($, gone, why)], Date.now() + RELAY_BOUND_MS)
   } catch (err) {
     await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
+}
+
+// The questions asked with `ask` withdrawn by their asker that the coordinator here was shown,
+// as the settled notices tell them: each closed by its asker, why.
+async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Promise<Settled[]> {
+  const told: Settled[] = []
+  for (const entry of withdrawn) {
+    if (await closesItself($, entry.id)) told.push({ entry: askedAsEntry(entry), answer: { text: `withdrawn: ${why}`, by: 'sender', at: entry.answer?.at ?? new Date().toISOString() } })
+  }
+  return told
 }
 
 // The questions just due, read in the coordinator's own session: one wake submitted to it for
@@ -1254,13 +1276,18 @@ async function wakeForDue($: any): Promise<void> {
   await reconcileRound($)
   const store = await readStore($)
   const local = store.rows
-  const read = (await readRound($)).map(found => found.entry)
+  const relayed = (await readRound($)).map(found => found.entry)
+  // The questions asked with `ask`, told and due as the relay's entries are, read through them only;
+  // one claimed by his prompt in its asker's tab has left the pane, and is neither told nor due
+  // until that turn's end, while its id stays one the round holds.
+  const asked = await readAsked($)
+  const read = [...relayed, ...asked.filter(entry => !entry.claimed).map(askedAsEntry)]
   const paneOpen = await paneIsOpen($)
-  const present = new Set(read.map(entry => entry.id))
+  const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
-  if (paneOpen) await traceUnseen($, read, now)
+  if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
-  const hosted = await hostedSuccessors($, read, local, store.alive)
+  const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
     (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
   if (!read.some(dueBeside(await readWoken($)))) return
@@ -1562,8 +1589,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const done = await withDeadline(successor
         ? moveToSuccessor($, sessionId, successor)
         : withdrawStale($, sessionId, null, "the sender's session ended").then(async settled => {
+          const asked = await withdrawAsked($, sessionId, "the sender's session ended")
           if (remote) await withdrawRemote($, remote.name, remote.held)
-          return settled
+          return [...settled, ...await shownAsked($, asked, "the sender's session ended")]
         }), bound)
       if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
@@ -1884,7 +1912,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // already answered.
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
-        asked = askedGroups((await readAsked($)).filter(entry => sessionKey(entry.sender.session) in local)).flat()
+        // One moved to a successor by its name alone is drawn while a live record of that name hosts it.
+        const allAsked = await readAsked($)
+        const hostedAsked = await hostedSuccessors($, allAsked.map(askedAsEntry), local, store.alive, new Set(allAsked.map(entry => entry.id)))
+        const localAsked = allAsked.filter(entry => sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
+        asked = askedGroups(localAsked).flat()
         pending += asked.length
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = questions[0]
@@ -1899,6 +1931,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         failed = drawn.filter(entry => entry.delivery?.state === 'failed' && (entry.origin
           || (entry.status !== 'withdrawn' && entry.answer?.at === entry.delivery.answerAt && !pane.forgotten.has(failedKey(entry)))))
           .map(entry => ({ entry, reason: entry.delivery!.reason ?? 'no answer' }))
+        // An answer to a question asked with `ask` not delivered, while its asker has a row here.
+        failed.push(...localAsked.filter(entry => entry.status === 'answered' && entry.delivery?.state === 'failed')
+          .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' })))
         delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
@@ -2058,13 +2093,18 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(keyOf(entry)) })).catch(() => undefined)
         },
       })
-      const focus = focusKey()
-      if (asking !== null && focus !== null && focusedFor !== keyOf(asking)) {
+      // With no card, the first question asked with `ask` takes the controls: its picker, its choices, its field.
+      const answering: Asked | null = asking === null ? asked[0] ?? null : null
+      const answeringPick = answering === null ? null : (answering.choices.find(c => c.letter === answering.recommended) ?? answering.choices[0])?.letter ?? null
+      const focus = answering === null ? focusKey()
+        : answeringPick === null ? null : picker ? `choices:${answering.id}` : `choice:${answeringPick}`
+      const focusFor = asking !== null ? keyOf(asking) : answering?.id ?? null
+      if (focusFor !== null && focus !== null && focusedFor !== focusFor) {
         // Once per question: the ring to its first choice for a pane already holding the keys,
         // and the window to it, so a question drawn below the rows shows its choice. Never
         // awaited, so the draw never waits on itself, and a refusal (the pane holds no keys yet)
         // is not an error.
-        focusedFor = keyOf(asking)
+        focusedFor = focusFor
         try {
           Promise.resolve($.ui.focus({ requestId: PANE_ID, key: focus })).catch(() => undefined)
         } catch {
@@ -2269,6 +2309,102 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         node: el.Box({ paddingLeft: line.indent, children: [rich(line.text, askedLook(line.look))] }),
         rows: rowsOf(takesRows(line.text), width - line.indent),
       }))
+      // His answer to the question asked with `ask` the controls are under, once at a time: the
+      // object answered by the pane, its asker sent the answer, the coordinator that was shown it
+      // told it is settled, as for an entry, the pane drawn again.
+      const answerAsked = (id: string, text: string): Promise<void> => {
+        if (pane.answering.has(id)) return Promise.resolve()
+        pane.answering.add(id)
+        return (async () => {
+          const shown = await shownToCoordinator($, id)
+          const done = await answerAskedFromPane($, id, text)
+          if (done === null || done.answer === null) return
+          forgetDraft(pane, id)
+          if (shown) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
+        })()
+          .catch(err => logLine($, 'supervision', `round: ${(err as Error).message}`))
+          .finally(() => {
+            pane.answering.delete(id)
+            $.ui.invalidate('ui.render')
+          })
+      }
+      // The controls under that question's lines, as the card draws its own: a picker of its letters
+      // and « Other answer » where the surface has one, a Button per choice elsewhere, then the field.
+      const askedControls = (entry: Asked): Drawn[] => {
+        const indent = 4
+        const at = width - indent
+        const pick = (letter: string) => answerAsked(entry.id, `${letter} : ${entry.choices.find(c => c.letter === letter)!.text}`)
+        const choosingAsked = entry.choices.length > 0
+        const controls: Drawn[] = []
+        if (choosingAsked && picker) {
+          controls.push({
+            node: el.Select({
+              key: `choices:${entry.id}`,
+              label: WORDS.choose,
+              options: [
+                ...entry.choices.map(c => ({ value: c.letter, label: c.letter === entry.recommended ? `${c.letter} (${WORDS.recommended})` : c.letter })),
+                { value: OTHER_VALUE, label: WORDS.otherBelow },
+              ],
+              value: answeringPick!,
+              autoFocus: true,
+              onSelect: (value: string) => {
+                if (value !== OTHER_VALUE) return pick(value)
+                pane.writing = entry.id
+                $.ui.invalidate('ui.render')
+                return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(entry.id) })).catch(() => undefined)
+              },
+            }),
+            rows: 1 + (e.props?.isFocused ? entry.choices.length + 1 : 0),
+          })
+        } else if (choosingAsked) {
+          for (const c of entry.choices) {
+            const label = `[${c.letter}] ${plainText(c.text)}${c.letter === entry.recommended ? `  ${STAR}` : ''}`
+            const key = `choice:${c.letter}`
+            controls.push({
+              node: el.Button({ key, label, hotkey: c.letter.toLowerCase(), ...(key === focus ? { autoFocus: true } : {}), onPress: () => pick(c.letter) }),
+              rows: rowsOf(label, at),
+            })
+          }
+        }
+        if (typeof el.Input === 'function') {
+          if (!(picker && choosingAsked && pane.writing !== entry.id)) {
+            const typed = pane.typed?.get(entry.id) ?? ''
+            controls.push({
+              node: el.Input({
+                key: answerKey(entry.id),
+                label: OTHER_LABEL,
+                placeholder: WORDS.otherPlaceholder,
+                submitLabel: WORDS.send,
+                rows: ANSWER_ROWS,
+                onInput: (value: string) => {
+                  if (value === '') pane.typed?.delete(entry.id)
+                  else pane.typed?.set(entry.id, value)
+                  $.ui.invalidate('ui.render')
+                },
+                onSubmit: (value: string) => (value.trim() === '' ? undefined : answerAsked(entry.id, value)),
+              }),
+              rows: ANSWER_ROWS,
+            }, ...(typed === '' ? [] : [{ node: el.Text({ children: typed }), rows: rowsOf(typed, at) }]))
+          }
+        } else {
+          const note = `type your answer in this tab, or in ${entry.sender.name}'s tab`
+          const noted = pane.other.has(entry.id)
+          controls.push({
+            node: el.Box({
+              flexDirection: 'column',
+              children: [
+                el.Button({ key: OTHER_KEY, label: WORDS.otherInSession, hotkey: OTHER_HOTKEY, onPress: () => { pane.other.add(entry.id); $.ui.invalidate('ui.render') } }),
+                ...(noted ? [el.Text({ color: 'suggestion', children: note })] : []),
+              ],
+            }),
+            rows: 1 + (noted ? rowsOf(note, at) : 0),
+          })
+        }
+        return controls.map(control => ({ node: el.Box({ paddingLeft: indent, children: [control.node] }), rows: control.rows }))
+      }
+      // The controls go right under the lines of the question they answer: its Blocks line, the first.
+      const answeredEnd = answering === null ? -1 : askedLines(asked).findIndex(line => line.look === 'label')
+      if (answering !== null && answeredEnd >= 0) askedPieces.splice(answeredEnd + 1, 0, ...askedControls(answering))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
         // Beside the questions asked with `ask`, the line still counts the orchestrators waiting with none drawn.
@@ -2284,7 +2420,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.orchestrators }), rows: rowsOf(WORDS.orchestrators, width) }
       // The key line, dim, at the foot: once the pane holds the keys, how to give them is no
       // longer said.
-      const keyLine = asking === null ? null : picker
+      const keyLine = asking === null && answering === null ? null : picker
         ? `${e.props?.isFocused ? '' : 'ctrl+x tab or a click: give the pane the keys · '}arrows: move · Enter: choose · Esc: back to the prompt`
         : 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt'
       const flow: Drawn[] = [
@@ -2297,7 +2433,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, answering?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -2728,7 +2864,10 @@ async function handOver($: any, sessionId: string): Promise<void> {
   const successor = await readSuccessor($, sessionId)
   const done = await withDeadline(successor
     ? moveToSuccessor($, sessionId, successor)
-    : withdrawStale($, sessionId, null, 'handed over to its successor'), RELAY_BOUND_MS)
+    : withdrawStale($, sessionId, null, 'handed over to its successor').then(async settled => {
+      await withdrawAsked($, sessionId, 'handed over to its successor')
+      return settled
+    }), RELAY_BOUND_MS)
   if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
   else await tellSettled($, done, until)
 }
@@ -3372,6 +3511,8 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
       await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
   }
+  // The questions asked with `ask` follow, their asker now the successor.
+  await moveAsked($, sessionId, { session, name: successor.name })
   return []
 }
 

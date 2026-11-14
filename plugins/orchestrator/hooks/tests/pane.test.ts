@@ -1293,6 +1293,124 @@ test('beside questions asked with ask alone, the section still counts the orches
   expect(alone.some(t => /waits? for you/.test(t) || t === 'none')).toBe(false)
 })
 
+// A question asked with `ask` alone in the pane is answered there, its controls under its own lines.
+async function askedPane(objects: Record<string, unknown>[], over: { refuse?: string; surface?: string } = {}) {
+  const pane = await askingPane([], over)
+  for (const object of objects) pane.fx.files.set(`${ROUND}/${String(object['id'])}.json`, JSON.stringify(object) + '\n')
+  return pane
+}
+
+test('with no card, the first question asked with ask takes a picker under its own lines, its asker line kept', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const second = askedObject('low', 'Orch: low', '2026-10-18T10:05:00.000Z', { subject: 'tag order' })
+  const { render, fx } = await askedPane([first, second])
+  const tree = await render()
+  expect(texts(tree)).toContain('Orch: low · orchestrator · box-1')
+  expect(findAll(tree, n => n.type === 'Select').length).toBe(1)
+  expect(picker(tree).props.options.map((o: any) => o.value)).toEqual(['A', 'B', 'other'])
+  expect(picker(tree).props.value).toBe('A')
+  const lines = shown(tree)
+  const at = (text: string) => lines.findIndex(line => line.includes(text))
+  expect(at('Blocks: acme/app#1')).toBeLessThan(at('Choose: A (recommended)'))
+  expect(at('Choose: A (recommended)')).toBeLessThan(at('Question 2 of 2: tag order'))
+  expect(lines.some(line => line.startsWith('arrows: move') || line.includes('Enter: choose'))).toBe(true)
+  expect(fx.focused.map(f => f.key)).toContain(`choices:${first.id}`)
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
+})
+
+test('a pick on a question asked with ask answers it by the pane, sends its asker the answer once, and draws the next', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const second = askedObject('low', 'Orch: low', '2026-10-18T10:05:00.000Z', { subject: 'tag order' })
+  const { fx, sent, render } = await askedPane([first, second])
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'coordinator', name: 'Coord: main', context_percent: 10 })) + '\n')
+  await pick(await render(), 'B')
+  const stored = JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`)))
+  expect(stored.status).toBe('answered')
+  expect(stored.seq).toBe(2)
+  expect(stored.answer).toEqual({ text: 'B : acme/app#2 first', by: 'pane', at: stored.answer.at, settler: 'Coord: main' })
+  expect(stored.delivery).toMatchObject({ state: 'delivered', attempts: 1 })
+  expect(sent).toEqual([{ to: { sessionId: 'low' }, text: `[module] The operator answered your question ${first.id} « merge order » (blocks: acme/app#1) through Coord: main at ${stored.answer.at} — B : acme/app#2 first` }])
+  const after = await render()
+  expect(texts(after)).toContain('Questions for you — 1 pending')
+  expect(picker(after).props.key).toBe(`choices:${second.id}`)
+})
+
+test('the Other answer of a question asked with ask is its field once picked, its words the answer; an empty field sends nothing', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const { fx, sent, render } = await askedPane([first])
+  expect(findAll(await render(), n => n.type === 'Input').length).toBe(0)
+  await pick(await render(), 'other')
+  const field = input(await render())
+  expect(field.props).toMatchObject({ key: `answer:${first.id}`, label: 'Other answer', rows: 4 })
+  await field.props.onSubmit('   ')
+  expect(sent).toEqual([])
+  await field.props.onSubmit('  neither, merge both  ')
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).answer.text).toBe('neither, merge both')
+  expect(sent.length).toBe(1)
+})
+
+test('a question asked with ask without choices takes the field at once', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [], recommended: null, why: null })
+  const { render } = await askedPane([first])
+  const tree = await render()
+  expect(findAll(tree, n => n.type === 'Select').length).toBe(0)
+  expect(input(tree).props.key).toBe(`answer:${first.id}`)
+})
+
+test('on a surface without a picker, a question asked with ask takes a Button per choice', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const { fx, sent, render } = await askedPane([first], { surface: 'mobile' })
+  const tree = await render()
+  expect(button(tree, 'choice:A').props.label).toBe('[A] acme/app#1 first  ★')
+  await button(tree, 'choice:A').props.onPress()
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).answer.text).toBe('A : acme/app#1 first')
+  expect(sent.length).toBe(1)
+})
+
+test('a pick on a question asked with ask settled or claimed meanwhile writes and sends nothing', async () => {
+  for (const over of [{ status: 'withdrawn' }, { claimed: { typed: 'B', at: '2026-10-18T10:06:00.000Z' } }]) {
+    const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+    const { fx, sent, render } = await askedPane([first])
+    const drawn = await render()
+    fx.files.set(`${ROUND}/${first.id}.json`, JSON.stringify({ ...first, ...over }) + '\n')
+    await pick(drawn, 'A')
+    expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).answer).toBeNull()
+    expect(sent).toEqual([])
+  }
+})
+
+test('the pane\'s answer to a question asked with ask that asks consent is written as its consent record, by the pane', async () => {
+  const consent = { kind: 'e2e-waiver', repo: 'Acme/Thing', pr: 12 }
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { consent, choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }] })
+  const { fx, render } = await askedPane([first])
+  await pick(await render(), 'A')
+  const records = [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
+  expect(records).toEqual([`${HOME}/.claude/consents/acme/thing/${first.id}.json`])
+  expect(JSON.parse(String(fx.files.get(records[0])))).toMatchObject({ subject: consent, entry: first.id, question: 'Which merges first?', answer: 'Accorder', by: 'pane' })
+})
+
+test('an answer to a question asked with ask not delivered is written failed on it and said in the pane while its asker has a row', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const { fx, render } = await askedPane([first], { refuse: 'nobody by that name' })
+  await pick(await render(), 'A')
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).delivery).toMatchObject({ state: 'failed', reason: 'nobody by that name' })
+  expect(texts(await render())).toContain('not delivered: nobody by that name — the answer to Orch: low (blocks: acme/app#1)')
+  fx.files.delete(`${SESSIONS}/low`)
+  expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
+})
+
+test('the coordinator shown a question asked with ask is told in its own session once the pane answers it; one never shown, nothing', async () => {
+  const shown = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const unseen = askedObject('low', 'Orch: low', '2026-10-18T10:05:00.000Z', { subject: 'tag order' })
+  const { fx, render } = await askedPane([shown, unseen])
+  fx.files.set(LISTED, JSON.stringify([shown.id]) + '\n')
+  await pick(await render(), 'A')
+  const answeredAt = JSON.parse(String(fx.files.get(`${ROUND}/${shown.id}.json`))).answer.at
+  expect(fx.submitted).toEqual([`[module] Settled in the pane: Orch: low's question since ${shown.at} (entry ${shown.id}) — answered at ${answeredAt}. Already closed: drop it, never ask or relay it again, present the next.`])
+  await pick(await render(), 'B')
+  expect(fx.submitted.length).toBe(1)
+})
+
 test('a pick of a choice answers the entry from the pane, sends the asking orchestrator the choice once, and draws the next question', async () => {
   const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const next = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })
@@ -3148,6 +3266,41 @@ test('a told line drawn before one the host refuses is recorded, and told once',
   expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: phase 3', 'Question pending from Orch: b — blocks: phase 3'])
 })
 
+// A question asked with `ask` reaches the coordinator as the relay's entries did: told once, and
+// due in its tab when urgent or with its pane closed, while its asker lives here.
+test('a question asked with ask is told to the coordinator once, and wakes it when urgent', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const urgent = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true })
+  const plain = askedObject('sb', 'Orch: b', minutesAgo(2))
+  const settled = askedObject('sc', 'Orch: c', minutesAgo(3), { status: 'answered', urgent: true })
+  for (const [asked, name] of [[urgent, 'Orch: a'], [plain, 'Orch: b'], [settled, 'Orch: c']] as const) {
+    fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+    fx.files.set(`${SESSIONS}/${asked.sender.session}`, JSON.stringify(row({ role: 'orchestrator', name })) + '\n')
+  }
+  await tick()
+  expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)', 'Question pending from Orch: b — blocks: acme/app#1'])
+  expect(fx.submitted.length).toBe(1)
+  expect(String(fx.submitted[0])).toContain('Orch: a')
+  await tick()
+  expect(fx.notices.length).toBe(2)
+  expect(fx.submitted.length).toBe(1)
+})
+
+test('a question asked with ask claimed by his prompt in its asker\'s tab is neither told nor woken for, until that turn\'s end gives it back', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const claimed = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true, claimed: { typed: 'B', at: minutesAgo(0) } })
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(claimed) + '\n')
+  fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: a' })) + '\n')
+  await tick()
+  expect(fx.notices).toEqual([])
+  expect(fx.submitted).toEqual([])
+  const { claimed: _typed, ...given } = claimed
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(given) + '\n')
+  await tick()
+  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)'])
+  expect(fx.submitted.length).toBe(1)
+})
+
 // --- what the pane leaves out, and what it shows, said in its log ---------------------------------
 
 // The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on
@@ -3349,6 +3502,40 @@ test('an entry moved to a successor not measured yet is due in the tab with the 
   const moved = entry('Orch: belt-2', minutesAgo(1), { session: 's-two', movedFrom: 's-old' })
   const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
   fx.files.delete(`${SESSIONS}/s-two`)
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch: belt-2')
+})
+
+// A question asked with `ask` moved to a successor by its name alone follows the same rule: drawn and
+// due while a live session of that name runs, its session written once known, withdrawn once none runs.
+test('a question asked with ask moved to a successor by its name alone is drawn while a live session of that name runs, and takes its session', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  const tree = await coordinatorRender(fx)
+  expect(JSON.stringify(tree)).toContain('Questions for you — 1 pending')
+  expect(texts(tree)).toContain('Orch: belt-2 · orchestrator · box-1')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.sender.session, read.status, read.seq]).toEqual(['s-two', 'open', 3])
+})
+
+test('a question asked with ask moved to a successor by its name alone is withdrawn once no session of that name runs', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/999.json`, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }))
+  expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.status, read.answer?.by, read.answer?.text]).toEqual(['withdrawn', 'sender', "the sender's session ended"])
+})
+
+test('a question asked with ask moved to a successor by its name alone is due in the tab with the pane closed', async () => {
+  const { fx, tick } = await wakingCoordinator([], { paneClosed: true })
+  const moved = askedObject('', 'Orch: belt-2', minutesAgo(1), { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
   fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
   await tick()
   expect(fx.submitted.length).toBe(1)
