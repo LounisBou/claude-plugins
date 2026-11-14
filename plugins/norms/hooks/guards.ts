@@ -79,11 +79,16 @@ function reads(argv: readonly string[]): boolean {
   return READERS.has(name)
 }
 
-// The refusal for a subagent's shell line during a walkthrough, or null when it only reads.
+// The refusal for a subagent's shell line during a walkthrough, or null when it only reads. A line
+// the reader cannot read is refused: what it hides is not known to only read.
 export function agentBashDecision(mode: Mode | undefined, command: string): string | null {
   if (!mode) return null
   if (command.replace(HARMLESS_REDIRECT, '').includes('>')) return AGENT_WRITE_REFUSAL
-  return simpleCommands(command).every(reads) ? null : AGENT_WRITE_REFUSAL
+  try {
+    return simpleCommands(command).every(reads) ? null : AGENT_WRITE_REFUSAL
+  } catch {
+    return AGENT_WRITE_REFUSAL
+  }
 }
 
 // Whether a command line runs `git push`, read through core's shell reader: each command of a list

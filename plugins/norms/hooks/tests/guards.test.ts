@@ -217,6 +217,22 @@ test('during a walkthrough a review agent\'s shell line only reads', () => {
   expect(agentBashDecision(undefined, 'rm -rf src')).toBe(null)
 })
 
+test('a line the reader cannot read, an over-limit brace word hiding a command, is refused to a subagent', async () => {
+  const hidden = 'echo ok; {rm,-rf}{1..1001} build'
+  expect(agentBashDecision('check', hidden)).toBe(AGENT_WRITE_REFUSAL)
+  expect(agentBashDecision('check', 'cat {1..100000}')).toBe(AGENT_WRITE_REFUSAL)
+  expect(agentBashDecision(undefined, hidden)).toBe(null)
+  resetGuards()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  $.ui = { ask: async () => 'Allow' }
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
+  const { next, seen } = nextOf()
+  const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: hidden, agentId: 'agent-1' }, next)
+  expect(seen).toEqual([])
+  expect(out.deny).toBe(AGENT_WRITE_REFUSAL)
+})
+
 test('the Bash hook holds a subagent to reading during a check, and leaves the main loop and other times alone', async () => {
   resetGuards()
   const hooks = mount(register)

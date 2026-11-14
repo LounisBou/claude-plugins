@@ -214,6 +214,13 @@ describe('the guards', () => {
     }
   })
 
+  test('a check refuses a shell line the reader cannot read: an over-limit brace word hides a stage or a commit', () => {
+    for (const line of ['{git,commit}{1..1001} -m x', 'echo ok; git {add,-A}{1..1001}', 'echo {1..100000}']) {
+      expect(bashDecision(checking, line)).toContain('implement:check edits, stages and commits nothing')
+    }
+    for (const g of [IDLE, phase, close]) expect(bashDecision(g, '{git,commit}{1..1001} -m x')).toBeNull()
+  })
+
   test('an aborted turn releases everything, an answered one keeps a phase armed', () => {
     expect(onTurnEnd(phase, true)).toEqual(IDLE)
     expect(onTurnEnd(phase, false).outer).toBe('phase')
