@@ -77,7 +77,7 @@ it. `/github:doctor` then confirms everything is ready.
   takes the other off, and `labels-ensure` creates both on a repository that
   lacks them. `pr-create` labels the new pull request (`Not Ready` for a draft,
   `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
-  `Ready` is the gate's: put by the module once the four hold (« Ready pull
+  `Ready` is the gate's: put by the module once the three hold (« Ready pull
   requests »), and refused by hand on a pull request that is not ready.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's words quoted verbatim, and `auto-merge-list`
@@ -144,15 +144,16 @@ of auto-merge reminds the session to call `auto-merge-set`.
 
 ## Ready pull requests
 
-A pull request is ready when four things hold at its current head commit: a
-clean review, a passed norms check, passed end-to-end tests (or a waiver the
-operator dated in their own words) and green CI, but for what the pull request's
-check plan does not require. The `Ready` label, leaving
-draft and a merge need the four; a draft opens with `Not Ready`, and a push to
+A pull request is ready when three things hold at its current head commit: a
+clean review, passed end-to-end tests (or a waiver the operator dated in their
+own words) and green CI, but for what the pull request's check plan does not
+require. A norms check is on demand: it blocks only when it ran at the head and
+failed. The `Ready` label, leaving
+draft and a merge need the three; a draft opens with `Not Ready`, and a push to
 the branch puts `Not Ready` back. A rebase that leaves the pull request's own
 commits unchanged carries its review and norms check to the new head; an E2E waiver stands for every later head. CI is read from GitHub: no check at all is
 green, a check that failed, still runs, was skipped, or is neutral on a draft
-is not. The other three are records, one small JSON file per run under
+is not. The others are records, one small JSON file per run under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by
 their producers, which the record contract (core's `pr-record.ts`) declares:
 pr-review's auto-fix-loop for the review, `/norms:check` for the norms, and
@@ -162,7 +163,7 @@ all without anything deleted. `engine/REFERENCE.md` « Records » holds the
 contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
 
 The module puts `Ready` itself: after a record is written, and after a
-`pr-gate` or `pr-checks` read through the tool, it reads the four at the head
+`pr-gate` or `pr-checks` read through the tool, it reads the three at the head
 and puts `Ready` when they hold, or `Not Ready` back on a pull request that
 carries `Ready` and no longer holds them, with one line of its own. That label
 is the gate's act, not the session's, though a read brought it about. The head
@@ -174,7 +175,7 @@ green line.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
 still `Not Ready`, as long as no check of its head has passed. Outside
-auto-merge, once the four hold the gate puts back to draft only a pull request
+auto-merge, once the three hold the gate puts back to draft only a pull request
 the plugin itself took out of draft for its CI (a mark kept in the data directory),
 then puts `Ready`; one the operator took out of draft keeps its place. That undraft
 runs in every repository, with one transcript line:
@@ -191,7 +192,7 @@ environment brings the enforce phase forward, where it is refused.
 ## Guards
 
 **Ready.** Taking a pull request out of draft and merging it
-(`gh pr merge --auto` included) need the four conditions above, through the tool
+(`gh pr merge --auto` included) need the three conditions above, through the tool
 (`pr-ready`, `pr-merge`) and through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
@@ -200,7 +201,7 @@ the act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
 ```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
+github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
 ```
 
 Under warn the act goes ahead with `github: <act> on <owner/name>#<n> is not

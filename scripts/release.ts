@@ -1,5 +1,6 @@
 // The release: one commit raises the version of every plugin that changed since its last release,
-// then regenerates the catalogue. A feature pull request raises no version.
+// lowers the prompt budgets to what is measured, then regenerates the catalogue. A feature pull
+// request raises no version and lowers no budget (CI still refuses one exceeded).
 //
 //   npm run release                       patch for each plugin changed since its last release; commits
 //   npm run release -- --minor a,b        those plugins get a MINOR; `--major c` a MAJOR
@@ -11,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { processIo, type Io } from './lib/io.ts'
 import { isEntry, manifestPath, readPlugins } from './lib/plugins.ts'
 import { run as writeCatalogue } from './marketplace.ts'
+import { CEILINGS_PATH, run as lowerBudgets } from './prompts.ts'
 import { shippedChanges } from './version-bump.ts'
 
 export type Level = 'major' | 'minor' | 'patch'
@@ -78,6 +80,7 @@ export function run(root: string, args: readonly string[], io: Io): number {
   }
   for (const bump of bumps) io.out(`${bump.dir}: ${bump.from} -> ${bump.to}`)
   if (args.includes('--dry-run')) return 0
+  if (lowerBudgets(root, ['--lower'], { ...io, out: () => {} }) !== 0) throw new Error(`a prompt budget is exceeded: fix it before the release lowers ${CEILINGS_PATH}`)
   for (const bump of bumps) {
     const path = manifestPath(root, bump.dir)
     const text = readFileSync(path, 'utf8')
@@ -86,7 +89,7 @@ export function run(root: string, args: readonly string[], io: Io): number {
     writeFileSync(path, next)
   }
   writeCatalogue(root, [], io)
-  git(root, ['add', '.claude-plugin/marketplace.json', ...bumps.map(bump => manifestPath('', bump.dir))])
+  git(root, ['add', '.claude-plugin/marketplace.json', CEILINGS_PATH, ...bumps.map(bump => manifestPath('', bump.dir))])
   git(root, ['commit', '-q', '-m', `chore(release): ${bumps.map(bump => `${bump.dir} ${bump.to}`).join(', ')}`])
   return 0
 }

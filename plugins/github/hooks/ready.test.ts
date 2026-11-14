@@ -27,13 +27,17 @@ function record(kind: string, result: string, at = '2026-11-01T10:00:00Z', over:
 
 const ALL = [record('review', 'pass'), record('norms', 'pass'), record('e2e', 'pass')]
 
-test('the four at the head leave nothing missing', () => {
+test('the three at the head leave nothing missing', () => {
   expect(missingItems(gate(), ALL)).toEqual([])
+})
+
+// Norms is on demand: no norms record at the head is not missing, a failed one still is (below).
+test('a pull request with no norms record at its head is ready on the rest', () => {
+  expect(missingItems(gate(), ALL.filter((r) => !r.name.startsWith('norms')))).toEqual([])
 })
 
 test('each missing condition is named alone', () => {
   expect(missingItems(gate(), ALL.filter((r) => !r.name.startsWith('review')))).toEqual(['review: no record at 0123456'])
-  expect(missingItems(gate(), ALL.filter((r) => !r.name.startsWith('norms')))).toEqual(['norms: no record at 0123456'])
   expect(missingItems(gate(), ALL.filter((r) => !r.name.startsWith('e2e')))).toEqual(['e2e: no record at 0123456'])
   expect(missingItems(gate({}, { result: 'FAILURE', failed: ['lint', 'test'] }), ALL)).toEqual(['CI failed: lint, test'])
   expect(missingItems(gate({}, { result: 'PENDING', running: 1 }), ALL)).toEqual(['CI still running'])
@@ -66,7 +70,7 @@ test('the orchestrator\'s acceptance passes the review over a failed one or on i
   }
   expect(gateReadyLine('acme/thing', 12, HEAD, false, SET_ASIDE))
     .toBe('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator (' + SET_ASIDE
-      + '), a passed norms check, passed E2E and green CI hold at its head.')
+      + '), passed E2E and green CI hold at its head.')
   expect(reviewAccepted(gate(), ALL)).toBeUndefined()
 })
 
@@ -316,7 +320,7 @@ test('the records refusals name only the producers the record contract declares'
 test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
-    + ' A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its'
+    + ' A pull request is ready when a clean review, passed E2E and green CI are all at its'
     + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
@@ -327,13 +331,13 @@ test('the refusals read as the guard documents them', () => {
 test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
   expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
     'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
-    + ' and Ready is put by the gate once the four conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
+    + ' and Ready is put by the gate once the three conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
   expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
   expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
   expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
 })
 
-test('the gate moves the label: Ready when the four hold, Not Ready back when Ready no longer holds', () => {
+test('the gate moves the label: Ready when the three hold, Not Ready back when Ready no longer holds', () => {
   expect(labelMove(gate(), [])).toBe('ready')
   expect(labelMove(gate({ labels: ['Ready'] }), [])).toBeUndefined()
   expect(labelMove(gate({ labels: ['Ready', 'Not Ready'] }), [])).toBe('ready')

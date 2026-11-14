@@ -3,12 +3,11 @@
 #
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
-#   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
+#   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
-#   dispatch-record.sh ready   <record> <id> --head <sha> --e2e "<the E2E line>" [--e2e-waiver "<his words, dated>"]
-#   dispatch-record.sh exempt  <record> --e2e "<his words, dated>"   (the operator exempts this session's pull requests from E2E)
+#   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row)
 #   dispatch-record.sh undefer <record> <id>
@@ -44,8 +43,8 @@
 #
 # `review` and `ready` carry the second rule the record is asked to hold: a pull request is
 # ready only when a review session read ITS head (either side may abbreviate the other, from
-# 7 characters) and the project's own norms check ran there - or when the head is the one
-# correction round that review produced, which the orchestrator verified on the artifact.
+# 7 characters) - or when the head is the one correction round that review produced, which the
+# orchestrator verified on the artifact.
 # A row with no review is refused, as the github ready gate refuses a pull request with no
 # review at its head. `fixed` with no review, or a second time, records what it was given
 # and warns.
@@ -77,19 +76,6 @@
 # carries, and when it recorded any defect: the defect is fixed, the capture retaken, and the
 # images audited again. `--minor` and `--none` rows are not held to it. Whether the audit was
 # honest stays the orchestrator's; the record makes it a step nobody can skip by forgetting.
-#
-# `ready` carries a fifth: a pull request says how it was proved end to end. A frontend pull
-# request was once merged and deployed and did not work there; its only proof was a browser
-# pass the implementer reported, nothing a reviewer could replay, and neither the report nor
-# the « ready » said there was no E2E test. So `ready` takes the implementer's E2E line
-# (`--e2e`), never the pull request's description, which holds its codified sections and
-# nothing about E2E. A line that does not start with `E2E:` is refused: silence is not ready.
-# `E2E: <test path(s)> — <command> — passed` passes. `E2E: none — <reason>` passes only with
-# the operator's validation of that pull request ready without one (`--e2e-waiver`, his words
-# and their date), or with his exemption of every pull request of this session, recorded once
-# beside the record by `exempt`; then the orchestrator decides alone. Whether the reason holds
-# is the review's and his, not the script's. The line is recorded on the row and printed for
-# the operator.
 #
 # A pair row names the model alias and the effort it ran on, and `cost` adds each session's
 # measured cost to it - the corrective rounds of a dispatch are part of what it cost. A

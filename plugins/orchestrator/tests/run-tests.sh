@@ -148,6 +148,128 @@ check_status() {
 spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
 
+# Defined here, outside every part, because a section of a later part reads them: its helpers,
+# the paths it names and the fixtures it builds from them.
+# plugin did not open, the predecessor is asked to end its own session through the module.
+# That end is proved on the tty, never on `list`, which keeps the row of a tab left holding a
+# shell.
+SUCC="$ROOT/templates/orchestrator-succession-brief.md"
+SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+SUCC3=$(awk '/^3\. /{f=1} /^4\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+succ3_has() { printf '%s' "$SUCC3" | grep -oF -- "$1" | wc -l | tr -d ' '; }
+succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
+# used to mean « immediately right of my tab », which put every new agent BETWEEN the
+# orchestrator and the previous one. The chain file names the last agent; `self` resolves
+# to it. A dry run reads the chain and never writes it: there is no tab to record.
+AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
+# The hand-over itself, on the module: the predecessor's own entries move under the
+# successor's tty and owner, its foreign entries stay, and a stale file on the successor's
+# recycled tty is replaced, not appended to. Nothing to hand over hands over an empty chain.
+py=$(command -v python3 || echo python3)
+transfer() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.chain_transfer('/dev/ttys900', 'S-ME', '/dev/ttys950', 'S-NEW'))" 2>&1; }
+append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.chain_append('/dev/ttys900', sys.argv[1], sys.argv[2], 'S-ME', resident=sys.argv[3] == 'yes')
+print('|'.join(str(m.is_resident(e)) for e in m.chain_read('/dev/ttys900')))" "$@" 2>&1; }
+# A commit made through an empty `-C` path would land in the repository the suite runs from.
+gc() { [ "${1:-}" = -C ] && [ -z "${2:-}" ] && return 1; git -c user.email=t@local -c user.name=t "$@"; }
+exists() { [ -e "$1" ] && echo 1 || echo 0; }
+# A process whose working directory is a given directory, until `release`.
+LIVE=""
+hold() {
+  ( cd "$1" && exec sleep 60 ) & LIVE="$LIVE $!"
+  local i=0 want; want=$(rp "$1")
+  while [ $i -lt 50 ]; do
+    lsof -a -p "${LIVE##* }" -d cwd -Fn 2>/dev/null | grep -qxF "n$want" && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+}
+release() { local p; for p in $LIVE; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; LIVE=""; }
+# checked the file: a path built from a host variable the agent's shell does not set, and
+# a second session reference sitting beside the real one. Both are mechanical; both are
+# caught here, before the dispatch rather than after the round.
+LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
+B="$WORK/briefs"; mkdir -p "$B"
+ok_brief() {  # a brief with nothing wrong in it
+  cat > "$1" <<BRIEF
+# scratch — Phase 1: thing
+
+You are the implementer for this phase.
+
+## 1. Required reading
+
+1. Spec: \`$WORK/briefs\`
+
+## 3. Scope
+
+Non-goals:
+
+- Nothing outside this list.
+- If you believe something outside this list is needed, STOP and ask the orchestrator first.
+
+## 6. Communication
+
+- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
+- Every report ends with your measured context, from the hooks module's measure file.
+BRIEF
+}
+ok_brief "$B/good.md"
+ok_brief "$B/placeholder.md"; printf 'Branch: {{BRANCH}}\n' >> "$B/placeholder.md"
+ISTATE="$WORK/istate"
+shaped() {
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
+}
+# and run dry through the launcher, and the successor's brief, filled, lints clean — and that
+# the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
+# only by title, the predecessor's, before the successor registers.
+COORDSKILL="$ROOT/skills/coordination/SKILL.md"
+COORDCMD="$ROOT/commands/coordinator.md"
+COORDEND="$ROOT/commands/coordinator-end.md"
+COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
+# handshake stays in each succession template, and the copies may not drift apart. The auditor's
+# and the coordinator's step 3 are one text, read with their line breaks folded; the
+# orchestrator's, longer, carries the same core.
+handshake() { sed -n '/^3\. \*\*Take over\.\*\*/,/nothing in flight\./p' "$1" | tr '\n' ' ' | tr -s ' '; }
+UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
+# to a stranger's tab must not make that tab movable. The owner is the session sitting on
+# the caller's tty RIGHT NOW, read from the app; the match is on the TAB id. The dry run
+# has no app and keeps ORCHESTRATOR_SELF_ID and the tty, which is what its checks seed.
+MSTUB='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+class T:
+    def __init__(s, tid, sess): s.tab_id=tid; s.sessions=[sess]; s.all_sessions=[sess]
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+app=App([W([T("1",S("S-LIVE","/dev/ttys801")), T("2",S("S-AGENT","/dev/ttys802"))])])
+'
+# --pid narrows verify to one process, and counts EVERY host CLI on the tty: a session that
+# runs a nested host CLI shows two, and the recorded one is not always the first.
+printf '/dev/ttys901 5100 a-host --name outer\n/dev/ttys901 5101 a-host --nested\n' > "$WORK/ps-two.txt"
+field() { printf '%s\n' "$1" | sed -n "s/^$2://p"; }
+
+# The suite runs in four parts that CI runs in parallel. SUITE_SHARD=<1-4> runs the
+# sections of that part and nothing else; unset, the whole suite runs. Each section sits in exactly one
+# part, between its `if shard_has` and its `fi`. What a section of a later part reads from an earlier
+# one (a helper, a path, a fixture) is defined above, outside every part.
+case "${SUITE_SHARD:-1}" in 1|2|3|4) ;; *) echo "SUITE_SHARD is 1, 2, 3 or 4, not ${SUITE_SHARD}" >&2; exit 1 ;; esac
+shard_has() { [ -z "${SUITE_SHARD:-}" ] || [ "$SUITE_SHARD" = "$1" ]; }
+
+if shard_has 1; then
 echo "== suite environment =="
 
 # The suite started from inside a role reads the same as one started outside it: every role
@@ -288,10 +410,10 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "no|yes|yes|yes" \
   "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)|$(spells "$ORCH_REFS/briefs.md" "**Scratch lives in the session's own host scratchpad directory**")"
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
-# agent's report is capped, the « wrong or doubtful » line excepted, and no brief still
+# agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs cap the report" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" 'is never cut to fit the cap'; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes|yes" \
+  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
 check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
@@ -300,13 +422,10 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
-# The cap leaves the machine line where the orchestrator's gate reads it: last.
-check "the review report still ends with the norms-check line" "yes" \
-  "$(sed -n '/^## 4\. Report shape/,/^## 5\./p' "$ROOT/templates/agent-review-brief.md" | grep -v '^## 5\.' | grep -v '^$' | tail -1 | grep -qF 'End the report with one machine line and nothing after it: `norms-check:' && echo yes || echo no)"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
-# would cut the reviewer's words out of them.
-check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
-  "$(spells "$ROOT/templates/agent-comments-brief.md" "except the per-thread assessments: each is sent in full, the reviewer's words included")"
+# and the verdict limit would cut the reviewer's words out of them, so each goes whole to a file.
+check "the comments brief sends each per-thread assessment whole, in a file" "yes" \
+  "$(spells "$ROOT/templates/agent-comments-brief.md" "each per-thread assessment, the reviewer's words included, goes in full to a file its message names")"
 # The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
 # briefs ask for the status line it reads and no longer for a context read by hand, which
 # cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
@@ -346,14 +465,6 @@ check "the comments brief keeps the subject-only commit and reads a backgrounded
   "$(spells "$ROOT/templates/agent-comments-brief.md" 'The message is the subject line only when the repository forbids attribution trailers')|$(spells "$ROOT/templates/agent-comments-brief.md" 'never call a run « going » when its process is gone')"
 # The successor always closes its predecessor, one started by hand included (the operator's
 # standing order): nothing is asked of him, and where the host refuses the close of a tab the
-# plugin did not open, the predecessor is asked to end its own session through the module.
-# That end is proved on the tty, never on `list`, which keeps the row of a tab left holding a
-# shell.
-SUCC="$ROOT/templates/orchestrator-succession-brief.md"
-SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-SUCC3=$(awk '/^3\. /{f=1} /^4\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-succ3_has() { printf '%s' "$SUCC3" | grep -oF -- "$1" | wc -l | tr -d ' '; }
-succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "the succession brief closes every predecessor and asks nothing" "1|1|yes|0" \
   "$(succ4_has 'you ALWAYS close your predecessor')|$(succ4_has 'one the launcher did not open included, and ask him nothing')|$(spells "$ORCH_REFS/lifecycle.md" 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
 check "the end_session fallback is proved on the tty, not on list" "yes|yes|no|1" \
@@ -364,10 +475,10 @@ check "the successor subscribes to its predecessor's idle notice with « takeove
   "$(succ4_has 'message the predecessor "takeover confirmed" with `notify_when_idle: true`')"
 check "the lifecycle closes a predecessor started by hand like any other" "1|0" \
   "$(grep -c 'is closed like any other, nothing asked' "$ORCH_REFS/lifecycle.md")|$(grep -c 'close it himself' "$ORCH_REFS/lifecycle.md")"
-# The rebase comes before the ready, and the squash-merge
-# of a lower branch is replayed around, never through.
-check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
-  "$(grep -c "each pull request of a stack on the one below it" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
+# A rebase no longer comes before the ready (f283aef back, 97f4e07 undone): its records follow
+# the one rule; the squash-merge of a lower branch is replayed around, never through.
+check "the rebase voids no record by itself and names the squash-merge trap" "0|1|1" \
+  "$(grep -c "rebase comes BEFORE the ready" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
 # The rationalizations table left review.md (rule 169 of the rules review): each row repeated a
 # rule kept elsewhere, the ready and the rebase --onto pinned just above.
 check "the review reference carries no rationalizations table" "0|0" \
@@ -505,10 +616,6 @@ check "and the recording covers the forms: successor, auditor, coordinator, wake
 
 echo "== agent chain (dry run) =="
 # The operator's rule: orchestrator, agent 1, agent 2, … in launch order. `--right-of self`
-# used to mean « immediately right of my tab », which put every new agent BETWEEN the
-# orchestrator and the previous one. The chain file names the last agent; `self` resolves
-# to it. A dry run reads the chain and never writes it: there is no tab to record.
-AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
 chain_spawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent: chain" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 out=$(chain_spawn --right-of self)
@@ -560,14 +667,6 @@ check "a successor anchors on self, whatever the chain says" "1|1" \
 check "a dry successor spawn leaves the chain as it was" "$before" "$(cat "$CHAINS/ttys900.jsonl")"
 check "a successor names its own anchor" "1|1" \
   "$(chain_spawn --successor --right-of self >/dev/null 2>&1; echo $?)|$(chain_spawn --successor --left-of /dev/ttys555 >/dev/null 2>&1; echo $?)"
-# The hand-over itself, on the module: the predecessor's own entries move under the
-# successor's tty and owner, its foreign entries stay, and a stale file on the successor's
-# recycled tty is replaced, not appended to. Nothing to hand over hands over an empty chain.
-py=$(command -v python3 || echo python3)
-transfer() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
-import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
-import iterm_agent as m
-print(m.chain_transfer('/dev/ttys900', 'S-ME', '/dev/ttys950', 'S-NEW'))" 2>&1; }
 printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-OTHER"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n{"tab_id":"9","tty":"/dev/ttys909","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
 printf '{"tab_id":"1","tty":"/dev/ttys901","owner":"S-DEAD"}\n' > "$CHAINS/ttys950.jsonl"
 check "the hand-over moves the predecessor's own entries" "2" "$(transfer)"
@@ -584,11 +683,6 @@ check "--resident is said by the dry run, and its absence too" "1|1" \
   "$(chain_spawn --resident | grep -c '^resident=yes$')|$(chain_spawn | grep -c '^resident=no$')"
 check "--resident is an agent's only: a successor or an auditor joins no chain to mark" "1|1" \
   "$(chain_spawn --resident --successor | grep -c 'spawn: refused: --resident marks an agent of your chain')|$(chain_spawn --resident --auditor --title 'Audit: x' | grep -c 'spawn: refused: --resident marks an agent of your chain')"
-append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
-import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
-import iterm_agent as m
-m.chain_append('/dev/ttys900', sys.argv[1], sys.argv[2], 'S-ME', resident=sys.argv[3] == 'yes')
-print('|'.join(str(m.is_resident(e)) for e in m.chain_read('/dev/ttys900')))" "$@" 2>&1; }
 printf '{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
 check "a resident agent's entry carries the mark, a plain one's and an older one's do not" "False|True|False" \
   "$(append 9 /dev/ttys909 yes >/dev/null; append 10 /dev/ttys910 no)"
@@ -743,8 +837,6 @@ check "the succession brief reads the goals by command and points at them" "yes|
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
-# The E2E line every passing `ready` below gives: a test the reviewer can replay.
-E2EOK='E2E: tests/e2e/breadcrumb.spec.ts — npx playwright test tests/e2e/breadcrumb.spec.ts — passed'
 RS="$WORK/rec-state"; RD="$WORK/rec-dir"; mkdir -p "$RD"
 bash "$REC" goals "$RD/dispatch.jsonl" init --spec none >/dev/null
 RR="$RD/dispatch.jsonl"
@@ -758,7 +850,7 @@ check "open registers the record by its absolute path" "$RDREAL/dispatch.jsonl" 
 rec_with s-round round dispatch.jsonl 1
 rec_with s-review review dispatch.jsonl 1 --head abcdef1234 --norms none
 rec_with s-fixed fixed dispatch.jsonl 1 --head abcdef1234
-rec_with s-ready ready dispatch.jsonl 1 --head abcdef1234 --e2e "$E2EOK" >/dev/null
+rec_with s-ready ready dispatch.jsonl 1 --head abcdef1234 >/dev/null
 rec_with s-escaped escaped dispatch.jsonl 1
 rec_with s-summary summary dispatch.jsonl >/dev/null
 rec_with s-close close dispatch.jsonl 1 --verdict ok
@@ -894,7 +986,7 @@ OWBEFORE="$(cksum < "$OWR")|$(cksum < "$OWR.owner")|$(cksum < "$OW/goals.md")"
 OWREFUSED=""
 for sub in "open $OWR --class x --tier light" "round $OWR 1" "review $OWR 1 --head abcdef1234 --norms none" \
   "fixed $OWR 1 --head abcdef1234" "surface $OWR 1 --none" "audit $OWR 1 --head abcdef1234 --images 1" \
-  "ready $OWR 1 --head abcdef1234 --e2e E2E:none" "exempt $OWR --e2e x-2026-11-03" "close $OWR 1 --verdict v" \
+  "ready $OWR 1 --head abcdef1234" "close $OWR 1 --verdict v" \
   "defer $OWR 1 --ruling r-2026-11-03" "undefer $OWR 1" "escaped $OWR 1" "cost $OWR 1 --session x" \
   "goals $OWR init --spec none --replace" "goals $OWR plan G1 --phase P" "goals $OWR met G1 --evidence e" \
   "goals $OWR rule-out G1 --ruling r" "goals $OWR defer G1 --ruling r-2026-11-03" "goals $OWR reopen G1"; do
@@ -904,7 +996,7 @@ for sub in "open $OWR --class x --tier light" "round $OWR 1" "review $OWR 1 --he
   OWREFUSED="$OWREFUSED ${sub%% *}:$code:$named"
 done
 check "every write from another orchestration is refused, naming the record and its owner" \
-  " open:1:named round:1:named review:1:named fixed:1:named surface:1:named audit:1:named ready:1:named exempt:1:named close:1:named defer:1:named undefer:1:named escaped:1:named cost:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named" \
+  " open:1:named round:1:named review:1:named fixed:1:named surface:1:named audit:1:named ready:1:named close:1:named defer:1:named undefer:1:named escaped:1:named cost:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named" \
   "$OWREFUSED"
 check "a refused write leaves the record, its owner and its goals as they were, and registers nothing" "yes|no|Orch: alpha" \
   "$([ "$OWBEFORE" = "$(cksum < "$OWR")|$(cksum < "$OWR.owner")|$(cksum < "$OW/goals.md")" ] && echo yes || echo no)|$([ -e "$OWST/records/o-beta" ] && echo yes || echo no)|$(cat "$OWR.owner")"
@@ -1068,38 +1160,36 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review and its norms check before
-# its verdict » was written in the rulebook and in the review template, and was still broken
-# twice in one day: two rounds replaced the project's norms tool by a hand reading of its
-# norms file. A rule only prose carries is applied from memory. `review` records what a round
+# The gate. « Every agent-produced pull request gets its review before its verdict » was written
+# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
 # actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
-check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
 check "and names the subcommand that records it" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
 bash "$REC" surface "$G" "$g1" --none >/dev/null
-check_status "ready refuses a row no review has touched, as the github gate does" 1 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses a row no review has touched, as the github gate does" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
 check "and names what is missing" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'no review recorded on row')"
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms]|join("|")' "$G")"
 check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
-check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 
 # The head moves on every corrective round, and the review that read the previous one says
 # nothing about this one. This is the case the orchestrator talked itself past.
-check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK"
+check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222
 check "and names both heads" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK" 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
+  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
 check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check "a review adds no row" "1" "$(wc -l < "$G" | tr -d ' ')"
-check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK"
+check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
 
 # `workspace.sh` prints short SHAs where a host API gives all forty: the same commit must not
 # be refused for how it was spelled. Either side may abbreviate the other, from seven
@@ -1108,14 +1198,14 @@ full=0123456789abcdef0123456789abcdef01234567
 g2=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "abbreviated")
 bash "$REC" surface "$G" "$g2" --none >/dev/null
 bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
-check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full" --e2e "$E2EOK"
+check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
 bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
-check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456 --e2e "$E2EOK"
-check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98 --e2e "$E2EOK"
+check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456
+check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
 check "and are named" "1" \
-  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 --e2e "$E2EOK" 2>&1 | grep -c "last review read $full, head is fedcba9")"
-check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345 --e2e "$E2EOK"
-check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 --e2e "$E2EOK" 2>&1 | grep -c 'ready: head 012345 is too short')"
+  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 2>&1 | grep -c "last review read $full, head is fedcba9")"
+check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
+check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
 
 # The operator's process: ONE review round, the orchestrator's triage, ONE correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
@@ -1139,14 +1229,14 @@ check "the review starts the row fresh" "ccc3333|tool||2" \
 bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
 check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
-check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444 --e2e "$E2EOK"
+check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
 check "and says which reading it rests on" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 --e2e "$E2EOK" 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
-check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef --e2e "$E2EOK"
-check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333 --e2e "$E2EOK"
-check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555 --e2e "$E2EOK"
+  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
+check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef
+check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333
+check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
 check "and names all three heads" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head eee5555 --e2e "$E2EOK" 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
+  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
@@ -1163,16 +1253,15 @@ check_status "a norms value that is neither tool nor none is refused" 1 bash "$R
 check "a refused review leaves the row as it was" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
-check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
 check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
 check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
-check_status "ready on an unknown row is an error" 1 bash "$REC" ready "$G" 99 --head aaa1111 --e2e "$E2EOK"
-check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no row with id 99')"
+check_status "ready on an unknown row is an error" 1 bash "$REC" ready "$G" 99 --head aaa1111
+check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --head aaa1111 2>&1 | grep -c 'ready: no row with id 99')"
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, exempt, close, defer, undefer, escaped, cost, summary or goals)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary or goals)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -1197,29 +1286,29 @@ srec review "$S" "$s1" --head aaa1111 --norms tool >/dev/null
 srec surface "$S" "$s1" --ui acme/front#11 >/dev/null
 check "surface records the kind and the pull request" "ui|acme/front#11" \
   "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
-check_status "ready refuses a frontend pull request with no image in its description" 1 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses a frontend pull request with no image in its description" 1 srec ready "$S" "$s1" --head aaa1111
 check "and says why" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
+  "$(srec ready "$S" "$s1" --head aaa1111 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
 srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
 srec audit "$S" "$s1" --head aaa1111 --images 1 >/dev/null
-check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
+check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
 check "and is counted on the ready line" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
+  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
 srec surface "$S" "$s1" --ui acme/front#13 >/dev/null
-check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
+check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111
 srec review "$S" "$s1" --head bbb2222 --norms tool >/dev/null
 check "a new review round keeps the surface" "ui|acme/front#13" \
   "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
 srec surface "$S" "$s1" --ui acme/front#99 >/dev/null
-check_status "a description that cannot be read is not ready" 1 srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK"
+check_status "a description that cannot be read is not ready" 1 srec ready "$S" "$s1" --head bbb2222
 check "and says the screenshots are unverified" "1" \
-  "$(srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK" 2>&1 | grep -c 'could not read the description of acme/front#99: its screenshots are unverified')"
+  "$(srec ready "$S" "$s1" --head bbb2222 2>&1 | grep -c 'could not read the description of acme/front#99: its screenshots are unverified')"
 srec surface "$S" "$s1" --minor "a label wording, nothing moves on screen" >/dev/null
 check "a minor ruling passes and prints its reason for the operator" "1" \
-  "$(srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK" 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
+  "$(srec ready "$S" "$s1" --head bbb2222 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
 s2=$(srec open "$S" --class behaviour-phase --tier standard --label "no review yet")
 srec surface "$S" "$s2" --ui acme/front#11 >/dev/null
-check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111 --e2e "$E2EOK"
+check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
 check_status "surface without a kind is an error" 1 bash "$REC" surface "$S" "$s1"
 check_status "surface with two kinds is an error" 1 bash "$REC" surface "$S" "$s1" --none --minor x
 check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1" --ui 1520
@@ -1236,61 +1325,61 @@ A="$WORK/audit.jsonl"
 a1=$(srec open "$A" --class behaviour-phase --tier standard --label "audit")
 srec surface "$A" "$a1" --ui acme/front#14 >/dev/null
 srec review "$A" "$a1" --head aaa1111 --norms tool >/dev/null
-check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111
 check "and names the subcommand that records it" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: the screenshots agent audits each one, and the audit is recorded with `audit <record> 1 --head <sha> --images <n>`')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: the screenshots agent audits each one, and the audit is recorded with `audit <record> 1 --head <sha> --images <n>`')"
 srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
 check "audit records the head, the images and no defect" "aaa1111|1|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
-check_status "ready refuses an audit that covered fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses an audit that covered fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111
 check "and names both counts" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#14 carries 2: audit every image')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#14 carries 2: audit every image')"
 srec audit "$A" "$a1" --head aaa1111 --images 2 --defect "map button: icon off-centre, style unlike its neighbours" --defect "after: stray text in the search field" >/dev/null
 check "a defect is recorded per --defect" "2" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.audit.defects|length' "$A")"
-check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111
 check "and names every defect" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit of acme/front#14 recorded 2 defect(s): map button: icon off-centre, style unlike its neighbours; after: stray text in the search field. Fix each one, retake the capture, and audit again: not ready')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit of acme/front#14 recorded 2 defect(s): map button: icon off-centre, style unlike its neighbours; after: stray text in the search field. Fix each one, retake the capture, and audit again: not ready')"
 srec audit "$A" "$a1" --head aaa1111 --images 2 >/dev/null
 check "a new audit replaces the last, defects included" "aaa1111|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
-check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111
 check "and says the images were audited clean" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
 srec audit "$A" "$a1" --head aaa1111 --images 3 >/dev/null
-check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111
 srec fixed "$A" "$a1" --head bbb2222 >/dev/null
-check_status "an audit at the reviewed head still passes at the fixed head" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
+check_status "an audit at the reviewed head still passes at the fixed head" 0 srec ready "$A" "$a1" --head bbb2222
 srec audit "$A" "$a1" --head bbb2222 --images 2 >/dev/null
-check_status "an audit at the fixed head passes there" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
-check_status "an audit at the fixed head passes at the reviewed head too" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "an audit at the fixed head passes there" 0 srec ready "$A" "$a1" --head bbb2222
+check_status "an audit at the fixed head passes at the reviewed head too" 0 srec ready "$A" "$a1" --head aaa1111
 srec audit "$A" "$a1" --head bbb2222abcdef --images 2 >/dev/null
-check_status "an audit head spelled in full accepts the short head" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
+check_status "an audit head spelled in full accepts the short head" 0 srec ready "$A" "$a1" --head bbb2222
 srec review "$A" "$a1" --head ccc3333 --norms tool >/dev/null
 check "a new review round keeps the audit" "bbb2222abcdef|2" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images]|join("|")' "$A")"
-check_status "ready refuses an audit at a head it does not accept" 1 srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK"
+check_status "ready refuses an audit at a head it does not accept" 1 srec ready "$A" "$a1" --head ccc3333
 check "and names both heads" "1" \
-  "$(srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the images on acme/front#14 were audited at bbb2222abcdef, head is ccc3333: audit them again at the head in front of you')"
+  "$(srec ready "$A" "$a1" --head ccc3333 2>&1 | grep -c 'ready: the images on acme/front#14 were audited at bbb2222abcdef, head is ccc3333: audit them again at the head in front of you')"
 srec audit "$A" "$a1" --head ccc3333 --images 2 >/dev/null
-check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK"
+check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333
 a2=$(srec open "$A" --class behaviour-phase --tier standard --label "audit, no review")
 srec surface "$A" "$a2" --ui acme/front#14 >/dev/null
-check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
+check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head eee5555 --images 2 >/dev/null
-check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
+check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
-check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
+check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
-check_status "with no review, a clean audit at the head in front is still refused: the gate needs a review" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
+check_status "with no review, a clean audit at the head in front is still refused: the gate needs a review" 1 srec ready "$A" "$a2" --head ddd4444
 a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
 srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
 srec surface "$A" "$a3" --minor "a label wording" >/dev/null
-check_status "a --minor row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
+check_status "a --minor row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
 srec surface "$A" "$a3" --none >/dev/null
-check_status "a --none row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
+check_status "a --none row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
 srec audit "$A" "$a3" --head aaa1111 --images 1 --defect "an unrelated defect" >/dev/null
-check_status "a --none row is not held to an audit's defect" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
+check_status "a --none row is not held to an audit's defect" 0 srec ready "$A" "$a3" --head aaa1111
 check_status "audit without --head is an error" 1 bash "$REC" audit "$A" "$a1" --images 2
 # Code is not an image. An `<img ...>` written as inline code, or inside a fenced block, is
 # text to Markdown, and counting it made `ready` refuse an audit that had covered every
@@ -1305,30 +1394,30 @@ c1=$(srec open "$C" --class behaviour-phase --tier standard --label "inline code
 srec surface "$C" "$c1" --ui acme/front#15 >/dev/null
 srec review "$C" "$c1" --head aaa1111 --norms tool >/dev/null
 srec audit "$C" "$c1" --head aaa1111 --images 4 >/dev/null
-check_status "an <img> in inline code is not counted: four images, audited four, ready" 0 srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK"
+check_status "an <img> in inline code is not counted: four images, audited four, ready" 0 srec ready "$C" "$c1" --head aaa1111
 check "and the ready line counts four" "1" \
-  "$(srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '4 screenshot(s) on acme/front#15')"
+  "$(srec ready "$C" "$c1" --head aaa1111 2>/dev/null | grep -c '4 screenshot(s) on acme/front#15')"
 srec surface "$C" "$c1" --ui acme/front#16 >/dev/null
-check_status "an <img> and an image inside fenced blocks are not counted" 0 srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK"
+check_status "an <img> and an image inside fenced blocks are not counted" 0 srec ready "$C" "$c1" --head aaa1111
 check "and the ready line counts four there too" "1" \
-  "$(srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '4 screenshot(s) on acme/front#16')"
+  "$(srec ready "$C" "$c1" --head aaa1111 2>/dev/null | grep -c '4 screenshot(s) on acme/front#16')"
 srec surface "$C" "$c1" --ui acme/front#17 >/dev/null
 srec audit "$C" "$c1" --head aaa1111 --images 1 >/dev/null
-check_status "an <img> outside code still counts after code spans are skipped" 1 srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK"
+check_status "an <img> outside code still counts after code spans are skipped" 1 srec ready "$C" "$c1" --head aaa1111
 check "and the count is two" "1" \
-  "$(srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#17 carries 2: audit every image')"
+  "$(srec ready "$C" "$c1" --head aaa1111 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#17 carries 2: audit every image')"
 srec surface "$C" "$c1" --ui acme/front#18 >/dev/null
 check "an unclosed backtick is literal and an unclosed fence runs to the end" "1" \
-  "$(srec ready "$C" "$c1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#18 carries 2: audit every image')"
+  "$(srec ready "$C" "$c1" --head aaa1111 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#18 carries 2: audit every image')"
 # An escaped backtick opens no code span: the <img it escapes is an image, and it counts.
 printf 'The escaped \\`<img src=x>\\` renders as an image.\n' > "$SURFACE_BODIES/19"
 e1=$(srec open "$C" --class behaviour-phase --tier standard --label "escaped backtick")
 srec surface "$C" "$e1" --ui acme/front#19 >/dev/null
 srec review "$C" "$e1" --head aaa1111 --norms tool >/dev/null
 srec audit "$C" "$e1" --head aaa1111 --images 1 >/dev/null
-check_status "an escaped backtick opens no span: its <img is an image, audited" 0 srec ready "$C" "$e1" --head aaa1111 --e2e "$E2EOK"
+check_status "an escaped backtick opens no span: its <img is an image, audited" 0 srec ready "$C" "$e1" --head aaa1111
 check "and the ready line counts one" "1" \
-  "$(srec ready "$C" "$e1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '1 screenshot(s) on acme/front#19')"
+  "$(srec ready "$C" "$e1" --head aaa1111 2>/dev/null | grep -c '1 screenshot(s) on acme/front#19')"
 # A fence closes only on a run at least as long as its opener: a 3-backtick line does not
 # close a 4-backtick fence, and the <img inside it stays code.
 printf '````\n```\n<img src=inside>\n````\n<img src=after>\n\n```\n<img src=in2>\n```\n' > "$SURFACE_BODIES/21"
@@ -1336,18 +1425,18 @@ e3=$(srec open "$C" --class behaviour-phase --tier standard --label "fence close
 srec surface "$C" "$e3" --ui acme/front#21 >/dev/null
 srec review "$C" "$e3" --head aaa1111 --norms tool >/dev/null
 srec audit "$C" "$e3" --head aaa1111 --images 1 >/dev/null
-check_status "a 3-backtick line does not close a 4-backtick fence: the <img inside is code" 0 srec ready "$C" "$e3" --head aaa1111 --e2e "$E2EOK"
+check_status "a 3-backtick line does not close a 4-backtick fence: the <img inside is code" 0 srec ready "$C" "$e3" --head aaa1111
 check "and the ready line counts one there" "1" \
-  "$(srec ready "$C" "$e3" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '1 screenshot(s) on acme/front#21')"
+  "$(srec ready "$C" "$e3" --head aaa1111 2>/dev/null | grep -c '1 screenshot(s) on acme/front#21')"
 # A span closes only on a run of its own length: a longer run after a single backtick is text.
 printf 'A single `<img src=x>`` is text.\nTwo ``a ` <img src=z>`` is code.\n' > "$SURFACE_BODIES/20"
 e2=$(srec open "$C" --class behaviour-phase --tier standard --label "span closes on its own length")
 srec surface "$C" "$e2" --ui acme/front#20 >/dev/null
 srec review "$C" "$e2" --head aaa1111 --norms tool >/dev/null
 srec audit "$C" "$e2" --head aaa1111 --images 1 >/dev/null
-check_status "a span closes only on a run of its own length: one <img outside code" 0 srec ready "$C" "$e2" --head aaa1111 --e2e "$E2EOK"
+check_status "a span closes only on a run of its own length: one <img outside code" 0 srec ready "$C" "$e2" --head aaa1111
 check "and the ready line counts one there" "1" \
-  "$(srec ready "$C" "$e2" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '1 screenshot(s) on acme/front#20')"
+  "$(srec ready "$C" "$e2" --head aaa1111 2>/dev/null | grep -c '1 screenshot(s) on acme/front#20')"
 check_status "audit with a head too short to identify a commit is an error" 1 bash "$REC" audit "$A" "$a1" --head abc123 --images 2
 check_status "audit without --images is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111
 check_status "audit with --images 0 is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 0
@@ -1357,75 +1446,45 @@ check_status "audit on an unknown row is an error" 1 bash "$REC" audit "$A" 99 -
 check_status "audit on an unknown option is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 2 --clean
 check "a refused audit leaves the last one in place" "ccc3333|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
-# The E2E line. A frontend pull request was merged and deployed and did not work there: its
-# only proof was a browser pass the implementer reported, nothing a reviewer could replay, and
-# nobody said « no E2E test ». `ready` takes the report's E2E line, never the pull request's
-# description; silence is refused; `E2E: none — <reason>` passes only with the operator's
-# dated validation of that pull request, or his dated exemption of the whole session.
+# The E2E line left `ready` (method-drift §11.3, O21 and the E2E branch of O18): the github
+# gate reads the E2E record, and the operator no longer validates each pull request without one.
 E="$WORK/e2e/dispatch.jsonl"; mkdir -p "$WORK/e2e"
 bash "$REC" goals "$E" init --spec none >/dev/null
 e1=$(bash "$REC" open "$E" --class behaviour-phase --tier standard --label "e2e")
 bash "$REC" surface "$E" "$e1" --none >/dev/null
 bash "$REC" review "$E" "$e1" --head aaa1111 --norms tool >/dev/null
-E2ENONE='E2E: none — a one-line config default, no environment worth bringing up'
-check_status "ready refuses a row with no E2E line" 1 bash "$REC" ready "$E" "$e1" --head aaa1111
-check "and says silence is not ready" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 2>&1 | grep -c 'ready: row 1 gives no E2E line: pass the implementer.s report line, `--e2e "E2E: <test path(s)> — <command> — passed"` or `--e2e "E2E: none — <reason>"`; silence is not ready')"
-check_status "an empty E2E line is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e ""
-check_status "a line not starting E2E: is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "tests passed"
-check "and says what it must start with" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "tests passed" 2>&1 | grep -c 'ready: the E2E line must start with `E2E:` and say something, got: tests passed')"
-check_status "a bare E2E: is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "E2E:  "
-check_status "a test line passes" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK"
-check "and the ready line states it for the operator" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -cF "norms check tool; no frontend surface; $E2EOK")"
-check "the E2E line is recorded on the row" "$E2EOK|test|aaa1111" \
-  "$(jq -r --argjson i "$e1" 'select(.id==$i)|[.e2e.line,.e2e.kind,.e2e.head]|join("|")' "$E")"
-check_status "a waiver beside a test line is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" --e2e-waiver "ok 2026-10-13"
-check_status "E2E: none without the operator's validation is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE"
-check "and says to tell him and record his validation" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>&1 | grep -cF "ready: row 1 has no E2E test and the operator has not validated it ready without one: tell him « $E2ENONE », then record his validation with --e2e-waiver")"
-e2=$(bash "$REC" open "$E" --class corrective --tier light --label "no review"); bash "$REC" surface "$E" "$e2" --none >/dev/null
-check_status "with no review, a test line is still refused: the gate needs a review" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2EOK"
-check_status "the no-review warning does not let silence by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111
-check_status "the no-review warning does not let an unvalidated E2E: none by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2ENONE"
-check_status "E2E: none without its reason is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "E2E: none" --e2e-waiver "ok 2026-10-13"
-check_status "an undated waiver is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "fine by me"
-check_status "E2E: none with his dated validation passes" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "ready without E2E, ok - 2026-10-13"
-check "and the ready line carries his words" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "ready without E2E, ok - 2026-10-13" 2>/dev/null | grep -cF "$E2ENONE (the operator validated it ready without E2E: ready without E2E, ok - 2026-10-13)")"
-check "the waiver is recorded on the row" "none|ready without E2E, ok - 2026-10-13" \
-  "$(jq -r --argjson i "$e1" 'select(.id==$i)|[.e2e.kind,.e2e.waiver]|join("|")' "$E")"
-check_status "exempt without his words is an error" 1 bash "$REC" exempt "$E"
-check_status "an undated exemption is refused" 1 bash "$REC" exempt "$E" --e2e "no E2E this session"
-check "and nothing is recorded" "no" "$([ -e "$E.e2e-exempt" ] && echo yes || echo no)"
-bash "$REC" exempt "$E" --e2e "no E2E tests for this session's PRs - 2026-10-13" >/dev/null
-check "the exemption is recorded once beside the record" "no E2E tests for this session's PRs - 2026-10-13" "$(jq -r .words "$E.e2e-exempt")"
-check_status "with the session exempted, E2E: none passes with no waiver" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE"
-check "and the ready line names the exemption" "1" \
-  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>/dev/null | grep -cF "(this session's pull requests exempted from E2E by the operator: no E2E tests for this session's PRs - 2026-10-13)")"
-check_status "an exemption does not excuse silence" 1 bash "$REC" ready "$E" "$e1" --head aaa1111
-check "the exemption is not a row" "2" "$(wc -l < "$E" | tr -d ' ')"
-check_status "ready with an unknown option is an error" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" --force
+check_status "ready passes a reviewed row with no E2E line and no waiver" 0 bash "$REC" ready "$E" "$e1" --head aaa1111
+check "and writes no E2E field on the row" "null" "$(jq -r --argjson i "$e1" 'select(.id==$i)|.e2e' "$E")"
+check_status "the E2E options are gone" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e-waiver "ok 2026-10-13"
+check_status "and so is the session exemption" 1 bash "$REC" exempt "$E" --e2e "no E2E - 2026-10-13"
 # The E2E rule in prose, where every brief, phase brief, review and review brief reads it: a
 # backend test against a container, a frontend Playwright test committed, the `E2E: none —
-# <reason>` line, silence not ready, nothing in the pull request's description, and the
-# operator's validation or session exemption before `none` is ready.
+# <reason>` line, silence a finding, nothing in the pull request's description.
 BR="$ORCH_REFS/briefs.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review.md"
-check "briefs.md carries the E2E rule for every phase" "yes|yes|yes|yes|yes|yes|yes" \
-  "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'What makes a pull request without one ready is `references/review.md`, item 14.')"
-# The validation and the exemption live once, in review.md item 14 (rule 182 of the rules review).
-check "briefs.md leaves a pull request without E2E to review.md's validation" "no|yes|yes" \
-  "$(spells "$BR" "A pull request with no E2E test is not ready on your word")|$(spells "$RV" "it is ready once he has validated it ready without one")|$(spells "$RV" "unless he has exempted every pull request of your session")"
+check "briefs.md carries the E2E rule for every phase, and no pointer to item 14" "yes|yes|yes|yes|yes|yes|no" \
+  "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')"
 check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
   "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. The line goes in your report')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
 check "the review brief replays the test or judges the reason, and flags silence" "yes|yes|yes|yes" \
-  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'With `E2E: none — <reason>`, you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
-check "review.md item 14 holds the E2E gate and the operator's validation" "yes|yes|yes|yes|yes" \
-  "$(spells "$RV" "14. **Every pull request carries an E2E test the reviewer replays, or says plainly it has none.**")|$(spells "$RV" "a backend test against the service brought up in a container, a frontend one a Playwright test committed in the project's test tree")|$(spells "$RV" "a report with no E2E line is a finding, and the pull request is not ready: silence is not allowed.")|$(spells "$RV" "A pull request with \`E2E: none\` is not ready on your word")|$(spells "$RV" 'you tell the operator « ready », with its E2E line')"
-check "design.md mirrors the E2E gate under the ready gate" "yes" \
-  "$(spells "$ROOT/docs/design.md" '`E2E: none` passes only with the operator'"'"'s validation of that pull request ready without one (`--e2e-waiver`')"
-unset SURFACE_BODIES
+  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
+  "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
+# The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
+# question, once, in the host's question tool, his choice the consent.
+check "review.md asks one E2E waiver question through the round, whoever presents the round puts it to him" "yes|yes|yes" \
+  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator:')|$(spells "$RV" 'whoever presents the round puts it to him with the question tool')|$(spells "$RV" '« Accorder » / « Refuser »')"
+# O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
+# review record itself, with ONE call named in one place, and the head its verified correction
+# moved is not reviewed again; O21: no E2E validation per pull request.
+REVIEW_CALL='mcp__orchestrator__review'
+check "review.md writes the review record with the one call, and nothing of accept" "1|0" \
+  "$(grep -o "$REVIEW_CALL" "$RV" | wc -l | tr -d ' ')|$(grep -c 'mcp__orchestrator__accept' "$RV")"
+check "review.md judges findings against the design and sets the rest aside" "yes|yes" \
+  "$(spells "$RV" 'critical is what contradicts the design or the architecture, and only that is kept')|$(spells "$RV" 'the rest is set aside with its one-line reason, no follow-up row')"
+check "review.md reviews no head the verified correction or a rebase moved, and holds no per-PR E2E validation" "yes|yes|no|no|yes" \
+  "$(spells "$RV" 'at the head you reviewed or at the correction'"'"'s head once you verified it')|$(spells "$RV" 'you read only its conflict resolution')|$(spells "$RV" 'is reviewed there before the gate can hold')|$(spells "$RV" 'it is ready once he has validated it ready without one')|$(spells "$RV" "14. **The E2E the pull request's check plan requires is replayed and recorded.**")"
+check "design.md says the E2E validation branch was removed" "yes|no" \
+  "$(spells "$ROOT/docs/design.md" 'that branch was removed with the method-drift retirements')|$(spells "$ROOT/docs/design.md" '(`--e2e-waiver`')"
 check "the review reference records the surface before ready" "1" \
   "$(grep -c 'dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>' "$ROOT/skills/orchestrator/references/review.md")"
 # Rule 158 of the rules review, on the ruling on topic 18: review.md's item 12 is lightened, the
@@ -1760,9 +1819,6 @@ mkdir -p "$WORK/wcroot"
 WCR=$(rp "$WORK/wcroot")
 # The host's name of a directory: every character that is not a letter or a digit turned into `-`.
 enc() { local p; p=$(rp "$1"); printf '%s' "$p" | tr -c 'A-Za-z0-9' '-'; }
-# A commit made through an empty `-C` path would land in the repository the suite runs from.
-gc() { [ "${1:-}" = -C ] && [ -z "${2:-}" ] && return 1; git -c user.email=t@local -c user.name=t "$@"; }
-exists() { [ -e "$1" ] && echo 1 || echo 0; }
 
 for n in 1 2 3; do
   suffix=""; [ "$n" -gt 1 ] && suffix=$n
@@ -1787,17 +1843,6 @@ printf '#!/bin/bash\nexit 1\n' > "$WC/bin-nolsof/lsof"
 chmod +x "$WC/bin/gh" "$WC/bin-nolsof/lsof"
 wcgh() { env PATH="$WC/bin:$PATH" "$@"; }
 
-# A process whose working directory is a given directory, until `release`.
-LIVE=""
-hold() {
-  ( cd "$1" && exec sleep 60 ) & LIVE="$LIVE $!"
-  local i=0 want; want=$(rp "$1")
-  while [ $i -lt 50 ]; do
-    lsof -a -p "${LIVE##* }" -d cwd -Fn 2>/dev/null | grep -qxF "n$want" && return 0
-    sleep 0.1; i=$((i + 1))
-  done
-}
-release() { local p; for p in $LIVE; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; LIVE=""; }
 
 # mkclone <source> <name> <branch> [dirty|unpushed]: a checkout on a pushed branch.
 mkclone() {
@@ -2089,45 +2134,15 @@ echo "== brief lint =="
 
 # The largest category of multi-agent failure is specification, and a brief is this
 # plugin's whole specification act. Two defects reached a live agent before anything
-# checked the file: a path built from a host variable the agent's shell does not set, and
-# a second session reference sitting beside the real one. Both are mechanical; both are
-# caught here, before the dispatch rather than after the round.
-LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
 # Rule 88 of the rules review: the lint's header says what it is for and leaves each check's
 # rule to the comment above its code; the retired check 8 keeps one line.
 check "the lint's header tells no incident and repeats no check" "no|no|no|1" \
   "$(spells "$LINT" 'Two defects reached a live agent')|$(spells "$LINT" '# Check 13 refuses a pull request title')|$(spells "$LINT" 'demanded an absolute path to context-gauge.sh')|$(grep -c '^# 8\. ' "$LINT")"
-B="$WORK/briefs"; mkdir -p "$B"
 
-ok_brief() {  # a brief with nothing wrong in it
-  cat > "$1" <<BRIEF
-# scratch — Phase 1: thing
 
-You are the implementer for this phase.
-
-## 1. Required reading
-
-1. Spec: \`$WORK/briefs\`
-
-## 3. Scope
-
-Non-goals:
-
-- Nothing outside this list.
-- If you believe something outside this list is needed, STOP and ask the orchestrator first.
-
-## 6. Communication
-
-- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
-- Every report ends with your measured context, from the hooks module's measure file.
-BRIEF
-}
-
-ok_brief "$B/good.md"
 check_status "a complete brief passes" 0 bash "$LINT" "$B/good.md"
 check "a complete brief says so" "brief-lint: $B/good.md: 0 findings" "$(bash "$LINT" "$B/good.md" 2>&1)"
 
-ok_brief "$B/placeholder.md"; printf 'Branch: {{BRANCH}}\n' >> "$B/placeholder.md"
 check_status "an unfilled placeholder is a finding" 1 bash "$LINT" "$B/placeholder.md"
 check "the unfilled placeholder is named" "1" "$(bash "$LINT" "$B/placeholder.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
 
@@ -2188,21 +2203,14 @@ check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1
 check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
-# and holding it to one would make the check noise nobody reads. What it IS held to is the
-# line its report must end on: a round that never reports its norms check leaves the
-# orchestrator nothing to record, and the readiness gate then refuses a head whose round did
-# read it. The rule lived in prose on both sides of the round and was skipped twice in one
-# day, so the brief is read for it before the dispatch rather than after.
+# and holding it to one would make the check noise nobody reads.
 review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"
-printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
 check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
 
 review_brief "$B/review-nogate.md"
-check_status "a review brief with no norms-check line is a finding" 1 bash "$LINT" "$B/review-nogate.md"
-check "the missing report line is named" "1" "$(bash "$LINT" "$B/review-nogate.md" 2>&1 | grep -c 'norms-check:')"
-check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 2>&1 | grep -c 'norms-check')"
+check_status "a review brief with no norms-check line passes: norms is on demand" 0 bash "$LINT" "$B/review-nogate.md"
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
@@ -2790,6 +2798,9 @@ check "a release under the old prefix is not invisible" "0.1.2" \
 newest=$(cd "$ROOT" && git tag --list '*orchestrator--v*' 2>/dev/null | sed 's/^.*--v//' | sort -V | tail -1)
 check "the version is not behind any published tag" "yes" "$(version_not_behind "$pv" "$newest")"
 
+fi
+
+if shard_has 2; then
 echo "== iterm-agents spawn (dry run) =="
 # The prompt is never typed into the shell: a 3 000-character prompt with non-ASCII
 # bytes, quotes and a backslash goes to a file byte for byte, the typed command stays
@@ -2797,7 +2808,6 @@ echo "== iterm-agents spawn (dry run) =="
 # with an inline prompt was truncated by AppleScript and never ran, and a `sed`
 # under LC_ALL=C died on an em dash.
 AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
-ISTATE="$WORK/istate"
 long=$(printf 'x%.0s' $(seq 1 3000))
 prompt="Read « this » — é \"quoted\" back\\slash $long"
 out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: B-1 — é" --prompt "$prompt" 2>&1)
@@ -2854,13 +2864,6 @@ check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" |
 ORCHVPS="$WORK/ps-orch-vehicle.txt"
 printf '/dev/ttys900 claude --name Orch: f\n' > "$ORCHVPS"
 orchv() { ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$ORCHVPS" "$@"; }
-shaped() {
-  case " $* " in
-    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
-    *) set -- --prompt p "$@" ;;
-  esac
-  CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
-}
 check "a shaped title names the session" "1" \
   "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")"
 check "and so does an orchestrator's" "1" \
@@ -3293,7 +3296,7 @@ check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1
 check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
   "$(aud --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit: x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit: x' | grep -c "an audit title is an auditor's")"
 check "and that refusal exits 1" "1" "$(aud --title 'Audit: x' >/dev/null 2>&1; echo $?)"
-for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
+for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "an auditor refuses $AUDFLAG" "1|1" \
     "$(aud --auditor --title 'Audit: x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit: x' $AUDFLAG | grep -c "is not an auditor's")"
@@ -3302,6 +3305,14 @@ check "an auditor with no readable pair is refused, naming where its transcript 
   "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p 2>&1 | grep -cF "no transcript for session s-aud-none under $ORCHESTRATOR_PROJECTS_DIR")"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit: x' | grep -c -- '--model aud-model')"
+# An auditor given its pair runs on it (the caller's pair is read only when none is given).
+AUDPAIR=$(aud --auditor --model m-x --effort low --title 'Audit: tm')
+check "an auditor given --model and --effort runs on that pair, not its caller's" "1|0" \
+  "$(printf '%s' "$AUDPAIR" | grep -c -- '--model m-x --effort low')|$(printf '%s' "$AUDPAIR" | grep -c -- '--model aud-model')"
+check "an auditor given neither runs on its caller's model and effort" "1" \
+  "$(audl --auditor --title 'Audit: tm' | grep -c -- '--model aud-model --effort high')"
+check "an auditor given a model without an effort is refused" "1" \
+  "$(aud --auditor --model m-x --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
 
 # An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
 # a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
@@ -3731,13 +3742,6 @@ check "the entry point's header lists both new forms" "yes|yes" \
 # The coordinator's own rulebook and its two commands. The judgment is prose, so what is
 # checked here is that every command line the prose hands the session is one the tooling
 # runs — the succession's spawn line and the start's leftmost move are taken out of the text
-# and run dry through the launcher, and the successor's brief, filled, lints clean — and that
-# the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
-# only by title, the predecessor's, before the successor registers.
-COORDSKILL="$ROOT/skills/coordination/SKILL.md"
-COORDCMD="$ROOT/commands/coordinator.md"
-COORDEND="$ROOT/commands/coordinator-end.md"
-COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
 # A skill and a command of one plugin share one address, `orchestrator:<name>`, and the host
 # resolves it to the command: a skill named like a command is never loaded by its name, and a
 # command that says « load that skill first » loads itself. The coordinator's skill was first
@@ -4042,10 +4046,6 @@ AUDSUCCFILLED="$WORK/audit-succession-filled.md"
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
 # Rule 82 of the rules review, the operator's ruling of 2026-11-04 (« A »): the successor's
-# handshake stays in each succession template, and the copies may not drift apart. The auditor's
-# and the coordinator's step 3 are one text, read with their line breaks folded; the
-# orchestrator's, longer, carries the same core.
-handshake() { sed -n '/^3\. \*\*Take over\.\*\*/,/nothing in flight\./p' "$1" | tr '\n' ' ' | tr -s ' '; }
 check "the succession templates carry one handshake" "yes|yes|yes|yes|yes" \
   "$([ -n "$(handshake "$AUDSUCCTPL")" ] && [ "$(handshake "$AUDSUCCTPL")" = "$(handshake "$COORDTPL")" ] && echo yes || echo no)|$(spells "$SUCC" 'Then message the predecessor "takeover confirmed"')|$(spells "$SUCC" 'and wait for its « handed over »')|$(spells "$SUCC" 'five minutes without it, read its screen with `screen --tty`')|$(spells "$SUCC" 'close on a prompt with nothing in flight')"
 # The code cites §52: the section it cites exists.
@@ -4087,7 +4087,6 @@ check "screen without a tty says which option is missing" "ERROR: screen: --tty 
 # tab exists, since afterwards it is found out from an agent that never answers.
 py=$(command -v python3 || echo python3)
 TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
-UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p
@@ -4375,8 +4374,8 @@ check "a tier bound without an effort types the shipped tier effort" "1" "$(pcmd
 check "an unknown effort on spawn is a refusal" \
   "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p --effort huge 2>&1 | tail -1)"
-check "an auditor refuses an effort: it runs as its caller runs" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+check "an auditor given an effort alone is refused: it takes the pair, or neither" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'an auditor takes --model and --effort together')"
 check "rotate forwards the effort to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
@@ -5493,7 +5492,7 @@ check "the Live state section replaces reading the journal, which is read by gre
 # 2026-11-04 on the cap, its template line).
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
+  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
 # Every successor measures its takeover at the same point, the turn that sends « takeover
 # confirmed », so one orchestration's takeover figures compare from one succession to the next:
 # step 4 keeps the figure recorded when that turn ends, and step 5 reports that reading only.
@@ -5501,7 +5500,7 @@ check "step 5 announces the successor's own measured context from its measure fi
 # sends « takeover confirmed » is the turn before's, or no file at all on a first turn. The
 # figure is the one recorded when that turn ends, read at the next turn's first tool call.
 check "step 4 takes the takeover figure the module records when the « takeover confirmed » turn ends" "yes|yes|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « at takeover confirmed » figure is the `context_tokens` the module records when the turn that sends « takeover confirmed » ends')|$(spells "$ORCH_REFS/lifecycle.md" 'read your measure file at the first tool call of your next turn and keep that figure')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« at takeover confirmed » at the end of the turn that sends it (woken from a pause, the turn that ends step 3)')|$(spells "$ORCH_REFS/lifecycle.md" 'read each at the first tool call of the next turn')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
 check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures, never a later reading' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'The announcement gives these two, never a later reading')"
 # The successor also keeps its first turn's reading: the gap between it and the « takeover
@@ -5510,13 +5509,13 @@ check "step 5 reports the context kept at « takeover confirmed », never a late
 # module writes it only when a turn ends. The « first turn » figure is the one recorded at
 # the end of the first turn, read at the second turn's first tool call.
 check "step 1 says the measure file is written only when a turn ends, and asks no reading before" "yes|no|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'the module writes it only when a turn of yours ends, so it is not there during your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'written when a turn of yours ends')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
 check "step 1's « first turn » figure is the one recorded at the end of the first turn, read at the next turn's first tool call" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens` it records when your first turn ends: read the file at the first tool call of your next turn and keep that figure')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')"
 # A file still missing when it is read — a first turn the host could not measure — gets the
 # four agent briefs' guard: no figure rather than an estimate.
 check "step 1 guards the measure file missing when it is read" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Missing, say so and give no figure')"
 check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1" \
   "$(printf '%s' "$SUCC5" | grep -oF 'on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')"
 check "the design names both figures and why: their gap is the takeover's verification cost" "yes|yes" \
@@ -5602,8 +5601,8 @@ check "the template reads Instructions, then Source, then Expected result, each 
   "$(i=$(succ_at '^# Instructions$'); a=$(succ_at '^## Analysis$'); f=$(succ_at '^## Your first task'); s=$(succ_at '^# Source$'); l=$(succ_at '^## Live state'); e=$(succ_at '^# Expected result$')
      [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
-check "the template names its rulings file, read whole at step 1, and carries no rulings field" "1|1|0|0" \
-  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
+check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
+  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
 check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
   "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
 check "the template carries the predecessor's tty and home server, the launcher and the scripts" "yes|yes|yes|yes" \
@@ -5913,24 +5912,6 @@ t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t
 
 # `move`'s guard, live, is the §26 reading: a tty is recycled minutes after a close and
 # the chain file named after it outlives its occupant, so an entry whose tty now belongs
-# to a stranger's tab must not make that tab movable. The owner is the session sitting on
-# the caller's tty RIGHT NOW, read from the app; the match is on the TAB id. The dry run
-# has no app and keeps ORCHESTRATOR_SELF_ID and the tty, which is what its checks seed.
-MSTUB='
-import asyncio, sys
-sys.path.insert(0, sys.argv[1])
-import iterm_agent as ia
-class S:
-    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
-    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
-class T:
-    def __init__(s, tid, sess): s.tab_id=tid; s.sessions=[sess]; s.all_sessions=[sess]
-class W:
-    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
-class App:
-    def __init__(s, wins): s.windows=wins
-app=App([W([T("1",S("S-LIVE","/dev/ttys801")), T("2",S("S-AGENT","/dev/ttys802"))])])
-'
 owned() { ORCHESTRATOR_STATE_DIR="$ISTATE" "$py" -c "$MSTUB
 print(asyncio.run(ia.move_is_owned(app, sys.argv[2], sys.argv[3])))" "$ROOT/skills/iterm-agents/scripts" "$1" "$2"; }
 mkdir -p "$ISTATE/chains"
@@ -5944,6 +5925,9 @@ check "a recycled tty in the chain does not make a stranger's tab movable" "Fals
 printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-GONE"}\n' > "$ISTATE/chains/ttys801.jsonl"
 check "an entry another session wrote is not the caller's to move" "False" "$(owned /dev/ttys802 /dev/ttys801)"
 
+fi
+
+if shard_has 3; then
 echo "== iterm-agents: iTerm2 answers, or it is said why (§46) =="
 # Every reading here is about the fault that made the launcher unkillable: the app stopped
 # dispatching AppleEvents, the library asked it for a cookie through an UNBOUNDED
@@ -6157,9 +6141,6 @@ check "a pid the host registered is the host, whatever its argv" "host" "$(hostp
 check "a shell on the tty is not the host" "none" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-shell.txt")"
 check "verify reads a bare host row under an absolute HOST_CLI" "0" \
   "$(ORCHESTRATOR_HOST_CLI=/opt/homebrew/bin/claude ORCHESTRATOR_PS_TABLE="$WORK/ps-bare.txt" bash "$AGENT" verify --tty /dev/ttys901 >/dev/null 2>&1; echo $?)"
-# --pid narrows verify to one process, and counts EVERY host CLI on the tty: a session that
-# runs a nested host CLI shows two, and the recorded one is not always the first.
-printf '/dev/ttys901 5100 a-host --name outer\n/dev/ttys901 5101 a-host --nested\n' > "$WORK/ps-two.txt"
 vpid() { ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$WORK/ps-two.txt" CLAUDE_CONFIG_DIR="$WORK/hostcfg" \
   bash "$AGENT" verify --tty /dev/ttys901 "$@"; }
 vpid_status() { vpid "$@" >/dev/null 2>&1; echo "exit $?"; }
@@ -6810,6 +6791,9 @@ live.close()
 ia.remove_exited_home_socket('suite-up')
 print('kept' if os.path.exists(path) else 'removed')" ) | paste -sd'|' -)"
 
+fi
+
+if shard_has 1; then
 echo "== iterm-agents: a close takes the stood-down session's checkout with it =="
 # The session's purpose is over once its close is proved on the process table, so the
 # checkout it worked in is deleted — through `workspace.sh delete`, never `--discard`, so a
@@ -6852,7 +6836,6 @@ print('OUT:' + out.getvalue().strip())
 print('ERR:' + err.getvalue().strip())
 PYEOF
 cprobe() { "$py" "$WORK/close_probe.py" "$ROOT/skills/iterm-agents/scripts" "$@"; }
-field() { printf '%s\n' "$1" | sed -n "s/^$2://p"; }
 
 CL=$(mkclone "$WCSRC" cl-a feat/cl-a); HCL=$(scratch "$CL"); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
 res=$(cprobe close)
@@ -6922,6 +6905,9 @@ rm -rf "$WC/hosttmp"/* 2>/dev/null
 # now, pinned in hooks/tests/gauge-core.test.ts (run by the host's
 # plugin test), and the one file that survives — the measure file — is pinned there too.
 
+fi
+
+if shard_has 3; then
 echo "== the mode a session came up in (§43) =="
 # Two agents stood on a permission prompt in tabs nobody watched. One carried
 # `--permission-mode auto` on its process line and `default` in every entry of its
@@ -7736,6 +7722,10 @@ reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
   "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
+reset_home
+out=$(home close --tty /dev/ttys901 --expect-title '' 2>&1)
+check "an empty title to expect is refused before anything is closed, a blank one too" "1|0|1|0" \
+  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[kill-window\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[kill-window\]')"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
@@ -9785,6 +9775,9 @@ check "a server that still answers and cannot be listed is not ended, and the cl
 rm -rf "$SHORTTMP"
 fi
 
+fi
+
+if shard_has 4; then
 echo "== install =="
 
 # The installer asks the host for its version before it touches anything, so every run
@@ -12601,6 +12594,9 @@ check "the routing skill no longer says no command does the calibration" "no" \
 check "the rulebook no longer orders a routine idle-notice subscription, and the succession brief re-announces the new address" "0|yes" \
   "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator')"
 
+fi
+
+if shard_has 2; then
 # §65: a launched session is given a lean tool set, by role, and the spawn can change it.
 # `--disallowedTools` takes several values like `--mcp-config`, so it sits before another
 # option; the roles read their title.
@@ -12612,9 +12608,11 @@ leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+# The servers an orchestrator never calls: its agents run them.
+LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
 check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
   "$(leanl --title 'Agent: x' | leanset)"
-check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
+check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
   "$(leanl --title-free --title probe | leanset)"
@@ -12622,12 +12620,12 @@ check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
-check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
+check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
-check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
+check "a woken orchestrator and an opened one keep the three and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
   "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
   "$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent: x' | leanset | grep -c .)|$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
@@ -12644,10 +12642,12 @@ check "--drop-tool given the same name twice removes it once, on the launch line
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
-check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
+check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
+check "--drop-tool on a name the role keeps removes it" "$LEANBASE $LEANORCH mcp__orchestrator__end_session" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
@@ -12657,7 +12657,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
@@ -12762,6 +12762,9 @@ check "no session id and no --transcript is refused, naming both ways out" "1|1"
 check "a session with no transcript and a missing file are each refused" "1|1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none toolsx | grep -c 'tools: no transcript for session s-none')|$(toolsx --transcript "$WORK/absent.jsonl" | grep -c 'tools: transcript not found')"
 
+fi
+
+if shard_has 4; then
 # The agent's orchestrator may hand over: the agent admits the successor its orchestrator names,
 # and the predecessor names it to each agent before « handed over ».
 ADMIT='When it hands over, it first sends you its successor'"'"'s exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.'
@@ -12828,6 +12831,9 @@ check "the routing table has the screenshot-audit row at the standard tier" "1" 
   "$(grep -c 'orchestrator:screenshots`.*`screenshot-audit` | `standard` | you, on a capture in doubt' "$ROOT/skills/model-routing/SKILL.md")"
 check "the design says why the audit left the orchestrator's context" "yes|yes" \
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
+fi
+
+if shard_has 1; then
 # The record's messages are dispatch-record.ts's since its port.
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "${REC%.sh}.ts" 'the description of ${pr} carries ${shots}: audit every image')|$(spells "${REC%.sh}.ts" 'the screenshots agent audits each one')"
@@ -12872,28 +12878,30 @@ srec review "$LR" "$lr1" --head aaa1111 --norms tool >/dev/null
 srec surface "$LR" "$lr1" --ui acme/front#12 >/dev/null
 srec audit "$LR" "$lr1" --head aaa1111 --images 1 >/dev/null
 check "ready on a row that names its pull request prints the command to run" "1" \
-  "$(srec ready "$LR" "$lr1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness 12 ready on acme/front$')"
+  "$(srec ready "$LR" "$lr1" --head aaa1111 2>/dev/null | grep -c '^pr-readiness 12 ready on acme/front$')"
 lr2=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr2" --head bbb2222 --norms tool >/dev/null
 srec surface "$LR" "$lr2" --none >/dev/null
 check "ready on a row that names none prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr2" --head bbb2222 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
+  "$(srec ready "$LR" "$lr2" --head bbb2222 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
 check "a refused ready prints no label command" "0" \
-  "$(srec ready "$LR" "$lr2" --head ccc3333 --e2e "$E2EOK" 2>&1 | grep -c 'pr-readiness')"
+  "$(srec ready "$LR" "$lr2" --head ccc3333 2>&1 | grep -c 'pr-readiness')"
 lr3=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr3" --head ddd4444 --norms tool >/dev/null
 srec fixed "$LR" "$lr3" --head eee5555 >/dev/null
 srec surface "$LR" "$lr3" --none >/dev/null
 check "ready on a row corrected and verified at the head prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr3" --head eee5555 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
+  "$(srec ready "$LR" "$lr3" --head eee5555 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
 lr4=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec surface "$LR" "$lr4" --none >/dev/null
-check_status "ready on a row with no review recorded is refused" 1 srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK"
+check_status "ready on a row with no review recorded is refused" 1 srec ready "$LR" "$lr4" --head fff6666
 check "and it prints no label command" "0" \
-  "$(srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK" 2>&1 | grep -c 'pr-readiness')"
+  "$(srec ready "$LR" "$lr4" --head fff6666 2>&1 | grep -c 'pr-readiness')"
 unset SURFACE_BODIES
 check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
 
+
+fi
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"

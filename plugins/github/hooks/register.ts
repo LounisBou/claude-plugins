@@ -611,10 +611,10 @@ export async function diagnose($: any, check = false): Promise<string> {
 // ---- the ready guard and the auto-merge split ----
 
 /*
- * A pull request is ready when a clean review, a passed norms check, passed
+ * A pull request is ready when a clean review, passed
  * E2E and green CI all stand at its current head (engine/writing/pull-requests.md « Ready
  * pull requests »). Marking it Ready, taking it out of draft and merging it
- * need the four, through the tool and through Bash alike. Under the warn
+ * need the three, through the tool and through Bash alike. Under the warn
  * phase an act that is not ready goes ahead with one warn line, under the
  * enforce phase it is refused. In a repository not in auto-merge, leaving
  * draft is refused on every route, and a merge is refused through Bash: the
@@ -707,7 +707,7 @@ async function headRecords($: any, gate: Gate, head = gate.head): Promise<Record
 }
 
 /*
- * A rebase that leaves a pull request's own commits unchanged keeps its review, its norms check and
+ * A rebase that leaves a pull request's own commits unchanged keeps its review, its norms check (if one ran) and
  * its E2E waiver: a kind with no record at the head counts as present when an earlier head of the
  * same pull request holds one, clean, passed or waived, and that head's fingerprint is the head's
  * (the engine's pr-fingerprint: the diffs of the pull request's k commits along first parents, so a
@@ -1044,7 +1044,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
 /*
  * The Ready label follows the gate: whenever the module learns something that can complete or
  * break readiness (a record written, the gate or the checks read through the tool), it reads the
- * four at the head and puts Ready, or Not Ready back on a pull request carrying Ready. The head is
+ * three at the head and puts Ready, or Not Ready back on a pull request carrying Ready. The head is
  * read again just before the write, and a head that moved meanwhile gets no label. Outside
  * auto-merge Ready lands on a draft: a pull request the plugin took out of draft for its CI goes back first. The
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
@@ -1920,7 +1920,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
-  // The record may complete the four: the gate reads them at the head it just checked.
+  // The record may complete the three: the gate reads them at the head it just checked.
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }

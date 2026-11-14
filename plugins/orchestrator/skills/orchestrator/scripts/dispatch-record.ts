@@ -2,7 +2,7 @@
 // what each records and refuses, and why, are documented in the header of dispatch-record.sh, the
 // launcher every caller runs.
 //
-// Every write of the record, the registry and the exemption goes through core's store: a lock,
+// Every write of the record and the registry goes through core's store: a lock,
 // one rename, no temporary file left behind. The session-name shape is core's (names.ts).
 import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -14,12 +14,10 @@ import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 
 export const USAGE =
-  'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|exempt|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)'
+  'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-// A waiver or an exemption is the operator's words with their date, or it is nobody's.
-const DATED = /[0-9]{4}-[0-9]{2}-[0-9]{2}/
-const WRITES = new Set(['open', 'round', 'review', 'fixed', 'surface', 'audit', 'ready', 'exempt', 'close', 'defer', 'undefer', 'escaped', 'cost'])
+const WRITES = new Set(['open', 'round', 'review', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'escaped', 'cost'])
 const GOAL_WRITES = new Set(['init', 'plan', 'met', 'rule-out', 'defer', 'reopen'])
 const GOAL_SUBS = ['init', 'status', 'plan', 'met', 'rule-out', 'defer', 'reopen', 'check']
 
@@ -325,7 +323,6 @@ interface Context {
   readonly deps: Deps
   readonly goalsFile: string
   readonly ownerFile: string
-  readonly exemptFile: string
   writing: boolean
   claimed: boolean
   registerAbsent: boolean
@@ -532,10 +529,9 @@ function review(ctx: Context, id: string, args: readonly string[]): void {
   const head = last(found, '--head')
   const norms = last(found, '--norms')
   if (head === '') die(ctx, 'review: --head is required')
-  // `tool` or `none`, and nothing else: `none` is a fact about the PROJECT - it ships no norms
-  // check - never a round's verdict that reading the file by hand was enough.
-  if (norms === '') die(ctx, 'review: --norms is required (tool when the project\'s norms check ran, none when it ships none)')
-  if (norms !== 'tool' && norms !== 'none') die(ctx, `review: unknown norms value: ${norms} (expected tool, or none when the project ships no norms check)`)
+  // Norms is on demand: --norms is given only when a norms check ran, `tool`, or the project ships
+  // none, `none`, and nothing else: `none` is a fact about the PROJECT.
+  if (norms !== '' && norms !== 'tool' && norms !== 'none') die(ctx, `review: unknown norms value: ${norms} (expected tool, or none when the project ships no norms check)`)
   // Only the LAST review is kept: the question `ready` asks is about the head in front of it now.
   const at = stamp(ctx)
   rewrite(ctx, id, row => {
@@ -602,14 +598,8 @@ function audit(ctx: Context, id: string, args: readonly string[]): void {
   rewrite(ctx, id, row => { row['audit'] = { head, images: Number(images), defects, at } })
 }
 
-const E2E_SHAPE = '`--e2e "E2E: <test path(s)> — <command> — passed"` or `--e2e "E2E: none — <reason>"`'
-
 async function ready(ctx: Context, id: string, args: readonly string[]): Promise<void> {
-  const found = options(ctx, 'ready', args, ['--head', '--e2e', '--e2e-waiver'])
-  const head = last(found, '--head')
-  const e2eGiven = found.some(([f]) => f === '--e2e')
-  const e2e = last(found, '--e2e')
-  const waiver = last(found, '--e2e-waiver')
+  const head = last(options(ctx, 'ready', args, ['--head']), '--head')
   if (head === '') die(ctx, 'ready: --head is required')
   const row = rowOf(ctx, id)
   const reviewed = text(or(field(row['review'], 'head'), ''))
@@ -646,70 +636,25 @@ async function ready(ctx: Context, id: string, args: readonly string[]): Promise
   } else if (kind === 'none') {
     surfaceLine = 'no frontend surface'
   }
-  // The E2E line, on every row, after the surface and before the heads, so that neither the
-  // no-review warning nor a reviewed head lets a pull request through on silence.
-  if (!e2eGiven) die(ctx, `ready: row ${id} gives no E2E line: pass the implementer's report line, ${E2E_SHAPE}; silence is not ready`)
-  if (!/^E2E:\s*\S/.test(e2e)) die(ctx, `ready: the E2E line must start with \`E2E:\` and say something, got: ${e2e || 'nothing'}; ${E2E_SHAPE}`)
-  let e2eKind = 'test'
-  let exemptWords = ''
-  let e2eLine = e2e
-  if (/^E2E:\s*none([^\p{L}\p{N}]|$)/iu.test(e2e)) {
-    e2eKind = 'none'
-    if (!/^E2E:\s*none\s*[—–:-]\s*\S/iu.test(e2e)) die(ctx, 'ready: `E2E: none` needs its reason: `E2E: none — <reason>`')
-  }
-  if (e2eKind === 'none') {
-    if (isFile(ctx.exemptFile)) {
-      try {
-        exemptWords = text(or(field(JSON.parse(readText(ctx.exemptFile) ?? ''), 'words'), ''))
-      } catch {
-        exemptWords = ''
-      }
-    }
-    if (waiver !== '') {
-      if (!DATED.test(waiver)) die(ctx, `ready: --e2e-waiver takes the operator's words with their date (YYYY-MM-DD), got: ${waiver}`)
-      e2eLine = `${e2e} (the operator validated it ready without E2E: ${waiver})`
-    } else if (exemptWords !== '') {
-      e2eLine = `${e2e} (this session's pull requests exempted from E2E by the operator: ${exemptWords})`
-    } else {
-      die(ctx, `ready: row ${id} has no E2E test and the operator has not validated it ready without one: tell him « ${e2e} », then record his validation with --e2e-waiver "<his words, dated>": not ready`)
-    }
-  } else if (waiver !== '') {
-    die(ctx, `ready: --e2e-waiver is for a pull request with no E2E test, and this line names one: ${e2e}`)
-  }
   // The github ready gate needs a review at the head; a row no review has touched is not ready.
   if (reviewed === '') die(ctx, `ready: no review recorded on row ${id}: dispatch a review round and record it with \`review\`: not ready`)
-  const at = stamp(ctx)
-  rewrite(ctx, id, r => { r['e2e'] = { line: e2e, kind: e2eKind, waiver, exempt: exemptWords, head, at } })
-  surfaceLine = `${surfaceLine}; ${e2eLine}`
   // The label is the orchestrator's to put, with the github tool, in the same move as its ready:
   // this prints the command and calls nothing.
   const hash = pr.lastIndexOf('#')
   const labelCmd = kind === 'ui' ? `pr-readiness ${pr.slice(hash + 1)} ready on ${hash === -1 ? pr : pr.slice(0, hash)}` : 'pr-readiness <n> ready on <owner/repo>'
   const norms = text(or(field(row['review'], 'norms'), ''))
+  const normsNote = norms === '' ? '' : `, norms check ${norms}`
   if (sameCommit(ctx, reviewed, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${head}, norms check ${norms}; ${surfaceLine}`)
+    say(ctx, `ready: row ${id} reviewed at ${head}${normsNote}; ${surfaceLine}`)
     say(ctx, labelCmd)
   } else if (fixedHead !== '' && sameCommit(ctx, fixedHead, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${reviewed}, corrected and verified at ${head}, norms check ${norms}; ${surfaceLine}`)
+    say(ctx, `ready: row ${id} reviewed at ${reviewed}, corrected and verified at ${head}${normsNote}; ${surfaceLine}`)
     say(ctx, labelCmd)
   } else if (fixedHead !== '') {
     die(ctx, `ready: last review read ${reviewed}, its correction ${fixedHead}, head is ${head}: the head in front of you has been neither read nor verified`)
   } else {
     die(ctx, `ready: last review read ${reviewed}, head is ${head}: the head in front of you has not been read`)
   }
-}
-
-function exempt(ctx: Context, args: readonly string[]): void {
-  const words = last(options(ctx, 'exempt', args, ['--e2e']), '--e2e')
-  if (words === '') die(ctx, 'exempt: --e2e "<the operator\'s words, dated>" is required')
-  if (!DATED.test(words)) die(ctx, `exempt: --e2e takes the operator's words with their date (YYYY-MM-DD), got: ${words}`)
-  if (!isFile(ctx.record)) die(ctx, `exempt: no such record: ${ctx.record}`)
-  try {
-    writeAtomic(ctx.exemptFile, `${JSON.stringify({ words, at: stamp(ctx) })}\n`)
-  } catch {
-    die(ctx, `exempt: could not write ${ctx.exemptFile}`)
-  }
-  say(ctx, `exempt: every pull request of this session's record is exempted from E2E: ${words}`)
 }
 
 async function cost(ctx: Context, id: string, args: readonly string[]): Promise<void> {
@@ -899,10 +844,9 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   if (WRITES.has(cmd) || (cmd === 'goals' && GOAL_WRITES.has(argv[2] ?? ''))) guardOwner(ctx)
   const rest = argv.slice(2)
   if (cmd === 'open') return open(ctx, rest)
-  if (cmd === 'exempt') return exempt(ctx, rest)
   if (cmd === 'summary') return summary(ctx, rest)
   if (cmd === 'goals') return goals(ctx, rest)
-  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, fixed, surface, audit, ready, exempt, close, defer, undefer, escaped, cost, summary or goals)`)
+  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary or goals)`)
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)
@@ -944,7 +888,6 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     cmd, record, deps,
     goalsFile: goalsFileOf(record),
     ownerFile: ownerFileOf(record),
-    exemptFile: `${record}.e2e-exempt`,
     writing: false, claimed: false, registerAbsent: false,
   }
   let code = 0

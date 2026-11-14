@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
-import { matrixOf, NO_SUITE, parseBlocking, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
+import { matrixOf, NO_SUITE, parseBlocking, parseShards, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
 import { breaches, isPromptPath, measure } from './prompts.ts'
 import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
@@ -104,6 +104,31 @@ describe('plugin matrix', () => {
   it('runs a pull request on Linux only', () => {
     const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['macos-latest'], beta: [] } }, ['alpha', 'beta']))
     assert.deepEqual(pullRequestCells(matrix, ['alpha']), [{ plugin: 'alpha', os: 'ubuntu-latest', blocking: false }])
+  })
+
+  it('splits a plugin into its parts on Linux alone, each part blocking as the platform does', () => {
+    const blocking = parseBlocking({ blocking: { alpha: ['ubuntu-latest'], beta: [] } }, ['alpha', 'beta'])
+    const shards = parseShards({ blocking: {}, shards: { alpha: 2 } }, ['alpha', 'beta'])
+    assert.deepEqual(matrixOf(blocking, shards), [
+      { plugin: 'alpha', os: 'ubuntu-latest', blocking: true, shard: 1 },
+      { plugin: 'alpha', os: 'ubuntu-latest', blocking: true, shard: 2 },
+      { plugin: 'alpha', os: 'macos-latest', blocking: false },
+      { plugin: 'beta', os: 'ubuntu-latest', blocking: false },
+      { plugin: 'beta', os: 'macos-latest', blocking: false },
+    ])
+  })
+
+  it('runs every part of a split plugin in a pull request that touches it', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: [] } }, ['alpha']), new Map([['alpha', 3]]))
+    assert.deepEqual(pullRequestCells(matrix, ['alpha']).map(cell => cell.shard), [1, 2, 3])
+  })
+
+  it('reads no part table as no split, and refuses a malformed one', () => {
+    assert.equal(parseShards({ blocking: {} }, ['alpha']).size, 0)
+    assert.throws(() => parseShards({ shards: [] }, ['alpha']), /must be \{ <plugin>/)
+    assert.throws(() => parseShards({ shards: { ghost: 2 } }, ['alpha']), /"ghost" in "shards" is not a plugin/)
+    assert.throws(() => parseShards({ shards: { alpha: 1 } }, ['alpha']), /needs two parts or more/)
+    assert.throws(() => parseShards({ shards: { alpha: '2' } }, ['alpha']), /needs two parts or more/)
   })
 
   it('runs one cell without a suite for a pull request that touches no plugin, so that it passes', () => {

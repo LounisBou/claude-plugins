@@ -13,3 +13,4 @@ export { markRow, nextRow, parseState, REPORT_STATUSES, reportStatus, ROW_STATUS
 export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS, STORE_CONTRACT, takeLockArgv, temporaryOf, updateOver, withLockOver, writeAtomicOver, type AsyncLockOptions, type RunResult, type StoreIo } from './store-io.ts'
 export { INSTALL_TIMEOUT_MS, installPlaywright, locatePlaywright, lockfileOf, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PACKAGES, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'
 export { KILL_GRACE_MS, runInGroup, signalGroup } from './process-group.ts'
+export { cutAt, reportPathOf, shorten, VERDICT_LIMIT, verdictLine, type Shortened, type Verdict } from './verdict.ts'

@@ -1,5 +1,8 @@
 {
-  "$comment": "Where each plugin's suite blocks the build. A platform is added the day the suite is green there, and never removed (docs/conventions.md, « Ratchets »).",
+  "$comment": "Where each plugin's suite blocks the build. A platform is added the day the suite is green there, and never removed (docs/conventions.md, « Ratchets »). \"shards\": a suite run on Linux in that many parts, side by side, each reading its number as SUITE_SHARD.",
+  "shards": {
+    "orchestrator": 4
+  },
   "blocking": {
     "bugs-bot": [
       "ubuntu-latest",
