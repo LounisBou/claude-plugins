@@ -160,6 +160,12 @@ export function archiveOf(record: string): string {
   return `${record.replace(/\.jsonl$/, '')}${PR_LEDGER_CONTRACT.archive_suffix}`
 }
 
+/** An archive's text with `lines` appended, each stamped with the time it was archived. */
+export function withArchived(archive: string, lines: readonly LedgerLine[], now: Date): string {
+  const head = archive === '' || archive.endsWith('\n') ? archive : `${archive}\n`
+  return head + lines.map(line => `${JSON.stringify({ ...line, archived: stamp(now) })}\n`).join('')
+}
+
 /** An instant to the minute, in UTC: `2026-11-14T10:00Z`; `?` for none. */
 export function minuteOf(iso: string | null): string {
   if (iso === null) return '?'

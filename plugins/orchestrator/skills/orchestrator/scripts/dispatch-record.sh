@@ -18,6 +18,14 @@
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
 #   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | defer <G> --ruling "<his words, dated>"
 #   dispatch-record.sh goals   <record> reopen <G> | check [--json]
+#   dispatch-record.sh pr      <record> <owner/name>#<n> (--working "<agent>" | --waiting "<what>" | --parked "<his words, dated>")
+#   dispatch-record.sh pr-archive <record> <owner/name>#<n>
+#
+# `pr` sets the pull request's one line in the ledger the record carries beside its rows, and
+# prints it in the operator's words; `pr-archive` moves the line to the archive beside the record.
+# The line's shape, its statuses and what « unattended » means are core's (`pr-ledger.ts`,
+# docs/contracts.md); the hooks module archives on its own the line of a pull request the forge no
+# longer lists open.
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then

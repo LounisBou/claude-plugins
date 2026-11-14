@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, withLine, withoutLines, type LedgerLine,
+  statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, withArchived, withLine, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -74,9 +74,12 @@ describe('the pull request ledger', () => {
     assert.equal(out, `${row}\n${JSON.stringify(line({ pr: 8 }))}\n`)
   })
 
-  it('archives beside the record', () => {
+  it('archives beside the record, each line stamped with its archiving', () => {
     assert.equal(archiveOf('/b/dispatch-record.jsonl'), '/b/dispatch-record.archive.jsonl')
     assert.equal(archiveOf('/b/record'), '/b/record.archive.jsonl')
+    const archived = withArchived('{"old":1}', [line()], new Date('2026-11-14T12:00:00.500Z'))
+    assert.deepEqual(archived.split('\n'), ['{"old":1}', JSON.stringify({ ...line(), archived: '2026-11-14T12:00:00Z' }), ''])
+    assert.equal(withArchived('', [], new Date(AT)), '')
   })
 
   it('says each status in the operator\'s words', () => {
