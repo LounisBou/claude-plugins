@@ -5,7 +5,7 @@
 // twice, none without a coordinator, none from a session that is no orchestrator, and a
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
+import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, answerFromPaneText, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
@@ -125,6 +125,13 @@ test('a held question is the operator wait whose own fingerprint was relayed', (
   expect(heldQuestion({ ...held, waiting: 'done' })).toBeNull()
   expect(heldQuestion({ ...held, blocks: '' })).toBeNull()
   expect(heldQuestion(null)).toBeNull()
+})
+
+test('a live operator wait whose blocks is empty vouches for nothing: unknown, never none held', () => {
+  const key = fingerprint({ kind: 'operator', blocks: '', question: '' })
+  const wait = { waiting: 'operator' as const, blocks: '', waiting_since: 'T', relayed: key }
+  expect(openQuestions(wait)).toBeNull()
+  expect(openQuestions({ ...wait, blocks: 'phase 3', relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) })).toEqual([{ since: 'T', blocks: 'phase 3' }])
 })
 
 test('the withdrawal names the sender, the question and where it was answered', () => {

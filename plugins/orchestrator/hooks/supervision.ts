@@ -1701,7 +1701,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
         const withdrawal = parseWithdrawal(delivery.body)
         if (withdrawal) {
-          const received = await receiveWithdrawal($, withdrawal)
+          const received = await receiveWithdrawal($, withdrawal, peerAddress(delivery))
           if (received) return received
         }
         if (isMarked(delivery.body)) {
@@ -3559,16 +3559,17 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
 
 // A remote orchestrator's withdrawal (withdrawalText): the fast path to what its next row says. In
 // the coordinator's session alone, the open entry of that sender with that start and those blocks is
-// settled as answered in its tab, with the words the operator typed; any other is a message nobody
-// needs: nothing is open, nothing changes. Consumed whatever it holds, the line being the module's
-// own.
-async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<typeof parseWithdrawal>>): Promise<{ consumed: string } | null> {
+// settled as answered in its tab; any other is a message nobody needs: nothing is open, nothing
+// changes. Only the peer whose address the entry came from (origin.address) can withdraw it, and
+// the words the message quotes are a peer's, never the operator's consent: they are not passed on.
+// Consumed whatever it holds, the line being the module's own.
+async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<typeof parseWithdrawal>>, from: string | null): Promise<{ consumed: string } | null> {
   if (await ownRole($) !== 'coordinator') return null
   try {
     const blocks = cleanBlocks(withdrawal.blocks)
     for (const { entry } of await readRound($)) {
-      if (entry.status !== 'open' || entry.kind !== 'operator' || !entry.origin || entry.from !== withdrawal.name || entry.since !== withdrawal.since || entry.blocks !== blocks) continue
-      await tellSettled($, await withdrawEntry($, entry.session, entry.from, { blocks, since: entry.since, ...(withdrawal.said ? { said: withdrawal.said } : {}) }), Date.now() + RELAY_BOUND_MS)
+      if (entry.status !== 'open' || entry.kind !== 'operator' || !entry.origin || entry.origin.address !== from || entry.from !== withdrawal.name || entry.since !== withdrawal.since || entry.blocks !== blocks) continue
+      await tellSettled($, await withdrawEntry($, entry.session, entry.from, { blocks, since: entry.since }), Date.now() + RELAY_BOUND_MS)
     }
     $.ui.invalidate('ui.render')
   } catch (err) {

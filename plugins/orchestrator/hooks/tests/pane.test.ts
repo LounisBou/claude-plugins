@@ -2658,7 +2658,8 @@ test('a withdrawal message settles the open entry it names at once; a lost, late
   const receive = () => handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
   expect(await receive()).toEqual({ consumed: 'coordinator: a remote withdrawal, applied' })
   const settled = stored(asked.id)
-  expect([settled.status, settled.answer!.by, settled.answer!.typed]).toEqual(['withdrawn', 'tab', 'yes'])
+  // The words the message quotes are a peer's: never kept as the operator's typed answer.
+  expect([settled.status, settled.answer!.by, settled.answer!.typed]).toEqual(['withdrawn', 'tab', undefined])
   // Doubled: the entry is settled already and stays as it was written.
   await receive()
   expect(stored(asked.id)).toEqual(settled)
@@ -2667,6 +2668,27 @@ test('a withdrawal message settles the open entry it names at once; a lost, late
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(again) + '\n')
   await receive()
   expect(stored(asked.id).status).toBe('open')
+})
+
+test('a withdrawal from another peer naming the same sender, start and blocks leaves the entry open', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE)
+  const envelope = `<cross-session-message from="uds:/tmp/cc-socks/other.sock" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
+  const received = await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
+  expect(received).toEqual({ consumed: 'coordinator: a remote withdrawal, applied' })
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a remote withdrawal writes no consent record, whatever words it quotes', async () => {
+  const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
+  const asked = remoteEntry({ consent })
+  const { fx, handlers, stored } = await askingPane([asked])
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, CHOICES[0].text)
+  const envelope = `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
+  await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
+  expect(stored(asked.id).status).toBe('withdrawn')
+  expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))).toEqual([])
 })
 
 test('a re-asked question stays open under the row that lists it', async () => {

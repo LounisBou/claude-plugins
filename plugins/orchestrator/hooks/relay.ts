@@ -180,9 +180,11 @@ export type HeldQuestion = { since: string; blocks: string }
 // The operator questions a sender's wait file vouches for, the one source of what its row says it
 // holds open whatever the session is doing: the held question, delivered or sent and not yet
 // acknowledged. A file whose wait is on something else than the operator (a closing proposal, none
-// ever) says nothing of the questions beside it: null, unknown, never « none open ».
+// ever) says nothing of the questions beside it: null, unknown, never « none open »; so does an
+// operator wait whose blocks is empty, which no entry's header can match.
 export function openQuestions(prior: RelayedWait | null): HeldQuestion[] | null {
   if ((prior?.waiting ?? prior?.last_waiting ?? null) !== 'operator') return null
+  if (typeof prior?.blocks !== 'string' || prior.blocks === '') return null
   const held = heldQuestion(prior) ?? heldQuestion({ ...prior, relayed: prior?.pending_key ?? null })
   return held && held.since !== null ? [{ since: held.since, blocks: held.blocks }] : []
 }
