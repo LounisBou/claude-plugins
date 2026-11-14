@@ -11,7 +11,7 @@ import {
   addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
-import { coordinatorAddress, parseSessionRow, sessionKey, storeOf } from './supervision.ts'
+import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf } from './supervision.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -192,9 +192,23 @@ export async function holdsTodos($: Held, wait: DeclaredWait): Promise<string | 
 /** The refusal that names the open items and what to do with each. */
 export const todoRefusal = (left: readonly TodoItem[], kind: 'done' | 'deferred'): string => todoOpen(left.map(todoName), kind)
 
+// The role of the session at its start, null when it cannot be told: the tool is then kept, never dropped on a guess.
+async function roleAtStart($: Held): Promise<string | null> {
+  try {
+    return await sessionRole($, await $.session.id())
+  } catch (err) {
+    await logLine($, 'todo', `role at start not read: ${messageOf(err)}`)
+    return null
+  }
+}
+
 export function register(on: On<Held>): void {
   on('session.start', {}, async ($, e, next) => {
     try {
+      // An agent carries no list, and the tool's text is about a thousand characters of its context:
+      // it is not registered for it. The role is the row's, else the launch name's; a role not known
+      // yet (an operator's session, named after its first turn) keeps the tool.
+      if (await roleAtStart($) === 'agent') return next(e)
       await $.tool.register({
         name: TODO_TOOL,
         isDeferred: false,

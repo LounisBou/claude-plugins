@@ -20,7 +20,7 @@ const SAID = '2026-11-14T14:58:00Z'
 const row = (role: string, name: string) =>
   JSON.stringify({ role, name, repo: null, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() })
 
-type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string>; unreadable?: string[] }
+type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string>; unreadable?: string[]; launchName?: string | null }
 
 function world(options: Options = {}) {
   const [role, name] = options.me ?? ['orchestrator', 'Orch: billing [ref-1]']
@@ -34,7 +34,7 @@ function world(options: Options = {}) {
   const logs: string[] = []
   const dollar: any = {
     plugin: { name: 'orchestrator', root: '/plugins/orch' },
-    env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
+    env: { get: async (key: string) => (key === 'HOME' ? HOME : key === 'ORCHESTRATOR_HOST_CLI' ? 'hostcli' : undefined) },
     session: {
       id: async () => 's-me',
       send: async (args: { to: string; text: string }) => {
@@ -60,6 +60,10 @@ function world(options: Options = {}) {
         if (log !== null) { logs.push(log); return { exitCode: 0, stdout: '', stderr: '' } }
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
+        // The walk of the session's own name: its tty, then the host process on it, named by its launch.
+        if (argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=')) return { exitCode: 0, stdout: '1 ttys001\n', stderr: '' }
+        if (argv[0] === 'sh' && String(argv[2]).startsWith('command -v')) return { exitCode: 1, stdout: '', stderr: '' }
+        if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: options.launchName ? `  501 hostcli --name ${options.launchName}\n` : '  501 hostcli\n', stderr: '' }
         if (argv[0] === 'mv') { writes.push(argv[3]); files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
@@ -244,6 +248,35 @@ test('the tool is registered loaded, not deferred, with flat fields', async () =
   expect(registrations[0].isDeferred).toBe(false)
   expect(Object.keys(registrations[0].inputSchema.properties)).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome'])
   expect(registrations[0].inputSchema.required).toEqual(['action'])
+})
+
+// What the session start registers, over a world: the tools the module declares to this session.
+async function registeredAt(dollar: any): Promise<string[]> {
+  const names: string[] = []
+  const handlers: Record<string, Function> = {}
+  registerTodo((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } })
+  dollar.tool = { register: async (spec: { name: string }) => { names.push(spec.name) } }
+  await handlers['session.start'](dollar, {}, (e: unknown) => e)
+  return names
+}
+
+test('an agent carries no todo tool: it is not registered for a session whose row names an agent', async () => {
+  expect(await registeredAt(world({ me: ['agent', 'Agent: belt-p3 [1]'] }).dollar)).toEqual([])
+})
+
+test('an agent carries no todo tool: nor for one whose row is not written yet but whose launch name is an agent\'s', async () => {
+  const { dollar, files } = world({ launchName: 'Agent: belt-p3' })
+  files.delete(`${MODULE}/store/sessions/s-me`)
+  expect(await registeredAt(dollar)).toEqual([])
+})
+
+test('an orchestrator, a coordinator, an auditor and a session of no known role carry the todo tool', async () => {
+  for (const me of [['orchestrator', 'Orch: billing [1]'], ['coordinator', 'Coord: general [1]'], ['auditor', 'Audit: todo [2]']] as const) {
+    expect(await registeredAt(world({ me: [me[0], me[1]] }).dollar)).toEqual([TODO_TOOL])
+  }
+  const { dollar, files } = world()
+  files.delete(`${MODULE}/store/sessions/s-me`)
+  expect(await registeredAt(dollar)).toEqual([TODO_TOOL])
 })
 
 function declarer() {
