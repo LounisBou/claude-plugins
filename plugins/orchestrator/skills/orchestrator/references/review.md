@@ -1,6 +1,6 @@
 # Review
 
-Read before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before a rebase. The evidence review is owed on every agent-produced pull request, small ones included; the norms check is on demand, when the pull request's check plan says `norms: required`; the rules a verdict never crosses — one review round and one correction round, ready as the github gate's — are the first section below; the rest is how the round is run.
+Read before dispatching a review or comments round, before a verdict on a delivery, before you record a round or tell the operator a pull request is ready, and before a rebase. The evidence review is owed on every agent-produced pull request, small ones included; the norms check is on demand (`norms: required` in the check plan). The rules a verdict never crosses come first; the rest is how the round is run.
 
 - Thresholds a verdict never crosses
 - Review on evidence
@@ -10,7 +10,7 @@ Read before dispatching a review or comments round, before a verdict on a delive
   - The rebase
   - The deepest method, from the first round
   - The verdict message
-- Review rounds run in disposable sessions — review, publishing, comments
+- Review rounds run in disposable sessions
   - The cost of a round
 - Depth vs scope
 
@@ -44,7 +44,7 @@ For each delivery, run yourself (read-only):
 
 ### The record
 
-**And the round ends on the record, not on memory.** `dispatch-record.sh review <record> <id> --head <sha>` (`--norms tool|none` only when a norms check ran) records the review round, `dispatch-record.sh fixed <record> <id> --head <sha>` the correction you verified, and `dispatch-record.sh ready <record> <id> --head <sha>` checks what the github gate does not read: the surface and the screenshots' audit (`orchestrator:model-routing`, « The record »). It is your pre-check, never the ready. The gate's review record is yours: at the head the rule above names (« Thresholds a verdict never crosses »), write it from a clean checkout at that head with `mcp__orchestrator__review` `{pr, repo?, dir?, verdict, kept?, set_asides?, detail?}`: `verdict` is `pass`, `fail` while a critical item is left, or `accepted`; `fail` lists in `kept`, `[{point, file?, line?, severity?}]`, each finding the correction round fixes, and `fail` or `accepted` lists in `set_asides`, `[{point, reason, file?, line?, severity?}]`, every set-aside point with its one-line reason, which `accepted` requires. A failed record of another reviewer at that head is answered the same way.
+**And the round ends on the record, not on memory.** `dispatch-record.sh <review|fixed|ready> <record> <id> --head <sha>`: `review` records the review round (`--norms tool|none` only when a norms check ran), `fixed` the correction you verified, `ready` checks what the github gate does not read: the surface and the screenshots' audit (`orchestrator:model-routing`, « The record »). It is your pre-check, never the ready. The gate's review record is yours: at the head the rule above names (« Thresholds a verdict never crosses »), write it from a clean checkout at that head with `mcp__orchestrator__review`, its schema naming the fields: `verdict` is `pass`, `fail` while a critical item is left, or `accepted`; `kept` lists the findings a `fail`'s correction round fixes, `set_asides` each point set aside with its one-line reason, which `accepted` requires. A failed record of another reviewer at that head is answered the same way.
 
 ### Checks, in one background watch
 
@@ -56,7 +56,7 @@ For each delivery, run yourself (read-only):
 
 ### The deepest method, from the first round
 
-**Where the deepest method applies: from the FIRST round.** If the real proof is to build the artifact and use it (walk the interface, drive the API, load the data), do it in the review round itself, against a control built from the previous head. There is no later round to build in: a reading now and a build afterwards is a second review round. The round's readers — inside its ONE review session, never the implementer's and never one session per lens — read a copy pinned at the head under review, a detached worktree of your own checkout (`workspace.sh pin <source> <round> <head>`), never a clone, which is for a writer; `workspace.sh delete` takes it when the round is judged. **A review round is a fresh reader, not a fresh lens**. The repair is read by you, on the artifact, not by a second round: a round's sharpest defect sits inside the fix it ordered. **The correction round is closed only when every kept item arrives with the reading that closes it** — or with a sentence saying what the fixtures cannot show.
+If the real proof is to build the artifact and use it (walk the interface, drive the API, load the data), do it in the review round itself, against a control built from the previous head. There is no later round to build in: a reading now and a build afterwards is a second review round. The round's readers — inside its ONE review session, never the implementer's and never one session per lens — read a copy pinned at the head under review, a detached worktree of your own checkout (`workspace.sh pin <source> <round> <head>`), never a clone, which is for a writer; `workspace.sh delete` takes it when the round is judged. **A review round is a fresh reader, not a fresh lens**. The repair is read by you, on the artifact, not by a second round: a round's sharpest defect sits inside the fix it ordered. **The correction round is closed only when every kept item arrives with the reading that closes it** — or with a sentence saying what the fixtures cannot show.
 
 ### The verdict message
 

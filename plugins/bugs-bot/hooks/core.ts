@@ -8,9 +8,6 @@
 // The orchestrator release whose launcher knows `spawn --resident`.
 export const MIN_ORCHESTRATOR = '0.46.1'
 
-// The iTerm launcher, under the orchestrator's install directory.
-export const ITERM_SCRIPT = 'skills/iterm-agents/scripts/iterm-agent.sh'
-
 // How long a spawn may take: the launcher waits up to 30 s for the host CLI on
 // the new tty, and the app itself answers in a few seconds.
 export const SPAWN_TIMEOUT_MS = 120_000
@@ -19,28 +16,8 @@ export const SPAWN_TIMEOUT_MS = 120_000
 // list, move and verify.
 export const STEP_TIMEOUT_MS = 60_000
 
-export type Session = { name: string; ref: string; full: string }
-
-/*
- * The first line of ListAgents names the caller: « This session is <name>
- * [<ref>] — the name other sessions use to message it … ». The peers follow,
- * one row each: « <name> [<ref>]  ·  interactive  ·  busy  ·  started 1h ago ».
- */
-export function selfOf(listing: string): Session | null {
-  const first = listing.split('\n', 1)[0] ?? ''
-  const m = first.match(/^This session is (.+?) \[([\w-]{1,20})\](?: —|$)/)
-  if (!m) return null
-  return { name: m[1].trim(), ref: m[2], full: `${m[1].trim()} [${m[2]}]` }
-}
-
-export function peersOf(listing: string): Session[] {
-  const peers: Session[] = []
-  for (const line of listing.split('\n').slice(1)) {
-    const m = line.match(/^\s+(.+?) \[([\w-]{1,20})\](?:\s+·|\s*$)/)
-    if (m) peers.push({ name: m[1].trim(), ref: m[2], full: `${m[1].trim()} [${m[2]}]` })
-  }
-  return peers
-}
+// The ListAgents text is core's (orchestration.ts).
+export { peersOf, selfOf } from '../core/orchestration.ts'
 
 // A live row « named as agent_title (or a variant of it) »: the same words, case
 // and spacing aside, or the title followed by more words (a host suffix). A blank

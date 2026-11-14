@@ -262,7 +262,7 @@ Requires push access to the repository.
 `python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
+- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a not applicable's `--detail` giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
 - It writes under a temporary name in the same directory, then renames; prints the path; exits 2 on a usage error. Standard library only.
 
 ### Fields (one JSON object per file)
@@ -292,7 +292,7 @@ names no consumer.
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
-| orchestrator `mcp__orchestrator__review` | review | `{pr, repo?, dir?, verdict: pass\|fail\|accepted, kept?, set_asides?, detail?}` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
+| orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason and files with no runtime (below) |
 
 A review record is refused from the session that pushed the head it reviews.
@@ -310,7 +310,7 @@ Both routes are `hooks/e2e-scope.ts`'s.
   in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator's dated words typed in the session, or a consent record
+  `exempt: false` revokes it. `detail` quotes the operator's words typed in the session, or a consent record
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing.
 
@@ -408,7 +408,7 @@ The E2E exemption and check plan files are refused alike (`github: an E2E exempt
 `record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
 directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs the operator's waiver (above), his dated answer its detail.
+needs the operator's waiver (above), his recorded answer its detail.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

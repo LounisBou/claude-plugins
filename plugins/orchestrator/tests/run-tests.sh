@@ -3894,7 +3894,7 @@ check "a decision round goes through a running coordinator, carried by the modul
 # 400 until the sender's account came back (the operator's ruling of 2026-11-04, « restore
 # everything and fix », after an independent control).
 check "the decision round's coordinator paragraph stays at 450 characters or fewer" "yes" \
-  "$([ "$(sed -n '/^\*\*While a coordinator runs, the wave goes through it\*\*/,/^Its answer, verbatim and dated/p' "$ROOT/commands/decide.md" | sed '$d' | wc -m | tr -d ' ')" -le 450 ] && echo yes || echo no)"
+  "$([ "$(sed -n '/^\*\*While a coordinator runs, the wave goes through it\*\*/,/^His answer there is his ruling/p' "$ROOT/commands/decide.md" | sed '$d' | wc -m | tr -d ' ')" -le 450 ] && echo yes || echo no)"
 # The module carries each question; the round sending them itself as well delivered one question twice.
 check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,800 bytes or fewer" "no|no|0|yes" \
   "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8800 ] && echo yes || echo no)"
@@ -5687,17 +5687,18 @@ check "a succession brief whose open-questions value is a 4,000-character block,
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
 check "succeed.md says the open-questions value is outside the 9,000-character cap" "yes" \
   "$(spells "$ROOT/commands/succeed.md" '9,000 characters, the open-questions value apart')"
-# The operator's standing rulings live once, in the orchestration's rulings file: the decision
-# round writes a ruling there first, verbatim and dated, the predecessor checks it before the
-# handover, and the lifecycle gives its format and what leaves it.
+# His answer in the round is the module's record, which answers the same question asked again
+# (hooks/tests/relay.test.ts, « a successor asking a question its predecessor had answered »): the
+# decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
+# with no coordinator, in the rulings file; the lifecycle gives that file's format and what leaves it.
 DECIDE42=$(awk '/^## 4\. /{f=1} /^## 5\. /{f=0} f' "$ROOT/commands/decide.md" | awk '/^2\. /{f=1} /^3\. /{f=0} f' | tr '\n' ' ' | tr -s ' ')
-check "the decision round writes a ruling first to the rulings file, verbatim and dated, then where it applies" "1|1" \
-  "$(printf '%s' "$DECIDE42" | grep -cF "Write the ruling first to the orchestration's rulings file, verbatim and dated")|$(printf '%s' "$DECIDE42" | grep -cF 'then where it applies')"
-# The round writes the ruling, so it must reach the file's path, its entry format and the rule that
-# a ruling carried out or superseded leaves the file in the same move: the step points at the
+check "the decision round leaves his round answer to the module's record and writes by hand only what binds beyond it" "1|1" \
+  "$(printf '%s' "$DECIDE42" | grep -cF "His answer in the round is the module's dated record")|$(printf '%s' "$DECIDE42" | grep -cF 'coordinator, the ruling there, verbatim and dated')"
+# What the round writes by hand must reach the file's path, its entry format and the rule that a
+# ruling carried out or superseded leaves the file in the same move: the step points at the
 # lifecycle item that holds all three, and that item holds them.
 check "the decision round's ruling step points at the lifecycle item giving the rulings file's path, entry and supersede rule" "1|yes|yes" \
-  "$(printf '%s' "$DECIDE42" | grep -cF "(\`references/lifecycle.md\`, « Prune the state file before you hand over »)")|$(spells "$ORCH_REFS/lifecycle.md" '0. **Prune the state file before you hand over.**')|$(sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/lifecycle.md" | grep -qF '`<briefs dir>/rulings.md`' && sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/lifecycle.md" | grep -qF 'is marked in the same move as the ruling that ends it' && echo yes || echo no)"
+  "$(printf '%s' "$DECIDE42" | grep -cF "\`references/lifecycle.md\` item 0")|$(spells "$ORCH_REFS/lifecycle.md" '0. **Prune the state file before you hand over.**')|$(sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/lifecycle.md" | grep -qF '`<briefs dir>/rulings.md`' && sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/lifecycle.md" | grep -qF 'is marked in the same move as the ruling that ends it' && echo yes || echo no)"
 check "succeed.md checks the rulings file among its preconditions" "yes" \
   "$(spells "$ROOT/commands/succeed.md" "the rulings marked (lifecycle item 0)")"
 check "the lifecycle gives the rulings file's entry and says a ruling ended leaves it" "yes|yes|yes" \

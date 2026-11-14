@@ -8,6 +8,7 @@
 // answers; the sending half reads the answers. Only two texts ever reach a model: the arrival
 // notice, on the receiver, and the notice of the outcome, on the sender.
 import { moduleDirOf } from './module-log.ts'
+import { launcherOf } from '../core/orchestration.ts'
 import { roleOf, walkName, hostBasenames, blockArgv, bytesOfBase64, type ReadRecord, type HostNames } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { machineLabel, deliveryOf, isPeerOrigin, type Delivery } from './remote-row.ts'
@@ -851,7 +852,7 @@ async function finish($: Dollar, h: Held): Promise<void> {
   if (h.notified) return
   h.notified = true
   await writeAtomic($, `${await movesDir($)}/${h.manifest.move}/notified`, '1\n')
-  const launcher = `${$.plugin.root}/skills/iterm-agents/scripts/iterm-agent.sh`
+  const launcher = launcherOf($.plugin.root)
   $.prompt.submit({ text: arrivedNotice(h.manifest, h.arrival, h.fromName || 'a session with no name', launcher) })
     .catch((err: unknown) => logLine($, 'moving', `move: the arrival notice was not submitted: ${String((err as Error)?.message ?? err)}`))
 }
