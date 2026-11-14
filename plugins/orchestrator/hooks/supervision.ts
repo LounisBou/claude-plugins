@@ -14,9 +14,9 @@
 // the writing side and read the same files through their own $.fs calls plus
 // the pure row parser and the urgency sort below.
 //
-// The engine fences $ to the file that received it — never passed across an
-// import — so this file spells its own env resolution, its own log stamp, its
-// own origin read and its own transcript-window reader, while the figures
+// The config dir, the state root, the log line, the store's I/O and the gate's
+// thresholds are module-io.ts's; this file spells its own origin read and its
+// own transcript-window reader, while the figures
 // cross as a plain import (currentReading, no $ argument) and the name runs
 // over the walk's pure core with readers built here.
 import { currentReading } from './gauge.ts'
@@ -27,11 +27,10 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
 import { typedByOperator } from './models-guard.ts'
-import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
-import { configDirOf, gateThresholds } from '../core/env.ts'
+import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { declaredConsent } from './wait.ts'
-import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
+import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
@@ -50,6 +49,7 @@ import {
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
+import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -324,17 +324,6 @@ export function wrapWords(text: string, width: number): string[] {
   return rows
 }
 
-// The config dir and the scripts' state root (the launcher's chains, the coordinator's record),
-// core's rule and the module's (moduleDirOf) over this file's own reads of the variables: the host
-// wants each name literal where a module reads it.
-async function configDir($: any): Promise<string> {
-  return configDirOf({ CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') }, String(await $.env.get('HOME') ?? ''))
-}
-
-async function stateDir($: any): Promise<string> {
-  return moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_STATE_DIR'))
-}
-
 // The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
 async function storeOf($: any): Promise<string> {
   return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
@@ -457,24 +446,6 @@ async function writeWait($: any, id: string, record: WaitRecord): Promise<void> 
     await writeAtomicOver(io, path, JSON.stringify(merged) + '\n')
     seenWaits.set(id, merged)
   })
-}
-
-// Core's store over this file's $ (store-io.ts): $.fs writes but cannot rename, remove or create
-// a file exclusively, so those run as processes; the lock is `<path>.lock`, every writer's.
-function storeIo($: any): StoreIo {
-  return {
-    write: (path, text) => $.fs.write(path, text),
-    read: path => $.fs.read(path).then((text: unknown) => String(text), () => undefined),
-    run: argv => $.process.run(argv, { timeoutMs: 5000 }),
-    mtimeMs: path => $.fs.stat(path).then((stat: { mtimeMs: number }) => Number(stat.mtimeMs), () => undefined),
-    sleep: ms => $.clock.sleep(ms),
-    now: Date.now,
-    tag: () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  }
-}
-
-async function writeAtomic($: any, path: string, text: string): Promise<void> {
-  await writeAtomicOver(storeIo($), path, text)
 }
 
 // A round entry read again and written under its lock, so its writers on this machine — the pane
@@ -632,7 +603,7 @@ async function sweepGoneSenders($: any, removed: ReadonlyMap<string, LearntSucce
       await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
     }
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
 }
 
@@ -870,7 +841,7 @@ async function openPane($: any, pane: PaneMemory, role: 'coordinator' | 'orchest
   pane.roundSeen = null
   pane.ticker?.cancel()
   pane.ticker = $.clock.every(PANE_ROUND_POLL_MS, () => paneTick($, pane))
-  if (role === 'coordinator') await recordPaneOpen($, pid).catch((err: unknown) => logLine($, `pane: ${(err as Error).message}`))
+  if (role === 'coordinator') await recordPaneOpen($, pid).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
   return placed
 }
 
@@ -911,7 +882,7 @@ async function closeShown($: any, pane: PaneMemory): Promise<void> {
   pane.ticker?.cancel()
   pane.ticker = null
   await $.ui.close({ id: PANE_ID })
-  await recordPaneClosed($).catch((err: unknown) => logLine($, `pane: ${(err as Error).message}`))
+  await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
 }
 
 // The coordinator's pane as `coordinator.sh round` reads it, `<state>/pane.json`: the session
@@ -926,7 +897,7 @@ async function panePath($: any): Promise<string> {
 // A pane whose pid is unknown is not recorded: a record naming none is no pane to the script.
 async function recordPaneOpen($: any, pid: string | null): Promise<void> {
   if (!pid) {
-    await logLine($, 'pane: no host pid read for this session; the pane is not recorded open')
+    await logLine($, 'supervision', 'pane: no host pid read for this session; the pane is not recorded open')
     return
   }
   const record: PaneRecord = { session: await $.session.id(), pid, at: new Date().toISOString() }
@@ -946,7 +917,7 @@ async function readPaneRecord($: any): Promise<PaneRecord | null> {
 async function recordPaneClosed($: any): Promise<void> {
   if (!(await readPaneRecord($))) return
   const done = await $.process.run(['rm', '-f', await panePath($)], { timeoutMs: 5000 }).catch(() => null)
-  if (!done || done.exitCode !== 0) await logLine($, `pane: the record ${await panePath($)} could not be removed`)
+  if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
 }
 
 // The coordinator's pane as `coordinator.sh round` judges it (its pane_open): a record naming a
@@ -1071,7 +1042,7 @@ async function tellSettled($: any, settled: readonly Settled[], until = Infinity
     if (!coordinator?.local) return
     to = coordinator.to
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
     return
   }
   for (const { entry, answer } of settled) {
@@ -1080,10 +1051,10 @@ async function tellSettled($: any, settled: readonly Settled[], until = Infinity
       const left = until - Date.now()
       const send = () => sendToCoordinator($, to, settledText(entry, answer))
       const sent = left === Infinity ? await send() : left > 0 ? await withDeadline(send(), left) : null
-      if (!sent || isDegradedPass(sent)) await logLine($, `round: no time left to tell ${addressLabel(to)} that ${entry.id} is settled`)
-      else if (!sent.isDelivered) await logLine($, `round: the settled notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent.reason ?? 'no answer'}`)
+      if (!sent || isDegradedPass(sent)) await logLine($, 'supervision', `round: no time left to tell ${addressLabel(to)} that ${entry.id} is settled`)
+      else if (!sent.isDelivered) await logLine($, 'supervision', `round: the settled notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent.reason ?? 'no answer'}`)
     } catch (err) {
-      await logLine($, `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
   }
 }
@@ -1093,9 +1064,9 @@ async function tellSettled($: any, settled: readonly Settled[], until = Infinity
 async function tellReopened($: any, to: CoordinatorTo, entry: RoundEntry): Promise<void> {
   try {
     const sent = await sendToCoordinator($, to, reopenedText(entry))
-    if (!sent?.isDelivered) await logLine($, `round: the reopened notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+    if (!sent?.isDelivered) await logLine($, 'supervision', `round: the reopened notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
 }
 
@@ -1126,13 +1097,13 @@ async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: nu
   try {
     await wakeForDue($)
   } catch (err) {
-    await logLine($, `round wake: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
   }
   await deliverInTurn($)
   try {
     await resendAnswers($)
   } catch (err) {
-    await logLine($, `round resend: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round resend: ${(err as Error).message}`)
   }
   if (wake.generation === generation) armWake($, wake)
 }
@@ -1178,14 +1149,14 @@ async function traceRender($: any, read: readonly RoundEntry[], taken: ReadonlyS
     if (taken.has(entry.id)) {
       if (trace.shown.has(entry.id)) continue
       trace.shown.add(entry.id)
-      await logLine($, `pane: shown ${entry.id}`)
+      await logLine($, 'supervision', `pane: shown ${entry.id}`)
       continue
     }
     const reason = reasonOf(entry)
     const key = `${entry.id} ${reason}`
     if (trace.left.has(key)) continue
     trace.left.add(key)
-    await logLine($, `pane: ${entry.id} not drawn: ${reason}`)
+    await logLine($, 'supervision', `pane: ${entry.id} not drawn: ${reason}`)
   }
 }
 
@@ -1237,7 +1208,7 @@ async function closeUnhosted($: any, orphans: readonly RoundEntry[]): Promise<vo
     const settled = await withdrawStale($, '', null, "the sender's session ended", entry => !ids.has(entry.id))
     await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
 }
 
@@ -1265,7 +1236,7 @@ async function wakeForDue($: any): Promise<void> {
   if (due.length === 0) return
   const taken = await $.prompt.submit({ text: dueText(due) })
   if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) {
-    await logLine($, `round wake: the host dropped the wake: ${String(taken.drop)}`)
+    await logLine($, 'supervision', `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
   }
   await addIds($, await wokenPath($), due.map(entry => entry.id), id => present.has(id))
@@ -1298,7 +1269,7 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
       await addIds($, path, [entry.id], id => present.has(id))
     }
   } catch (err) {
-    await logLine($, `round told: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round told: ${(err as Error).message}`)
   }
 }
 
@@ -1312,7 +1283,7 @@ async function traceUnseen($: any, read: readonly RoundEntry[], now: number): Pr
     const at = Number.isFinite(Date.parse(entry.at)) ? Date.parse(entry.at) : Date.parse(entry.since)
     if (!Number.isFinite(at) || now - at < ROUND_WAKE_MS) continue
     trace.unseen.add(entry.id)
-    await logLine($, `round wake: ${entry.id} open ${Math.floor((now - at) / 1000)} s, never drawn by the pane (last render ${trace.lastRender ?? 'none'})`)
+    await logLine($, 'supervision', `round wake: ${entry.id} open ${Math.floor((now - at) / 1000)} s, never drawn by the pane (last render ${trace.lastRender ?? 'none'})`)
   }
 }
 
@@ -1384,20 +1355,20 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
   on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
       const swept = await withDeadline(sweepTemporaries($), RELAY_BOUND_MS)
-      if (isDegradedPass(swept)) await logLine($, `sweep: did not finish within ${RELAY_BOUND_MS} ms`)
+      if (isDegradedPass(swept)) await logLine($, 'supervision', `sweep: did not finish within ${RELAY_BOUND_MS} ms`)
     } catch (err) {
-      await logLine($, `sweep: ${(err as Error).message}`)
+      await logLine($, 'supervision', `sweep: ${(err as Error).message}`)
     }
     try {
       const self = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
-      if (isDegradedPass(self)) await logLine($, `round wake: did not finish within ${RELAY_BOUND_MS} ms`)
+      if (isDegradedPass(self)) await logLine($, 'supervision', `round wake: did not finish within ${RELAY_BOUND_MS} ms`)
       else if (self) armWake($, wake)
     } catch (err) {
-      await logLine($, `round wake: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -1414,7 +1385,7 @@ export function runsRoundClose(command: string): boolean {
 let delivering: Promise<void> = Promise.resolve()
 function deliverInTurn($: any): Promise<void> {
   delivering = delivering.then(() => deliverClosedAnswers($)).catch(async err => {
-    await logLine($, `round delivery: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
   })
   return delivering
 }
@@ -1432,13 +1403,13 @@ export function registerCloseRelay(on: (...args: [event: string, handler: Functi
       const done = await withDeadline((async () => {
         if (await recordedCoordinator($)) await deliverInTurn($)
       })(), RELAY_BOUND_MS)
-      if (isDegradedPass(done)) await logLine($, `round delivery: did not finish within ${RELAY_BOUND_MS} ms after a round-close, left to go on`)
+      if (isDegradedPass(done)) await logLine($, 'supervision', `round delivery: did not finish within ${RELAY_BOUND_MS} ms after a round-close, left to go on`)
     } catch (err) {
-      await logLine($, `round delivery: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
     }
     return out
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -1461,11 +1432,11 @@ export function registerPaneTool(on: (...args: [event: string, handler: Function
       })
     } catch (err) {
       // A start never fails on the tool: the commands still open the pane.
-      await logLine($, `supervision tool not registered: ${(err as Error).message}`)
+      await logLine($, 'supervision', `supervision tool not registered: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -1534,20 +1505,20 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // An orchestrator's row to a coordinator on another machine, when it is news.
         if (walked.known && roleOf(walked.name) === 'orchestrator') {
           const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
-          if (isDegradedPass(sent)) await logLine($, `row: did not finish within ${RELAY_BOUND_MS} ms`)
+          if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
         }
         // The window's tab shows the gate crossed, or left.
         await showGate($, reading)
         // An agent's measure past its gate: its orchestrator told once per crossing.
         if (walked.known && walked.tty && roleOf(walked.name) === 'agent') {
           const done = await withDeadline(reportGate($, sessionId, walked.name!, walked.tty, reading), RELAY_BOUND_MS)
-          if (isDegradedPass(done)) await logLine($, `gate: did not finish within ${RELAY_BOUND_MS} ms`)
+          if (isDegradedPass(done)) await logLine($, 'supervision', `gate: did not finish within ${RELAY_BOUND_MS} ms`)
         }
       }
     } catch (err) {
       // A row that cannot be written, or a gate report that failed, never blocks the
       // measure: the next one writes it.
-      await logLine($, (err as Error).message)
+      await logLine($, 'supervision', (err as Error).message)
     }
     // The deck follows the row just written (writeDeck): a new fill is what its keys draw.
     await refreshDeck($)
@@ -1556,7 +1527,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // The registered net the plan's every-handler rule asks validate to see:
     // the measure is let through, the state dir says why, and next is
     // replay-safe in a catch, called or not.
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1574,7 +1545,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       await recordPaneClosed($)
     } catch (err) {
       // The end is never held on the store's own failure; it is said.
-      await logLine($, (err as Error).message)
+      await logLine($, 'supervision', (err as Error).message)
     }
     // What the host's end bound leaves, shared by the round and the deck after it.
     let until = Date.now() + Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
@@ -1591,17 +1562,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           if (remote) await withdrawRemote($, remote.name, remote.held)
           return settled
         }), bound)
-      if (isDegradedPass(done)) await logLine($, `round: did not finish within ${bound} ms`)
+      if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
     } catch (err) {
-      await logLine($, `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
     // The ended session leaves the deck, in what the round left of the bound.
     const left = until - Date.now()
     if (left > 0) await refreshDeck($, left)
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1619,33 +1590,33 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && e.reason === 'answer') {
         const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent), RELAY_BOUND_MS)
-        if (isDegradedPass(done)) await logLine($, `relay: did not finish within ${RELAY_BOUND_MS} ms`)
+        if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
-        if (isDegradedPass(sent)) await logLine($, `row: did not finish within ${RELAY_BOUND_MS} ms`)
+        if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
       } else if (!e.agentId) {
         // A turn that ended without an answer (interrupted, failed) still ends the mark's turn.
         await dropMark($)
       }
     } catch (err) {
-      await logLine($, `relay: ${(err as Error).message}`)
+      await logLine($, 'supervision', `relay: ${(err as Error).message}`)
     }
     // The wait the relay just wrote, or none, is what the window's tab shows.
     if (!e.agentId) await showTurnEnd($)
     try {
       if (!e.agentId) {
         const done = await withDeadline(openOnFirstTurn($, pane), RELAY_BOUND_MS)
-        if (isDegradedPass(done)) await logLine($, `pane: did not finish within ${RELAY_BOUND_MS} ms`)
+        if (isDegradedPass(done)) await logLine($, 'supervision', `pane: did not finish within ${RELAY_BOUND_MS} ms`)
         else if (done) armWake($, wake)
       }
     } catch (err) {
-      await logLine($, `pane: ${(err as Error).message}`)
+      await logLine($, 'supervision', `pane: ${(err as Error).message}`)
     }
     // The wait the relay just wrote, or cleared, is what the deck's keys show.
     if (!e.agentId) await refreshDeck($)
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1660,11 +1631,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await refreshDeck($)
       }
     } catch (err) {
-      await logLine($, `relay: ${(err as Error).message}`)
+      await logLine($, 'supervision', `relay: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1675,13 +1646,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('prompt.submit', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
       const done = await withDeadline(withdrawOnTyped($, String(e.origin?.kind ?? ''), String(e.text ?? '')), RELAY_BOUND_MS)
-      if (isDegradedPass(done)) await logLine($, `withdraw: did not finish within ${RELAY_BOUND_MS} ms`)
+      if (isDegradedPass(done)) await logLine($, 'supervision', `withdraw: did not finish within ${RELAY_BOUND_MS} ms`)
     } catch (err) {
-      await logLine($, `withdraw: ${(err as Error).message}`)
+      await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1696,11 +1667,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // the sender in charge of them.
       if (handedOver && sent?.isDelivered !== false) await handOver($, await $.session.id())
     } catch (err) {
-      await logLine($, `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
     return sent
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1739,11 +1710,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (successor) await learnSuccessor($, successor)
       }
     } catch (err) {
-      await logLine($, `receive: ${(err as Error).message}`)
+      await logLine($, 'supervision', `receive: ${(err as Error).message}`)
     }
     return next(passed)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1774,7 +1745,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     await openPane($, pane, role, tty, pid)
     return { text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' }
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1799,17 +1770,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (placed && placed.isPlaced === false) return { result: `Supervision pane opened, not drawn yet: ${placed.reason ?? 'no reason given'}.` }
     return { result: 'Supervision pane opened.' }
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: "the supervision pane could not be opened or closed; the module's log says why", isError: true }
   })
 
   // The pane closed by its ✕ or its key: its clock stops with it.
   on('ui.close', { id: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
     stopTicker()
-    await recordPaneClosed($).catch((err: unknown) => logLine($, `pane: ${(err as Error).message}`))
+    await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1819,7 +1790,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (pane.drawn) pane.measure = { contentRows: e.contentRows, drawn: pane.drawn }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -1833,7 +1804,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     }
     return result
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -2298,15 +2269,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       })
     } catch (err) {
       // A pane that fails to draw never blocks the render: the engine draws its own.
-      await logLine($, (err as Error).message)
+      await logLine($, 'supervision', (err as Error).message)
       return next(e)
     } finally {
       const took = await clockNow($) - started
-      if (took > PANE_RENDER_BOUND_MS && !renderSlow) await logLine($, `pane: the render took ${took} ms, past its bound of ${PANE_RENDER_BOUND_MS} ms`)
+      if (took > PANE_RENDER_BOUND_MS && !renderSlow) await logLine($, 'supervision', `pane: the render took ${took} ms, past its bound of ${PANE_RENDER_BOUND_MS} ms`)
       renderSlow = took > PANE_RENDER_BOUND_MS
     }
   }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -2452,8 +2423,8 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     ? coordinator?.to ?? null
     : await orchestratorOn($, tty, name, 'relay')
   if (!to) {
-    if (role === 'agent') await logLine($, `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    else if (consent && wait?.kind === 'operator') await logLine($, `relay: no coordinator to enter the question of ${name} that asks consent (${subjectLabel(consent)}), no consent can be recorded`)
+    if (role === 'agent') await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    else if (consent && wait?.kind === 'operator') await logLine($, 'supervision', `relay: no coordinator to enter the question of ${name} that asks consent (${subjectLabel(consent)}), no consent can be recorded`)
     return
   }
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
@@ -2464,12 +2435,12 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     // the ask goes without it, and the log names it.
     const asked = wait.kind === 'operator' ? consent : null
     const carried = asked && asked.repo.length <= CONSENT_REPO_CAP ? asked : null
-    if (asked && !carried) await logLine($, `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
+    if (asked && !carried) await logLine($, 'supervision', `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
     const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
     const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
     if (sent?.isDelivered) return
-    await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+    await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
     if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
     return
@@ -2480,7 +2451,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
-    await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+    await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
 }
 
@@ -2558,13 +2529,13 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
     if (sent?.isDelivered) {
       // The round of a coordinator elsewhere is not this machine's: no consent record is written
       // here for the words typed, and the log keeps a trace of it.
-      if (consent) await logLine($, `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
+      if (consent) await logLine($, 'supervision', `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
       return []
     }
-    await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
+    await logLine($, 'supervision', `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
     return null
   } catch (err) {
-    await logLine($, `withdraw: ${(err as Error).message}`)
+    await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
     return null
   }
 }
@@ -2591,9 +2562,9 @@ async function withdrawRemote($: any, name: string, held: { blocks: string; sinc
   if (!coordinator || coordinator.local) return
   try {
     const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
-    if (!sent?.isDelivered) await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
+    if (!sent?.isDelivered) await logLine($, 'supervision', `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
-    await logLine($, `withdraw: ${(err as Error).message}`)
+    await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
   }
 }
 
@@ -2636,7 +2607,7 @@ async function handOver($: any, sessionId: string): Promise<void> {
   const done = await withDeadline(successor
     ? moveToSuccessor($, sessionId, successor)
     : withdrawStale($, sessionId, null, 'handed over to its successor'), RELAY_BOUND_MS)
-  if (isDegradedPass(done)) await logLine($, `round: did not finish within ${RELAY_BOUND_MS} ms`)
+  if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
   else await tellSettled($, done, until)
 }
 
@@ -2662,13 +2633,13 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
     // Read again under the lock: an answer the pane wrote meanwhile stands.
     const written = await changeEntry($, path, current =>
       current && current.status === 'open' && current.session === sessionId ? { ...current, status: closed ? 'closed' : 'withdrawn', answer } : null)
-    if (!written) await logLine($, `round: ${entry.id} was settled meanwhile, left as it is`)
+    if (!written) await logLine($, 'supervision', `round: ${entry.id} was settled meanwhile, left as it is`)
     else {
       if (closed) settled.push({ entry, answer })
       await writeTabConsent($, entry, held.said ?? '', at)
     }
   }
-  if (direct.length === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
+  if (direct.length === 0) await logLine($, 'supervision', `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
 }
 
@@ -2691,7 +2662,7 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
     if (made.exitCode !== 0) throw new Error(made.stderr || `mkdir exited ${made.exitCode}`)
     await writeAtomic($, path, JSON.stringify(record) + '\n')
   } catch (err) {
-    await logLine($, `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
   }
 }
 
@@ -2703,7 +2674,7 @@ async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: str
   if (!entry.consent) return
   const chosen = answersChoice(typed, entry.choices)
   if (!chosen) {
-    await logLine($, `round: the words typed for ${entry.id} answer none of its choices, no consent recorded`)
+    await logLine($, 'supervision', `round: the words typed for ${entry.id} answer none of its choices, no consent recorded`)
     return
   }
   await writeConsent($, entry, `${chosen.letter} : ${chosen.text}`, 'tab', at)
@@ -2756,7 +2727,7 @@ async function answerPart($: any, pane: PaneMemory, asked: RoundEntry, text: str
       return
     }
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
     return
   }
   return answerEntryFromPane($, pane, asked, (answers as string[]).join(' · '))
@@ -2808,10 +2779,10 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
     }
     if (closed) {
       const taken = await $.prompt.submit({ text: settledText(entry, answer) })
-      if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, `round: the host dropped the settled notice of ${entry.id}: ${String(taken.drop)}`)
+      if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, 'supervision', `round: the host dropped the settled notice of ${entry.id}: ${String(taken.drop)}`)
     }
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   } finally {
     pane.answering.delete(asked.id)
     $.ui.invalidate('ui.render')
@@ -2841,7 +2812,7 @@ async function answerTwins($: any, entry: RoundEntry, text: string, at: string):
       if (closed) await $.prompt.submit({ text: settledText(twin, answer) })
     }
   } catch (err) {
-    await logLine($, `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
 }
 
@@ -2860,7 +2831,7 @@ async function deliverLocal($: any, path: string, entry: RoundEntry, readable: s
     reason = (err as Error).message
   }
   const by = answer.by === 'coordinator' ? 'coordinator' : 'pane'
-  if (reason !== null) await logLine($, `round: the ${by}'s answer was not delivered to ${entry.from}: ${reason}`)
+  if (reason !== null) await logLine($, 'supervision', `round: the ${by}'s answer was not delivered to ${entry.from}: ${reason}`)
   if (reason === null && !entry.delivery) return
   const at = new Date().toISOString()
   const moved: RoundDelivery = reason === null
@@ -2869,7 +2840,7 @@ async function deliverLocal($: any, path: string, entry: RoundEntry, readable: s
   const written = await changeEntry($, path, now =>
     !now || now.answer?.at !== answer.at || now.delivery?.state !== entry.delivery?.state ? null : { ...now, delivery: moved })
   if (!written) {
-    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
+    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
     return
   }
   if (reason !== null) $.ui.invalidate('ui.render')
@@ -2884,7 +2855,7 @@ async function failMismatched($: any, path: string, entry: RoundEntry): Promise<
     !now?.delivery || now.delivery.state !== 'pending' || now.answer?.at !== entry.answer?.at
       ? null
       : { ...now, delivery: { ...now.delivery, state: 'failed', at: new Date().toISOString(), reason } })
-  if (written) await logLine($, `round: ${entry.id}: ${reason}`)
+  if (written) await logLine($, 'supervision', `round: ${entry.id}: ${reason}`)
 }
 
 // The answers the coordinator closed in its tab, read at each round wake whether the pane is open
@@ -2901,7 +2872,7 @@ async function deliverClosedAnswers($: any): Promise<void> {
       else if (delivery.answerAt === entry.answer.at) await deliverLocal($, path, entry, coordinatorClosedText(entry, entry.answer.text, entry.answer.at))
       else await failMismatched($, path, entry)
     } catch (err) {
-      await logLine($, `round delivery: ${entry.id}: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round delivery: ${entry.id}: ${(err as Error).message}`)
     }
   }
 }
@@ -2930,11 +2901,11 @@ async function sendAnswer($: any, path: string, entry: RoundEntry, text: string)
   const written = await changeEntry($, path, now =>
     !now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts ? null : { ...now, delivery: moved })
   if (!written) {
-    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
+    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
     return
   }
   if (reason !== null) {
-    await logLine($, `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
+    await logLine($, 'supervision', `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
     $.ui.invalidate('ui.render')
   }
 }
@@ -2960,10 +2931,10 @@ async function resendAnswers($: any): Promise<void> {
           ? null
           : { ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })
       if (!written) continue
-      await logLine($, `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
+      await logLine($, 'supervision', `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
       $.ui.invalidate('ui.render')
     } catch (err) {
-      await logLine($, `round resend: ${entry.id}: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round resend: ${entry.id}: ${(err as Error).message}`)
     }
   }
 }
@@ -3058,11 +3029,11 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
       const written = await changeEntry($, path, fresh =>
         !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, status: closed ? 'closed' : via ? 'answered' : 'withdrawn', answer })
       if (!written) continue
-      await logLine($, `round: withdrawn by the sender: ${entry.id}`)
+      await logLine($, 'supervision', `round: withdrawn by the sender: ${entry.id}`)
       await forgetRelayed($, entry)
       if (closed) settled.push({ entry, answer })
     } catch (err) {
-      await logLine($, `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
   }
   return settled
@@ -3078,7 +3049,7 @@ export async function readRound($: any): Promise<{ path: string; entry: RoundEnt
   try {
     listed = await $.fs.list(dir)
   } catch (err) {
-    if (await $.fs.exists(dir).catch(() => true)) await logLine($, `round: cannot list ${dir}: ${(err as Error).message}`)
+    if (await $.fs.exists(dir).catch(() => true)) await logLine($, 'supervision', `round: cannot list ${dir}: ${(err as Error).message}`)
     return []
   }
   const stale = staleTemporaries(dir, listed, Date.now())
@@ -3187,7 +3158,7 @@ export async function sendToCoordinator($: any, to: CoordinatorTo, text: string)
 
 // A consent subject as a log line names it: the pull request of a waiver, the repository of auto-merge.
 function subjectLabel(consent: ConsentSubject): string {
-  return consent.kind === 'e2e-waiver' ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
+  return 'pr' in consent ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
 }
 
 // A recipient as a log line names it.
@@ -3213,7 +3184,7 @@ async function learnSuccessor($: any, learnt: LearntSuccessor): Promise<void> {
   if (roleOf(row?.name ?? null) !== 'orchestrator') return
   const session = (await registeredSession($, learnt.name, '', { exclude: sessionId, pid: successorPid(learnt) }))?.sessionId ?? null
   await writeAtomic($, `${await storeOf($)}/${successorKey(sessionId)}`, JSON.stringify({ ...learnt, session }) + '\n')
-  await logLine($, `round: successor learnt: ${learnt.name}${session ? ` (session ${session})` : ''}`)
+  await logLine($, 'supervision', `round: successor learnt: ${learnt.name}${session ? ` (session ${session})` : ''}`)
 }
 
 // The process id a successor's reply address carries (`uds:/…/<pid>.sock`), or none.
@@ -3238,9 +3209,9 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
     try {
       const written = await changeEntry($, path, fresh =>
         !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, session, from: successor.name, movedFrom: sessionId })
-      if (written) await logLine($, `round: moved to the successor ${successor.name}: ${entry.id}`)
+      if (written) await logLine($, 'supervision', `round: moved to the successor ${successor.name}: ${entry.id}`)
     } catch (err) {
-      await logLine($, `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
   }
   return []
@@ -3299,7 +3270,7 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   let sent = await sendToCoordinator($, to.to, rowText(row))
   if (!sent?.isDelivered && to.to !== to.name) sent = await sendToCoordinator($, to.name, rowText(row))
   if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
-  else await logLine($, `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+  else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
 }
 
 // A new question is what its session waits on now: its older open entries are not, a closing
@@ -3329,14 +3300,14 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
   const asked = parseAsk(delivery.body)
   const from = peerAddress(delivery)
   if (!asked || !from) {
-    await logLine($, `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
+    await logLine($, 'supervision', `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
     return { consumed: 'orchestrator: a malformed remote question, refused' }
   }
   // The line is the module's own: whatever throws below, it is consumed, never passed to a model.
   let step = 'the role read'
   try {
     if (await ownRole($) !== 'coordinator') {
-      await logLine($, `receive: a remote question reached a session that is no coordinator: ${asked.entry.id}`)
+      await logLine($, 'supervision', `receive: a remote question reached a session that is no coordinator: ${asked.entry.id}`)
       return { consumed: 'orchestrator: a remote question for no coordinator, dropped' }
     }
     step = 'the entry read'
@@ -3351,7 +3322,7 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
       const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
       step = 'the entry write'
       await changeEntry($, path, () => entry)
-      await logLine($, `round: entered from ${asked.machine}: ${entry.id}`)
+      await logLine($, 'supervision', `round: entered from ${asked.machine}: ${entry.id}`)
       step = 'the supersede'
       await supersede($, entry)
       step = 'the deck refresh'
@@ -3361,9 +3332,9 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
     }
     step = 'the acknowledgment'
     const sent = await $.session.send({ to: from, text: ackLine(asked.entry.id, asked.entry.since) })
-    if (!sent?.isDelivered) await logLine($, `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+    if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
-    await logLine($, `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
   }
   return { consumed: 'orchestrator: a remote question, entered' }
 }
@@ -3380,13 +3351,13 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
     const sessionId = await $.session.id()
     const now = ack === null ? null : await readWait($, sessionId)
     if (ack === null || !now || now.pending !== ack.id || now.waiting_since !== ack.since || typeof now.pending_key !== 'string') {
-      await logLine($, `receive: an acknowledgment ${ack === null ? 'was refused' : `of ${ack.id} matches no pending question`}`)
+      await logLine($, 'supervision', `receive: an acknowledgment ${ack === null ? 'was refused' : `of ${ack.id} matches no pending question`}`)
       return { consumed: 'orchestrator: an acknowledgment, dropped' }
     }
     step = 'the wait write'
     await writeWait($, sessionId, { ...now, relayed: now.pending_key, relayed_id: now.pending, pending: null, pending_key: null })
   } catch (err) {
-    await logLine($, `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
     return { consumed: 'orchestrator: an acknowledgment, failed' }
   }
   return { consumed: 'orchestrator: an acknowledgment, recorded' }
@@ -3404,7 +3375,7 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
 async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: string } | { readable: string }> {
   const answer = parseAnswer(delivery.body)
   if (!answer) {
-    await logLine($, `receive: an answer was refused (${delivery.body.length} characters)`)
+    await logLine($, 'supervision', `receive: an answer was refused (${delivery.body.length} characters)`)
     return { consumed: 'orchestrator: a malformed answer, refused' }
   }
   let step = 'the wait read'
@@ -3422,14 +3393,14 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
     }
     step = 'the acknowledgment'
     const from = peerAddress(delivery)
-    if (!from) await logLine($, `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
+    if (!from) await logLine($, 'supervision', `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
     else {
       const sent = await $.session.send({ to: from, text: answerAckLine(answer.id, answer.since) })
-      if (!sent?.isDelivered) await logLine($, `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+      if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
     }
     if (again) return { consumed: 'orchestrator: an answer received already, acknowledged again' }
   } catch (err) {
-    await logLine($, `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
   }
   return { readable: answer.readable }
 }
@@ -3452,14 +3423,14 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
   let step = 'the entry read'
   try {
     if (!ack) {
-      await logLine($, "receive: an answer's acknowledgment was refused")
+      await logLine($, 'supervision', "receive: an answer's acknowledgment was refused")
       return { consumed: "orchestrator: an answer's acknowledgment, refused" }
     }
     const path = roundPath(await stateDir($), ack.id)
     const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     const state = entry?.delivery?.state
     if (!entry?.origin || !entry.delivery || entry.since !== ack.since || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
-      await logLine($, `receive: an answer's acknowledgment of ${ack.id} matches no answer sent`)
+      await logLine($, 'supervision', `receive: an answer's acknowledgment of ${ack.id} matches no answer sent`)
       return { consumed: "orchestrator: an answer's acknowledgment, dropped" }
     }
     step = 'the entry write'
@@ -3471,7 +3442,7 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
     step = 'the pane redraw'
     $.ui.invalidate('ui.render')
   } catch (err) {
-    await logLine($, `receive: an answer's acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an answer's acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
   }
   return { consumed: "orchestrator: an answer's acknowledgment, recorded" }
 }
@@ -3496,7 +3467,7 @@ async function ownRole($: any): Promise<SessionRow['role']> {
 async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
   const row = parseRemoteRow(body)
   if (!row) {
-    await logLine($, `receive: a marked row was refused (${body.length} characters)`)
+    await logLine($, 'supervision', `receive: a marked row was refused (${body.length} characters)`)
     return { consumed: 'orchestrator: a malformed supervision row, refused' }
   }
   await writeAtomic($, `${await storeOf($)}/${remoteKey(row.name)}`, JSON.stringify(row) + '\n')
@@ -3589,7 +3560,7 @@ export function refreshUsage($: any, clock: () => number = Date.now): Promise<vo
   if (!usageRead) {
     usageRead = readOwnUsage($, clock)
       .then(async published => { if (published) await writeDeck($) })
-      .catch(err => logLine($, `deck: usage: ${(err as Error).message}`))
+      .catch(err => logLine($, 'supervision', `deck: usage: ${(err as Error).message}`))
       .finally(() => { usageRead = null })
   }
   return usageRead
@@ -3678,7 +3649,7 @@ const logged = new Map<string, string>()
 async function logOnce($: any, topic: string, fingerprint: string, message: string): Promise<void> {
   if (logged.get(topic) === fingerprint) return
   logged.set(topic, fingerprint)
-  await logLine($, message)
+  await logLine($, 'supervision', message)
 }
 
 // The lines appended to one transcript since the book's offset; a file shorter than it was
@@ -3700,9 +3671,9 @@ async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
   void refreshUsage($)
   try {
     const done = await withDeadline(writeDeck($), bound)
-    if (isDegradedPass(done)) await logLine($, `deck: did not finish within ${bound} ms`)
+    if (isDegradedPass(done)) await logLine($, 'supervision', `deck: did not finish within ${bound} ms`)
   } catch (err) {
-    await logLine($, `deck: ${(err as Error).message}`)
+    await logLine($, 'supervision', `deck: ${(err as Error).message}`)
   }
 }
 
@@ -3744,10 +3715,10 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
       } catch { /* a record being written, or gone: not this one */ }
     }
     if (chosen) {
-      await logLine($, `${what}: ${agent} on ${tty ?? 'an unknown tty'} goes to ${bare} (session ${chosen.sessionId}) by the launch record`)
+      await logLine($, 'supervision', `${what}: ${agent} on ${tty ?? 'an unknown tty'} goes to ${bare} (session ${chosen.sessionId}) by the launch record`)
       return { sessionId: chosen.sessionId }
     }
-    await logLine($, `${what}: ${agent} was launched for ${recorded}, and no live session bears the name ${bare}`)
+    await logLine($, 'supervision', `${what}: ${agent} was launched for ${recorded}, and no live session bears the name ${bare}`)
   }
   const rows = `${await storeOf($)}/sessions`
   const orchestrators = new Map<string, SessionRow>()
@@ -3762,11 +3733,11 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
   const owner = tty ? chainOwnerTty(chains, tty, ownerTty => orchestrators.has(ownerTty)) : null
   const found = owner ? orchestrators.get(owner) ?? null : null
   if (found?.name) {
-    await logLine($, `${what}: ${agent} on ${tty} goes to ${found.name} by the chain on ${owner}`)
+    await logLine($, 'supervision', `${what}: ${agent} on ${tty} goes to ${found.name} by the chain on ${owner}`)
     return found.name
   }
   const stale = tty ? chainOwnerTty(chains, tty) : null
-  if (stale) await logLine($, `${what}: the chain on ${stale} names ${tty} and has no live owner: the entry is orphaned`)
+  if (stale) await logLine($, 'supervision', `${what}: the chain on ${stale} names ${tty} and has no live owner: the entry is orphaned`)
   return null
 }
 
@@ -3785,20 +3756,12 @@ export async function reportGate($: any, sessionId: string, name: string, tty: s
   }
   const to = await orchestratorOn($, tty, name, 'gate')
   if (!to) {
-    await logLine($, `gate: no orchestrator found for ${name} on ${tty}`)
+    await logLine($, 'supervision', `gate: no orchestrator found for ${name} on ${tty}`)
     return
   }
   const sent = await $.session.send({ to, text: gateText(name, reading.context_tokens, reading.context_percent) })
   if (sent?.isDelivered) await $.fs.write(path, 'reported\n')
-  else await logLine($, `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
-}
-
-// The gate's thresholds (core's gateThresholds) over this file's reads of the variables.
-async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number }> {
-  return gateThresholds({
-    ORCHESTRATOR_CONTEXT_GATE: await $.env.get('ORCHESTRATOR_CONTEXT_GATE'),
-    ORCHESTRATOR_CONTEXT_GATE_TOKENS: await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS'),
-  })
+  else await logLine($, 'supervision', `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
 // What each window of a home session shows, kept by the window it is written on (the server's
@@ -3842,7 +3805,7 @@ async function tabOf($: any): Promise<{ target: TabTarget; bin: string; memory: 
 async function tabFailure($: any, memory: TabMemory, message: string): Promise<void> {
   if (memory.said) return
   memory.said = true
-  await logLine($, `tab-state: ${message}`)
+  await logLine($, 'supervision', `tab-state: ${message}`)
 }
 
 // The state written on the window, only when it is not the one already shown.
@@ -3877,7 +3840,7 @@ async function showTurnEnd($: any): Promise<void> {
     const wait = await readWait($, await $.session.id())
     await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past))
   } catch (err) {
-    await logLine($, `tab-state: ${(err as Error).message}`)
+    await logLine($, 'supervision', `tab-state: ${(err as Error).message}`)
   }
 }
 
@@ -3890,17 +3853,8 @@ async function showGate($: any, reading: { context_percent: number; context_toke
     const next = stateAfterMeasure(tab.memory.shown, tab.memory.past)
     if (next) await showTabState($, next)
   } catch (err) {
-    await logLine($, `tab-state: ${(err as Error).message}`)
+    await logLine($, 'supervision', `tab-state: ${(err as Error).message}`)
   }
-}
-
-// One line appended to the module's log (module-log.ts): the stamp names the
-// half that failed. Never throws, never blocks the handler it serves.
-async function logLine($: any, message: string): Promise<void> {
-  try {
-    const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'supervision', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }
 
 // $.fs.read carries no range and refuses past 4 MiB, so the walk's transcript

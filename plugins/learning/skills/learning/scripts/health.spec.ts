@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { eventId, journalDir, type LearningEvent } from '../../../core/learning.ts'
+import { auditEvent, eventId, journalDir, type LearningEvent } from '../../../core/learning.ts'
 import { HEALTH_USAGE, readJournals, render, run, summarize } from './health.ts'
 
 const NOW = Date.parse('2026-11-14T10:00:00Z')
@@ -117,5 +117,23 @@ test('run prints the report of the configuration directory, and refuses a call w
     assert.equal(run(['--config'], deps), 2)
     assert.equal(run(['--config', config, 'extra'], deps), 2)
     assert.deepEqual(errs, [HEALTH_USAGE, HEALTH_USAGE, HEALTH_USAGE])
+  })
+})
+
+test('an audit event, version 2 of the contract, is counted apart from version 1 and is never unreadable', () => {
+  scratch(config => {
+    const fact = { step: 'implement', edge: 'start', record: null, row: 1, result: null } as const
+    for (const [daysAgo, random] of [[1, '00000001'], [40, '00000002']] as const) {
+      const audit = auditEvent({ at: iso(daysAgo), random, kind: 'step', source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.open' }, trust: 'computed', fact })
+      assert.ok(audit)
+      mkdirSync(journalDir(config, 'orchestrator'), { recursive: true })
+      writeFileSync(join(journalDir(config, 'orchestrator'), `${audit.id}.json`), JSON.stringify(audit))
+    }
+    write(config, 'orchestrator', event('orchestrator', 1))
+    const journals = readJournals(config)
+    assert.deepEqual(journals.map(j => [j.plugin, j.events.length, j.audit?.length, j.unreadable]), [['orchestrator', 1, 2, 0]])
+    const s = summarize(journals, NOW)
+    assert.deepEqual([s.events, s.audit, s.older, s.unreadable], [1, 1, 1, 0])
+    assert.match(render(s), /^1 audit events$/m)
   })
 })

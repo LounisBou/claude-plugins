@@ -6,7 +6,7 @@ import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
 import { isRelease, mainCells, matrixOf, nightlyCells, NO_SUITE, parseBlocking, parseShards, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
-import { breaches, isPromptPath, measure } from './prompts.ts'
+import { breaches, isPromptPath, loweredOutsideRelease, measure } from './prompts.ts'
 import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
@@ -241,5 +241,15 @@ describe('prompts', () => {
       '1 sentences said more than once, over the ceiling of 0',
     ])
     assert.deepEqual(breaches(measured, { budgets: { a: 10, b: 1 }, duplicates: 1 }), [])
+  })
+
+  it('refuses a budget or the duplicate ceiling lowered below its base, unless the change is a release', () => {
+    const base = { budgets: { a: 10, b: 5 }, duplicates: 4 }
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 9, b: 5 }, duplicates: 3 }, base, false), [
+      'a: budget lowered from 10 to 9, which only the release does',
+      'duplicates: ceiling lowered from 4 to 3, which only the release does',
+    ])
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 9, b: 4 }, duplicates: 3 }, base, true), [])
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 10, b: 5, c: 1 }, duplicates: 4 }, base, false), [])
   })
 })

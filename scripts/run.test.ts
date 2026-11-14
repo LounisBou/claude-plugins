@@ -349,6 +349,34 @@ describe('prompts run', () => {
     assert.deepEqual(written, { $comment: 'kept', budgets: { alpha: 22, beta: 22 }, duplicates: 1 })
   })
 
+  describe('against a base', () => {
+    function branched(subject: string): string {
+      const root = withPrompts({ budgets: { alpha: 100, beta: 100 }, duplicates: 1 })
+      git(root, 'init', '-q', '-b', 'main')
+      git(root, 'add', '.')
+      git(root, 'commit', '-q', '-m', 'base')
+      git(root, 'checkout', '-q', '-b', 'work')
+      writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 90, beta: 100 }, duplicates: 1 }))
+      git(root, 'commit', '-q', '-am', subject)
+      return root
+    }
+
+    it('refuses a budget lowered in a pull request that is not a release', () => {
+      const io = recorder()
+      assert.equal(prompts(branched('chore: lower a budget'), ['--base', 'main'], io), 1)
+      assert.deepEqual(io.lines.err, ['alpha: budget lowered from 100 to 90, which only the release does'])
+    })
+
+    it('accepts the same lowering in a release commit, and an unchanged file', () => {
+      assert.equal(prompts(branched('chore(release): alpha 1.0.1'), ['--base', 'main'], recorder()), 0)
+      assert.equal(prompts(branched('chore: lower a budget'), ['--base', 'work'], recorder()), 0)
+    })
+
+    it('refuses --base without a ref', () => {
+      assert.throws(() => prompts(branched('chore: lower a budget'), ['--base'], recorder()), /needs a git ref/)
+    })
+  })
+
   it('refuses malformed ceilings', () => {
     assert.throws(() => parseCeilings([]), /expected/)
     assert.throws(() => parseCeilings({ budgets: { alpha: 'many' }, duplicates: 0 }), /budget of "alpha" is not a number/)

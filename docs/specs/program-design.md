@@ -140,14 +140,15 @@ cap is the operator's.
 - The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`, `move.ts:95`,
   `skills/coordinator/scripts/coordinator.sh:316`, `skills/iterm-agents/scripts/iterm_agent.py:114`,
   `dispatch-record.sh:168`, and statusbar's prefixes. **Open**: core's `names.ts` is read by
-  implement and `dispatch-record.ts`; the orchestrator's `hooks/naming.ts`, `move.ts`,
-  `session-name.ts`, `iterm_agent.py` and statusbar still hold their own.
+  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts`, `move.ts` and
+  `session-name.ts`; `iterm_agent.py` reads it as `names.json`; `coordinator.sh` and statusbar
+  still hold their own.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`. **Open**,
   and bugs-bot's `gate.py` holds a third copy of the thresholds.
 - The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in `hooks/usage.ts`, read by `routing.py`; one price table, `routing/prices.json` under the orchestrator's state directory.
 - The negative-phrase list in `plugins/github/engine/ghlib/assets.py:25` and `hooks/writing.ts`. **Open**: two copies a test keeps equal.
 - The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Open.**
-- `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Open**: `logLine` is still defined in five hook files, `configDir` in three, `writeAtomic` in `moving.ts`.
+- `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Done**: one module, `hooks/module-io.ts`, imported by every hook file.
 - The gh installer of `plugins/pr-review/install.sh:49-150`, which duplicates github's. **Done** (#29).
 
 ## Verified defects by plugin (goal 13)
