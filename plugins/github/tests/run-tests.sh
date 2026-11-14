@@ -2077,6 +2077,29 @@ check "pr-status --json answers the full pull request" "12 3" \
 check "pr-status under a --format answers the full pull request to that format" "open" \
   "$(gh8 pr-status 12 --format pr-merge-status)"
 
+check "pr-gate reads a pull request with no base as not stacked" "False" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+STACK8='{"number":12,"state":"open","draft":false,"commits":1,"head":{"sha":"'$GATEHEAD'","ref":"feat-b"},"base":{"ref":"feat-a","repo":{"default_branch":"main"}},"labels":[]}'
+gate8 stacked "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
+printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+check "pr-gate reads a base that is another open pull request's head as stacked" "feat-a True" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["base"], d["stacked"])')"
+printf '%s' '{"name":"feat-a","protected":true}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+check "pr-gate never reads a protected base as stacked, though a release pull request heads it" "False" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+printf '%s' '[{"type":"deletion"}]' > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+check "pr-gate never reads a base under a ruleset as stacked" "False" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+rm "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+printf '%s' '[]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+check "pr-gate reads a base no open pull request heads as not stacked" "False" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+gate8 bottom "$(printf '%s' "$STACK8" | sed 's/"ref":"feat-a"/"ref":"main"/')" '{"statuses":[]}' '{"check_runs":[]}'
+gh8 pr-gate 12 >/dev/null
+check "pr-gate never reads the default branch as a stacked base, nor asks" "0" \
+  "$(grep -c 'state=open&head=' "$F8/sent.jsonl")"
+
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
 check "pr-gate reads no check at all as pending, total 0" "PENDING   0" "$(ci8)"
 
@@ -2378,6 +2401,16 @@ for case in \
   # shellcheck disable=SC2086
   check_status "record.py refuses a $name with exit 2" 2 rec ${case#*|}
 done
+path=$(rec --repo acme/thing --pr 12 --head "$HEAD40" --kind tests --result pass --producer light-ci --detail "npm test — 12s")
+check "record.py writes a tests record from the light CI" "tests pass light-ci" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["kind"], d["result"], d["producer"])' "$path")"
+for case in \
+  "tests record from another producer|--kind tests --result pass --producer session-e2e" \
+  "tests record waived|--kind tests --result waived --detail operator --producer light-ci" \
+  "tests record not applicable|--kind tests --result not-applicable --detail docs --producer light-ci"; do
+  # shellcheck disable=SC2086
+  check_status "record.py refuses a ${case%%|*} with exit 2" 2 rec --repo acme/thing --pr 12 --head "$HEAD40" ${case#*|}
+done
 check_status "record.py refuses a waiver whose detail is blank with exit 2" 2 \
   rec --repo acme/thing --pr 12 --head "$HEAD40" --kind e2e --result waived --detail "  " --producer x
 check_status "record.py refuses a detail past 500 characters with exit 2" 2 \
@@ -2388,6 +2421,115 @@ check "record.py writes nothing on a usage error" "no" \
   "$(rm -rf "$WORK/cfgrec2"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec2" python3 "$RECORD" --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>/dev/null; [ -e "$WORK/cfgrec2/pr-records" ] && echo yes || echo no)"
 check "record.py imports nothing outside the standard library" "" \
   "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
+
+
+echo "== light CI =="
+
+# A checkout of acme/thing whose origin is a local bare repository, so `{base}` reads a real merge base: the
+# pull request 12 is feat-b, stacked on feat-a. The pull request is served by fixtures, its head the checkout's.
+LIGHT="$ROOT/engine/light_ci.py"
+LC="$WORK/lightci"; rm -rf "$LC"; mkdir -p "$LC/fix" "$LC/cfg/light-ci"
+git init -q --bare "$LC/origin.git"
+git init -q -b feat-a "$LC/co"
+lcgit() { git -C "$LC/co" -c user.name=t -c user.email=t@example.com "$@"; }
+printf 'a\n' > "$LC/co/a.txt"; lcgit add a.txt; lcgit commit -qm a
+lcgit remote add origin "$LC/origin.git"; lcgit push -q origin feat-a
+BASESHA=$(lcgit rev-parse HEAD)
+lcgit checkout -qb feat-b; printf 'b\n' > "$LC/co/b.txt"; lcgit add b.txt; lcgit commit -qm b
+LCHEAD=$(lcgit rev-parse HEAD)
+lcpull() { printf '%s' '{"number":12,"state":"open","head":{"sha":"'"$1"'","ref":"feat-b"},"base":{"ref":"feat-a"}}' > "$LC/fix/GET_repos_acme_thing_pulls_12.json"; }
+lcpull "$LCHEAD"
+lcproject() { printf '%s' "$1" > "$LC/cfg/light-ci/acme-thing.json"; }
+lc() { (cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 "$LIGHT" "$@"); }
+lcrun() { lc run --pr 12 --repo acme/thing --session s-1; }
+# The newest tests record of the head: its result, producer and detail.
+lcrecord() { python3 -c 'import glob,json,sys; f=sorted(glob.glob(sys.argv[1] + "/tests.*.json")); d=json.load(open(f[-1])) if f else {}; print(d.get("result"), d.get("producer"), d.get("detail"))' "$LC/cfg/pr-records/acme/thing/$LCHEAD"; }
+lccount() { ls "$LC/cfg/pr-records/acme/thing/$LCHEAD" 2>/dev/null | grep -c '^tests\.' ; }
+
+check "light_ci run with no project file exits 1 and names the file" "1|$LC/cfg/light-ci/acme-thing.json" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$?|$(grep -o "$LC/cfg/light-ci/acme-thing.json" "$LC/err")")"
+lcproject '{"off": "non, pas pour ce projet", "at": "2026-11-14T18:30:00Z"}'
+check "light_ci run where light CI is off exits 1 and quotes the refusal" "1 1" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'light CI is off for acme/thing (2026-11-14T18:30:00Z: non, pas pour ce projet)' "$LC/err")")"
+lcproject '{"command": "npm test"}'
+check "light_ci run refuses a command that is no list of words" "1 1" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'command is a non-empty list of words' "$LC/err")")"
+
+lcproject '{"command": ["python3", "-c", "import sys; print(sys.argv[1:]); print(\"# tests 3\")", "a;b $HOME", "{base}"], "timeoutSeconds": 30}'
+lcpull "$BASESHA"
+check "light_ci run refuses a checkout off the pull request's head, and writes nothing" "1 1 0" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c "the checkout is at ${LCHEAD:0:7}, the head of acme/thing#12 is ${BASESHA:0:7}" "$LC/err") $(lccount)")"
+lcpull "$LCHEAD"
+printf 'dirty\n' >> "$LC/co/a.txt"
+check "light_ci run refuses a checkout whose tracked files changed, and writes nothing" "1 1 0" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'tracked files have changes' "$LC/err") $(lccount)")"
+lcgit checkout -q -- a.txt
+
+out=$(lcrun 2>"$LC/err"); code=$?
+check "light_ci run exits 0 once its record is written" "0" "$code"
+check "light_ci run answers one line" "1" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+check "light_ci run records a pass at the head, by light-ci, with the command, its time and its count" "pass light-ci 1" \
+  "$(lcrecord | python3 -c 'import sys; r=sys.stdin.read().split(" ", 2); print(r[0], r[1], 1 if r[2].startswith("python3 -c") and " — exit 0 — " in r[2] and r[2].rstrip().endswith("— 3 tests") else r[2])')"
+log=$(printf '%s' "$out" | sed -E 's/.*; output ([^;]+); record .*/\1/')
+check "light_ci run passes each word as it is, no shell, and {base} as the merge base" "['a;b \$HOME', '$BASESHA']" \
+  "$(head -1 "$log")"
+rm -f "$log"
+check "light_ci run takes the session it is given" "s-1" \
+  "$(python3 -c 'import glob,json,sys; print(json.load(open(sorted(glob.glob(sys.argv[1] + "/tests.*.json"))[-1]))["session"])' "$LC/cfg/pr-records/acme/thing/$LCHEAD")"
+
+sleep 1
+lcproject '{"command": ["python3", "-c", "import sys; sys.exit(3)"]}'
+lcrun >/dev/null 2>&1
+check "light_ci run records a failure with the command's exit code" "fail light-ci python3 -c import sys; sys.exit(3) — exit 3" \
+  "$(lcrecord | sed -E 's/ — [0-9]+s$//')"
+sleep 1
+lcproject '{"command": ["python3", "-c", "import time; time.sleep(5)"], "timeoutSeconds": 1}'
+lcrun >/dev/null 2>&1
+check "light_ci run records a run past its timeout as a failure" "1" "$(lcrecord | grep -c '^fail light-ci .* — timed out after 1s')"
+n=$(lccount)
+lcproject '{"command": ["python3", "-c", "import time; time.sleep(5)"], "timeoutSeconds": 30}'
+check "light_ci run cut by its budget writes nothing and says to run it from Bash" "1 1 $n" \
+  "$(lc run --pr 12 --repo acme/thing --budget 1 >/dev/null 2>"$LC/err"; echo "$? $(grep -c "stopped at the tool's budget of 1s, nothing recorded: run $LIGHT run --pr 12 from Bash in the background" "$LC/err") $(lccount)")"
+lcproject '{"command": ["python3", "-c", "print(1)"], "prepare": ["python3", "-c", "import sys; sys.exit(1)"]}'
+check "light_ci run writes nothing when prepare fails" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'prepare python3 -c import sys; sys.exit(1) exited 1, no tests run, nothing recorded' "$LC/err") $(lccount)")"
+check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
+check "light_ci.py imports nothing outside the standard library and the engine" "" \
+  "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|base64|datetime|json|os|re|statistics|subprocess|sys|tempfile|time|urllib\.parse|record|ghlib)( |$)')"
+
+# status: the project file, then the facts of the invitation.
+lcproject '{"command": ["npx", "jest"], "decided": {"at": "2026-11-14T18:30:00Z", "words": "A"}}'
+check "light_ci status names a configured command and its decision" \
+  "acme/thing: configured: npx jest (decided 2026-11-14T18:30:00Z); $LC/cfg/light-ci/acme-thing.json" "$(lc status --repo acme/thing)"
+lcproject '{"off": "non", "at": "2026-11-14T18:30:00Z"}'
+check "light_ci status names the refusal and its date" "acme/thing: off: non, 2026-11-14T18:30:00Z; $LC/cfg/light-ci/acme-thing.json" "$(lc status --repo acme/thing)"
+rm "$LC/cfg/light-ci/acme-thing.json"
+printf '%s' '{"workflow_runs":[{"run_started_at":"2026-11-14T10:00:00Z","updated_at":"2026-11-14T10:02:00Z"},{"run_started_at":"2026-11-14T11:00:00Z","updated_at":"2026-11-14T11:08:00Z"},{"run_started_at":"2026-11-14T12:00:00Z","updated_at":"2026-11-14T12:04:00Z"}]}' \
+  > "$LC/fix/GET_repos_acme_thing_actions_runs__event=pull_request&status=completed&per_page=10.json"
+recent=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+printf '%s' '[{"number":3,"created_at":"'"$recent"'","head":{"ref":"feat-b"},"base":{"ref":"feat-a"}},{"number":2,"created_at":"'"$recent"'","head":{"ref":"feat-a"},"base":{"ref":"develop"}},{"number":1,"created_at":"'"$recent"'","head":{"ref":"develop"},"base":{"ref":"main"}},{"number":4,"created_at":"2020-01-01T00:00:00Z","head":{"ref":"old-b"},"base":{"ref":"feat-a"}}]' \
+  > "$LC/fix/GET_repos_acme_thing_pulls__state=all&sort=created&direction=desc&per_page=100.json"
+printf '%s' '{"default_branch":"main"}' > "$LC/fix/GET_repos_acme_thing.json"
+printf '%s' '[{"name":"main"},{"name":"develop"}]' > "$LC/fix/GET_repos_acme_thing_branches__protected=true&per_page=100.json"
+lcgit remote set-url origin https://github.com/acme/thing.git
+mkdir -p "$LC/co/.github/workflows"
+printf 'name: ci\non:\n  push:\n  pull_request:\n    branches: [develop, main]\njobs: {}\n' > "$LC/co/.github/workflows/ci.yml"
+printf '{"devDependencies": {"jest": "29.7.0"}}' > "$LC/co/package.json"
+check "light_ci status says missing, the CI limited to the long-lived bases, the median, the stacked count, the command" \
+  "acme/thing: missing; CI on stacked bases: no (ci.yml: develop, main); median pull request run: 4.0 min over 3 runs; stacked pull requests over 30 days: 1; proposed: npx jest (Jest, TIA past 2 min: npx jest --changedSince={base}); useful: yes; file: $LC/cfg/light-ci/acme-thing.json" \
+  "$(lc status)"
+printf 'on: [push, pull_request]\njobs: {}\n' > "$LC/co/.github/workflows/ci.yml"
+check "light_ci status reads a CI on every pull request as covering stacked bases, and proposes nothing to ask" \
+  "CI on stacked bases: yes (ci.yml)|useful: no" "$(lc status | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|useful)' | paste -sd'|' -)"
+
+# The workflow reader on the shapes it meets.
+branches() { printf "$1" | python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import light_ci; print(light_ci.pull_request_branches(sys.stdin.read()))' "$ROOT/engine"; }
+check "a pull_request trigger with no branches runs on every base" "None" "$(branches 'on:\n  pull_request:\n  push:\n    branches: [main]\n')"
+check "a branches list under pull_request limits it" "['develop', 'staging']" "$(branches 'on:\n  pull_request:\n    branches:\n      - develop\n      - staging\n')"
+check "a branches glob of every branch runs on every base" "None" "$(branches 'on:\n  pull_request:\n    branches: [\"**\"]\n')"
+check "a workflow with no pull_request trigger runs on none" "[]" "$(branches 'on:\n  push:\n    branches: [main]\n')"
+check "a push trigger's branches never limit pull_request" "None" "$(branches 'on:\n  push:\n    branches: [main]\n  pull_request:\n')"
+rm -rf "$LC"
 
 
 echo "== reads answer what the caller needs =="

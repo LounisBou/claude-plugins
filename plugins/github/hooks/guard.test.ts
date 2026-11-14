@@ -81,6 +81,10 @@ type World = {
   commits?: number
   // A head directory that is there but cannot be listed.
   unlistable?: string
+  // Whether pr-gate reads the pull request stacked (on feat-a); omitted, it says nothing of it.
+  stacked?: boolean
+  // What light_ci.py answers; with a result, it writes a tests record of that result at the head, by light-ci.
+  lightCi?: { exitCode: number; stdout: string; stderr: string; result?: string }
 }
 
 type Seen = {
@@ -114,6 +118,7 @@ function gateOf(w: World, pull?: Pull) {
   return w.gate ?? {
     repo: 'acme/thing', pr: 12, state: 'open', draft: pull?.draft ?? w.draft ?? true, head, labels: pull?.labels ?? w.labels ?? ['Not Ready'],
     ...(w.commits === undefined ? {} : { commits: w.commits }),
+    ...(w.stacked === undefined ? {} : { stacked: w.stacked, base: 'feat-a' }),
     ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1, ...(w.ci ?? {}) },
   }
 }
@@ -239,6 +244,14 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       const [name, text] = record(option('--kind'), option('--result'), '2026-11-02T10:00:00Z', { producer: 'session-e2e', ...acceptance })
       records[name] = text
       return { value: { exitCode: 0, stdout: HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json\n', stderr: '' } }
+    }
+    if (String(e.argv[1] ?? '').endsWith('/engine/light_ci.py')) {
+      const answer = w.lightCi ?? { exitCode: 0, stdout: '', stderr: '' }
+      if (answer.exitCode === 0 && answer.result) {
+        const [name, text] = record('tests', answer.result, '2026-11-02T10:00:00Z', { producer: 'light-ci', detail: 'npm test — exit 0 — 9s' })
+        records[name] = text
+      }
+      return { value: { exitCode: answer.exitCode, stdout: answer.stdout, stderr: answer.stderr } }
     }
     if (stdin.command === 'pr-gate') {
       if (w.gateFails) return { value: { exitCode: 3, stdout: '', stderr: w.gateFails } }
@@ -3281,4 +3294,133 @@ test('the deploy list is refused to Write, Edit and Bash, and a read of it is no
   }
   expect(seen.bash).toEqual([])
   expect(((await $.tool.call(bash('grep -n auto-deploy.json README.md'))) as any).deny).toBeUndefined()
+})
+
+// ---- the light CI of a stacked pull request ----
+
+const LIGHT_CI_FILE = '/cfg/light-ci/acme-thing.json'
+const lightCiRun = (seen: Seen) => seen.runs.find((r) => String(r.argv[1]).endsWith('/engine/light_ci.py'))
+const PENDING = { ci: { result: 'PENDING', running: 1 } }
+const READY_BEFORE_CI = READY_LINE.slice(0, READY_LINE.indexOf(' green CI'))
+
+test('a stacked pull request with neither a tests record nor its checks green is not ready, and the gate names the light CI', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out).toEqual({ result: 'github: acme/thing#12 carries Not Ready at 0123456, Ready not put: not ready. Missing: tests: no record at'
+    + ' 0123456 and its checks not green: stacked on feat-a, run mcp__github__light_ci {"action": "run", "pr": 12} from a clean checkout of its head.' })
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a stacked pull request is ready on its review and the light CI\'s tests passed at its head, CI still pending', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true, records: { ...FOUR, ...Object.fromEntries([record('tests', 'pass', '2026-11-01T10:00:00Z', { producer: 'light-ci' })]) } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_BEFORE_CI + ' passed local tests (light-ci) hold at its head.'])
+})
+
+test('a tests record from another producer stands for nothing on a stacked pull request', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true, records: { ...FOUR, ...Object.fromEntries([record('tests', 'pass')]) } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a stacked pull request with no tests record is ready on its checks green, and the line says green CI', async ($, on) => {
+  const seen = await world($, on, { stacked: true })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.pull?.labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_LINE])
+})
+
+test('a failed tests run, or a failed check, keeps a stacked pull request not ready over the other', async ($, on) => {
+  const seen = await world($, on, { stacked: true, records: { ...FOUR, ...Object.fromEntries([record('tests', 'fail', '2026-11-01T10:00:00Z', { producer: 'light-ci', detail: 'npm test — exit 1 — 4s' })]) } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: tests: fail at 0123456 by light-ci, npm test — exit 1 — 4s.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a check that failed at a stacked pull request\'s head blocks it though its tests passed, and the gate refuses its merge', async ($, on) => {
+  await world($, on, { stacked: true, autoMerge: ['acme/thing'], ci: { result: 'FAILURE', failed: ['lint'] },
+    records: { ...FOUR, ...Object.fromEntries([record('tests', 'pass', '2026-11-01T10:00:00Z', { producer: 'light-ci' })]) } })
+  const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: CI failed: lint.' + REFUSAL_END)
+})
+
+test('the bottom pull request is unchanged: a tests record stands for no CI, and its merge waits on GitHub\'s check', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: false, records: { ...FOUR, ...Object.fromEntries([record('tests', 'pass', '2026-11-01T10:00:00Z', { producer: 'light-ci' })]) } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out).toEqual({ result: 'github: acme/thing#12 carries Not Ready at 0123456, Ready not put: not ready. Missing: CI still running.' })
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a stacked pull request of a repository whose light CI the operator refused is ready on its review, the line saying so with its date', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true,
+    tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: JSON.stringify({ off: 'non, pas pour ce projet', at: '2026-11-14T18:30:00Z' }) } } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.pull?.labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_BEFORE_CI + ' the operator\'s refusal of light CI for this repository (2026-11-14) hold at its head.'])
+})
+
+test('a light CI file that holds a command, or cannot be read, refuses nothing', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true,
+    tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: '{"off": ' } } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a rebase that leaves a stacked pull request\'s diff unchanged carries its tests record', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true, records: {},
+    tree: earlier([...CLEAN_OLD, at('tests', 'pass', { producer: 'light-ci' })]), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.pull?.labels).toEqual(['Ready'])
+  expect(seen.logs[0]).toContain('passed local tests (light-ci) hold at its head')
+  expect(seen.logs[0]).toContain('tests carried from abcdef0')
+})
+
+test('the model may not record tests through the record tool, which names the light CI', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', kind: 'tests', result: 'pass' } as any)
+  expect(out.deny).toBe('github: tests records are written by mcp__github__light_ci alone, from the run of the project\'s command: this tool writes e2e only.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('light_ci run runs the script in the checkout named with the session, then the gate follows its record', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true, tree: CHECKOUTS, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
+    lightCi: { exitCode: 0, stdout: 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record /r.json\n', stderr: '', result: 'pass' } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR } as any)
+  const run = lightCiRun(seen)!
+  expect(run.argv.slice(2, 6)).toEqual(['run', '--pr', '12', '--session'])
+  expect(run.argv[6]).toContain('guard-session-')
+  expect(run.argv.slice(7)).toEqual(['--budget', '570'])
+  expect(out.result).toBe('tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record /r.json\n'
+    + READY_BEFORE_CI + ' passed local tests (light-ci) hold at its head.')
+  expect(seen.pull?.labels).toEqual(['Ready'])
+})
+
+test('light_ci run that writes nothing is an error with its line, and the gate is not read', async ($, on) => {
+  const seen = await world($, on, { lightCi: { exitCode: 1, stdout: '', stderr: 'error: acme/thing has no light CI: no /cfg/light-ci/acme-thing.json\n' } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, repo: 'acme/thing' } as any)
+  expect(out).toEqual({ result: 'error: acme/thing has no light CI: no /cfg/light-ci/acme-thing.json', isError: true })
+  expect(gates(seen)).toBe(0)
+})
+
+test('light_ci status answers the script\'s line; a call with no action, no pull request or a bad repository is refused', async ($, on) => {
+  const seen = await world($, on, { lightCi: { exitCode: 0, stdout: 'acme/thing: off: non, 2026-11-14; /cfg/light-ci/acme-thing.json\n', stderr: '' } })
+  const status: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'status', repo: 'acme/thing' } as any)
+  expect(status).toEqual({ result: 'acme/thing: off: non, 2026-11-14; /cfg/light-ci/acme-thing.json' })
+  expect(lightCiRun(seen)!.argv.slice(2)).toEqual(['status', '--repo', 'acme/thing'])
+  const none: any = await $.tool.call({ tool: 'mcp__github__light_ci' } as any)
+  expect(none.deny).toContain('takes {"action": "run", "pr": <n>} or {"action": "status"}')
+  const noPr: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run' } as any)
+  expect(noPr.deny).toBe('github: name the pull request: {"action": "run", "pr": <n>}')
+  const badRepo: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'status', repo: 'thing' } as any)
+  expect(badRepo.deny).toBe('github: repo is owner/name, got: thing')
+  const relative: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'status', dir: 'co' } as any)
+  expect(relative.deny).toBe('github: dir is the absolute path of the checkout, got: co')
+})
+
+test('light_ci refused by a permission rule runs nothing', async ($, on) => {
+  const seen = await world($, on, { verdict: { decision: 'deny', reason: 'no light CI here' } })
+  const out: any = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12 } as any)
+  expect(out.deny).toBe('no light CI here')
+  expect(lightCiRun(seen)).toBeUndefined()
 })
