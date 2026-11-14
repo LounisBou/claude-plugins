@@ -131,7 +131,7 @@ The release pull request also asks the operator whether to re-run the outcome me
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
-| prompt budgets and duplicates only fall, lowered only by the release | `npm run prompts -- --base <ref>`, `ci/prompts.json` |
+| prompt budgets and duplicates within their ceilings (a pull request may lower a ceiling after a cut; no ceiling rises outside the release, a rise CI does not refuse) | `npm run prompts`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |

@@ -1741,6 +1741,49 @@ test('the Other answer field comes last, labelled, and replaces the in-session B
   expect(keys.props.dimColor).toBe(true)
 })
 
+// The host's field draws one line of a long text, cut by an ellipsis (its rows are lines, not
+// wrapped rows), so the pane draws what is typed again under the field, whole and wrapped.
+const TYPED = 'I hesitate between A and C, I need more elements to decide: what each costs, who carries it. '.repeat(8).trim()
+
+test('the text typed in the Other answer field is drawn whole under it, wrapped at the card and never cut', async () => {
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { render } = await askingPane([asked])
+  await pick(await render(), 'other')
+  expect(texts(await render())).not.toContain(TYPED)
+  await input(await render()).props.onInput(TYPED)
+  const tree = await render({ bodyColumns: 60 })
+  const kids = cardOf(tree).props.children
+  expect(kids.at(-2)).toBe(input(tree))
+  expect(kids.at(-1).type).toBe('Text')
+  expect(kids.at(-1).props.children).toBe(TYPED)
+  expect(JSON.stringify(tree)).not.toContain('…')
+  await input(await render()).props.onInput(`${TYPED} and more`)
+  expect(cardOf(await render({ bodyColumns: 60 })).props.children.at(-1).props.children).toBe(`${TYPED} and more`)
+  await input(await render()).props.onInput('')
+  expect(cardOf(await render({ bodyColumns: 60 })).props.children.at(-1).type).toBe('Input')
+})
+
+test('the rows the pane counts include the typed text drawn under the Other answer field', async () => {
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { render } = await askingPane([asked])
+  await pick(await render(), 'other')
+  await input(await render()).props.onInput(TYPED)
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length + 3)
+})
+
+test('the typed text is forgotten with the field: once the ring leaves it, picked again it is empty and so is the mirror', async () => {
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { render, ring } = await askingPane([asked])
+  await pick(await render(), 'other')
+  await input(await render()).props.onInput(TYPED)
+  await ring(`choices:${asked.id}`)
+  expect(texts(await render())).not.toContain(TYPED)
+  await pick(await render(), 'other')
+  const tree = await render()
+  expect(texts(tree)).not.toContain(TYPED)
+  expect(cardOf(tree).props.children.at(-1)).toBe(input(tree))
+})
+
 test('the footer says how keys reach the selector, and names no letter where none answers', async () => {
   const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { render } = await askingPane([asked])

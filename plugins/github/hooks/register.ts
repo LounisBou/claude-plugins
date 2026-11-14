@@ -135,7 +135,7 @@ async function permit(
   // Read once per call, for a write only.
   const autoMerge = !READS.has(e.command) && await inAutoMerge($, e)
   // Outside auto-merge, leaving draft is the operator's on GitHub: refused, never asked, and
-  // before the writing rules, whose « Send as it is? » would otherwise open it.
+  // before the writing rules, whose own refusal would otherwise come first.
   if (!autoMerge && leavesDraft(e.command, args)) {
     const repo = await targetRepo($, e).catch(() => undefined)
     const pr = Number(String(args.pr ?? '').replace('#', ''))
@@ -1210,7 +1210,7 @@ async function prOfBranch($: any, repo: string, branch?: string): Promise<number
 
 // The refusal of an act that is not ready, which also takes Ready off a pull request
 // that still carries it, so the label never claims what the guard refused.
-async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Readiness): Promise<string> {
+async function refuseNotReady($: any, name: string, repo: string, pr: number, r: Readiness): Promise<string> {
   const gate = r.gate as Gate
   if (carriesReady(gate)) {
     try {
@@ -1219,7 +1219,7 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
     }
   }
-  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
+  return notReadyRefusal(name, repo, pr, gate.head, r.missing, r.carried)
 }
 
 /*
@@ -1227,14 +1227,32 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
  * holds, the gate puts Ready itself when the whole contract holds at the head, CI included, and
  * refuses the act with what is missing otherwise, or when the label could not be put.
  */
-async function readyLabelRefusal($: any, act: Act, repo: string, pr: number, r: Readiness): Promise<string | undefined> {
+async function readyLabelRefusal($: any, name: string, repo: string, pr: number, r: Readiness): Promise<string | undefined> {
   const followed = await followGate($, repo, pr, r.gate)
   if (followed.missing === undefined) {
     return unverifiedRefusal(repo, pr, followed.line ?? 'the Ready label could not be put')
   }
-  if (followed.missing.length > 0) return refuseNotReady($, act, repo, pr, { ...r, missing: followed.missing })
+  if (followed.missing.length > 0) return refuseNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   if (followed.line) note($, followed.line)
   return undefined
+}
+
+// The tool's pr-readiness ready: Ready goes on only where the gate reads the pull request ready,
+// CI included, as for pr-ready; else it refuses with what is missing, or why that is unknown.
+function readyLabelCall($: any, e: any): (() => Promise<string | undefined>) | undefined {
+  if (e.command !== 'pr-readiness' || e.args?.state !== 'ready') return undefined
+  return async () => {
+    const repo = await targetRepo($, e).catch(() => undefined)
+    const pr = Number(String(e.args?.pr ?? '').replace('#', ''))
+    if (!repo || !Number.isInteger(pr) || pr < 1) return unverifiedRefusal(repo, e.args?.pr, 'no repository or pull request named')
+    try {
+      const r = await readiness($, repo, pr)
+      if (r.error) return unverifiedRefusal(repo, pr, r.error)
+      return await readyLabelRefusal($, e.command, repo, pr, r)
+    } catch (err: any) {
+      return unverifiedRefusal(repo, pr, String(err?.message ?? err).trim())
+    }
+  }
 }
 
 // The Bash ready guard failed on its own: the command is refused as a readiness that could not be read.
@@ -1291,11 +1309,11 @@ function toolReady($: any, e: any, act: Act) {
       if (!found) {
         if (forCi || !read?.gate) return undefined
         const { repo, pr } = await repoPr()
-        return repo && pr !== undefined ? readyLabelRefusal($, act, repo, pr, read) : undefined
+        return repo && pr !== undefined ? readyLabelRefusal($, act.name, repo, pr, read) : undefined
       }
       if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
       try {
-        return await refuseNotReady($, act, found.repo, Number(found.pr), found.r)
+        return await refuseNotReady($, act.name, found.repo, Number(found.pr), found.r)
       } catch (err: any) {
         return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
       }
@@ -1381,8 +1399,8 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   }
   const shown = pr ?? '?'
   if (r.error) return unverifiedRefusal(repo, shown, r.error)
-  if (r.missing.length > 0) return refuseNotReady($, act, repo, Number(pr), r)
-  return readyLabelRefusal($, act, repo, Number(pr), r)
+  if (r.missing.length > 0) return refuseNotReady($, act.name, repo, Number(pr), r)
+  return readyLabelRefusal($, act.name, repo, Number(pr), r)
 }
 
 function stdoutOf(result: any): string {
@@ -1837,7 +1855,7 @@ async function showPlan($: any, raw: any): Promise<{ result: string; isError?: b
 async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const checks = planInput(e.plan)
   if (typeof checks === 'string') {
-    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|none"}, each "<need>: <reason>" but the first: ' + checks }
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
   }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
@@ -2022,8 +2040,8 @@ export function register(on: any): void {
       isDeferred: false,
       description:
         'GitHub API: pull requests, review threads, comments, reviews, labels, '
-        + 'issues, search, image uploads. Before first use, Read '
-        + root + '/engine/REFERENCE.md for every subcommand. Before authoring any '
+        + 'issues, search, image uploads. Before a subcommand, Read its section of '
+        + root + '/engine/REFERENCE.md, not the whole file. Before authoring any '
         + 'PR title, body, comment, review or commit message, Read its rules in ' + root + '/engine/writing/: '
         + 'commits.md (commit), pull-requests.md (PR title or body, with security-updates.md for advisories), '
         + 'comments.md (comment, review, reply), each with references.md. Pass positionals by their documented name '
@@ -2231,7 +2249,7 @@ export function register(on: any): void {
     if (unlabelled) return { deny: unlabelled }
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
-    const refused = await permit($, e, ready?.beforeAsk, ready?.ciUndraft)
+    const refused = await permit($, e, ready?.beforeAsk ?? readyLabelCall($, e), ready?.ciUndraft)
     if (refused) return { deny: refused }
     try {
       // The line of a gate read (the Actions runs it could not read) is shown after afterRead,

@@ -29,12 +29,10 @@ function checkOf(kind: Planned, value: unknown): Check | string {
   const text = value === undefined ? PLAN_OMITTED[kind] : typeof value === 'string' ? value.trim() : ''
   const at = text.indexOf(':')
   const reason = at === -1 ? '' : text.slice(at + 1).trim()
-  let need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
+  const need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
   if (kind === 'review') {
     const review = reviewNeed(need, reason)
-    if (typeof review === 'string') return review
-    if (review.need === 'required') return { need: review.need, reason: '', max: review.max }
-    need = review.need
+    return typeof review === 'string' ? review : { need: review.need, reason: '', max: review.max }
   }
   if (!(PLAN_NEEDS[kind] as readonly string[]).includes(need)) return kind + ' is one of ' + PLAN_NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
   const strictest = need === PLAN_NEEDS[kind][0]
@@ -86,7 +84,6 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
   if (plan.e2e.need === 'none') excused.e2e = by + plan.e2e.reason
   if (plan.e2e.need === 'screenshots') excused.e2e = by + 'desktop and mobile screenshots in its place, ' + plan.e2e.reason
   if (plan.norms.need === 'none') excused.norms = by + plan.norms.reason
-  if (plan.review.need === 'none') excused.review = by + plan.review.reason
   return excused
 }
 
