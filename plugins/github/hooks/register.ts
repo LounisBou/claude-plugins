@@ -1763,7 +1763,7 @@ async function unprovenDeployWord($: any, words: string, repo: string, env: Depl
     }
     if (await consentAnswered($, words, subject)) return undefined
   }
-  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': ' + (on ? 'the operator\'s newest answer is not « ' + CONSENT_GRANT + ' » ' : 'its "words" are not the operator\'s answer ')
+  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': ' + (on ? 'the operator\'s newest answer is missing or is not « ' + CONSENT_GRANT + ' » ' : 'its "words" are not the operator\'s answer ')
     + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s ' + askedConsent('auto-deploy', repo, 'consent_env', env) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' »' + (on ? '.' : ', then quote their answer verbatim.')
 }
 

@@ -3242,8 +3242,17 @@ test('auto-deploy-set on with no consent record is refused naming the record, wh
   const out: any = await $.tool.call(setDeploy(true, CONSENT_GRANT, 'prod'))
   expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
   expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(out.deny).toContain('newest answer is missing or is not « ' + CONSENT_GRANT + ' »')
   expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
   expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set on adds the declared commands on the recorded « ' + CONSENT_GRANT + ' » too, whatever its words say', async ($, on) => {
+  const seen = await world($, on, deployWorld())
+  const declared = { kind: 'script', path: 'scripts/deploy.sh' }
+  const out: any = await $.tool.call(setDeploy(true, 'oui', 'prod', { commands: [declared] }))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toContainEqual({ repo: INFRA, ...declared })
 })
 
 // Two answers to the same question: the newest one is the operator's word.

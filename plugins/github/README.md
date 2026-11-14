@@ -187,8 +187,9 @@ record of auto-deploy on that repository and environment (core's `consent-record
 when their newest recorded answer is « Accorder », whatever `words` says. `on: false` needs `words`
 to name auto-deploy (« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement »,
 « déploiement automatique » or « déploiement continu ») and to quote their answer in such a record.
-`commands` adds declarations for the repository (`repo` implied) and needs the same as `on`; the
-tool never removes one. `auto-deploy-list` prints
+`commands` adds declarations for the repository (`repo` implied) and needs what the call's `on` needs (the newest « Accorder » for `true`, the words and the quote for `false`); the
+tool never removes one. A withdrawal writes no consent record: the answer « Accorder » stays the newest
+until the operator answers « Refuser », and a later `on: true` passes on it. `auto-deploy-list` prints
 each granted environment. A Write, an Edit or a shell command on the file is refused.
 
 ## Ready pull requests
