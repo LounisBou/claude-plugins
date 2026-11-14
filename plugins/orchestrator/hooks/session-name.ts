@@ -33,15 +33,8 @@ export type ReadBlock = (path: string, index: number) => Promise<Uint8Array>
 export type ReadRecord = (pid: string) => Promise<string | null>
 export type HostNames = () => Promise<readonly string[]>
 
-// The prefix names the role, with or without the space before the colon: a session the
-// operator renamed « Orch: x » by hand is an orchestrator all the same.
-const ROLES = { Orch: 'orchestrator', Agent: 'agent', Audit: 'auditor', Coord: 'coordinator' } as const
-
-export function roleOf(name: string | null): 'orchestrator' | 'agent' | 'auditor' | 'coordinator' | null {
-  if (!name) return null
-  const prefix = /^(Orch|Agent|Audit|Coord) ?:/.exec(name)?.[1]
-  return prefix ? ROLES[prefix as keyof typeof ROLES] : null
-}
+// The role a name's prefix names is core's rule, read by the walk's callers through this file.
+export { roleOf } from '../core/names.ts'
 
 export function isTitle(line: string): boolean {
   return /"type"\s*:\s*"custom-title"/.test(line)

@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
+import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
 export const USAGE = 'usage: ci-watch.sh <pr | owner/name#pr | pull request url> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base] (outside a clone of the repository: name it, by --repo or in the target)'
 
@@ -160,6 +161,8 @@ export interface Deps {
   readonly now: () => number
   /** The draft guard classifier beside this script. */
   readonly draftGuard: string
+  /** Takes the watch's start and end for the audit trail (lib/audit.ts); none, nothing is written. */
+  readonly journal?: Journal
 }
 
 /** One watch of `options.pr`; resolves to the line it says and its exit code. */
@@ -441,17 +444,28 @@ function insertRepo(rest: readonly string[], repo: readonly string[]): string[] 
 /** Runs the watch of `argv`; returns its exit code. */
 export async function main(argv: readonly string[], env: Env, deps: Deps): Promise<number> {
   let said: Said
+  let options: Options | undefined
   try {
-    said = await watch(parseArgs(argv, env), deps)
+    options = parseArgs(argv, env)
+    noteWait(deps, env, options, null, null)
+    said = await watch(options, deps)
   } catch (error) {
     if (!(error instanceof Said)) throw error
     said = error
   }
+  if (options !== undefined) noteWait(deps, env, options, said.line.split(' ')[0] ?? null, said.line.split(' ').find(word => fullHead(word) !== null))
   deps.io.out(`ci-watch: ${said.line}\n`)
   return said.code
 }
 
-/* node:coverage ignore next 9 */
+/** The wait on CI as the audit trail holds it: its start (no result), or its end with the line's first word and the head it names. */
+function noteWait(deps: Deps, env: Env, options: Options, result: string | null, head: string | undefined | null): void {
+  writeAudit(deps.journal, auditRun(env, new Date(deps.now())), 'step', `orchestrator.ci-watch.${result ?? 'start'}`,
+    { step: 'ci-wait', edge: result === null ? 'start' : 'end', record: null, row: null, result },
+    { subject: { repo: options.repo ?? null, pr: Number(options.pr), head: fullHead(head ?? undefined) } })
+}
+
+/* node:coverage ignore next 10 */
 if (isEntry(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2), process.env, {
     run,
@@ -459,5 +473,6 @@ if (isEntry(import.meta.url)) {
     sleep: seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000)),
     now: () => Date.now(),
     draftGuard: join(dirname(fileURLToPath(import.meta.url)), 'draft_guard.py'),
+    journal: scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)),
   })
 }

@@ -71,6 +71,10 @@ fi
 # effort is empty), followed by a compaction request on another pair, which is not the
 # main thread's and must never be read as it.
 export ORCHESTRATOR_PROJECTS_DIR="$WORK/projects"
+# The dispatch record, the CI watch and the succession check write the audit trail into the
+# orchestrator's journal under the configuration directory: every run of the suite wrote the
+# operator's own. Its journal is the suite's.
+export ORCHESTRATOR_JOURNAL_DIR="$WORK/journal"
 pair_transcript() {
   local config='' ; [ -n "$3" ] && config=",\"output_config\":{\"effort\":\"$3\"}"
   mkdir -p "$ORCHESTRATOR_PROJECTS_DIR/p"
@@ -746,6 +750,11 @@ bash "$REC" goals "$R" init --spec none >/dev/null
 
 id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
 check "open prints the row id" "1" "$id1"
+check "the record's audit trail goes to the suite's journal, never to a configuration directory" "1|no" \
+  "$(ls "$ORCHESTRATOR_JOURNAL_DIR" | wc -l | tr -d ' ')|$(JH="$WORK/journal-home"; JR="$WORK/journal-rec.jsonl"
+    HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" goals "$JR" init --spec none >/dev/null 2>&1
+    HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" open "$JR" --class corrective --tier light >/dev/null 2>&1
+    [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ] && [ ! -e "$JH/.claude/orchestrator/journal" ] && echo no || echo yes)"
 check "the row is one line of json" "1" "$(wc -l < "$R" | tr -d ' ')"
 check "the row carries what was asked" "behaviour-phase|standard|phase 1|0|open" \
   "$(jq -r '[.class,.tier,.label,.rounds,.state]|join("|")' "$R")"
@@ -1471,8 +1480,9 @@ check "review.md item 14 keys the E2E on the check plan, and the review brief fo
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
 # question, once, in the host's question tool, his choice the consent.
-check "review.md asks one E2E waiver question through the round, whoever presents the round puts it to him" "yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator:')|$(spells "$RV" 'whoever presents the round puts it to him with the question tool')|$(spells "$RV" '« Accorder » / « Refuser »')"
+PRW="$ROOT/../github/engine/writing/pull-requests.md"
+check "review.md asks one waiver question through the round, worded by pull-requests.md, which holds Accorder / Refuser" "yes|yes|yes|yes|yes" \
+  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator,')|$(spells "$RV" '`consent` naming the waiver')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
