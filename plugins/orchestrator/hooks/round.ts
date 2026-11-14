@@ -20,10 +20,10 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (typedWords in supervision.ts); `text` keeps the reason. His answer to the
-// coordinator's dialog is `by: 'dialog'`. An entry answered from the record before it reached him
-// (recordedAnswer) repeats that answer, `record` naming the entry that holds it.
-export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'dialog' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
+// with the cut said (typedWords in supervision.ts); `text` keeps the reason. An entry answered from
+// the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
+// that holds it.
+export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
@@ -425,8 +425,8 @@ export const PANE_CLOSED = 'answered from the pane: '
 
 // The operator's own answer an entry holds, the record every later session of its project reads
 // before he is asked again (recordedAnswer): his choice, its letter and text, or his own words,
-// with its channel and the module's date. Given in the pane, in the coordinator's dialog or through
-// its round-close, or typed in the sender's tab when it names one choice unambiguously
+// with its channel and the module's date. Given in the pane's picker, through the coordinator's
+// round-close, or typed in the sender's tab when it names one choice unambiguously
 // (answersChoice). A withdrawal on evidence, a sender's own settling or an answer relayed by
 // message holds none.
 export type RecordedAnswer = { letter: string | null; text: string; by: RoundAnswer['by']; at: string }
@@ -438,7 +438,7 @@ export function operatorAnswer(entry: RoundEntry): RecordedAnswer | null {
     const chosen = answer.typed === undefined ? undefined : answersChoice(answer.typed, entry.choices)
     return chosen ? { letter: chosen.letter, text: chosen.text, ...stamp } : null
   }
-  const own = answer.by === 'pane' || answer.by === 'dialog' || (answer.by === 'coordinator' && answer.evidence === undefined)
+  const own = answer.by === 'pane' || (answer.by === 'coordinator' && answer.evidence === undefined)
   if (!own) return null
   const text = answer.by === 'pane' && answer.text.startsWith(PANE_CLOSED) ? answer.text.slice(PANE_CLOSED.length) : answer.text
   return { ...givenAnswer(text, entry.choices), ...stamp }
