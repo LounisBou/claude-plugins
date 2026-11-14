@@ -202,7 +202,7 @@ test('verdict: the row carries the verdict, its few words and the findings index
   assert.equal(await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', '2 set aside']), '0|row 1: accepted — 2 set aside — findings: none\n|')
   assert.deepEqual(rows()[0]?.['review'], {
     head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z', fixed: { head: 'def5678', at: '2026-11-08T10:11:12Z' },
-    verdict: { head: 'def5678', result: 'accepted', words: '2 set aside', findings: null, at: '2026-11-08T10:11:12Z' },
+    verdict: { head: 'def5678', result: 'accepted', words: '2 set aside', findings: null, rounds: 2, at: '2026-11-08T10:11:12Z' },
   })
   assert.equal(rows()[0]?.['rounds'], 2)
   assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted — 2 set aside — findings=none')

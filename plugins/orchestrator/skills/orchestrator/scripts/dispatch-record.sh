@@ -52,7 +52,7 @@
 # command. This script never calls the network.
 #
 # `verdict` keeps level 1 of a review, the only one the orchestrator reads: the verdict, a few
-# words and the path of the review session's findings index (level 2, one line per finding, each
+# words, the rounds the row counted then, and the path of the review session's findings index (level 2, one line per finding, each
 # naming its detail file, level 3, which only the fixing session reads). The review tool
 # (`mcp__orchestrator__review` given `record` and `row`) writes it with the gate's record, in one
 # call; `summary --open --label` prints it on the row's line. A new review round voids it.

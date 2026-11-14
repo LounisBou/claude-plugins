@@ -595,7 +595,8 @@ function verdict(ctx: Context, id: string, args: readonly string[]): void {
   rewrite(ctx, id, r => {
     const reviewed = field(r, 'review')
     const object = typeof reviewed === 'object' && reviewed !== null && !Array.isArray(reviewed) ? (reviewed as Row) : {}
-    object['verdict'] = { head, result, words, findings: findings === '' ? null : findings, at }
+    // The rounds the row counted when the verdict fell: a pass at 1 is a first-pass success.
+    object['verdict'] = { head, result, words, findings: findings === '' ? null : findings, rounds: asNumber(r['rounds']), at }
     r['review'] = object
   })
   say(ctx, `row ${id}: ${result} — ${words} — findings: ${findings || 'none'}`)
