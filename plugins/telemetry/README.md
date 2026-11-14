@@ -35,8 +35,13 @@ Applied to every line before it is written, and run again by the export: the val
 `~/.env`, token shapes, `Authorization` and `Bearer` credentials, credentials in URLs, secret
 options and assignments, and high-entropy runs, at any depth, each whole value before it is cut.
 The export passes each transcript through the same redaction before it leaves the machine: every
-line is parsed and each of its strings redacted, so a value of `~/.env` is masked wherever it sits
-in a message. A match becomes `[REDACTED:<pattern>]`. An `~/.env` that exists but cannot be read refuses every
+line is parsed and each of its strings and keys redacted, so a value of `~/.env` is masked wherever
+it sits in a message. A line that is no JSON becomes `[REDACTED:not-json]`; the last line, while the
+host is still writing it, waits for the next export. A transcript that cannot be read or redacted, or
+is over `MAX_TRANSCRIPT_BYTES`, is skipped and named in the result, its manifest entry null. One
+export takes at most `MAX_RUN_BYTES` of transcripts (both in `lib/export.ts`): the rest is said and
+waits for the next, and a transcript already pushed whose file has not changed is not read again.
+A match becomes `[REDACTED:<pattern>]`. An `~/.env` that exists but cannot be read refuses every
 write and export.
 
 ## Tests

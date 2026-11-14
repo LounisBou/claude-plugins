@@ -126,7 +126,13 @@ reading every line:
 Raw transcripts are exported, redacted (the operator's order of 2026-11-14: everything goes into
 the logs repository, indexed like the rest). The export copies the transcript of each session the
 day files name to `machines/<machine>/transcripts/<session>.jsonl`, after passing it through
-`lib/redact.ts`: each line parsed, each string redacted at any depth, a line that is no JSON
-redacted as text; the values of `~/.env` never reach the repository. The manifest names that copy,
-nothing of its content. The index is scanned as the day files are: a secret it would carry
+`lib/redact.ts`: each line parsed, each string and each key redacted at any depth; a line that is
+no JSON becomes a mark, never text (a value of `~/.env` sits in it as JSON wrote it, or cut short),
+and the last line, while the host may still be writing it, waits for the next export. The values of
+`~/.env` never reach the repository. The manifest names that copy, nothing of its content, and none
+for a session whose transcript was skipped. A transcript that cannot be read or redacted, or is over
+the size cap, is skipped and named in the result; one export takes up to a bound of transcript
+bytes and the rest waits, so a first export of several GB never holds the day files back; a
+transcript whose copy the repository holds and whose file is unchanged is not read again. The
+export refreshes its lock before each git command and each transcript. The index is scanned as the day files are: a secret it would carry
 refuses the export, nothing pushed.
