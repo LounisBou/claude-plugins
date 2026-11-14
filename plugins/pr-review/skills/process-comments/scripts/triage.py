@@ -216,13 +216,13 @@ def _resolved(gh, ids, tmpdir, name):
 def fetch(gh, pr=None):
     if not os.path.isfile(gh):
         raise TriageError("not a file: %s" % gh)
-    pr_raw = _gh(gh, "pr-status", str(pr), "--json") if pr else _gh(gh, "pr-get")
+    pr_raw = _gh(gh, "pr-status", str(pr), "--json") if pr else _gh(gh, "pr-get", "--format", "raw")
     number = pr_record(pr_raw).get("number")
     data = {"pr": pr_raw}
     if not number:
         return data
-    data["issue_comments"] = _list(_gh(gh, "pr-issue-comments", str(number)))
-    data["reviews"] = _list(_gh(gh, "pr-reviews", str(number)))
+    data["issue_comments"] = _list(_gh(gh, "pr-issue-comments", str(number), "--format", "raw"))
+    data["reviews"] = _list(_gh(gh, "pr-reviews", str(number), "--format", "raw"))
     data["threads"] = _list(_gh(gh, "pr-threads", str(number), "--format", "open-threads"))
     with tempfile.TemporaryDirectory(prefix="pr-review-triage-") as tmpdir:
         data["issue_resolved"] = _resolved(

@@ -218,7 +218,7 @@ test('on a detached head the base comes from the open pull request whose head is
   const calls: any[] = []
   const $ = tool((input: any) => { calls.push(input); return { result: pulls(['c'.repeat(40), 'main'], [PR_HEAD, 'home']) } })
   expect(baseOf(await openPullAt($, 'Owner/Repo', PR_HEAD))).toEqual({ base: 'home' })
-  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: {}, repo: 'Owner/Repo' }])
+  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: { format: 'raw' }, repo: 'Owner/Repo' }])
   expect(baseOf(await openPullAt($, 'Owner/Repo', 'd'.repeat(40)))).toEqual({})
   expect(baseOf(await openPullAt(tool(() => ({ deny: 'no github' })), 'Owner/Repo', PR_HEAD))).toEqual({ why: 'no github' })
 })
@@ -292,7 +292,7 @@ async function branchCheck(answer: () => any) {
 test('/norms:check on a branch asks the branch\'s pull request in the repository named, whatever the pull request list holds', async () => {
   const { args, toolCalls } = await branchCheck(() => ({ result: JSON.stringify([{ base: { ref: 'develop' } }]) }))
   expect(args).toContain('base: ' + BASE + ' (from base=develop)')
-  expect(toolCalls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature' }, repo: 'Owner/Repo' }])
+  expect(toolCalls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature', format: 'raw' }, repo: 'Owner/Repo' }])
 })
 
 test('/norms:check on a branch whose pull request cannot be read refuses instead of taking the default branch', async () => {

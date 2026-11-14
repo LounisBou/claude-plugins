@@ -1,6 +1,7 @@
 """Turn an API response into the shape a skill wants to read."""
 
 import json
+import re
 
 from . import errors
 
@@ -287,6 +288,160 @@ def _pending_review_summary(obj):
     return "\n".join(lines)
 
 
+
+# ---- The compact defaults: what a reader of the command needs, the full object under --json. ----
+
+_LINE_MAX = 80
+
+
+def _first_line(text, limit=_LINE_MAX):
+    """The first non-empty line of a text, cut at limit characters."""
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line if len(line) <= limit else line[: limit - 1] + "…"
+    return ""
+
+
+def _cell(value):
+    """A table cell: no pipe, no line break."""
+    return str(value if value is not None else "?").replace("|", "/").replace("\n", " ")
+
+
+def _nwo_of(url):
+    """owner/name out of a GitHub API or web URL, or empty."""
+    match = re.search(r"/repos/([^/]+/[^/]+)", url or "") or re.search(r"github\.com/([^/]+/[^/]+)", url or "")
+    return match.group(1) if match else ""
+
+
+def _items(obj):
+    return obj if isinstance(obj, list) else ([obj] if isinstance(obj, dict) else [])
+
+
+def _pr_line(pull):
+    nwo = ((pull.get("base") or {}).get("repo") or {}).get("full_name") or _nwo_of(pull.get("html_url"))
+    state = "merged" if pull.get("merged_at") else pull.get("state", "")
+    if pull.get("draft"):
+        state += ", draft"
+    labels = ", ".join(label.get("name", "") for label in pull.get("labels") or [])
+    return "%s#%s: %s [%s] %s -> %s%s | %s" % (
+        nwo,
+        pull.get("number"),
+        _first_line(pull.get("title"), 100),
+        state,
+        (pull.get("head") or {}).get("ref", "?"),
+        (pull.get("base") or {}).get("ref", "?"),
+        " | labels: " + labels if labels else "",
+        (pull.get("user") or {}).get("login", "?"),
+    )
+
+
+def _pr_lines(obj):
+    pulls = _items(obj)
+    return "\n".join(["%d pull request%s" % (len(pulls), "" if len(pulls) == 1 else "s")] + [_pr_line(p) for p in pulls])
+
+
+def _checks_summary(obj):
+    ci = gate_ci(
+        obj.get("statuses"),
+        obj.get("check_runs", []),
+        bool(obj.get("draft")),
+        obj.get("workflows"),
+        obj.get("workflow_runs"),
+    )
+    lines = ["checks: %s (%d total, %d running, %d failed, %d skipped)" % (
+        ci["result"], ci["total"], ci["running"], len(ci["failed"]), len(ci["skipped"]))]
+    if ci["failed"]:
+        lines.append("failed: " + ", ".join(ci["failed"]))
+    if ci["skipped"]:
+        lines.append("skipped: " + ", ".join(ci["skipped"]))
+    return "\n".join(lines)
+
+
+def _review_comments(obj):
+    comments = [c for c in _items(obj) if isinstance(c, dict)]
+    lines = ["%d review comment%s" % (len(comments), "" if len(comments) == 1 else "s")]
+    for comment in comments:
+        number = (comment.get("pull_request_url") or "").rsplit("/", 1)[-1]
+        line = comment.get("line") or comment.get("original_line") or "?"
+        lines.append("%s | %s | %s:%s | %s | %s" % (
+            comment.get("id", "?"),
+            "%s#%s" % (_nwo_of(comment.get("pull_request_url")), number) if number.isdigit() else "-",
+            _cell(comment.get("path")),
+            line,
+            (comment.get("user") or {}).get("login", "?"),
+            _cell(_first_line(comment.get("body"))),
+        ))
+    return "\n".join(lines)
+
+
+def _reviews_summary(obj):
+    reviews = [r for r in _items(obj) if isinstance(r, dict)]
+    lines = ["%d review%s" % (len(reviews), "" if len(reviews) == 1 else "s")]
+    for review in reviews:
+        lines.append("%s | %s | %s | %s" % (
+            review.get("id", "?"),
+            review.get("state", "?"),
+            (review.get("user") or {}).get("login", "?"),
+            _cell(_first_line(review.get("body"))),
+        ))
+    return "\n".join(lines)
+
+
+def _files_summary(obj):
+    files = [f for f in _items(obj) if isinstance(f, dict)]
+    added = sum(int(f.get("additions") or 0) for f in files)
+    removed = sum(int(f.get("deletions") or 0) for f in files)
+    lines = ["%d file%s, +%d -%d" % (len(files), "" if len(files) == 1 else "s", added, removed)]
+    for entry in files:
+        name = entry.get("filename", "?")
+        if entry.get("previous_filename"):
+            name = "%s -> %s" % (entry["previous_filename"], name)
+        lines.append("%s %s +%d -%d" % (entry.get("status", "?"), name, int(entry.get("additions") or 0), int(entry.get("deletions") or 0)))
+    return "\n".join(lines)
+
+
+def _commits_summary(obj):
+    commits = [c for c in _items(obj) if isinstance(c, dict)]
+    lines = ["%d commit%s" % (len(commits), "" if len(commits) == 1 else "s")]
+    for commit in commits:
+        info = commit.get("commit") or {}
+        lines.append("%s | %s | %s" % (
+            str(commit.get("sha", "?"))[:7],
+            (commit.get("author") or {}).get("login") or (info.get("author") or {}).get("name", "?"),
+            _cell(_first_line(info.get("message"))),
+        ))
+    return "\n".join(lines)
+
+
+def _issue_line(issue):
+    nwo = _nwo_of(issue.get("repository_url")) or _nwo_of(issue.get("html_url"))
+    labels = ", ".join(label.get("name", "") for label in issue.get("labels") or [])
+    return "%s#%s: %s [%s] %s%s" % (
+        nwo,
+        issue.get("number"),
+        _first_line(issue.get("title"), 100),
+        issue.get("state", "?") + (", pr" if issue.get("pull_request") else ""),
+        (issue.get("user") or {}).get("login", "?"),
+        " | labels: " + labels if labels else "",
+    )
+
+
+def _issue_lines(obj):
+    issues = [i for i in (obj.get("items") if isinstance(obj, dict) else _items(obj)) or [] if isinstance(i, dict)]
+    total = obj.get("total_count") if isinstance(obj, dict) else None
+    head = "%d issue%s" % (len(issues), "" if len(issues) == 1 else "s")
+    if total is not None and total != len(issues):
+        head += " of %s" % total
+    return "\n".join([head] + [_issue_line(i) for i in issues])
+
+
+def _issue_detail(obj):
+    issue = _first(obj) or {}
+    body = (issue.get("body") or "").strip()
+    return _issue_line(issue) + ("\n\n" + body if body else "") + "\n" + issue.get("html_url", "")
+
+
 _FORMATTERS = {
     "raw": _raw,
     "error-check": _error_check,
@@ -304,7 +459,38 @@ _FORMATTERS = {
     "login": _login,
     "pending-review-summary": _pending_review_summary,
     "comment-bodies": _comment_bodies,
+    "pr-lines": _pr_lines,
+    "checks-summary": _checks_summary,
+    "review-comments": _review_comments,
+    "reviews-summary": _reviews_summary,
+    "files-summary": _files_summary,
+    "commits-summary": _commits_summary,
+    "issue-lines": _issue_lines,
+    "issue-detail": _issue_detail,
 }
+
+# What a read answers when no --format and no --json is given: the few lines its caller reads. A
+# command not listed answers its object. `--json` (or `--format raw`) gives the full object.
+DEFAULT_FORMATS = {
+    "pr-get": "pr-lines",
+    "pr-list": "pr-lines",
+    "pr-checks": "checks-summary",
+    "pr-threads": "thread-summary",
+    "pr-comments": "review-comments",
+    "pr-issue-comments": "issue-comments-summary",
+    "pr-reviews": "reviews-summary",
+    "pr-files": "files-summary",
+    "pr-commits": "commits-summary",
+    "issue-view": "issue-detail",
+    "issue-list": "issue-lines",
+    "issue-search": "issue-lines",
+    "repo-review-comments": "review-comments",
+}
+
+
+def default_format(command, as_json):
+    """The format a read takes when none is named."""
+    return "raw" if as_json else DEFAULT_FORMATS.get(command, "raw")
 
 
 def render(name, obj):

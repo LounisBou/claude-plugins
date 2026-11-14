@@ -163,14 +163,14 @@ async function pullList($: any, repo: string, command: string, args: Record<stri
 
 // The open pull request of `branch` in `repo`.
 export async function branchPull($: any, repo: string, branch: string): Promise<Lookup> {
-  const pulls = await pullList($, repo, 'pr-get', { branch })
+  const pulls = await pullList($, repo, 'pr-get', { branch, format: 'raw' })
   return Array.isArray(pulls) ? { pull: pulls[0] } : pulls
 }
 
 // The open pull request of `repo` whose head is `head`: a detached head names no branch to ask
 // about, its commit does. Several such pull requests are refused, naming them: none is the one.
 export async function openPullAt($: any, repo: string, head: string): Promise<Lookup> {
-  const pulls = await pullList($, repo, 'pr-list', {})
+  const pulls = await pullList($, repo, 'pr-list', { format: 'raw' })
   if (!Array.isArray(pulls)) return pulls
   const found = pulls.filter(p => p?.head?.sha === head)
   if (found.length > 1) {

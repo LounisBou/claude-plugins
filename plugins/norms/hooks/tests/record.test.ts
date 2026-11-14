@@ -175,7 +175,7 @@ test('the pull request is read through the github tool', async () => {
   await m.scope($)
   // The scope's own call, at the command's start, reads the pull request's base: of the branch,
   // in the repository named, never the session's directory's.
-  const ofBranch = { tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature' }, repo: 'Owner/Repo' }
+  const ofBranch = { tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature', format: 'raw' }, repo: 'Owner/Repo' }
   expect(calls).toEqual([ofBranch])
   await m.done($, { open: 0, fixed: 0, passed: 0 })
   expect(calls[1]).toEqual(ofBranch)
@@ -634,7 +634,7 @@ test('a check_done after a shell cd into another repository records the reposito
   const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls).map(c => [c.repo, c.pr])).toEqual([['Owner/Repo', 12]])
-  expect(calls[0]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature' }, repo: 'Owner/Repo' })
+  expect(calls[0]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature', format: 'raw' }, repo: 'Owner/Repo' })
   expect(argvs.filter(a => !a.startsWith('(/repo) '))).toEqual([])
 })
 
@@ -686,7 +686,7 @@ test('a detached head whose pull request list the github tool refuses leaves no 
   const { $ } = detached(() => ({ deny: 'github: gh is not signed in' }), calls)
   const out = await mounted().done($, { open: 0, fixed: 0, passed: 1 })
   expect(out.result).toBe('record: none — github: gh is not signed in')
-  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: {}, repo: 'Owner/Repo' }])
+  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: { format: 'raw' }, repo: 'Owner/Repo' }])
 })
 
 test('a host that cannot say where the repository is leaves the session\'s directory to git', async () => {
