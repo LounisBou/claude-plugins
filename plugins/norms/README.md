@@ -83,7 +83,8 @@ mechanical work the markdown would otherwise hand the model:
   the report, when `/norms:check` did not compute its scope in the session, the
   branch has no pull request, tracked files have changes, a later commit touches
   a file the check did not read, or the `github` plugin is absent, older, or
-  refuses the record.
+  refuses the record. Whether a pull request owes the check is its plan's to say (the
+  `github` plugin's `hooks/check-plan.ts`), not this plugin's.
 - `validate`: the lexical checks (empty entries, vague words, no code block,
   mixed list markers, no top-level header) arrive with exact line numbers.
 

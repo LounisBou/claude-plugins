@@ -12,13 +12,10 @@ Run `/pr-review-toolkit:review-pr` in a loop. Fix issues. Re-run the review.
 Keep looping. **ONLY TWO EXIT CONDITIONS EXIST:**
 
 1. **The review found ZERO issues** (no Critical, no Important, no Suggestions — completely clean)
-2. **5 passes reached** (safety limit)
+2. **`MAX_PASSES` reached** (safety limit): 5, or one in a session the orchestrator spawned (`ORCHESTRATOR_SPAWNED` set), where the review and the one correction are the orchestrator's
 
 **NOTHING ELSE stops the loop.** Not "all remaining are SKIP". Not "only suggestions left".
-Not "fixes were applied". After EVERY pass where fixes were applied, you MUST re-run the
-review to check if the fixes introduced new issues. After EVERY pass where issues were
-found but skipped, increment the pass counter and re-run. The loop runs until one of
-the two exit conditions is met.
+Not "fixes were applied": after every pass, fixed or skipped, re-run the review.
 
 ## Loop State: the `mcp__pr-review__loop` tool
 
@@ -38,7 +35,9 @@ long run that way. Call it at each of these points, with `action` and its fields
 The answer that carries an `exit` ends with one more line, `record: <path>` or
 `record: none — <why>`: the review record the loop left for the github plugin's
 ready guard, or the reason it left none. It never changes the exit. Step 7 prints it.
-The orchestrator judges a `fail`.
+The orchestrator judges a `fail`. A session that wrote or pushed the code writes no review
+record: `review_only` (`start` with `"review_only": true`) is the reviewer's mode, one pass and
+no fix, for a session that did not.
 
 Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
 answer carries `exit`, go to Step 7 with that reason and render the summary from
@@ -61,7 +60,7 @@ LOOP:
   pass_count += 1
 
   # EXIT CHECK 1: safety limit
-  if pass_count > 5:
+  if pass_count > MAX_PASSES:
       display exit summary
       STOP
 
@@ -97,10 +96,6 @@ LOOP:
   goto LOOP
 ```
 
-**CRITICAL RULE:** After applying fixes, you MUST re-run the review. You cannot
-assume the fixes are correct. You cannot assume no new issues were introduced.
-The ONLY way to confirm "clean" is to run the review and get zero findings.
-
 ## What to Auto-Fix (no user confirmation needed)
 
 **Always fix — issues labeled Critical or Important by review agents:**
@@ -126,11 +121,11 @@ The ONLY way to confirm "clean" is to run the review and get zero findings.
 ```
 - Identify changed files via `git diff --name-only` (or full codebase if user requests)
 - Set pass_count = 0
-- Set MAX_PASSES = 5
+- Set MAX_PASSES = 5, or 1 when `ORCHESTRATOR_SPAWNED` is set
 - Initialize seen_issues = set()
 - Initialize fix_log = []
 - Determine TEST_COMMAND (see Step 1.5) — once, before entering the loop
-- Display: "Starting review-fix loop (max 5 passes)"
+- Display: "Starting review-fix loop (max {MAX_PASSES} passes)"
 ```
 
 ### Step 1.5: Determine the Test Command (once, before the loop)

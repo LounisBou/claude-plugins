@@ -21,8 +21,8 @@ _Recommendation_ : A — <why it beats the others>
 - Name every item, in the context and each choice, in plain words (what breaks, for whom,
   what it costs him) and by its pull request with the repository name. A tracking-table row
   number may follow in parentheses, never alone.
-- A host dialog takes the same parts: choices as options, the recommended first and marked,
-  the free answer as « Other ».
+- A host dialog only for a session nobody waits on (`SKILL.md`): choices as options,
+  the recommended first and marked, the free answer as « Other ».
 - The answer is recorded, dated, where the work keeps its decisions.
 - Never ask what the spec, the plan or the code answers. Answer him first, check the premise
   after. Asked again for what you failed to deliver, say you failed, answer, offer the hand-over

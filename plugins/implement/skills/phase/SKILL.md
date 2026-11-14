@@ -166,8 +166,7 @@ left, say that `implement:close` is next.
 | The plan does not settle a scope question | the question in one line — status `question` |
 | An outward-facing or irreversible action is needed that no instruction calls for | name it and wait; it is not taken on the skill's own account |
 
-Each stop asks once, in one line; a question never stops the phase (`method:lifecycle`). No
-narration between sub-phases.
+Each stop says its line once (`method:lifecycle`). No narration between sub-phases.
 
 ---
 
@@ -208,8 +207,7 @@ orchestrator decides and releases the guard with `/implement:release-guard`. The
 from this skill's start until another implement skill starts, the turn is interrupted, or that
 release. A refusal is a stop to report, never a wall to go around.
 
-This skill's own steps end at the branch. A push and a draft pull request need no consent;
-taking it out of draft and the merge follow the method's ready gate and consent rules.
+This skill's own steps end at the branch; consent, ready and merge are `method:lifecycle`'s.
 
 ---
 
