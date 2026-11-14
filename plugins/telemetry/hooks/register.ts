@@ -146,7 +146,8 @@ export function mount(on: On, collector: Collector): void {
       const at = await $.clock.now()
       const session = await $.session.id()
       if (e['agentId'] === undefined) await readTitle($, collector)
-      const events = [turnEnd(at, session, e, usageFacts(await $.session.usage()))]
+      const usage = usageFacts(await $.session.usage())
+      const events = [turnEnd(at, session, e, usage, collector.turnCost(usage.costUsd))]
       const child = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
       const spawnedAt = collector.closing(child)
       if (child !== undefined && spawnedAt !== undefined) events.push(agentClosed(at, session, child, spawnedAt, e))

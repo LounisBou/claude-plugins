@@ -65,6 +65,19 @@ test('turn_end: duration, tokens, context and cost; never the answer', () => {
   assert.equal(child['context_tokens'], undefined)
 })
 
+test('Collector.turnCost: the difference with the previous turn, the first turn whole, a restarted count whole, no figure no change', () => {
+  const c = new Collector()
+  assert.equal(c.turnCost(undefined), undefined)
+  assert.equal(c.turnCost(0.3), 0.3)
+  assert.equal(c.turnCost(undefined), undefined)
+  assert.equal(c.turnCost(0.4), 0.1)
+  assert.equal(c.turnCost(0.4), 0)
+  assert.equal(c.turnCost(0.1), 0.1)
+  assert.equal(c.turnCost(0.35), 0.25)
+  assert.equal(turnEnd(AT, S, F('turn.complete'), usageFacts(F('usage')), 0.25)['turn_cost_usd'], 0.25)
+  assert.equal(turnEnd(AT, S, F('turn.complete'), {})['turn_cost_usd'], undefined)
+})
+
 test('session_end: reason, duration, turns, cost, context', () => {
   assert.deepEqual(sessionEnd(AT, S, F('session.end'), { ...usageFacts(F('usage')), startedAt: AT - 60_000, turns: 4 }), {
     ...HEAD, event: 'session_end', reason: 'prompt_input_exit', duration_ms: 60_000, turns: 4, cost_usd: 1.25, context_tokens: 42000, window: 1000000,

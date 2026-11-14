@@ -9,7 +9,7 @@ repository.
 ## What it records
 
 Session start and end (role from the title, model, effort, launch latency, time to the first
-turn, duration, cost, context), each turn's end (duration, tokens, context, cost), each tool call
+turn, duration, cost, context), each turn's end (duration, tokens, context, the session's cumulative cost and the turn's own), each tool call
 (tool, MCP server, outcome, who refused it, duration, a redacted Bash line), subagents and
 launched sessions spawned and closed, questions put to the operator and the letters chosen, and the
 dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
