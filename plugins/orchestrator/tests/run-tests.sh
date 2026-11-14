@@ -10917,7 +10917,7 @@ round c-done | done | from Orch: c | since 2026-10-18T10:04:00.000Z | blocks: - 
     Everything merged.
 round a-gone | operator | from Orch: a | since 2026-10-18T09:00:00.000Z | blocks: phase 3 | withdrawn
     Close the tab?" \
-  "$(COORDINATOR_NOW=$ROUND_NOW coord round 2>&1)"
+  "$(COORDINATOR_NOW=$ROUND_NOW coord round --all 2>&1)"
 check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord_status round)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round 2>&1)|$(mkdir -p "$WORK/coord-empty-round/round" && ORCHESTRATOR_STATE_DIR="$WORK/coord-empty-round" bash "$COORD" round 2>&1)"
 out=$(coord round-close b-early --answer 'A, ship it — on 2026-10-18' 2>&1); code=$?
@@ -11128,7 +11128,7 @@ round x2 | operator | from Orch: a | since 2026-10-20T10:04:00.000Z | blocks: ph
 round w1 | operator | from Orch: a | since 2026-10-20T10:01:00.000Z | blocks: phase 3 | withdrawn
     Ask w1?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: a later turn the operator typed in waits on something else" \
-  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)"
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round --all 2>&1)"
 # A sender's withdrawal that says why (superseded, ended, handed over) is said with its reason; one
 # that says nothing keeps the sentence above.
 for spec in "w2:superseded by s-a-o2" "w3:handed over to its successor"; do
@@ -11144,7 +11144,7 @@ check "round says a sender's withdrawal with its reason, and shows no withdrawn 
 round w3 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w3?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: handed over to its successor|0" \
-  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[23] ')|$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -c '^round w[123] .*| open')"
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round --all 2>&1 | grep -A2 '^round w[23] ')|$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round --all 2>&1 | grep -c '^round w[123] .*| open')"
 rm -f "$ASTATE/round/w2.json" "$ASTATE/round/w3.json"
 # Every withdrawal's reason is printed on the entry, whoever recorded it: one the prompt typed in
 # the sender's tab withdrew printed nothing, and the coordinator closed a lost question with a
@@ -11162,7 +11162,7 @@ check "round prints every withdrawn entry's reason, whoever withdrew it" \
 round w5 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w5?
     withdrawn by pane at 2026-10-20T10:09:00.000Z: an older reason" \
-  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[45] ')"
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round --all 2>&1 | grep -A2 '^round w[45] ')"
 rm -f "$ASTATE/round/w4.json" "$ASTATE/round/w5.json"
 # What the operator typed in the sender's tab is printed after the reason, on one line.
 jq -n '{id:"w6", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
@@ -11172,7 +11172,7 @@ check "round prints what the operator typed in the sender's tab after the reason
   "round w6 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w6?
     withdrawn in the sender's tab at 2026-10-20T10:09:00.000Z: answered in the sender's own tab — he typed: B, keep it small" \
-  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w6 ')"
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round --all 2>&1 | grep -A2 '^round w6 ')"
 rm -f "$ASTATE/round/w6.json"
 # round records the open entries it printed, for the module to tell the coordinator at once when
 # one of them is settled in the pane or in the sender's tab: the coordinator once relayed a second
@@ -11229,7 +11229,7 @@ done
 : > "$DCFG/claude-orchestrator/store/sessions/s-d"
 printf '4242 1 ttys004 hostcli\n' > "$WORK/coord-due-ps"
 printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
-dround() { ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round 2>&1; }
+dround() { ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round --all 2>&1; }
 # The urgent entry leads, the round's one order (6.2).
 check "with the pane open round marks due an urgent entry alone, however old the others" \
   "round u1 | operator | from Orch: d | since 2026-10-24T11:59:00.000Z | blocks: phase 3 | open | due
@@ -11267,7 +11267,7 @@ for spec in "a0:a:open:10:00:false" "b1:b:open:10:01:true" "b2:b:open:10:02:fals
 done
 : > "$UCFG/claude-orchestrator/store/sessions/s-orcha"; : > "$UCFG/claude-orchestrator/store/sessions/s-orchb"
 printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$USTATE/pane.json"
-uround() { ORCHESTRATOR_STATE_DIR="$USTATE" CLAUDE_CONFIG_DIR="$UCFG" COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round "$@" 2>&1; }
+uround() { ORCHESTRATOR_STATE_DIR="$USTATE" CLAUDE_CONFIG_DIR="$UCFG" COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round --all "$@" 2>&1; }
 check "round --by-urgency orders each set urgent first, then grouped by orchestrator within each level, oldest first, due marked as without it" \
   "round b1 | operator | from Orch: b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
 round a3 | operator | from Orch: a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
@@ -11291,6 +11291,20 @@ round a4 | operator | from Orch: a | since 2026-10-24T10:04:00.000Z | blocks: ph
 round b5 | operator | from Orch: b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
 round a8 | operator | from Orch: a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
   "$(mv "$USTATE/pane.json" "$WORK/coord-urgency-pane"; uround --by-urgency | grep '^round '; mv "$WORK/coord-urgency-pane" "$USTATE/pane.json")"
+# The default round prints the entries still to rule and counts the settled ones; --all prints them too.
+uround_open() { ORCHESTRATOR_STATE_DIR="$USTATE" CLAUDE_CONFIG_DIR="$UCFG" COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round "$@" 2>&1; }
+check "round counts the settled entries in its first line and prints none of them" \
+  "settled: 2 answered, 1 withdrawn (round --all prints them)|6|0" \
+  "$(uround_open | sed -n 1p)|$(uround_open | grep -c '^round ')|$(uround_open | grep -c '^round \(a4\|b5\|a8\) ')"
+check "round --all prints the settled entries after the open ones, with no count line" \
+  "9|3|0" \
+  "$(uround | grep -c '^round ')|$(uround | grep -c '^round \(a4\|b5\|a8\) ')|$(uround | grep -c '^settled:')"
+mkdir -p "$WORK/coord-openonly/round"
+jq -n '{id:"only", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-24T10:00:00.000Z", blocks:"phase 3", question:"Ask only?", choices:[], recommendation:null, status:"open", at:"2026-10-24T10:00:00.000Z", answer:null}' > "$WORK/coord-openonly/round/only.json"
+check "a round with nothing settled prints no count line" "no|1" \
+  "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -q '^settled:' && echo yes || echo no)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -c '^round only ')"
+check "the default round is shorter than the round --all prints" "yes" \
+  "$(a=$(uround_open | wc -c); b=$(uround | wc -c); [ "$a" -lt "$b" ] && echo yes || echo "$a of $b")"
 # One order everywhere, the ruling's (6.2): round without the flag prints what --by-urgency prints.
 check "round without the flag prints the round's one order, the very output of --by-urgency, and refuses another argument" \
   "b1 a3 a0 a7 b2 b6 a4 b5 a8|same output|exit 1|coordinator: round: unexpected argument --soon" \

@@ -11,8 +11,7 @@
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { fencedLines, openFence, outsideFences } from './one-question.ts'
-import { entryQuestions, numberOfLine, parseChoices, questionShape, type QuestionField } from './round.ts'
+import { entryQuestions, fencedLines, numberOfLine, openFence, outsideFences, parseChoices, questionShape, type QuestionField } from '../core/method.ts'
 import { logLine } from './module-io.ts'
 
 // The nouns the declaration holds.

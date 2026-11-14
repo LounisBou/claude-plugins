@@ -11,7 +11,11 @@ export { accepts, DETAIL_MAX, KINDS, kindFor, parsePrRecord, producersOf, RECORD
 export { blocks, carriesAcross, CI_CHECK, heldBy, missingEvidence, PLAN_NEEDS, PLAN_OMITTED, READINESS_CONTRACT, WAIVABLE, type Condition, type HeadEvidence, type Holder, type Missing, type Planned, type Waivable } from './readiness.ts'
 export { CONSENT_KINDS, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, consentAnswer, consentDir, consentPath, consentRecordOf, parseConsentRecord, parseConsentSubject, quotesConsent, sameSubject, type Answerer, type ConsentKind, type ConsentRecord, type ConsentSubject } from './consent-record.ts'
 export { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
-export { markRow, nextRow, parseState, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits, type ReportStatus, type Row, type RowStatus, type State } from './method.ts'
+export {
+  entryQuestions, fencedLines, machineLine, markRow, nextRow, numberOfLine, openFence, outsideFences, parseChoices, parseState, questionBody,
+  questionParts, questionShape, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits,
+  type Choice, type QuestionField, type QuestionPart, type QuestionShape, type QuestionSource, type ReportStatus, type Row, type RowStatus, type State, type StatusWord,
+} from './method.ts'
 export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS, STORE_CONTRACT, takeLockArgv, temporaryOf, updateOver, withLockOver, writeAtomicOver, type AsyncLockOptions, type RunResult, type StoreIo } from './store-io.ts'
 export { INSTALL_TIMEOUT_MS, installPlaywright, locatePlaywright, lockfileOf, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PACKAGES, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'
 export { KILL_GRACE_MS, runInGroup, signalGroup } from './process-group.ts'

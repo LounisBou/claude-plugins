@@ -65,12 +65,14 @@ export const TOOL = 'mcp__github__gh'
 // The request travels as JSON on stdin: gh.py maps it onto its own parser,
 // refuses what that parser does not declare, and writes the bodies to a
 // private directory it removes. No argv is built and no file written here.
+//
+// full: the module parses the answer, so it asks the full object where a read has a short default.
 async function runGhRaw(
-  $: any, command: string, args: Record<string, unknown> = {}, repo?: string,
+  $: any, command: string, args: Record<string, unknown> = {}, repo?: string, full = false,
 ): Promise<{ out: string; err: string }> {
   const r = await $.process.run(
     ['python3', $.plugin.root + '/engine/gh.py', '--stdin-json'],
-    { stdin: JSON.stringify({ command, args, repo }), timeoutMs: 120_000 },
+    { stdin: JSON.stringify({ command, args, repo, ...(full ? { full: true } : {}) }), timeoutMs: 120_000 },
   )
   if (r.exitCode !== 0) throw new Error(r.stderr || 'gh.py exited ' + r.exitCode)
   const out = r.isStdoutTruncated ? r.stdout + '\n[output cut at 4 MiB]' : r.stdout
@@ -85,7 +87,7 @@ const withNote = (out: string, err: string): string => (err ? out.trimEnd() + '\
 async function runGh(
   $: any, command: string, args: Record<string, unknown> = {}, repo?: string, notes = false,
 ): Promise<string> {
-  const r = await runGhRaw($, command, args, repo)
+  const r = await runGhRaw($, command, args, repo, true)
   return notes ? withNote(r.out, r.err) : r.out
 }
 

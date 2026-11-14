@@ -3,9 +3,9 @@
 // he answers it, wakes the session with its answer, and is not repeated in later messages; a turn
 // that leaves it out is logged, never refused. Pure: the stop gate reads the round and the
 // session's wait file, this file decides on what they hold and on the turn's final message.
-import { entryQuestions, questionParts, questionShape, parseChoices, plainText, numberLabel, type RoundEntry, type QuestionShape } from './round.ts'
+import { entryQuestions, outsideFences, parseChoices, questionParts, questionShape, type QuestionShape } from '../core/method.ts'
+import { plainText, numberLabel, type RoundEntry } from './round.ts'
 import { heldQuestion, type RelayedWait } from './relay.ts'
-import { outsideFences } from './one-question.ts'
 
 // The session's wait file as this rule reads it: the wait, the fingerprint the coordinator
 // holds, a send not yet acknowledged by a coordinator on another machine, and the mark of a

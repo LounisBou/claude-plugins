@@ -8,7 +8,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
-  machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
+  deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
@@ -17,7 +17,8 @@ import {
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredQuestion, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
-import { entryQuestions, roundEntry } from '../round.ts'
+import { machineLine, entryQuestions } from '../../core/method.ts'
+import { roundEntry } from '../round.ts'
 import { parseWait } from '../relay.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
 import { unnamedReport } from '../relay.ts'
@@ -258,14 +259,6 @@ test('work given a deadline is cancelled at the deadline, never left to write la
 })
 
 // --- the ported parsers ------------------------------------------------------------------
-
-test('the machine line is read through whatever markup wraps it', () => {
-  expect(machineLine('a report\n`waiting: operator — blocks: the report`.')).toBe('waiting: operator — blocks: the report')
-  expect(machineLine('> waiting: done')).toBe('waiting: done')
-  expect(machineLine('- *waiting: done*')).toBe('waiting: done')
-  expect(machineLine('Waiting:  operator – blocks: x')).toBe('Waiting:  operator – blocks: x')
-  expect(machineLine('waiting: operator-blocks: stand-by')).toBe('waiting: operator-blocks: stand-by')
-})
 
 test('the listing parses the launcher rows and drops the marks', () => {
   const rows = listing('w1/t1 | /dev/ttys001 | a title | Orch: belt | self\nw1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3 | hidden\nnot a row\n')

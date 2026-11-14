@@ -40,7 +40,8 @@ class _ArgumentParser(argparse.ArgumentParser):
 def build_parser():
     parser = _ArgumentParser(prog="gh.py", description=__doc__)
     parser.add_argument("--repo", help="owner/name, overriding the origin remote")
-    parser.add_argument("--format", default="raw", help="output formatter (default: raw)")
+    parser.add_argument("--format", default=None, help="output formatter (default: the command's few lines, else raw)")
+    parser.add_argument("--json", action="store_true", help="the full object, in place of the few lines (same as --format raw)")
     subparsers = parser.add_subparsers(dest="command")
     for module in _MODULES:
         module.register(subparsers)
@@ -52,6 +53,7 @@ def build_parser():
     for sub in subparsers.choices.values():
         sub.add_argument("--repo", default=argparse.SUPPRESS)
         sub.add_argument("--format", default=argparse.SUPPRESS)
+        sub.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return parser
 
 
@@ -84,7 +86,7 @@ def main(argv):
         if args.repo:
             repo.set_override(args.repo)
         result = args.handler(args)
-        rendered = fmt.render(args.format, result)
+        rendered = fmt.render(args.format or fmt.default_format(args.command, args.json), result)
         if rendered:
             print(rendered)
         return 0

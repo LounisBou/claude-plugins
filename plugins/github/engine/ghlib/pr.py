@@ -50,7 +50,7 @@ def pr_list(args):
 def pr_status(args):
     owner, name = repo.owner_repo()
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
-    if args.json or args.format != "raw":
+    if args.json or args.format:
         return pull
     # The few lines by default; the full pull request with --json, or under a --format that reads it.
     sha = (pull.get("head") or {}).get("sha") or ""
@@ -363,7 +363,6 @@ def register(subparsers):
 
     parser = subparsers.add_parser("pr-status", help="get PR state")
     parser.add_argument("pr", type=int)
-    parser.add_argument("--json", action="store_true", help="the full pull request, in place of the summary")
     parser.set_defaults(handler=pr_status)
 
     parser = subparsers.add_parser("pr-gate", help="state, head, labels and CI, as the ready guard reads them")

@@ -34,10 +34,11 @@ is its contract, read it before its first use in a session:
   Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
   freshness, wait, context, their repository and the pull requests they watch), and a pull
   request one of them lists counts as one more orchestrator on it in a `collision pr`.
-- `round` — the round's entries still to rule, the open ones, then the ones he answered from
-  the pane (with the answer sent), then the withdrawn ones, each with its id, sender, `since`,
-  `blocks` and question; `round-close <id> --answer "<text>"` closes one with his answer, which
-  the module then sends to its sender (« Relaying questions to the operator »).
+- `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`,
+  `blocks` and question, after a line counting the settled ones; `--all` prints those too, the ones
+  he answered from the pane (with the answer sent), then the withdrawn ones;
+  `round-close <id> --answer "<text>"` closes one with his answer, which the module then sends to
+  its sender (« Relaying questions to the operator »).
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows
   two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
@@ -128,7 +129,7 @@ line, a blank line between two, its dot coloured by its state (the ones waiting 
 and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
 With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
-`answered` and sends the sender his choice, so `round` lists it with that answer, and you send
+`answered` and sends the sender his choice, so `round --all` lists it with that answer, and you send
 nothing for it: close it with
 `coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"` — unless you
 were shown it: then the module has closed it already, and tells you so (below). When the
@@ -148,7 +149,8 @@ and its « Other answer » field: record it all the same, and present it once du
 proposal, which the pane cannot rule, you present as before. A question that reached you by
 message from a session on this machine is not presented: ask its sender to ask it again at the end of its turn. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
-in the pane before it is due is never presented: close it as answered from the pane. One you
+in the pane before it is due is never presented: `round --all` lists it, close it as answered from
+the pane. One you
 presented and he then answered in the pane is closed by the module, and one he answered in your
 tab while the pane still showed it, by one `round-close`; neither is presented again. Besides,
 the module writes one line in your conversation for each new question, pane open or not,

@@ -343,7 +343,7 @@ async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>)
   const headRun = await git($, ['rev-parse', 'HEAD'], dir)
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
-  const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
+  const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: { format: 'raw' }, repo })
   if (listed?.deny || listed?.isError) return 'record: none — ' + (textOf(listed) || 'the pull requests could not be read')
   let pulls: unknown
   try {

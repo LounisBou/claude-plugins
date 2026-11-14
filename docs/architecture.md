@@ -110,9 +110,11 @@ language; when another language needs it, it reads it as data, never as a re-imp
 
 ## Release
 
-A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
-from it. A pull request raises no version. The release pull request (`npm run release`) raises
-the version of every plugin changed since its last release, because the host caches by version.
+A plugin's version lives in its `plugin.json`; the catalogue is generated from it. A pull request
+raises no version. The release pull request (`npm run release`) raises the version of every plugin
+changed since its last release, because the host caches by version; a plugin already raised by that
+pull request keeps its version on a re-run, and one that carries its own `marketplace.json` (the
+orchestrator) has it raised with its manifest.
 A release runs at the end of each merge wave, and at least daily.
 A release is its merge: the host installs the version the catalogue names, and no tag is made.
 The release pull request also asks the operator whether to re-run the outcome measure (cap

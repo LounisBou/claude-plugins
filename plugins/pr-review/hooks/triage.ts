@@ -39,13 +39,13 @@ export const OPEN_COMMENTS_SCHEMA = {
 }
 
 async function fetchAll($: any, pr?: number): Promise<Record<string, unknown>> {
-  const raw = pr ? await gh($, 'pr-status', { pr, json: true }) : await gh($, 'pr-get', {})
+  const raw = pr ? await gh($, 'pr-status', { pr, json: true }) : await gh($, 'pr-get', { format: 'raw' })
   const record: any = Array.isArray(raw) ? raw[0] : raw
   const number = record?.number
   if (!number) return { pr: raw }
   const [issueComments, reviews, threads] = await Promise.all([
-    gh($, 'pr-issue-comments', { pr: number }),
-    gh($, 'pr-reviews', { pr: number }),
+    gh($, 'pr-issue-comments', { pr: number, format: 'raw' }),
+    gh($, 'pr-reviews', { pr: number, format: 'raw' }),
     gh($, 'pr-threads', { pr: number, format: 'open-threads' }),
   ])
   const batch = async (ids: string[]) => (ids.length ? gh($, 'comments-resolved-batch', { nodes: ids }) : {})

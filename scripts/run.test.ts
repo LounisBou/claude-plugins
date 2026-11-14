@@ -159,6 +159,36 @@ describe('release run', () => {
     assert.deepEqual(again.lines.out, ['no plugin changed since its last release'])
   })
 
+  it('leaves a plugin already raised by this release as it is, when it changes again before a re-run', () => {
+    const root = released()
+    git(root, 'branch', 'last-release', 'HEAD~1')
+    assert.equal(release(root, ['--base', 'last-release'], recorder()), 0)
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed again.\n')
+    git(root, 'commit', '-q', '-am', 'fix alpha on the release branch')
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' })
+    const again = recorder()
+    assert.equal(release(root, ['--base', 'last-release'], again), 0)
+    assert.deepEqual(again.lines.out, ['no plugin changed since its last release'])
+    assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.1')
+    assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }), head)
+  })
+
+  it('raises the catalogue a plugin carries itself, so that no manifest disagrees with the version', () => {
+    const root = released()
+    const own = join(root, 'plugins', 'alpha', '.claude-plugin', 'marketplace.json')
+    const catalogue = { name: 'own', metadata: { version: '1.0.0' }, plugins: [{ name: 'alpha', source: './', version: '1.0.0' }] }
+    writeFileSync(own, `${JSON.stringify(catalogue, null, 2)}\n`)
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'alpha carries its own catalogue')
+    git(root, 'branch', 'last-release', 'HEAD~2')
+    assert.equal(release(root, ['--base', 'last-release'], recorder()), 0)
+    const raised = JSON.parse(readFileSync(own, 'utf8'))
+    assert.equal(raised.metadata.version, '1.0.1')
+    assert.equal(raised.plugins[0].version, '1.0.1')
+    assert.match(execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: root, encoding: 'utf8' }), /^plugins\/alpha\/\.claude-plugin\/marketplace\.json$/m)
+    assert.equal(versionBump(root, ['last-release'], recorder()), 0)
+  })
+
   it('lowers the prompt budgets to the measure in the release commit', () => {
     const root = released()
     assert.equal(release(root, [], recorder()), 0)
