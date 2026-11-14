@@ -8,12 +8,20 @@
 // transcript itself, so the model does not write it. Any main session that keeps a list asks with
 // it: an orchestrator, a coordinator, an auditor; an agent asks the session that launched it.
 // The old path, a block written in the turn's text, stays as it is beside it.
+//
+// The `settle` tool closes a question by its id, here: its one closure function writes every close
+// of a round question, the object `ask` stored or the relay's entry (settle.ts decides what it
+// writes), then records the consent it asked, sends the answer to its asker at once when another
+// session settles it, and records the work the answer asks as a to-do of the asker. It replaces
+// `answered-by-message` and `coordinator.sh round-close`; the relay's other closures (the pane, the
+// prompt typed in the asker's tab, its turn's end) stay as they are until the text path goes.
 import { updateOver } from '../core/store-io.ts'
 import { CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { machineLabel } from './remote-row.ts'
 import { plainText } from './round.ts'
-import { whoAmI } from './todo.ts'
-import { sessionRole } from './supervision.ts'
+import { callTodo, whoAmI } from './todo.ts'
+import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
+import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
@@ -46,14 +54,18 @@ export type AskFields = {
   consent?: ConsentSubject
 }
 
-/** One question in the round, as `ask` writes it. Settling it (`answer`, a status other than open) is the next tool's. */
+/** How a question asked here was settled (settle.ts): the answer or the reason, who settled it, when, and the message's author. */
+export type AskedAnswer = { text: string; by: 'tab' | 'coordinator' | 'sender' | 'message'; at: string; settler: string; author?: string }
+
+/** One question in the round, as `ask` writes it, then as `settle` closes it, its answer's trip to its asker in `delivery`. */
 export type Asked = AskFields & {
   v: typeof ASK_VERSION
   id: string
   sender: AskedSender
   status: 'open' | 'answered' | 'withdrawn'
   at: string
-  answer: null
+  answer: AskedAnswer | null
+  delivery?: { state: 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
   seq: number
 }
 
@@ -151,7 +163,7 @@ export function parseAsked(text: string): Asked | null {
   return fine ? o as unknown as Asked : null
 }
 
-/** The question in the method's shape, numbered among its sender's open questions, its id after the number. */
+/** The question in the method's shape, numbered among the questions asked in its turn, its id after the number. */
 export function questionBlock(entry: Asked, number: { i: number; n: number }): string {
   return [
     `**Question ${number.i} of ${number.n}** (${entry.id})`,
@@ -244,6 +256,15 @@ async function machineOf($: Host<'process'>): Promise<string> {
   return machine
 }
 
+// The questions asked in the main thread's current turn, by id: what « Question i of N » counts. A
+// turn's start empties it (registerQuestion's turn.start).
+const thisTurn: string[] = []
+
+/** The main thread's turn started: the questions it asks next are numbered from one. */
+export function askTurnStarted(): void {
+  thisTurn.length = 0
+}
+
 /** What the tool answers to one call; `now` is the instant it records. */
 export async function callAsk($: Held, e: Record<string, unknown>, now: Date = new Date()): Promise<Answer> {
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
@@ -252,10 +273,6 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   const me = await whoAmI($)
   if (me === null) {
     return refuse('Only an orchestrator, a coordinator or an auditor asks with `ask`, once its name is known (after its first turn); an agent asks the session that launched it, by message.')
-  }
-  // Until declare_wait takes a question asked here, an orchestrator's turn end would fail or double the entry.
-  if (me.role === 'orchestrator') {
-    return refuse('An orchestrator does not ask with `ask` yet: its question goes through declare_wait (kind operator, with the question block), as before.')
   }
   const sessionId = await $.session.id()
   const sender = { session: sessionId, name: me.name, role: me.role, machine: await machineOf($) }
@@ -272,10 +289,10 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
     return refuse(`the question could not be stored (${messageOf(err)}); nothing was shown to the operator, ask again.`)
   }
   if (taken) return refuse(`a question with the id ${entry.id} is already in the round; ask again.`)
-  // Numbered among its asker's open questions: several asked in one turn read 1 of 2, 2 of 2.
-  const own = askedGroups(await readAsked($)).flat().filter(open => open.sender.session === sessionId)
-  const at = own.findIndex(open => open.id === entry.id)
-  const block = questionBlock(entry, { i: at < 0 ? own.length + 1 : at + 1, n: Math.max(own.length, 1) })
+  // Numbered among the questions asked in this turn: several asked in one turn read 1 of 1, then 2 of 2;
+  // one asked in a later turn reads 1 of 1 again, whatever stays open from before.
+  const asked = thisTurn.push(entry.id)
+  const block = questionBlock(entry, { i: asked, n: asked })
   try {
     for (const line of shownLines(block)) $.ui.log(line)
   } catch (err) {
@@ -283,6 +300,82 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
     return { result: `Asked as ${entry.id}, but its block could not be shown in this chat (${messageOf(err)}): write it in your message as it stands.\n\n${block}` }
   }
   return { result: `Asked as ${entry.id}: the question is in the round and shown to the operator in this chat, as a block. Do not write it again.` }
+}
+
+/**
+ * The one closure of a round question: the entry read again and written under its lock, then its
+ * consent recorded, its asker sent the answer (or the coordinator told, for the relay's entry it was
+ * shown), and the work the answer asks added to the asker's list. Answers the tool's reply.
+ */
+export async function settle($: Held, request: SettleRequest, now: Date = new Date()): Promise<Answer> {
+  const who = await whoAmI($)
+  if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once its name is known (after its first turn).')
+  const me: Me = { ...who, session: await $.session.id() }
+  const path = `${await stateDir($)}/round/${request.id}.json`
+  const at = now.toISOString()
+  // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
+  const shown = await closesItself($, request.id)
+  let plan: Plan | { error: string } = { error: `no entry ${request.id} in the round.` }
+  try {
+    await updateOver(storeIo($), path, current => {
+      const asked = current === undefined ? null : parseAsked(current)
+      const relayed = asked !== null || current === undefined ? null : parseRoundEntry(current)
+      if (asked !== null) plan = planAsked(asked, request, me, at)
+      else if (relayed !== null) plan = planRelayed(relayed, request, me, at, shown)
+      else if (current !== undefined) plan = { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
+      return 'error' in plan ? undefined : `${JSON.stringify(plan.entry)}\n`
+    })
+  } catch (err) {
+    await logLine($, 'question', `${request.id} not settled: ${messageOf(err)}`)
+    return refuse(`${request.id} could not be written (${messageOf(err)}); nothing changed, settle it again.`)
+  }
+  const done = plan as Plan | { error: string }
+  if ('error' in done) return refuse(done.error)
+  const said = [`Settled ${request.id}: ${String(done.entry['status'])}.`]
+  if (done.consentBy !== null) {
+    const question = typeof done.entry['ask'] === 'string' ? done.entry['ask'] : done.entry['question']
+    const missed = await writeConsent($, { ...done.entry, question }, request.text, done.consentBy, at)
+    if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
+  }
+  if (done.relayed) await forgetRelayed($, done.entry)
+  if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }])
+  if (done.deliver === 'pending') {
+    await deliverInTurn($)
+    said.push(`The answer goes to ${done.asker.name} now.`)
+  }
+  if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
+  if (request.work !== null) {
+    const own = done.asker.session === me.session
+    const made = await callTodo($, { action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)
+    said.push(made.isError ? `The work it asks is not recorded: ${made.result}` : made.result)
+  }
+  return { result: said.join(' ') }
+}
+
+// The answer sent to its asker at once — its session while it has a row here (two sessions may share
+// a name), else its name — then its outcome written on the entry while it still holds that answer:
+// delivered, or failed with the host's reason, which the pane then shows.
+async function deliverSettled($: Held, path: string, done: Plan, me: Me, at: string): Promise<string> {
+  let reason: string | null = null
+  try {
+    const live = done.asker.session !== '' && sessionKey(done.asker.session) in await readSessions($)
+    const sent = await $.session.send({ to: (live ? { sessionId: done.asker.session } : done.asker.name) as string, text: settledMessage(done.entry, me) })
+    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
+  } catch (err) {
+    reason = messageOf(err)
+  }
+  const delivery = { state: reason === null ? 'delivered' : 'failed', at: new Date().toISOString(), attempts: 1, ...(reason !== null ? { reason } : {}) }
+  try {
+    await updateOver(storeIo($), path, current => {
+      const now = current === undefined ? null : parseAsked(current)
+      return now !== null && now.answer?.at === at ? `${JSON.stringify({ ...now, delivery })}\n` : undefined
+    })
+  } catch (err) {
+    await logLine($, 'question', `the delivery of ${String(done.entry['id'])} not written: ${messageOf(err)}`)
+  }
+  if (reason === null) return `Sent to ${done.asker.name}.`
+  await logLine($, 'question', `the answer to ${String(done.entry['id'])} was not delivered to ${done.asker.name}: ${reason}`)
+  return `Not delivered to ${done.asker.name} (${reason}): the entry says so; tell it by message.`
 }
 
 // Whether the session is an agent at its start; a role that cannot be told keeps the tool.
@@ -309,7 +402,7 @@ export function register(on: On<Held>): void {
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
           + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as declare_wait takes them, and offers choice_a "Accorder", choice_b "Refuser". '
-          + 'For a coordinator or an auditor.',
+          + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -338,8 +431,60 @@ export function register(on: On<Held>): void {
     return next(e)
   })
 
+  on('turn.start', {}, async ($, e, next) => {
+    if (e.agentId === undefined) askTurnStarted()
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   on('tool.call', { tool: `mcp__orchestrator__${ASK_TOOL}` }, async ($, e) => callAsk($, e)).catch(async ($, e, next) => {
     await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the question could not be asked; the module\'s log says why', isError: true }
+  })
+}
+
+// The settle tool, registered at each start beside ask, for every main session but an agent's.
+export function registerSettle(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      if (await agentAtStart($)) return next(e)
+      await $.tool.register({
+        name: SETTLE_TOOL,
+        isDeferred: false,
+        description: 'Closes a question of the round by its id, and sends the answer to its asker at once. '
+          + 'outcome: `answered-here` (he answered in this tab; answer: his words or letter), `answered-by-message` (his answer to your own question reached you by a message; answer, and author: that session), '
+          + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker. '
+          + 'For an orchestrator, a coordinator or an auditor.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            outcome: { type: 'string', enum: [...OUTCOMES] },
+            answer: { type: 'string' },
+            reason: { type: 'string' },
+            author: { type: 'string' },
+            work: { type: 'string' },
+          },
+          required: ['id', 'outcome'],
+        },
+      })
+    } catch (err) {
+      await logLine($, 'question', `${SETTLE_TOOL} not registered: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  on('tool.call', { tool: `mcp__orchestrator__${SETTLE_TOOL}` }, async ($, e) => {
+    if (e['agentId']) return refuse('a subagent settles nothing: only the main thread settles a question.')
+    const parsed = parseSettle(e)
+    return 'error' in parsed ? refuse(parsed.error) : settle($, parsed.request)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return { result: 'the question could not be settled; the module\'s log says why', isError: true }
   })
 }

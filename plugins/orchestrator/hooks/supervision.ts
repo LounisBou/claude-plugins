@@ -30,8 +30,8 @@ import { entryQuestions, machineLine, questionBody, questionShape, type Choice }
 import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
-import { declaredConsent } from './wait.ts'
-import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
+import { declaredAsked, declaredConsent } from './wait.ts'
+import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
@@ -47,6 +47,7 @@ import {
 import {
   CONSENT_REPO_CAP, askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -219,7 +220,7 @@ const PANE_REFRESH_MS = 20000
 
 // How often an open coordinator's pane looks at its round. The host offers no watch on a
 // file: the clock stats the round's directory, whose mtime every write moves (the module, the
-// script's round-close and the senders' sessions all rename a file into it), and redraws only
+// `settle` and the senders' sessions all rename a file into it), and redraws only
 // when it moved, so a question settled elsewhere leaves the pane within this delay for one
 // stat a tick.
 const PANE_ROUND_POLL_MS = 2000
@@ -427,7 +428,7 @@ const seenWaits = new Map<string, WaitRecord | null>()
 
 // A write of a wait file merged with what another process wrote since this one read it: the
 // file has writers in several processes (its session's relay, the coordinator's hooks forgetting
-// a fingerprint, `coordinator.sh round-close`), and a write computed from an older read put back
+// a fingerprint, the coordinator's `settle`), and a write computed from an older read put back
 // a fingerprint another had just forgotten. A field this write leaves as it read it, and that the
 // file now holds otherwise, keeps the file's value; every other field is this write's.
 export function mergeWait(seen: WaitRecord | null | undefined, now: WaitRecord | null, record: WaitRecord): WaitRecord {
@@ -1059,13 +1060,13 @@ export function reopenedText(entry: RoundEntry): string {
 
 // Whether the entry is closed by the module when settled: the coordinator on this machine was
 // shown it. A coordinator elsewhere never reads this round.
-async function closesItself($: any, id: string): Promise<boolean> {
+export async function closesItself($: any, id: string): Promise<boolean> {
   return !!(await coordinatorAddress($))?.local && await shownToCoordinator($, id)
 }
 
 // The settled entries told to the coordinator on this machine, one message each, while time is
 // left before `until`: a notice that does not fit, is refused or throws is one log line.
-async function tellSettled($: any, settled: readonly Settled[], until = Infinity): Promise<void> {
+export async function tellSettled($: any, settled: readonly Settled[], until = Infinity): Promise<void> {
   if (settled.length === 0) return
   let to: CoordinatorTo
   try {
@@ -1119,7 +1120,7 @@ function stopWake(wake: WakeMemory): void {
   wake.timer = null
 }
 
-// One reading: the questions just due, the answers round-close left to deliver, then the answers
+// One reading: the questions just due, the answers the coordinator's `settle` left to deliver, then the answers
 // to send again to another machine. A failure of any is one log line, and the next reading still
 // comes. A timer no longer the one armed reads nothing.
 async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
@@ -1405,45 +1406,15 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
   })
 }
 
-// A Bash command that runs `coordinator.sh round-close`, the path quoted or not.
-const ROUND_CLOSE = /\bcoordinator\.sh["']?\s+round-close\b/
-export function runsRoundClose(command: string): boolean {
-  return ROUND_CLOSE.test(command)
-}
-
-// The answers round-close left pending, delivered one reading at a time: the reading a command
+// The answers the coordinator's `settle` left pending, delivered one reading at a time: the reading a command
 // starts waits for the one already running, so the same pending answer is never sent twice by
 // two readings that both found it pending.
 let delivering: Promise<void> = Promise.resolve()
-function deliverInTurn($: any): Promise<void> {
+export function deliverInTurn($: any): Promise<void> {
   delivering = delivering.then(() => deliverClosedAnswers($)).catch(async err => {
     await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
   })
   return delivering
-}
-
-// Each ruling relayed at once (the operator's ruling 6.3 of 2026-10-31): once a round-close has
-// run in the recorded coordinator's session, the answers it left pending are delivered there and
-// then, before its next question is presented, rather than at the round's next reading up to
-// ROUND_WAKE_MS later. A command refused ran nothing and delivers nothing. Bounded: a delivery
-// past RELAY_BOUND_MS goes on, and the command's result is answered without it.
-export function registerCloseRelay(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: (e: any) => any) => {
-    const out = await next(e)
-    if (!runsRoundClose(String(e.command ?? '')) || out?.deny) return out
-    try {
-      const done = await withDeadline((async () => {
-        if (await recordedCoordinator($)) await deliverInTurn($)
-      })(), RELAY_BOUND_MS)
-      if (isDegradedPass(done)) await logLine($, 'supervision', `round delivery: did not finish within ${RELAY_BOUND_MS} ms after a round-close, left to go on`)
-    } catch (err) {
-      await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
-    }
-    return out
-  }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
 }
 
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
@@ -1619,9 +1590,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // ends, and that start makes the declaration stale while the relay still reads its files.
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
     const consent = e.agentId ? null : declaredConsent()
+    const onAsked = e.agentId ? false : declaredAsked()
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent, onAsked), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -1710,8 +1682,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side; so are a remote orchestrator's
   // ask, entered in the coordinator's round, its acknowledgment, and the acknowledgment of an
-  // answer sent back (remote-round.ts). That answer reaches the sender's model as its readable
-  // line alone, its marked first line taken out. A coordinator's message
+  // answer sent back (remote-round.ts), by the event line or an older machine's lines. That
+  // answer reaches the sender's model as its readable part alone, its marked line taken out. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
@@ -1720,11 +1692,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
-        if (isAsk(delivery.body)) return await receiveAsk($, delivery)
-        if (isAck(delivery.body)) return await receiveAck($, delivery.body)
-        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, delivery.body)
-        if (isAnswer(delivery.body)) {
-          const received = await receiveAnswer($, delivery)
+        if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body))
+        if (isAck(delivery.body)) return await receiveAck($, oldAck(parseAck(delivery.body), 'ask'))
+        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, oldAck(parseAnswerAck(delivery.body), 'answer'))
+        const q = isQ(delivery.body) ? parseQ(delivery.body) : null
+        if (isQ(delivery.body) && q?.event.kind !== 'answer') {
+          return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null, true)
+        }
+        if (isAsk(delivery.body)) return await receiveAsk($, delivery, parseAsk(delivery.body), false)
+        if (q?.event.kind === 'answer' || isAnswer(delivery.body)) {
+          const answer = q?.event.kind === 'answer' ? { id: q.id, ...q.event } : parseAnswer(delivery.body)
+          const received = await receiveAnswer($, delivery, answer, q !== null)
           if ('consumed' in received) return received
           // The marked first line out, the readable answer in its place, the envelope kept.
           const at = e.text.indexOf(delivery.body)
@@ -2031,11 +2009,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      // A waiting row with its line in the pane is not one the operator is left without.
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key)).length
-      const says = waiting === 0
-        ? WORDS.none
-        : `${WORDS.none} in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
+      // A waiting row with its line in the pane, or whose question asked with `ask` the pane draws, is
+      // not one the operator is left without.
+      const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
+      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key) && !askedHere.has(row.key)).length
+      const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
+      const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
       // The question the card asks: an entry that asks several presents them one at a time, the
       // first not yet answered.
       const parts = asking ? entryQuestions(asking) : []
@@ -2292,7 +2271,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
-        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
+        // Beside the questions asked with `ask`, the line still counts the orchestrators waiting with none drawn.
+        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 || waiting > 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
         ...(nextLine ? [nextLine] : []),
         ...(askedPieces.length === 0 ? [] : [{
           node: el.Box({ flexDirection: 'column', ...(asking !== null ? { marginTop: 1 } : {}), children: askedPieces.map(piece => piece.node) }),
@@ -2374,7 +2354,7 @@ async function dropMark($: any): Promise<void> {
 }
 
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
-// coordinator and an auditor do, as one rule for the turn's end, the prompt and the answered tool.
+// coordinator and an auditor do, as one rule for the turn's end and the prompt.
 export function entersRound(role: string | null): boolean {
   return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
 }
@@ -2403,7 +2383,9 @@ export function entersRound(role: string | null): boolean {
 // `consent` is the subject the turn's operator question declared it asks consent on, read when the
 // turn ended. It rides with the entry wherever the entry goes: into the round on this machine, on
 // the ask line to a coordinator elsewhere; with no coordinator at all, one log line names it.
-export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null): Promise<void> {
+// `onAsked`: the turn's operator wait waits on questions asked with `ask`, already in the round as
+// their own objects: its wait is written, so its row shows it waiting, and no entry is entered or sent.
+export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null, onAsked = false): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2467,6 +2449,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     ? waitPatch(reasked && before ? { ...before, waiting_since: null } : before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
+  if (onAsked && wait?.kind === 'operator') return
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
@@ -2524,8 +2507,15 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     if (asked && !carried) await logLine($, 'supervision', `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
     const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
-    if (sent?.isDelivered) return
+    const machine = await machineOf($)
+    const sent = await sendToCoordinator($, to, qAskLine(entry, machine))
+    if (sent?.isDelivered) {
+      // Until the old lines retire, the old ask goes beside the event line: a coordinator of an
+      // older release reads that one alone; this release's enters the first and ignores the other.
+      const old = await sendToCoordinator($, to, askLine(entry, machine))
+      if (!old?.isDelivered) await logLine($, 'supervision', `relay: the old ask line was not delivered to ${addressLabel(to)}: ${old?.reason ?? 'no answer'}`)
+      return
+    }
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
     if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
@@ -2646,6 +2636,7 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
       await tellSettled($, settled)
       return settled.map(({ entry }) => entry.id)
     }
+    await answeredInTab($, sessionId, held.since)
     const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since, held.said))
     if (sent?.isDelivered) {
       // The round of a coordinator elsewhere is not this machine's: no consent record is written
@@ -2659,6 +2650,16 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
     await logLine($, 'supervision', `withdraw: ${(err as Error).message}`)
     return null
   }
+}
+
+// The question a coordinator elsewhere holds for this wait, settled here first by what the operator
+// typed in this tab: kept as the last answer taken (answeredKey), so the pane's answer crossing it
+// is told « already answered » (receiveAnswer), the owner's first settlement winning.
+async function answeredInTab($: any, sessionId: string, since: string | null): Promise<void> {
+  const wait = await readWait($, sessionId)
+  const id = wait?.relayed_id ?? wait?.pending ?? null
+  if (!id || !since) return
+  await writeAtomic($, `${await storeOf($)}/${answeredKey(sessionId)}`, JSON.stringify({ id, since, by: 'tab' }) + '\n')
 }
 
 // The question of a session's wait that a coordinator elsewhere holds (acknowledged: `relayed`) or
@@ -2773,20 +2774,23 @@ export function withConsent(entry: RoundEntry, consent: RoundEntry['consent'] | 
 // record (core's consent-record.ts), the contract github reads in place of the round. An entry
 // that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
 // is: an entry that asked a consent and records none says why in one log line.
-export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<void> {
-  if (!entry.consent) return
+export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<string | null> {
+  if (!entry.consent) return null
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
   if (!record) {
-    await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: « ${text.trim()} » names none of its choices`)
-    return
+    const why = `« ${text.trim()} » names none of its choices`
+    await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: ${why}`)
+    return why
   }
   try {
     const path = consentPath(await configDir($), record)
     const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 5000 })
     if (made.exitCode !== 0) throw new Error(made.stderr || `mkdir exited ${made.exitCode}`)
     await writeAtomic($, path, JSON.stringify(record) + '\n')
+    return null
   } catch (err) {
     await logLine($, 'supervision', `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
+    return (err as Error).message
   }
 }
 
@@ -2883,7 +2887,7 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
     const path = roundPath(await stateDir($), asked.id)
     const at = new Date().toISOString()
     // The coordinator that was shown this question leaves it at once, in its own session: the
-    // entry is closed here, in the same rename, and never waits on its round-close.
+    // entry is closed here, in the same rename, and never waits on the coordinator's `settle`.
     const closed = await shownToCoordinator($, asked.id)
     const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
     // Read again under the entry's lock: a question its sender withdrew meanwhile is left as it
@@ -2943,7 +2947,7 @@ async function answerTwins($: any, entry: RoundEntry, text: string, at: string):
 // One send of an answer to a sender on this machine, `readable` the message it receives, to its
 // session (senderAddress); then the entry read again and, while it still holds that answer and its
 // delivery has not moved, written whole once: `failed` with the host's reason when the send was
-// not delivered, or, for an answer whose delivery round-close left pending, `delivered`. A pane's
+// not delivered, or, for an answer whose delivery settle left pending, `delivered`. A pane's
 // answer delivered writes nothing more.
 async function deliverLocal($: any, path: string, entry: RoundEntry, readable: string): Promise<void> {
   const answer = entry.answer!
@@ -2983,10 +2987,10 @@ async function failMismatched($: any, path: string, entry: RoundEntry): Promise<
 }
 
 // The answers the coordinator closed in its tab, read at each round wake whether the pane is open
-// or not: an entry `coordinator.sh round-close` closed with a delivery pending and never sent is
+// or not: an entry the coordinator's `settle` closed with a delivery pending and never sent is
 // sent once — to its sender's session on this machine (deliverLocal), or as a marked line to
 // another machine (sendAnswer, its resends then resendAnswers') — and its outcome written in its
-// delivery. One `round-close --withdraw` closed is told as a withdrawal (coordinatorClosedText). A failure of one entry is one log line, and the others are still read.
+// delivery. One the coordinator withdrew with `settle` is told as a withdrawal (coordinatorClosedText). A failure of one entry is one log line, and the others are still read.
 async function deliverClosedAnswers($: any): Promise<void> {
   for (const { path, entry } of await readRound($)) {
     const delivery = entry.delivery
@@ -3012,7 +3016,9 @@ async function sendAnswer($: any, path: string, entry: RoundEntry, text: string)
   let reason: string | null = null
   try {
     const readable = (entry.answer!.by === 'coordinator' ? coordinatorClosedText : paneAnswerText)(entry, carried, at)
-    const sent = await $.session.send({ to: entry.origin!.address, text: answerLine(entry.id, entry.since, carried, at, readable) })
+    // An entry entered from an older machine's line, or before this release, is answered in that line, which it alone reads.
+    const line = entry.origin!.line === 'q' ? qAnswerLine : answerLine
+    const sent = await $.session.send({ to: entry.origin!.address, text: line(entry.id, entry.since, carried, at, readable) })
     if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
   } catch (err) {
     reason = (err as Error).message
@@ -3072,7 +3078,7 @@ function rowKeyOf(entry: RoundEntry): string {
 // Where an entry's answer goes: its sender's own session, by the id the entry recorded, while
 // that session has a live row on this machine — two sessions may share a name, and a name sent
 // to is refused when they do. An entry naming no such session goes to its sender's name.
-async function senderAddress($: any, entry: RoundEntry): Promise<string | { sessionId: string }> {
+export async function senderAddress($: any, entry: RoundEntry): Promise<string | { sessionId: string }> {
   if (entry.session === '') return entry.from
   return sessionKey(entry.session) in await readSessions($) ? { sessionId: entry.session } : entry.from
 }
@@ -3085,7 +3091,7 @@ async function entryIsOpen($: any, id: string): Promise<boolean> {
 // A settled entry's fingerprint forgotten in its sender's wait file, so the same question asked
 // again is entered again: the file is re-read and written back with `relayed` null only when it
 // still holds that entry's own fingerprint (a later wait may have replaced it).
-async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
+export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   const now = await readWait($, entry.session)
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...withoutMark(now), relayed: null })
 }
@@ -3095,12 +3101,12 @@ export function paneAnswerText(entry: RoundEntry, answer: string, at: string): s
   return `[module] The operator answered from the coordinator's pane at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
 }
 
-// The same report for his answer the coordinator closed in its tab with round-close.
+// The same report for his answer the coordinator closed in its tab with settle.
 export function coordinatorAnswerText(entry: RoundEntry, answer: string, at: string): string {
   return `[module] The operator answered through the coordinator at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
 }
 
-// What the sender of a question `round-close --withdraw` closed is told: that the coordinator
+// What the sender of a question the coordinator withdrew with `settle` is told: that the coordinator
 // withdrew it, settled meanwhile, and the evidence it read on the artifact — never that the
 // operator answered it (the operator's ruling 6.1 of 2026-10-31).
 export function withdrawnText(entry: RoundEntry, evidence: string): string {
@@ -3124,39 +3130,26 @@ function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): s
   return typeof entry.answer?.evidence === 'string' ? withdrawnText(entry, entry.answer.evidence) : coordinatorAnswerText(entry, answer, at)
 }
 
-// The session acted on an answer that reached it by a message (a relay from another session):
-// its open operator entries, or only `only` when named, are marked `answered`, by `message`, with
-// the message's author. Answers the ids still open, for the tool's reply, or null for a session
-// that is no orchestrator, coordinator or auditor.
-export async function answerByMessage($: any, author: string, only: string | null): Promise<string[] | null> {
-  const sessionId = await $.session.id()
-  if (!entersRound(await sessionRole($, sessionId))) return null
-  await tellSettled($, await withdrawStale($, sessionId, null, `answered by a message from ${author}`,
-    entry => entry.kind !== 'operator' || (only !== null && entry.id !== only), { author }))
-  return (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open').map(({ entry }) => entry.id)
-}
-
 // An orchestrator's turn ended on a machine line other than the wait an open entry of its own
 // holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
 // pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
 // of its wait and withdraws nothing. The same withdrawal closes every open entry of a session
 // that is superseded by its new question, that ended, or that handed over (`current` null).
 // `current` is the id of the entry this turn's wait has, kept open; `why` the withdrawal's answer
-// text; `kept` the entries left open besides; `via` set, the answer reached the sender by a message
-// from that author: the entry is `answered`, by `message`, rather than withdrawn. An entry the
+// text; `kept` the entries left open besides. An entry the
 // coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
 // every write is done. Each withdrawal is one log line; one that cannot be written is one too,
 // and the relay goes on.
-async function withdrawStale($: any, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean, via?: { author: string }): Promise<Settled[]> {
+async function withdrawStale($: any, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
   const settled: Settled[] = []
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open' || entry.id === current || kept?.(entry)) continue
     try {
       const closed = await closesItself($, entry.id)
-      const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: via ? 'message' : 'sender', at: new Date().toISOString(), ...via }
+      const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: 'sender', at: new Date().toISOString() }
       // Read again under the lock: a move to a successor or an answer in between is never overwritten.
       const written = await changeEntry($, path, fresh =>
-        !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, status: closed ? 'closed' : via ? 'answered' : 'withdrawn', answer })
+        !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, status: closed ? 'closed' : 'withdrawn', answer })
       if (!written) continue
       await logLine($, 'supervision', `round: withdrawn by the sender: ${entry.id}`)
       await forgetRelayed($, entry)
@@ -3443,7 +3436,7 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
 // proposal withdrawing none. A wait that asks nothing never withdraws its session's open
 // question with choices, which only copies its urgent mark. An entry moved here from a
 // predecessor is the operator's question still, whatever this session asks next: only its
-// answer, a round-close, the tab's typed answer or this session's own end settles it.
+// answer, a settle, the tab's typed answer or this session's own end settles it.
 async function supersede($: any, entry: RoundEntry): Promise<void> {
   if (entry.kind !== 'operator') return
   const silent = asksNothing(entry)
@@ -3462,8 +3455,7 @@ async function supersede($: any, entry: RoundEntry): Promise<void> {
 // the wait's text too: a note without choices under the same wait has the same id and the same
 // start (roundEntryId reads no question under a wait that blocks something), so it never replaces
 // the entry, as keptChoices keeps a local one's. Anything else is one log line.
-async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: string }> {
-  const asked = parseAsk(delivery.body)
+async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
     await logLine($, 'supervision', `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
@@ -3479,13 +3471,18 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
     step = 'the entry read'
     const path = roundPath(await stateDir($), asked.entry.id)
     const known = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    // The same ask by the other line, sent beside the one it was entered by: the first was
+    // taken and acknowledged, this one changes nothing and is acknowledged nowhere.
+    if (known?.since === asked.entry.since && known.origin && (known.origin.line === 'q') !== byEvent) {
+      return { consumed: 'orchestrator: a remote question received by its other line, ignored' }
+    }
     if (known?.since === asked.entry.since) {
       if (known.status === 'open') {
         step = 'the urgent mark'
         await takeUrgent($, { path, entry: known }, asked.entry)
       }
     } else {
-      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
+      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from, ...(byEvent ? { line: 'q' as const } : {}) } }
       step = 'the entry write'
       await changeEntry($, path, () => entry)
       await logLine($, 'supervision', `round: entered from ${asked.machine}: ${entry.id}`)
@@ -3497,7 +3494,8 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
       $.ui.invalidate('ui.render')
     }
     step = 'the acknowledgment'
-    const sent = await $.session.send({ to: from, text: ackLine(asked.entry.id, asked.entry.since) })
+    const ack = byEvent ? qAckLine({ id: asked.entry.id, seq: seqOf(asked.entry.since), of: 'ask' }) : ackLine(asked.entry.id, asked.entry.since)
+    const sent = await $.session.send({ to: from, text: ack })
     if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
     await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
@@ -3510,13 +3508,12 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
 // a delivery's, and clears it. An older ask's, late, matches nothing: the newer one stays pending
 // and is sent again. The wait is read again just before, a turn's end may have written it. Any
 // other is one log line.
-async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
-  const ack = parseAck(body)
+async function receiveAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the wait read'
   try {
     const sessionId = await $.session.id()
     const now = ack === null ? null : await readWait($, sessionId)
-    if (ack === null || !now || now.pending !== ack.id || now.waiting_since !== ack.since || typeof now.pending_key !== 'string') {
+    if (ack === null || !now || now.pending !== ack.id || !now.waiting_since || seqOf(now.waiting_since) !== ack.seq || typeof now.pending_key !== 'string') {
       await logLine($, 'supervision', `receive: an acknowledgment ${ack === null ? 'was refused' : `of ${ack.id} matches no pending question`}`)
       return { consumed: 'orchestrator: an acknowledgment, dropped' }
     }
@@ -3538,8 +3535,7 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
 // one part a model reads. The last one taken is kept (answeredKey): the same answer sent again, its
 // acknowledgment lost, is acknowledged again and passed nowhere. A throw is one log line and the
 // readable line still passes. A refused one is one log line, passed nowhere, never acknowledged.
-async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: string } | { readable: string }> {
-  const answer = parseAnswer(delivery.body)
+async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<typeof parseAnswer>, byEvent: boolean): Promise<{ consumed: string } | { readable: string }> {
   if (!answer) {
     await logLine($, 'supervision', `receive: an answer was refused (${delivery.body.length} characters)`)
     return { consumed: 'orchestrator: a malformed answer, refused' }
@@ -3550,6 +3546,8 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
     const taken = `${await storeOf($)}/${answeredKey(sessionId)}`
     const last = parseAnswered(String(await $.fs.read(taken).catch(() => '')))
     const again = last?.id === answer.id && last.since === answer.since
+    // Settled first in this session's own tab: the answer that crossed it is not applied.
+    const already = again && last.by === 'tab'
     const now = again ? null : await readWait($, sessionId)
     if (now && now.waiting_since === answer.since && (now.relayed_id === answer.id || now.pending === answer.id)) {
       step = 'the wait write'
@@ -3561,9 +3559,14 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
     const from = peerAddress(delivery)
     if (!from) await logLine($, 'supervision', `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
     else {
-      const sent = await $.session.send({ to: from, text: answerAckLine(answer.id, answer.since) })
+      // « Already » rides on the event line's acknowledgment alone: an old line's answer that crossed
+      // the tab's is acked by it too, never as delivered, so the pane says it failed. A coordinator of
+      // an older release reads no such acknowledgment: its answer stays unacked and fails there.
+      const ack = byEvent || already ? qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) }) : answerAckLine(answer.id, answer.since)
+      const sent = await $.session.send({ to: from, text: ack })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
     }
+    if (already) return { consumed: 'orchestrator: an answer to a question answered in its tab first, said already answered' }
     if (again) return { consumed: 'orchestrator: an answer received already, acknowledged again' }
   } catch (err) {
     await logLine($, 'supervision', `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
@@ -3572,10 +3575,10 @@ async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: st
 }
 
 // The last answer taken, as answeredKey's file holds it: null when it holds no id and start.
-function parseAnswered(text: string): { id: string; since: string } | null {
+function parseAnswered(text: string): { id: string; since: string; by?: 'tab' } | null {
   try {
     const read = JSON.parse(text)
-    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since } : null
+    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since, ...(read.by === 'tab' ? { by: 'tab' as const } : {}) } : null
   } catch {
     return null
   }
@@ -3584,8 +3587,7 @@ function parseAnswered(text: string): { id: string; since: string } | null {
 // A remote sender's acknowledgment of the answer sent to it, consumed whatever it holds: the
 // entry of that id and start, its answer pending, sent or failed, is acknowledged and closed, and
 // the pane drawn again. Any other is one log line.
-async function receiveAnswerAck($: any, body: string): Promise<{ consumed: string }> {
-  const ack = parseAnswerAck(body)
+async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the entry read'
   try {
     if (!ack) {
@@ -3595,7 +3597,7 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
     const path = roundPath(await stateDir($), ack.id)
     const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     const state = entry?.delivery?.state
-    if (!entry?.origin || !entry.delivery || entry.since !== ack.since || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
+    if (!entry?.origin || !entry.delivery || seqOf(entry.since) !== ack.seq || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
       await logLine($, 'supervision', `receive: an answer's acknowledgment of ${ack.id} matches no answer sent`)
       return { consumed: "orchestrator: an answer's acknowledgment, dropped" }
     }
@@ -3603,6 +3605,8 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
     await changeEntry($, path, now => {
       if (!now?.delivery || now.delivery.state !== entry.delivery!.state) return null
       const { reason: _reason, ...delivery } = now.delivery
+      // Answered first in its sender's tab: the pane says so, as it says an answer not delivered.
+      if (ack.already) return { ...now, status: 'closed', delivery: { ...delivery, state: 'failed', at: new Date().toISOString(), reason: ALREADY_ANSWERED } }
       return { ...now, status: 'closed', delivery: { ...delivery, state: 'acked', at: new Date().toISOString() } }
     })
     step = 'the pane redraw'
@@ -3612,6 +3616,19 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
   }
   return { consumed: "orchestrator: an answer's acknowledgment, recorded" }
 }
+
+// An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
+async function receiveQAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
+  return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
+}
+
+// An old line's acknowledgment, read as the event line's: its start as the seq.
+function oldAck(ack: { id: string; since: string } | null, of: QAck['of']): QAck | null {
+  return ack && { id: ack.id, seq: seqOf(ack.since), of }
+}
+
+// What the pane says of an answer its sender's tab had settled first.
+const ALREADY_ANSWERED = 'already answered in its own tab'
 
 // A peer's address as its envelope gave it, when it is one a send can reach.
 function peerAddress(delivery: Delivery): string | null {
@@ -3636,7 +3653,15 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
     await logLine($, 'supervision', `receive: a marked row was refused (${body.length} characters)`)
     return { consumed: 'orchestrator: a malformed supervision row, refused' }
   }
-  await writeAtomic($, `${await storeOf($)}/${remoteKey(row.name)}`, JSON.stringify(row) + '\n')
+  const path = `${await storeOf($)}/${remoteKey(row.name)}`
+  const io = storeIo($)
+  try {
+    await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(row) + '\n'))
+  } catch (err) {
+    // The lock stayed held, or the write failed: the next row the sender sends is stored instead.
+    await logLine($, 'supervision', `receive: a remote row of ${row.name} was not stored: ${(err as Error).message}`)
+    return { consumed: 'orchestrator: a supervision row, not stored' }
+  }
   await reconcileRound($)
   return { consumed: 'orchestrator: a supervision row, stored' }
 }
@@ -3663,21 +3688,34 @@ async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<type
 }
 
 // The rows received from other machines, each checked again as it is read; a stale or
-// unreadable one is removed as it is met, so the directory never outgrows the live set.
+// malformed one is removed, so the directory never outgrows the live set. A row met dead is read
+// again under the lock its writer takes (receiveRow), and removed only when it is still dead: a
+// sender's newer row landing between the first read and the removal, or a read that failed once,
+// never loses a live row.
 const REMOTE_READ_CAP = 64
 export async function readRemoteRows($: any): Promise<RemoteRow[]> {
   const dir = `${await storeOf($)}/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
-  const dead: string[] = []
   const now = Date.now()
-  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
-    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
-    const row = parseRemoteRow(`${ROW_MARKER}${String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))}`)
-    if (row && !isRemoteStale(row, now, REMOTE_STALE_AFTER_MS)) rows.push(row)
-    else dead.push(`${dir}/${entry.name}`)
+  const live = (text: string | undefined) => {
+    const row = text === undefined ? null : parseRemoteRow(`${ROW_MARKER}${text}`)
+    return row && !isRemoteStale(row, now, REMOTE_STALE_AFTER_MS) ? row : null
   }
-  if (dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  const io = storeIo($)
+  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
+    if (!entry || entry.kind !== 'file' || isTemporary(entry.name) || entry.name.endsWith(STORE_CONTRACT.lock_suffix)) continue
+    const path = `${dir}/${entry.name}`
+    const row = live(await io.read(path))
+    if (row) { rows.push(row); continue }
+    const kept = await withLockOver(io, path, async () => {
+      const text = await io.read(path)
+      const again = live(text)
+      if (!again && text !== undefined) await io.run(removeArgv(path))
+      return again
+    }, { tries: 5 }).catch(() => null)
+    if (kept) rows.push(kept)
+  }
   return rows
 }
 

@@ -52,8 +52,9 @@ reported in one line, and the next question is presented instead: a settled item
 The shape is the method's question (`method:lifecycle`, « Questions to the operator »), in the user's
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
-« or your own words ». Launch first, in this turn, what the question does not block; the
-question ends the turn's last message, then `declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`. Split references in `blocks` by `, `, never `/`. One question per message.
+« or your own words ». Launch first, in this turn, what the question does not block; then ask it
+with one `ask` call (the module writes its block: write none) and
+`declare_wait({kind: "operator"})`, without `question`. Split references in `blocks` by `, `, never `/`. One question per message.
 
 ## 3. While the answer is awaited
 
@@ -67,7 +68,8 @@ fact that changes a question still to come updates it before it is presented.
 
 ## 4. On the answer, in the same turn and in this order
 
-1. « Recorded: <the ruling in one line> » — the user sees their decision written back.
+1. « Recorded: <the ruling in one line> » — the user sees their decision written back. Given in
+   your tab or by a message, close it with `settle`, the work it asks in `work`.
 2. His answer in the round is the module's dated record, answering any re-ask, a successor's
    too: never copy it. By hand only what binds beyond it (rulings file, `references/succession-predecessor.md`
    item 0; plan; register) and, with no coordinator, the ruling there, verbatim and dated. A goal

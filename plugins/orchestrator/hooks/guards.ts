@@ -24,7 +24,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { DECLARATIONS, type Declarations } from './wait.ts'
+import { DECLARATIONS, declaredAsked, type Declarations } from './wait.ts'
 import { operatorWaitRefusal, turnQuestionReader } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
@@ -529,7 +529,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // operator wait that still holds no question block, read off the message alone: that one
       // is refused again, within REFIRED_REFUSALS (below).
       const refired = Boolean(e.stop_hook_active)
-      if (refired && operatorWaitRefusal(String(e.last_assistant_message ?? '')) === null) return next(e)
+      // A wait on questions asked with `ask` shows its blocks in the chat, not in the message: no block is asked of it.
+      const onAsked = declaredAsked(declarations)
+      if (refired && (onAsked || operatorWaitRefusal(String(e.last_assistant_message ?? '')) === null)) return next(e)
       const sessionId = String(e.session_id ?? '')
       if (!refired) unaskedRefusals.delete(sessionId)
       // The scope first, from the session itself: the launcher's listing is a call to
@@ -572,7 +574,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       if (role === 'coordinator') return next(e)
       // An orchestrator ending on a wait for the operator puts him a question: read off the message too.
-      const unasked = operatorWaitRefusal(String(e.last_assistant_message ?? ''))
+      const unasked = onAsked ? null : operatorWaitRefusal(String(e.last_assistant_message ?? ''))
       if (unasked !== null && !(await askedThisTurn($, transcript, until))) {
         await logLine($, 'guards', 'stop gate: an operator wait with no question')
         return refuse(unasked)
