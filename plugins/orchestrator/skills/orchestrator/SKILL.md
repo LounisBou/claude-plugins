@@ -46,16 +46,14 @@ words.
    pull request found merged or closed stops the work on it at once.
 5. **What you can run is yours to run.** Launch, verify, control, stand down and replace
    your agents without waiting for him; never hand him a line to paste. What reaches him is
-   an arbitration, one at a time, in the method's question shape, through
-   `orchestrator:decide`.
+   an arbitration, through `orchestrator:decide`.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
    blockers, deliveries and gate crossings: act on each. An agent's question or stop is
    yours to answer; only the operator's own goes to him. An agent reporting « waiting »
    has stalled: read its tree. Real load on a shared machine is stopped at once.
 7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you
    dispatch. An agent past the gate gets no new phase: rotate it. Your own succession is
-   yours to trigger, at a quiet boundary, with `/orchestrator-succeed`; a session lacking
-   what the role needs is repaired by a successor that has it.
+   `references/lifecycle.md` › « Succession ».
 8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: it is
    pasted from `date -u +%FT%TZ` or the event's own timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
@@ -67,12 +65,13 @@ words.
 
 ## Where the rest lives, read at the moment of the action
 
+Each reference opens on its contents: read the section the moment names, not the whole.
+
 | Moment | Read |
 |---|---|
 | `build`: planning phases, writing a brief, choosing a tier | `references/briefs.md` |
-| Spawning, dispatching, standing down, closing, rotating; a pause, an opening, a move | `references/lifecycle.md` |
+| Spawning, dispatching, standing down, closing, rotating | `references/lifecycle.md` › « The agents' lifecycle is yours », « Context rotation » |
+| A pause, an opening, a move | `references/lifecycle.md` › « Pause, opening and move » |
 | Handing over, or taking over | `/orchestrator-succeed`, then `references/lifecycle.md` › « Succession » |
 | `build`: a review or comments round, a verdict, the ready, the rebase, a CI watch | `references/review.md` |
 | A question to the operator, a coordinator running or not | `commands/decide.md` |
-
-A reference binds whole; read it again at each such moment.

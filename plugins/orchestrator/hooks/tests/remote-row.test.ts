@@ -12,6 +12,7 @@ import {
 } from '../remote-row.ts'
 import { paneRows, sendRow, readRemoteRows, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
+import { fingerprint } from '../relay.ts'
 import { ASK_MARKER, parseAsk } from '../remote-round.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -125,14 +126,20 @@ function remote(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
     name: 'Orch: far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'bench-mac',
-    repo: null, prs: [], ...over,
+    repo: null, prs: [], held: null, ...over,
   }
 }
 
 // The row as 0.58 and 0.59 sent it: the ten fields, no repository and no pull request.
 function oldRowText(row: RemoteRow): string {
-  const { repo: _repo, prs: _prs, ...ten } = row
+  const { repo: _repo, prs: _prs, held: _held, ...ten } = row
   return ROW_MARKER + JSON.stringify(ten)
+}
+
+// The row as 0.60 sent it: the twelve fields, no word on the questions held.
+function twelveRowText(row: RemoteRow): string {
+  const { held: _held, ...twelve } = row
+  return ROW_MARKER + JSON.stringify(twelve)
 }
 
 // --- the send --------------------------------------------------------------------------
@@ -531,3 +538,67 @@ test('past 256 listed entries, the newest watches are still read and a base log 
   expect(fx.sent.length).toBe(1)
   expect(parseRemoteRow(fx.sent[0].text)!.prs).toEqual(['acme/app#1000'])
 })
+
+// --- the questions a row holds open ------------------------------------------------------
+
+const HELD = [{ since: '2026-11-14T10:00:00.000Z', blocks: 'phase 3' }]
+
+test('the row sent says the question the wait file vouches for, delivered or sent and not acknowledged', async () => {
+  const fx = fake()
+  const wait = { waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501' }
+  fx.files.set(WAIT, JSON.stringify({ ...wait, relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }) + '\n')
+  await sendRow(fx.dollar, 's-one')
+  expect(parseRemoteRow(fx.sent[0].text)!.held).toEqual(HELD)
+  fx.files.set(WAIT, JSON.stringify({ ...wait, relayed: null, pending: 'x', pending_key: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }) + '\n')
+  fx.files.set(SENT, JSON.stringify({ ...JSON.parse(fx.files.get(SENT)!), held: [] }))
+  await sendRow(fx.dollar, 's-one')
+  expect(parseRemoteRow(fx.sent[1].text)!.held).toEqual(HELD)
+})
+
+test('a session that works on while its question stays held says so: its wait cleared, the question still listed', async () => {
+  const fx = fake()
+  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501',
+    relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }
+  fx.files.set(WAIT, JSON.stringify(wait) + '\n')
+  await sendRow(fx.dollar, 's-one')
+  const row = parseRemoteRow(fx.sent[0].text)!
+  expect([row.waiting, row.held]).toEqual([null, HELD])
+})
+
+test('a question withdrawn says none held; a wait that vouches for nothing says unknown', async () => {
+  const fx = fake()
+  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501', relayed: null }
+  fx.files.set(WAIT, JSON.stringify(wait) + '\n')
+  await sendRow(fx.dollar, 's-one')
+  expect(parseRemoteRow(fx.sent[0].text)!.held).toEqual([])
+  fx.files.set(WAIT, JSON.stringify({ ...wait, waiting: 'done', blocks: null, last_waiting: null }) + '\n')
+  await sendRow(fx.dollar, 's-one')
+  expect(parseRemoteRow(fx.sent[1].text)!.held).toBeNull()
+})
+
+test('the questions held changing is news at once, whatever the session is doing', () => {
+  const now = Date.now()
+  const row = remote({ held: HELD })
+  expect(rowIsNews(row, rowSent(row, now), now)).toBe(false)
+  expect(rowIsNews(remote({ held: [] }), rowSent(row, now), now)).toBe(true)
+  expect(rowIsNews(row, { ...rowSent(row, now), held: undefined }, now)).toBe(true)
+})
+
+test('the row of 0.60 and the older ones are read as no word on the questions held, never as none held', () => {
+  expect(parseRemoteRow(twelveRowText(remote()))!.held).toBeNull()
+  expect(parseRemoteRow(oldRowText(remote()))!.held).toBeNull()
+  expect(parseRemoteRow(rowText(remote({ held: HELD })))!.held).toEqual(HELD)
+  expect(parseRemoteRow(rowText(remote({ held: [] })))!.held).toEqual([])
+})
+
+for (const [label, held] of [
+  ['two entries', [...HELD, ...HELD]],
+  ['a start that is no time', [{ since: 'soon', blocks: 'phase 3' }]],
+  ['a field more', [{ ...HELD[0], extra: 1 }]],
+  ['blocks past the cap', [{ since: HELD[0].since, blocks: 'x'.repeat(201) }]],
+  ['not an array', 'phase 3'],
+] as const) {
+  test(`a row whose held questions are malformed (${label}) is refused`, () => {
+    expect(parseRemoteRow(rowText(remote({ held: held as never })))).toBeNull()
+  })
+}

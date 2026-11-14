@@ -7,6 +7,7 @@ is deliberately not used here.
 
 import base64
 import hashlib
+import json
 import os
 import re
 
@@ -21,11 +22,9 @@ TITLE_STRIPPED = str.maketrans("", "", "*]")
 
 # What the description lint refuses in the bold line and the alt text of a block, so a
 # title that would break it is refused here, before any block is written. The phrases are
-# hooks/writing.ts NEGATIVE_PHRASES, which a test keeps equal.
-NEGATIVE_PHRASES = (
-    "unchanged", "no dependency", "does not", "doesn't", "is not changed", "left untouched",
-    "no other pull request", "without conflict",
-)
+# engine/negative-phrases.json, which hooks/writing.ts reads too.
+with open(os.path.join(os.path.dirname(__file__), os.pardir, "negative-phrases.json"), encoding="utf-8") as _fh:
+    NEGATIVE_PHRASES = tuple(json.load(_fh)["phrases"])
 _NEGATIVE = re.compile(
     r"(?<![\w-])(%s)(?![\w-])" % "|".join(re.escape(p) for p in NEGATIVE_PHRASES), re.IGNORECASE
 )

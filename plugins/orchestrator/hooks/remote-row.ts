@@ -10,7 +10,7 @@
 import { roleOf } from './session-name.ts'
 import { watchNumberOf } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
-import { confirmsTakeover, type WaitKind } from './relay.ts'
+import { confirmsTakeover, type HeldQuestion, type WaitKind } from './relay.ts'
 
 // The line's fixed head: what the receiver keys on, and nothing a person or a model
 // writes by chance.
@@ -39,6 +39,16 @@ const NUMBER_CAP = 100_000_000
 const REPO_CAP = 140
 const PR_CAP = 150
 
+// The operator questions a row lists as held open, at most this many: a wait file vouches for one.
+export const HELD_CAP = 1
+
+// What a row's and an ask's blocks are cut to: a control character a space, then BLOCKS_CAP. The
+// receiver refuses a line holding a control character, and the question a row says it holds is
+// matched to its entry by these very words.
+export function cleanBlocks(blocks: string): string {
+  return blocks.replace(/[\u0000-\u001f]/g, ' ').slice(0, BLOCKS_CAP)
+}
+
 // The pull requests a row lists, at most this many: the sender cuts to it, the receiver
 // refuses a row past it.
 export const PRS_CAP = 20
@@ -64,15 +74,21 @@ export type RemoteRow = {
   machine: string
   repo: string | null
   prs: string[]
+  // The operator questions its orchestrator still holds open, whatever it is doing: a question
+  // absent from the latest row is no longer held. Null when the sender does not say (a row of an
+  // older release, a wait file that vouches for nothing): unknown, never « none open ».
+  held: HeldQuestion[] | null
 }
 
-// The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request.
+// The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request, and the
+// twelve that followed, as no word on the questions held.
 const OLD_FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
-const FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
+const PRS_FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
+const FIELDS = [...PRS_FIELDS, 'held'] as const
 
 // What was last sent (`rows/<id>`, beside the wait file): the deduplication key. A record
 // written before the repository and the pull requests were carried has neither field.
-export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; sent_at: string }
+export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; held?: HeldQuestion[] | null; sent_at: string }
 
 // A machine label as the pane shows it: the host name's own letters, cut, never empty.
 export function machineLabel(raw: string): string {
@@ -84,7 +100,7 @@ export function machineLabel(raw: string): string {
 // flight (prsInFlight): null for any session that is no named orchestrator — only an
 // orchestrator's row travels. The repository is the store row's own, or none when it is not
 // the receiver's shape.
-export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = []): RemoteRow | null {
+export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null): RemoteRow | null {
   if (!row || row.role !== 'orchestrator' || !row.name || roleOf(row.name) !== 'orchestrator') return null
   const on = row.waiting === 'operator' || row.waiting === 'done'
   const out: RemoteRow = {
@@ -100,6 +116,7 @@ export function remoteRowOf(row: SessionRow | null, machine: string, prs: readon
     machine: machineLabel(machine),
     repo: repoShaped(row.repo) ? row.repo : null,
     prs: prs.filter(prShaped).slice(0, PRS_CAP),
+    held: held === null ? null : held.slice(0, HELD_CAP).map(question => ({ since: question.since.slice(0, STAMP_CAP), blocks: cleanBlocks(question.blocks) })),
   }
   // The receiver refuses a line past its cap whole, so the pull requests are dropped from the
   // end of the sorted list until the line fits: the row is sent, with fewer of them.
@@ -151,12 +168,15 @@ function prOf(slug: string, n: string, repo: string | null): string | null {
 
 // Whether this row is news against what was last sent: a new wait (kind or blocks), a new
 // repository or pull request list, the fill in another band, or the refresh bound passed.
-// Nothing sent yet: news; a record that carries neither repository nor pull requests: news once.
+// Nothing sent yet: news; a record that carries neither repository nor pull requests, or no word on
+// the questions held: news once. The questions held changing is news at the turn's end that changed
+// them, so the coordinator's round follows within one turn.
 export function rowIsNews(row: RemoteRow, last: RowSent | null, now: number): boolean {
   if (!last) return true
   if (last.band !== bandOf(row.context_percent)) return true
   if ((last.waiting ?? null) !== row.waiting || (last.blocks ?? null) !== row.blocks) return true
   if (last.prs === undefined || (last.repo ?? null) !== row.repo || JSON.stringify(last.prs) !== JSON.stringify(row.prs)) return true
+  if (last.held === undefined || JSON.stringify(last.held) !== JSON.stringify(row.held)) return true
   const at = Date.parse(last.sent_at)
   return !Number.isFinite(at) || now - at >= ROW_REFRESH_MS
 }
@@ -168,7 +188,7 @@ export function bandOf(percent: number): number {
 export function rowSent(row: RemoteRow, now: number): RowSent {
   return {
     band: bandOf(row.context_percent), waiting: row.waiting, blocks: row.blocks,
-    repo: row.repo, prs: row.prs, sent_at: new Date(now).toISOString(),
+    repo: row.repo, prs: row.prs, held: row.held, sent_at: new Date(now).toISOString(),
   }
 }
 
@@ -230,7 +250,8 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   const keys = Object.keys(o)
-  const carriesPrs = sameKeys(keys, FIELDS)
+  const carriesHeld = sameKeys(keys, FIELDS)
+  const carriesPrs = carriesHeld || sameKeys(keys, PRS_FIELDS)
   if (!carriesPrs && !sameKeys(keys, OLD_FIELDS)) return null
   const str = (v: unknown, cap: number) => typeof v === 'string' && v.length > 0 && v.length <= cap
   const num = (v: unknown, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max
@@ -250,12 +271,24 @@ export function parseRemoteRow(body: string): RemoteRow | null {
     if (o['repo'] !== null && !repoShaped(o['repo'])) return null
     if (!Array.isArray(o['prs']) || o['prs'].length > PRS_CAP || !o['prs'].every(prShaped)) return null
   }
+  if (carriesHeld && o['held'] !== null && !heldShaped(o['held'])) return null
   if (/[\u0000-\u001f]/.test(String(o['name']) + String(o['blocks'] ?? ''))) return null
   return {
     ...(o as unknown as RemoteRow),
     repo: carriesPrs ? o['repo'] as string | null : null,
     prs: carriesPrs ? o['prs'] as string[] : [],
+    held: carriesHeld ? o['held'] as HeldQuestion[] | null : null,
   }
+}
+
+// The questions a row holds: at most HELD_CAP, each a start and one line of blocks within their caps.
+function heldShaped(held: unknown): held is HeldQuestion[] {
+  return Array.isArray(held) && held.length <= HELD_CAP && held.every(question => {
+    const q = question as Record<string, unknown> | null
+    return !!q && typeof q === 'object' && Object.keys(q).length === 2
+      && typeof q['since'] === 'string' && q['since'].length > 0 && q['since'].length <= STAMP_CAP && Number.isFinite(Date.parse(q['since']))
+      && typeof q['blocks'] === 'string' && q['blocks'].length <= BLOCKS_CAP && !/[\u0000-\u001f]/.test(q['blocks'])
+  })
 }
 
 function sameKeys(keys: readonly string[], fields: readonly string[]): boolean {

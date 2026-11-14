@@ -106,8 +106,8 @@ names you and the sender.
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
 question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
 its own tab and the turn he started there ends on another line or on none, the same entry marked
-`withdrawn`, as for the sender's other open entries then (« withdrawn by the sender »: it no longer
-waits on that question); a new question of the same session withdraws its older open entries
+`withdrawn` (« withdrawn by the sender »), or when its latest row,
+a remote one too, no longer lists it; a new question of the same session withdraws its older open entries
 (« superseded by <id> »), except that a wait whose text asks nothing — no choice, no labelled
 field — is entered as its own entry beside the session's open question with choices and never
 withdraws it; its session ending or its « handed over » to a successor withdraws them

@@ -30,8 +30,7 @@ NEVER close while a phase is not done, or while the tree is dirty
 NEVER touch a version file when the bump type is none
 ```
 
-This skill's own steps end at the branch. A push and a draft pull request need no consent;
-taking it out of draft and the merge follow the method's ready gate and consent rules. Once
+This skill's own steps end at the branch (`method:lifecycle`: consent, ready). Once
 the pull request is open at its final head, run `/implement:review`: the review is made by
 another session, never by this one.
 
@@ -156,7 +155,7 @@ git diff --stat "$BASE"..HEAD
 
 The summary states, in the user's language: the branch, every commit since the base,
 the version if one was written, and each gate command with its exit code. It ends on
-one sentence, said once: this skill's steps end at the branch: a push and a draft pull request need no consent, and ready and merge follow the method's gate.
+one sentence, said once: this skill's steps end at the branch; ready and merge follow the method's gate.
 
 ---
 
@@ -205,8 +204,8 @@ of the repository and stay in it.
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
 | The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `question` |
 
-Each stop says its line once; a question never stops a session (`method:lifecycle`). No answer to
-a stop turns it into an outward action that no instruction calls for.
+Each stop says its line once (`method:lifecycle`). No answer to a stop turns it into an outward
+action that no instruction calls for.
 
 ---
 
