@@ -10,7 +10,7 @@ import { updateOver } from '../core/store-io.ts'
 import {
   addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoItems, todoName, todoPath, type TodoItem,
 } from '../core/todo.ts'
-import { type DeclaredWait } from './stop-gate.ts'
+import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, storeOf } from './supervision.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
@@ -154,11 +154,7 @@ export async function holdsTodos($: Held, wait: DeclaredWait): Promise<string | 
 }
 
 /** The refusal that names the open items and what to do with each. */
-export function todoRefusal(left: readonly TodoItem[], kind: 'done' | 'deferred'): string {
-  return `Not ${kind === 'done' ? 'done' : 'deferred'}: to-do ${left.map(todoName).join(', ')} ${left.length === 1 ? 'is' : 'are'} open. `
-    + 'Do it and close it (todo done, with its outcome), hand it on (todo add … to <session>, then todo done naming it), '
-    + `or, if the operator put it off, record his ruling (todo defer)${kind === 'done' ? ' and declare a deferred wait' : ''}.`
-}
+export const todoRefusal = (left: readonly TodoItem[], kind: 'done' | 'deferred'): string => todoOpen(left.map(todoName), kind)
 
 export function register(on: On<Held>): void {
   on('session.start', {}, async ($, e, next) => {

@@ -140,6 +140,12 @@ const IDS_WRONG = 'A deferred wait must name every deferred item (rows by their 
 const NOTHING_DEFERRED = 'Nothing is deferred: no open row or goal carries the operator\'s ruling. '
   + 'If everything is finished, declare done.'
 const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
+// The to-dos of the session's own list (todo.ts): an open one holds a done, one he did not put off a deferred.
+const TODO_WAYS = ' Do it and close it (todo done, with its outcome), hand it on (todo add … to <session>, then todo done naming it), '
+  + 'or, if the operator put it off, record his ruling (todo defer) and declare a deferred wait.'
+/** The refusal that names the open to-dos and what to do with each; `verb` is the wait that was refused. */
+export const todoOpen = (names: readonly string[], verb: 'done' | 'deferred' = 'done'): string =>
+  `Not ${verb}: ${names.length === 1 ? `to-do ${names[0]} is` : `to-dos ${names.join(', ')} are`} open.${TODO_WAYS}`
 
 // Where the rows and the goals were read: the record files and goals.md files that hold them,
 // said in the refusal so a session sees whose file it is being asked about. Nothing is said
@@ -579,19 +585,20 @@ export function isSuccessorSpawn(command: string): boolean {
 // accepted: `<n> rows` with ` G<m>` for goals, and the ids, each named and none unknown.
 const COUNT_ITEMS = /^(\d+)\s+items?$/i
 const COUNT_FORM = /^(\d+)\s+rows?(?:\s+G(\d+))?$/i
-function idsMismatch(listed: string, rows: readonly string[], goals: readonly string[]): string | null {
-  const total = rows.length + goals.length
+function idsMismatch(listed: string, rows: readonly string[], goals: readonly string[], todos: readonly string[] = []): string | null {
+  const total = rows.length + goals.length + todos.length
   const countWrong = COUNT_WRONG.replace('%s', `${total} items`)
   const items = COUNT_ITEMS.exec(listed.trim())
   if (items) return Number(items[1]) === total ? null : countWrong
   const counted = COUNT_FORM.exec(listed.trim())
   if (counted) {
-    if (Number(counted[1]) === rows.length && Number(counted[2] ?? 0) === goals.length) return null
+    if (Number(counted[1]) === rows.length && Number(counted[2] ?? 0) === goals.length && todos.length === 0) return null
     return countWrong
   }
   const wanted = new Map<string, string>()
   for (const row of rows) wanted.set(row.split(' ')[0].toUpperCase(), `row ${row.split(' ')[0]}`)
   for (const goal of goals) wanted.set(goal.toUpperCase(), goal)
+  for (const todo of todos) wanted.set(`T${todo.split(' ')[0]}`.toUpperCase(), `to-do ${todo.split(' ')[0]}`)
   const named = listed.split(/[,\s]+/).filter(id => id !== '' && !/^rows?$/i.test(id))
   const upper = named.map(id => id.toUpperCase())
   const missing = [...wanted].filter(([id]) => !upper.includes(id)).map(([, name]) => name)
@@ -609,6 +616,8 @@ export function checkWakeDone(left: {
   goalsOpen?: readonly string[]
   goalsDeferred?: readonly string[]
   goalsFaults?: readonly string[]
+  todos?: readonly string[]
+  todosDeferred?: readonly string[]
   rowRecords?: readonly string[]
   goalsRecords?: readonly string[]
   ending?: 'done' | 'deferred'
@@ -621,10 +630,12 @@ export function checkWakeDone(left: {
   const goals = { open: left.goalsOpen ?? [], faults: left.goalsFaults ?? [] }
   const putOffGoals = left.goalsDeferred ?? []
   const reasons = notDoneReasons(stillThere, rows, goals, { rows: left.rowRecords, goals: left.goalsRecords })
-  const names = [...putOff.map(row => `row ${row}`), ...putOffGoals]
+  const putOffTodos = left.todosDeferred ?? []
+  const names = [...putOff.map(row => `row ${row}`), ...putOffGoals, ...putOffTodos.map(todo => `to-do ${todo}`)]
+  if ((left.todos ?? []).length > 0) reasons.push(todoOpen(left.todos ?? [], left.ending === 'deferred' ? 'deferred' : 'done'))
   if (left.ending === 'deferred') {
     if (names.length === 0 && reasons.length === 0) return { case: 'nothing-deferred', reason: NOTHING_DEFERRED }
-    const wrong = names.length > 0 && left.ids !== undefined ? idsMismatch(left.ids, putOff, putOffGoals) : null
+    const wrong = names.length > 0 && left.ids !== undefined ? idsMismatch(left.ids, putOff, putOffGoals, putOffTodos) : null
     if (wrong) reasons.push(wrong)
   } else if (names.length > 0) {
     reasons.push(DEFERRED_STILL.replace('%s', names.join(', ')))

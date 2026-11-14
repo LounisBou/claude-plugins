@@ -582,6 +582,8 @@ type Setup = {
   round?: Record<string, string>
   wait?: string
   roundHang?: 'list' | 'read'
+  // The to-do list of the session (todo.ts), read from the module's todo directory.
+  todos?: string
   // The owner file of the register's record, and further registered records beside it, each
   // with its text, its owner file and its goals.md reading.
   recordOwner?: string
@@ -629,6 +631,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`) || p === WAIT_FILE)) return new Promise(() => undefined)
         if (p.startsWith(`${S.root}/round/`) && setup.round?.[p.slice(S.root.length + 7)] !== undefined) return setup.round[p.slice(S.root.length + 7)]
         if (p === WAIT_FILE && setup.wait !== undefined) return setup.wait
+        if (p.startsWith(`${S.root}/todo/`) && setup.todos !== undefined) return setup.todos
         if (p.startsWith(`${S.ci}/`)) {
           // The owner file is read before its log: the log's own read is the one that fails.
           if (setup.failLogRead && !p.endsWith('.session')) throw new Error('EIO: the log cannot be read')
@@ -2648,4 +2651,79 @@ test('the notice to the coordinator is only a log line when there is none to tel
   const fx = fakeDollar({})
   for (let i = 0; i <= REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
   expect(fx.written.some(l => l.includes('no coordinator to tell'))).toBe(true)
+})
+
+// --- the to-do list beside the record (todo.ts) -------------------------------------------------
+
+const todoLine = (id: number, change: Record<string, unknown> = {}) => JSON.stringify({
+  v: 1, id, opened: '2026-11-14T15:00:00Z', label: `item ${id}`, state: 'open', verdict: '', words: `his words ${id}`, said_at: '2026-11-14T14:58:00Z', from: 'Coord: general', ...change,
+}) + '\n'
+
+test('a done ending is refused while a to-do is open, a deferred one while one he did not put off is, each named', () => {
+  const held = checkWakeDone({ agents: [], checkouts: [], deferred: [], todos: ['3 (item 3)'] })!
+  expect(held.case).toBe('not-done')
+  expect(held.reason).toContain('to-do 3 (item 3) is open')
+  expect(held.reason).toContain('todo done')
+  const later = checkWakeDone({ agents: [], checkouts: [], deferred: [], todos: ['3 (item 3)'], ending: 'deferred' })!
+  expect(later.reason).toContain('to-do 3 (item 3) is open')
+  expect(checkWakeDone({ agents: [], checkouts: [], deferred: [] })).toBeNull()
+})
+
+test('a to-do he put off is deferred work: a done ending names the deferred line, the deferred ending counts it', () => {
+  const left = { agents: [], checkouts: [], deferred: ['5 (a)'], deferredRows: ['5 (a)'], todosDeferred: ['3 (item 3)'] }
+  expect(checkWakeDone(left)!.reason).toContain('to-do 3 (item 3)')
+  expect(checkWakeDone(left)!.reason).toContain('deferred by the operator')
+  expect(checkWakeDone({ ...left, ending: 'deferred', ids: '2 items' })).toBeNull()
+  expect(checkWakeDone({ ...left, ending: 'deferred', ids: '5, T3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ending: 'deferred', ids: '1 items' })!.reason).toContain('the right count is 2 items')
+  expect(checkWakeDone({ ...left, ending: 'deferred', ids: '5' })!.reason).toContain('missing to-do 3')
+  expect(checkWakeDone({ ...left, deferred: [], deferredRows: [], ending: 'deferred', ids: '1 items' })).toBeNull()
+})
+
+test('the stop of an orchestrator ending on done is refused while its list holds an open item, and passes once it is closed', async () => {
+  const { handlers } = mounted()
+  const open = fakeDollar({ todos: todoLine(1) + todoLine(2, { state: 'closed', verdict: 'row 5' }) })
+  const held = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect((held.answer as any).block).toContain('to-do 1 (item 1) is open')
+  expect((held.answer as any).block).not.toContain('item 2')
+  const closed = fakeDollar({ todos: todoLine(1, { state: 'closed', verdict: 'claude-plugins#230' }) })
+  const passed = await stop(handlers['classic.Stop'], closed.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+test('the deferred line takes a to-do he put off, counted with the rows, and refuses one he did not', async () => {
+  const { handlers } = mounted()
+  const putOff = fakeDollar({ todos: todoLine(1, { deferred: 'after the release, 2026-11-14' }) })
+  const passed = await stop(handlers['classic.Stop'], putOff.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — 1 items' }))
+  expect(passed.answer).toBe(passed.passed)
+  const done = await stop(handlers['classic.Stop'], putOff.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect((done.answer as any).block).toContain('deferred by the operator')
+  const live = fakeDollar({ todos: todoLine(1) })
+  const refused = await stop(handlers['classic.Stop'], live.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — 1 items' }))
+  expect((refused.answer as any).block).toContain('to-do 1 (item 1) is open')
+})
+
+test('an auditor stopping with an open to-do and no declared wait is refused once, the item named; a declared wait or an empty list lets it go', async () => {
+  const { handlers } = mounted()
+  const audit = fakeDollar({ launchName: 'Audit: todo', todos: todoLine(1) })
+  const held = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
+  expect((held.answer as any).block).toContain('to-do 1 (item 1) is open')
+  // The refusal is made once: the host re-fires the stop with the marker set, and it passes.
+  const again = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'The report is written.', stop_hook_active: true }))
+  expect(again.answer).toBe(again.passed)
+  const declared = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'Asked.\n\nwaiting: operator — blocks: the answer' }))
+  expect(declared.answer).toBe(declared.passed)
+  const empty = fakeDollar({ launchName: 'Audit: todo' })
+  const none = await stop(handlers['classic.Stop'], empty.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
+  expect(none.answer).toBe(none.passed)
+  const closed = fakeDollar({ launchName: 'Audit: todo', todos: todoLine(1, { state: 'closed', verdict: 'the report' }) })
+  const finished = await stop(handlers['classic.Stop'], closed.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
+  expect(finished.answer).toBe(finished.passed)
+})
+
+test('a coordinator\'s stop is never held by its list: only its end command is', async () => {
+  const { handlers } = mounted()
+  const coord = fakeDollar({ launchName: 'Coord: machine', todos: todoLine(1) })
+  const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'Nothing more.' }))
+  expect(passed.answer).toBe(passed.passed)
 })
