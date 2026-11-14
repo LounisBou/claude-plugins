@@ -79,7 +79,7 @@ outside this repository.
 | 18 | met for the strict parts | `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured; a part joins the day it is strict |
 | 19 | met | `plugins/method` (the kernel and its references), core's `method.ts`; implement and the orchestrator point at `method:lifecycle` (claude-plugins#19, claude-plugins#67, claude-plugins#74) | the orchestrator's relay still parses an agent's status line with its own `parseStatus` (`hooks/relay.ts`) rather than core's `reportStatus` |
 | 20 | met | `/implement:review` runs the review in another session (claude-plugins#20) | the operator's open decision on implement in orchestrated briefs (below) |
-| 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32) | not calibrated on the gauge's first-turn measures, which live on the operator's machine |
+| 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
 | 22 | met | `npm run rules` (claude-plugins#33) | — |
 
 ## Constraints
