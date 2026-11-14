@@ -5497,7 +5497,7 @@ check "the Live state section replaces reading the journal, which is read by gre
 # 2026-11-04 on the cap, its template line).
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
+  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
 # Every successor measures its takeover at the same point, the turn that sends « takeover
 # confirmed », so one orchestration's takeover figures compare from one succession to the next:
 # step 4 keeps the figure recorded when that turn ends, and step 5 reports that reading only.
@@ -5505,7 +5505,7 @@ check "step 5 announces the successor's own measured context from its measure fi
 # sends « takeover confirmed » is the turn before's, or no file at all on a first turn. The
 # figure is the one recorded when that turn ends, read at the next turn's first tool call.
 check "step 4 takes the takeover figure the module records when the « takeover confirmed » turn ends" "yes|yes|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « at takeover confirmed » figure is the `context_tokens` the module records when the turn that sends « takeover confirmed » ends')|$(spells "$ORCH_REFS/lifecycle.md" 'read your measure file at the first tool call of your next turn and keep that figure')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« at takeover confirmed » at the end of the turn that sends it (woken from a pause, the turn that ends step 3)')|$(spells "$ORCH_REFS/lifecycle.md" 'read each at the first tool call of the next turn')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
 check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures, never a later reading' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'The announcement gives these two, never a later reading')"
 # The successor also keeps its first turn's reading: the gap between it and the « takeover
@@ -5514,13 +5514,13 @@ check "step 5 reports the context kept at « takeover confirmed », never a late
 # module writes it only when a turn ends. The « first turn » figure is the one recorded at
 # the end of the first turn, read at the second turn's first tool call.
 check "step 1 says the measure file is written only when a turn ends, and asks no reading before" "yes|no|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'the module writes it only when a turn of yours ends, so it is not there during your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'written when a turn of yours ends')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
 check "step 1's « first turn » figure is the one recorded at the end of the first turn, read at the next turn's first tool call" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens` it records when your first turn ends: read the file at the first tool call of your next turn and keep that figure')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')"
 # A file still missing when it is read — a first turn the host could not measure — gets the
 # four agent briefs' guard: no figure rather than an estimate.
 check "step 1 guards the measure file missing when it is read" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Missing, say so and give no figure')"
 check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1" \
   "$(printf '%s' "$SUCC5" | grep -oF 'on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')"
 check "the design names both figures and why: their gap is the takeover's verification cost" "yes|yes" \
