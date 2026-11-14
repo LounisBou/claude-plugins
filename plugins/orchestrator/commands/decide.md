@@ -20,8 +20,7 @@ The first says in three to five sentences what you work on, for its round of its
 your questions come together.
 Its pane shows each one, the coordinator's tab when the pane is closed;
 declare it with `declare_wait` and `urgent: true` only for what step 1 calls urgent.
-His answer there is his ruling, recorded by the module (step 4). Each question is written in
-full in your own chat too.
+His answer there is his ruling (step 4). Each question is also written in full in your chat.
 
 ## 1. Collect first, then announce the count
 
@@ -69,15 +68,14 @@ fact that changes a question still to come updates it before it is presented.
 ## 4. On the answer, in the same turn and in this order
 
 1. « Recorded: <the ruling in one line> » — the user sees their decision written back.
-2. His answer in the round is the module's dated record, which answers the same question asked
-   again, a successor's too: never copy it. By hand, only what binds beyond it (a standing order
-   in the rulings file, `references/lifecycle.md` item 0; the plan; the register) and, with no
-   coordinator, the ruling there, verbatim and dated. A ruling that rules out a goal is written with
-   `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, so the stop gate
-   reads it. A ruling that defers work (« later, when I say so ») is recorded with
-   `dispatch-record.sh defer <record> <id> --ruling "<his words, dated>"` for a row and
-   `dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>"` for a goal, never left
-   open as a question: the turn then declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.
+2. His answer in the round is the module's dated record, answering any re-ask, a successor's
+   too: never copy it. By hand only what binds beyond it (rulings file, `references/lifecycle.md`
+   item 0; plan; register) and, with no coordinator, the ruling there, verbatim and dated. A goal
+   ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
+   stop gate reads. Work deferred (« later, when I say so »):
+   `dispatch-record.sh defer <record> <id>` (a row) or `dispatch-record.sh goals <record> defer <G>`
+   (a goal) with `--ruling "<his words, dated>"`, never left open as a question; the turn then
+   declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.
 3. Relay it at once, showing nothing of it, to the agent whose STOP it answers, if any — `SendMessage`,
    the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator ruled » — and mark
    it « relayed » in `decision-round.md`.
