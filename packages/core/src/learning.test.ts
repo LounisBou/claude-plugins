@@ -4,7 +4,7 @@ import { DATA_FILES } from './data.ts'
 import {
   AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, eventId, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
-  foldWeekly, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
+  foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFolded, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
 const AT = '2026-11-14T10:15:00Z'
@@ -207,6 +207,48 @@ describe('the weekly fold of the events a journal drops', () => {
     assert.deepEqual(foldWeekly([]), [])
     const events = [refusal('2026-11-16T00:00:00Z'), refusal('2026-11-09T00:00:00Z')]
     assert.deepEqual(foldWeekly(events), foldWeekly([...events].reverse()))
+  })
+})
+
+describe('the fold file of a journal', () => {
+  const line = (signature: string, week: string, count: number) => ({ signature, week, count })
+  const dropped = (at: string, code = 'github.ready.missing-review') =>
+    JSON.stringify(learningEvent({ kind: 'refusal', at, random: '0a1b2c3d', source: { plugin: 'github', code }, trust: 'computed' }))
+
+  it('is one file named by the contract, which is not an entry of the journal', () => {
+    assert.equal(JOURNAL_FOLD_FILE, 'folded.json')
+    assert.equal(LEARNING_CONTRACT.fold_file, JOURNAL_FOLD_FILE)
+    assert.equal(journalEntryOf(JOURNAL_FOLD_FILE), undefined)
+  })
+
+  it('adds counts of the same signature and week, and keeps the others, in order', () => {
+    const merged = mergeFolded([line('refusal:a.b', '2026-11-09', 2)], [line('refusal:a.b', '2026-11-09', 3), line('refusal:a.b', '2026-11-02', 1)])
+    assert.deepEqual(merged, [line('refusal:a.b', '2026-11-02', 1), line('refusal:a.b', '2026-11-09', 5)])
+  })
+
+  it('is written whole and read back whole; an absent file is no counts, an unreadable one is undefined', () => {
+    const counts = [line('refusal:a.b', '2026-11-09', 2)]
+    assert.deepEqual(parseFolded(foldedText(counts)), counts)
+    assert.deepEqual(parseFolded(undefined), [])
+    for (const bad of ['', 'x', '[]', '{"v":2,"counts":[]}', '{"v":1}', '{"v":1,"counts":[{"signature":"a","week":"2026-11-09","count":0}]}',
+      '{"v":1,"counts":[{"signature":"a","week":"soon","count":1}]}', '{"v":1,"counts":[{"signature":"a","week":"2026-11-09","count":1,"more":1}]}']) {
+      assert.equal(parseFolded(bad), undefined, bad)
+    }
+  })
+
+  it('folds the dropped events into the current counts, whatever version they are, and skips what is no event', () => {
+    const current = foldedText([line('refusal:github.ready.missing-review', '2026-11-09', 4)])
+    const text = foldDropped([dropped('2026-11-10T08:00:00Z'), '{}', undefined, 'not json', dropped('2026-11-17T08:00:00Z')], current)
+    assert.deepEqual(parseFolded(text), [
+      line('refusal:github.ready.missing-review', '2026-11-09', 5),
+      line('refusal:github.ready.missing-review', '2026-11-16', 1),
+    ])
+  })
+
+  it('writes nothing when no dropped event can be read, and refuses to overwrite a fold it cannot read', () => {
+    assert.equal(foldDropped(['{}', undefined], undefined), undefined)
+    assert.equal(foldDropped([], foldedText([])), undefined)
+    assert.throws(() => foldDropped([dropped('2026-11-10T08:00:00Z')], 'garbled'), /fold/)
   })
 })
 

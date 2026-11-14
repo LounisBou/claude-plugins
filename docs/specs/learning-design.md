@@ -493,7 +493,7 @@ under 1,200 tokens.
    to advance.
 9. **Window and retention.** *Answered 2026-11-14, « A »:* **a window of 30 days; the learning
    journal kept 90 days and at most 6,000 events a plugin, the older ones folded by code into
-   one count per signature and week (`foldWeekly`); telemetry events kept for ever; raw
+   one count per signature and week (`foldWeekly`, kept in the journal's `folded.json`); telemetry events kept for ever; raw
    transcripts kept 90 days in the logs repository, then dropped by a yearly rewrite of it**
    (the operator's act, `plugins/telemetry/README.md`, « Yearly rewrite »). The figures behind it:
    transcripts are 200 MB a day raw and 17 MiB a day packed in the logs repository (6.2 GB a

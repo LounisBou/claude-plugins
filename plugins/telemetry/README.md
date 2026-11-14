@@ -53,10 +53,9 @@ Once a year, from a clone of the repository `CLAUDE_LOGS_REPO` names, with no ex
    (`git reflog expire --expire=now --all && git gc --prune=now --aggressive`) in every clone,
    the machine's own included.
 
-Known limit: the export copies a transcript the repository does not hold whenever the host still
-has its file and a day file names its session, and the host keeps each file 365 days. Until the
-export itself leaves out the transcripts older than 90 days, which it does not yet, the next export
-puts back the dropped ones younger than 365 days, and the rewrite frees only the older ones.
+The export does not put them back: it leaves out a transcript last written over 90 days ago
+(`MAX_TRANSCRIPT_AGE_DAYS` in `lib/export.ts`) and says how many, though the host keeps its file 365
+days. A transcript the repository holds already, whose file has not changed, stays until a rewrite.
 
 The host keeps its own copy of each transcript 365 days (`cleanupPeriodDays`), which this does
 not touch. The yearly size to expect: about 6 GB packed at 365 days, about 1.6 GB at 90.
