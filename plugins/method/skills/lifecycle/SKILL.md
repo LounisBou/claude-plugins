@@ -17,22 +17,22 @@ sessions.
 3. **Implementation.** Per step: a failing test first, the code, the project's gate run and
    its exit code read, one commit.
 4. **Review on evidence.** By a session that did not write the code. A result without the
-   command output that shows it is a claim, not a result. A change meant to change nothing
-   may quote a `drift` verdict as proof, never a required gate.
+   command output that shows it is a claim, not a result.
 5. **Ready.** The definition of done below, at the current head.
 6. **Merge.** The operator's, unless the repository is in auto-merge.
 
 ## Done means ready
 
-A pull request is done when, at its current head commit:
+A pull request is done at its head when:
 
-- a review by another session left no Critical or Important finding;
+- a review by another session left no Critical or Important finding (the orchestrator's review
+  may write it; a point it sets aside, with its reason, is accepted);
 - the norms check passed;
-- E2E passed, or the operator waived it in their own dated words;
+- the checks its plan owes passed, E2E unless the operator waived it durably;
 - CI is green.
 
-The github plugin's ready gate computes this; no role declares it. Written, green on one
-machine, or "looks fine" is not done. A new commit voids ready until the four hold again.
+The github ready gate computes it. A content change voids it until
+the four hold.
 
 ## Consent
 
@@ -52,13 +52,13 @@ A unit of work ends with a report in the shape of `references/report.md`. Its la
 
 ## Questions to the operator
 
-One question per message, in the shape of `references/questions.md`. Never ask what the spec,
-the plan or the code already answers.
+One question per message, in the shape of `references/questions.md`, never on what the spec,
+the plan or the code answers. Asked once, it blocks only the work that needs its answer. Answer
+him first, check the premise after. Asked again for what you failed to deliver, say you failed,
+answer, offer the hand-over to a fresh session.
 
 ## The formats
 
 - `references/plan.md`: the spec's goals, the plan, the state file.
 - `references/report.md`: the report.
 - `references/questions.md`: the question.
-
-Read each only when writing it.

@@ -358,17 +358,6 @@ test('warn: a pull request opened out of draft in auto-merge runs with no questi
   expect(seen.logs[0]).toContain('opened out of draft')
 })
 
-test('warn: the Ready label on a pull request not ready is refused all the same, Not Ready is not', async ($, on) => {
-  const seen = await world($, on, { records: Object.fromEntries([record('review', 'pass'), record('norms', 'pass')]) })
-  const ready: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-  expect(ready.deny).toContain('e2e: no record')
-  const label: any = await $.tool.call(gh('label-add', { pr: 12, label: ['Ready'] }))
-  expect(label.deny).toContain('e2e: no record')
-  await $.tool.call(gh('pr-readiness', { pr: 12, state: 'not-ready' }))
-  expect(seen.logs).toEqual([])
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness'])
-})
-
 test('warn: each warn line is appended to guard-warn.log, the lines before it kept', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], warnLog: '{"old":1}\n' })
   await $.tool.call(gh('pr-merge', { pr: 12 }))
@@ -427,16 +416,6 @@ test('enforce: a merge pinned to a head that moved is refused', async ($, on) =>
     await world($, on, { autoMerge: ['acme/thing'] })
     const out: any = await $.tool.call(gh('pr-merge', { pr: 12, sha: MOVED }))
     expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
-  })
-})
-
-test('enforce: a refused Ready label on a pull request still carrying Ready puts Not Ready back', async ($, on) => {
-  await inPhase('enforce', async () => {
-    const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
-    const out: any = await $.tool.call(gh('label-add', { pr: 12, label: ['Ready'] }))
-    expect(out.deny).toContain('not ready')
-    expect(seen.runs.find((r) => r.command === 'pr-readiness')?.args).toEqual({ pr: 12, state: 'not-ready' })
-    expect(commands(seen)).toEqual(['pr-gate', 'pr-readiness'])
   })
 })
 
@@ -612,12 +591,8 @@ test('a pull request that carries Ready, or whose CI is green, is no CI undraft'
   })
 })
 
-// ---- the Ready label and the undraft against CI ----
+// ---- the undraft against CI ----
 
-const LABEL_ACTS = [
-  ['tool', gh('pr-readiness', { pr: 12, state: 'ready' })],
-  ['Bash', bash('gh pr edit 12 -R acme/thing --add-label Ready')],
-] as const
 const UNDRAFT_ACTS = [
   ['tool', gh('pr-ready', { pr: 12 })],
   ['Bash', bash('gh pr ready 12 -R acme/thing')],
@@ -628,33 +603,6 @@ const actRan = (seen: Seen, route: string, command: string) =>
   route === 'Bash' ? seen.bash.length : commands(seen).filter((c) => c === command).length
 
 for (const phase of ['warn', 'enforce'] as const) {
-  for (const [route, call] of LABEL_ACTS) {
-    for (const ci of [{ result: 'PENDING', running: 1 }, { result: 'FAILURE', failed: ['test'] }]) {
-      test(phase + ': the ' + route + ' Ready label on a Not Ready pull request with the three records and CI '
-        + ci.result + ' is no CI undraft', async ($, on) => {
-        await inPhase(phase, async () => {
-          const seen = await world($, on, { ci })
-          const out: any = await $.tool.call(call)
-          const missing = ci.result === 'FAILURE' ? 'CI failed: test' : 'CI still running'
-          // The Ready label is the gate's: refused in both phases.
-          expect(out.deny).toContain('refused on acme/thing#12 at 0123456: not ready. Missing: ' + missing + '.')
-          expect(actRan(seen, route, 'pr-readiness')).toBe(0)
-        })
-      })
-    }
-
-    test(phase + ': the ' + route + ' Ready label with the four holding passes with no warn line', async ($, on) => {
-      await inPhase(phase, async () => {
-        const seen = await world($, on)
-        const out: any = await $.tool.call(call)
-        expect(out.deny).toBeUndefined()
-        expect(actRan(seen, route, 'pr-readiness')).toBe(1)
-        expect(seen.logs).toEqual([])
-        expect(seen.writes.filter((w) => w.path === WARN_LOG)).toEqual([])
-      })
-    })
-  }
-
   for (const [route, call] of UNDRAFT_ACTS) {
     test(phase + ': a ' + route + ' undraft of a pull request carrying Ready with CI not green is no CI undraft', async ($, on) => {
       await inPhase(phase, async () => {
@@ -750,47 +698,12 @@ test('a Bash merge whose readiness cannot be read warns, then is refused under e
   })
 })
 
-test('the Ready label needs the four on a draft as out of draft', async ($, on) => {
-  await inPhase('enforce', async () => {
-    await world($, on, { gate: {
-      repo: 'acme/thing', pr: 12, state: 'open', draft: false, head: HEAD, labels: ['Not Ready'],
-      ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 },
-    }, records: {} })
-    const open: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-    expect(open.deny).toContain('not ready')
-  })
-})
-
-test('the Ready label on a draft needs the four too', async ($, on) => {
-  await inPhase('enforce', async () => {
-    const seen = await world($, on, { records: {} })
-    const draft: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-    expect(draft.deny).toContain('not ready')
-    expect(commands(seen)).toEqual(['pr-gate'])
-  })
-})
-
 test('a Bash merge of the current branch\'s pull request reads it with pr-get', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'], pulls: { '': [{ number: 12 }] } })
   await $.tool.call(bash('gh pr merge -R acme/thing'))
   expect(commands(seen)).toEqual(['pr-get', 'pr-gate'])
   expect(seen.runs[0].repo).toBe('acme/thing')
   expect(seen.runs[1].args).toEqual({ pr: 12 })
-})
-
-test('a Bash Ready label is the ready guard\'s in every repository', async ($, on) => {
-  const seen = await world($, on, NO_RECORDS)
-  for (const line of ['gh pr edit 12 -R acme/thing --add-label Ready', 'gh api --method POST repos/acme/thing/issues/12/labels -f \'labels[]=Ready\'']) {
-    const out: any = await $.tool.call(bash(line))
-    expect(out.deny, line).toContain('not ready')
-  }
-  expect(seen.bash.length).toBe(0)
-  await inPhase('enforce', async () => {
-    const out: any = await $.tool.call(bash('gh issue edit 12 -R acme/thing --add-label ready'))
-    expect(out.deny).toContain('github: gh issue edit refused on acme/thing#12')
-    const unnamed: any = await $.tool.call(bash('gh pr edit 12 --add-label Ready'))
-    expect(unnamed.deny).toBe('github: gh pr edit refused: name the repository with -R owner/name.')
-  })
 })
 
 test('a Bash pull request opened out of draft is refused outside auto-merge in both phases', async ($, on) => {
@@ -908,7 +821,6 @@ test('a Bash gh.py act whose pull request number cannot be read is refused in bo
     ENGINE + ' pr-merge {} --repo acme/thing',
     ENGINE + ' pr-merge "$PR" --repo acme/thing',
     ENGINE + ' pr-ready {} --repo acme/thing',
-    ENGINE + ' pr-readiness {} ready --repo acme/thing',
   ]) {
     const out: any = await $.tool.call(bash(command))
     expect(out.deny, command).toBe('github: gh.py ' + command.split(' ')[2] + ' refused: the pull request number cannot be read from the command.'
@@ -922,33 +834,12 @@ test('a Bash gh.py act whose pull request number cannot be read is refused in bo
   expect(commands(seen)).toEqual([])
 })
 
-test('a Bash Ready label through gh.py needs the four under enforce', async ($, on) => {
-  await inPhase('enforce', async () => {
-    const seen = await world($, on, NO_RECORDS)
-    for (const command of [ENGINE + ' pr-readiness 12 ready --repo acme/thing', ENGINE + ' label-add 12 bug Ready --repo acme/thing']) {
-      const out: any = await $.tool.call(bash(command))
-      expect(out.deny, command).toContain('refused on acme/thing#12 at 0123456: not ready.')
-    }
-    expect(seen.bash.length).toBe(0)
-  })
-})
-
 test('a Bash undraft through gh.py for CI passes in auto-merge too, still Not Ready', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], ci: { result: 'PENDING', skipped: ['test'] } })
   const out: any = await $.tool.call(bash(ENGINE + ' pr-ready 12 --for-ci --repo acme/thing'))
   expect(out.deny).toBeUndefined()
   expect(seen.bash.length).toBe(1)
   expect(seen.logs).toEqual(['github: acme/thing#12 out of draft to run CI, still Not Ready'])
-})
-
-test('a Bash Ready label through gh.py that is not ready is refused under warn too', async ($, on) => {
-  const seen = await world($, on, NO_RECORDS)
-  for (const command of [ENGINE + ' pr-readiness 12 ready --repo acme/thing', ENGINE + ' label-add 12 Ready --repo acme/thing']) {
-    const out: any = await $.tool.call(bash(command))
-    expect(out.deny, command).toContain('refused on acme/thing#12 at 0123456: not ready.')
-  }
-  expect(seen.bash.length).toBe(0)
-  expect(seen.logs).toEqual([])
 })
 
 test('a text quoting a gh.py act passes with nothing read', async ($, on) => {
@@ -982,13 +873,6 @@ test('a --stdin-json request from Bash is refused in auto-merge and under enforc
     expect(((await $.tool.call(bash(line))) as any).deny).toBe(STDIN_REFUSAL)
   })
   expect(seen.bash).toEqual([])
-})
-
-test('a --stdin-json word among other engine words does not hide the Ready label act', async ($, on) => {
-  const seen = await world($, on, NO_RECORDS)
-  const out: any = await $.tool.call(bash(ENGINE + ' --repo acme/thing label-add 12 Ready -- --stdin-json'))
-  expect(out.deny).toContain('github: gh.py label-add refused on acme/thing#12 at 0123456: not ready.')
-  expect(seen.bash.length).toBe(0)
 })
 
 test('a Bash draft opened gets Not Ready from the URL gh printed', async ($, on) => {
@@ -1248,6 +1132,13 @@ test('an E2E waiver quotes words the operator typed in this session', async ($, 
   expect(recordRun(seen)).toContain('waived')
 })
 
+test('a waiver with a dated reason but no consent record is refused', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: 'docs only, no runtime path to run, 2026-11-14' } as any)
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
 const CONSENTS = '/cfg/consents/acme/thing'
 
 function consentWorld(records: Record<string, unknown>, dir = CONSENTS): World {
@@ -1261,6 +1152,7 @@ const consent = (over: Record<string, unknown> = {}) => ({
   v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, entry: 'a', question: 'E2E for thing#12: waive it?',
   answer: CONSENT_WORDS, by: 'pane', at: '2026-11-03T10:00:00Z', ...over,
 })
+
 const waiveCall = (detail: string) =>
   ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail }) as any
 
@@ -1318,9 +1210,10 @@ test('no consent records carry no waiver and do not crash', async ($, on) => {
   expect(recordRun(seen)).toBeUndefined()
 })
 
+
 for (const [plugin, kind, allowed] of [
   ['pr-review', 'review', true], ['pr-review', 'norms', false], ['norms', 'norms', true], ['norms', 'review', false],
-  ['orchestrator', 'review', false], ['orchestrator', 'e2e', true],
+  ['orchestrator', 'review', true], ['orchestrator', 'e2e', false],
 ] as const) {
   test('a call from the ' + plugin + ' plugin ' + (allowed ? 'writes' : 'is refused') + ' a ' + kind + ' record', {
     plugins: [{
@@ -1348,20 +1241,22 @@ for (const [plugin, kind, allowed] of [
   })
 }
 
-// ---- the orchestrator's acceptance of a failed review ----
+// ---- the orchestrator's review verdict ----
 
 // A failed review at the head, norms and E2E passed: the review is what the pull request misses.
 const FAILED = record('review', 'fail', '2026-11-01T11:00:00Z', { producer: 'pr-review', detail: '2 Important' })
 const FAILED_AT_HEAD = Object.fromEntries([FAILED, record('norms', 'pass'), record('e2e', 'pass')])
-const ACCEPT = { pr: 12, repo: 'acme/thing', kind: 'review', result: 'accepted', over: FAILED[0], detail: 'both findings are out of scope' }
+const OTHERS_PASSED = Object.fromEntries([record('norms', 'pass'), record('e2e', 'pass')])
+const SET_ASIDE = 'set aside: a.ts:3 — naming only'
+const VERDICT = { pr: 12, repo: 'acme/thing', kind: 'review', result: 'accepted', detail: SET_ASIDE }
 
-// A plugin whose command calls the record tool with the acceptance its argument holds, as the
-// orchestrator's accept tool does. Its module runs apart from the test: the call travels as text.
-const accepting = (plugin: string) => ({
+// A plugin whose command calls the record tool with the verdict its argument holds, as the
+// orchestrator's review tool does. Its module runs apart from the test: the call travels as text.
+const reviewing = (plugin: string) => ({
   plugins: [{
     name: plugin,
     register(on: any) {
-      on('command.run', { command: 'emit-acceptance' }, async ($: any, e: any) => {
+      on('command.run', { command: 'emit-verdict' }, async ($: any, e: any) => {
         const out = await $.tool.call({ tool: 'mcp__github__record', ...JSON.parse(String(e.args)) })
         return { text: JSON.stringify(out) }
       })
@@ -1369,83 +1264,57 @@ const accepting = (plugin: string) => ({
   }],
 })
 
-const accept = async ($: any, over: Record<string, unknown> = {}) =>
-  JSON.parse(String((await $.command.run({ command: 'emit-acceptance', args: JSON.stringify({ ...ACCEPT, ...over }) })).text))
+const verdict = async ($: any, over: Record<string, unknown> = {}) =>
+  JSON.parse(String((await $.command.run({ command: 'emit-verdict', args: JSON.stringify({ ...VERDICT, ...over }) })).text))
 
-test('the orchestrator accepts the failed review at the head: the record names it, the gate counts it and says so', accepting('orchestrator'), async ($, on) => {
-  // No checkout is read: the decision is over the records of the head GitHub names.
-  const seen = await world($, on, { records: FAILED_AT_HEAD })
-  const out = await accept($)
-  const argv = recordRun(seen)!
-  expect(argv.slice(6, 14)).toEqual(['--kind', 'review', '--result', 'accepted', '--producer', 'orchestrator', '--detail',
-    'over ' + FAILED[0] + ': both findings are out of scope'])
-  expect(String(out.result)).toContain('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator over ' + FAILED[0])
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+for (const [label, records] of [['over a failed review', FAILED_AT_HEAD], ['with no review before it', OTHERS_PASSED]] as const) {
+  test('the orchestrator\'s acceptance ' + label + ' passes the review: the gate counts it and names the points set aside', reviewing('orchestrator'), async ($, on) => {
+    const seen = await world($, on, { records, git: CLEAN })
+    const out = await verdict($)
+    const argv = recordRun(seen)!
+    expect(argv.slice(6, 14)).toEqual(['--kind', 'review', '--result', 'accepted', '--producer', 'orchestrator', '--detail', SET_ASIDE])
+    expect(String(out.result)).toContain('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator (' + SET_ASIDE + ')')
+    expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  })
+}
+
+test('the orchestrator\'s pass is written where no review failed, and refused over a failed one', reviewing('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD, git: CLEAN })
+  const refused = await verdict($, { result: 'pass', detail: 'clean' })
+  expect(refused.deny).toContain('github: the latest review at 0123456 failed: a pass does not override it.')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('the orchestrator\'s pass with no failed review at the head is written', reviewing('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: OTHERS_PASSED, git: CLEAN })
+  expect((await verdict($, { result: 'pass', detail: 'clean' })).deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('pass')
+})
+
+test('the orchestrator\'s verdict is written from a clean checkout at the head only', reviewing('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD, git: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } })
+  expect((await verdict($)).deny).toContain('the tracked files have changes')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 for (const plugin of ['pr-review', 'norms']) {
-  test('an acceptance from the ' + plugin + ' plugin is refused', accepting(plugin), async ($, on) => {
-    const seen = await world($, on, { records: FAILED_AT_HEAD })
-    expect((await accept($)).deny).toContain('github: an accepted review is the orchestrator\'s decision, written by mcp__orchestrator__accept')
+  test('an acceptance from the ' + plugin + ' plugin is refused', reviewing(plugin), async ($, on) => {
+    const seen = await world($, on, { records: FAILED_AT_HEAD, git: CLEAN })
+    expect(JSON.stringify(await verdict($))).toMatch(/accepted review is the orchestrator's decision|review records are written by their producer/)
     expect(recordRun(seen)).toBeUndefined()
   })
 }
 
 test('an acceptance from the model itself is refused', async ($, on) => {
   const seen = await world($, on, { records: FAILED_AT_HEAD, git: CLEAN })
-  const out: any = await $.tool.call({ tool: 'mcp__github__record', ...ACCEPT } as any)
-  expect(out.deny).toContain('this tool writes none')
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', ...VERDICT } as any)
+  expect(out.deny).toContain('review records are written by their producer')
   expect(recordRun(seen)).toBeUndefined()
 })
 
-test('an acceptance with no failed review at the head is refused', accepting('orchestrator'), async ($, on) => {
-  const seen = await world($, on)
-  expect((await accept($, { over: FOUR_REVIEW })).deny).toContain('github: ' + FOUR_REVIEW + ' is no failed review record at 0123456, the pull request\'s head')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a refused acceptance over a wrong file names the latest failed review to pass as over', accepting('orchestrator'), async ($, on) => {
-  const seen = await world($, on, { records: FAILED_AT_HEAD })
-  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
-  expect(deny).toContain('The latest failed review at 0123456 is ' + FAILED[0] + ': pass it as over.')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a refused acceptance says there is no failed review to accept when the head has no review record', accepting('orchestrator'), async ($, on) => {
-  await world($, on)
-  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
-  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
-  expect(deny).not.toContain('pass it as over')
-})
-
-test('a refused acceptance says there is no failed review to accept when the latest review passed', accepting('orchestrator'), async ($, on) => {
-  const later = record('review', 'pass', '2026-11-01T12:00:00Z')
-  await world($, on, { records: { ...FAILED_AT_HEAD, [later[0]]: later[1] } })
-  const deny = String((await accept($, { over: FOUR_REVIEW })).deny)
-  expect(deny).toContain('There is no failed review to accept at 0123456: no review record, or the latest is not a failed one.')
-  expect(deny).not.toContain('pass it as over')
-})
-
-test('an acceptance of a failed review of another head is refused', accepting('orchestrator'), async ($, on) => {
-  // The failed review lies at the head before a push; the pull request's head holds only passes.
-  const before = RECORDS + '/acme/thing/' + MOVED
-  const seen = await world($, on, {
-    tree: { [before]: { kind: 'directory', mtimeMs: 1 }, [before + '/' + FAILED[0]]: { kind: 'file', mtimeMs: 1, text: FAILED[1].replace(HEAD, MOVED) } },
-  })
-  expect((await accept($)).deny).toContain('github: ' + FAILED[0] + ' is no failed review record at 0123456')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('an acceptance of a failed review a later review followed is refused', accepting('orchestrator'), async ($, on) => {
-  const later = record('review', 'pass', '2026-11-01T12:00:00Z')
-  const seen = await world($, on, { records: { ...FAILED_AT_HEAD, [later[0]]: later[1] } })
-  expect((await accept($)).deny).toContain('is followed by ' + later[0])
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('an acceptance with no decision is refused', accepting('orchestrator'), async ($, on) => {
-  const seen = await world($, on, { records: FAILED_AT_HEAD })
-  expect((await accept($, { detail: '  ' })).deny).toContain('an acceptance says its decision in one sentence')
+test('an acceptance that names no point set aside is refused', reviewing('orchestrator'), async ($, on) => {
+  const seen = await world($, on, { records: FAILED_AT_HEAD, git: CLEAN })
+  expect((await verdict($, { detail: '  ' })).deny).toContain('an acceptance names each point it sets aside with its reason')
   expect(recordRun(seen)).toBeUndefined()
 })
 
@@ -1763,7 +1632,7 @@ test('a typed prompt that does not speak of auto-merge adds no line', async ($, 
   expect(seen.contexts.at(-1)).toEqual([])
 })
 
-// ---- the operator's words, quoted inside a record's wrapping, and typed while the session works ----
+// ---- the operator's words, quoted inside a wrapping ----
 
 // The moment the prompts are received and the day the module dates them: noon in UTC, a day
 // everywhere the tests run.
@@ -2051,36 +1920,24 @@ test('a merged pull request keeps its labels when read', async ($, on) => {
 // ---- the Ready label by hand ----
 
 for (const phase of ['warn', 'enforce'] as const) {
-  test(phase + ': a Ready label put by hand on a pull request not ready is refused, on every route', async ($, on) => {
+  test(phase + ': a Ready label put by hand on a pull request not ready runs, on every route: the gate alone decides readiness', async ($, on) => {
     await inPhase(phase, async () => {
-      const seen = await world($, on, { ci: { result: 'FAILURE', failed: ['test'] } })
+      const seen = await world($, on, { ci: { result: 'FAILURE', failed: ['test'] }, gateFails: 'error: never read' })
       for (const call of [
         gh('label-add', { pr: 12, label: ['Ready'] }),
         gh('pr-readiness', { pr: 12, state: 'ready' }),
-        bash('gh pr edit 12 -R acme/thing --add-label Ready'),
+        bash('gh pr edit 12 --add-label Ready'),
+        bash('gh issue edit 12 -R acme/thing --add-label ready'),
         bash('gh api --method POST repos/acme/thing/issues/12/labels -f \'labels[]=Ready\''),
-        bash('gh api -X PATCH repos/acme/thing/issues/12 -f \'labels[]=Ready\''),
         bash('gh api -X PATCH repos/acme/thing/pulls/12 -f labels=\'["Ready"]\''),
-        bash('gh api -X PATCH https://api.github.com/repos/acme/thing/issues/12 --input labels.json'),
-        bash('gh api https://api.github.com/repos/acme/thing/issues/12/labels -f labels=\'["Ready"]\''),
         bash('python3 ' + ROOT + '/engine/gh.py label-add 12 Ready --repo acme/thing'),
       ]) {
         const out: any = await $.tool.call(call)
-        expect(String(out.deny)).toContain('not ready. Missing: CI failed: test.')
+        expect(out.deny).toBeUndefined()
       }
-      expect(seen.bash).toEqual([])
-      expect(commands(seen).filter((c) => c !== 'pr-gate')).toEqual([])
-    })
-  })
-
-  test(phase + ': a Ready label whose readiness cannot be read is refused', async ($, on) => {
-    await inPhase(phase, async () => {
-      const seen = await world($, on, { gateFails: 'error: boom' })
-      const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-      expect(out.deny).toBe('github: readiness of acme/thing#12 unverified: error: boom')
-      const shell: any = await $.tool.call(bash('gh pr edit 12 --add-label Ready'))
-      expect(shell.deny).toBe('github: gh pr edit refused: name the repository with -R owner/name.')
-      expect(seen.bash).toEqual([])
+      expect(seen.bash.length).toBe(5)
+      // No pr-gate: the label reads no readiness.
+      expect(commands(seen).filter((c) => !c.startsWith('git '))).toEqual(['label-add', 'pr-readiness'])
     })
   })
 }
@@ -2325,9 +2182,18 @@ test('records that cannot be listed leave the label as it is, never Not Ready, a
   expect(seen.logs[0]).toContain('EACCES: permission denied')
 })
 
+// A merge in auto-merge under enforce: refused with what the pull request misses at its head.
+async function mergeProbe($: any): Promise<any> {
+  let out: any
+  await inPhase('enforce', async () => {
+    out = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  })
+  return out
+}
+
 test('records that cannot be listed are an unverified readiness to the guard', async ($, on) => {
-  await world($, on, { listFails: 'EACCES: permission denied' })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  await world($, on, { autoMerge: ['acme/thing'], listFails: 'EACCES: permission denied' })
+  const out: any = await mergeProbe($)
   expect(String(out.deny)).toStartWith('github: readiness of acme/thing#12 unverified: the records of 0123456 cannot be listed: ')
   expect(out.deny).toContain('EACCES: permission denied')
 })
@@ -2339,14 +2205,6 @@ test('a head with no records directory holds none: a Ready pull request goes bac
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'not-ready' }]])
   expect(seen.logs[0]).toContain('back to Not Ready at fedcba9. Missing: review: no record at fedcba9')
-})
-
-test('warn: a Bash Ready label whose guard throws is refused, never let through with a warn line', async ($, on) => {
-  const seen = await world($, on, { gate: BROKEN_GATE })
-  const out: any = await $.tool.call(bash('gh pr edit 12 -R acme/thing --add-label Ready'))
-  expect(String(out.deny)).toStartWith('github: readiness of acme/thing#12 unverified: ')
-  expect(seen.bash).toEqual([])
-  expect(seen.logs).toEqual([])
 })
 
 test('a record written on a closed pull request moves no label and says nothing more', async ($, on) => {
@@ -2786,6 +2644,14 @@ test('a rebase that leaves the diff unchanged carries the review, the norms chec
   expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
 })
 
+test('a rebase that leaves the diff unchanged carries the orchestrator\'s acceptance of the review', async ($, on) => {
+  const accepted = at('review', 'accepted', { producer: 'orchestrator', detail: 'set aside: a.ts:3 — naming only' }, '2026-11-01T11:00:00Z')
+  const tree = earlier([at('review', 'fail'), accepted, at('norms', 'pass'), at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })])
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+})
+
 test('a rebase that changed the diff carries nothing but the operator\'s E2E waiver', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
@@ -2793,12 +2659,11 @@ test('a rebase that changed the diff carries nothing but the operator\'s E2E wai
     + ' norms: no record at 0123456; e2e carried from abcdef0'])
 })
 
-test('an E2E pass at the earlier head is not carried: E2E runs again, the review and norms are carried', async ($, on) => {
+test('an E2E pass at the earlier head is carried with the review and norms', async ($, on) => {
   const tree = earlier([at('review', 'pass'), at('norms', 'pass'), at('e2e', 'pass')])
-  const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456;'
-    + ' review carried from abcdef0, norms carried from abcdef0'])
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
 })
 
 test('a review that failed last at the earlier head is not carried, nor is a kind already recorded at the head', async ($, on) => {
@@ -2817,8 +2682,8 @@ test('a review failed at a later head of the same diff is not carried from an ea
     ...earlier(CLEAN_OLD),
     ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
   }
-  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  const out: any = await mergeProbe($)
   expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
 })
 
@@ -2850,10 +2715,10 @@ test('the records of another pull request with the same diff are never carried, 
   expect(fingerprintRuns(seen)).toEqual([])
 })
 
-test('a refused Ready label names the records carried beside what is missing', async ($, on) => {
+test('a refused merge names the records carried beside what is missing', async ($, on) => {
   const tree = earlier([at('review', 'pass'), at('norms', 'pass')])
-  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await mergeProbe($)
   expect(out.deny).toContain('Missing: e2e: no record at 0123456; review carried from abcdef0, norms carried from abcdef0.')
 })
 
@@ -2907,8 +2772,8 @@ test('a review failed at a later head that cannot be fingerprinted is not carrie
     ...earlier(CLEAN_OLD),
     ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
   }
-  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  const seen = await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await mergeProbe($)
   expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
   expect(seen.logs[0]).toBe('github: acme/thing#12: no review record carried to 0123456: 1111111\'s commits cannot be fingerprinted:'
     + ' error: commit 1234567 is a merge')
@@ -2928,16 +2793,16 @@ test('an earlier head whose records cannot be listed lets no earlier head carry,
 })
 
 test('a review record that does not parse at the head is not carried over from an earlier head, and is named', async ($, on) => {
-  const seen = await world($, on, { records: { 'review.20261102T100000Z.p-review.json': '{"v": 1, "kind": "rev' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  const seen = await world($, on, { autoMerge: ['acme/thing'], records: { 'review.20261102T100000Z.p-review.json': '{"v": 1, "kind": "rev' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await mergeProbe($)
   expect(out.deny).toContain('Missing: review: no record at 0123456, unreadable record review.20261102T100000Z.p-review.json;'
     + ' norms carried from abcdef0, e2e carried from abcdef0.')
   expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
 })
 
 test('a record that does not parse at the head and whose name gives no kind lets no kind be carried', async ($, on) => {
-  const seen = await world($, on, { records: { 'stray.json': 'not json' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  const seen = await world($, on, { autoMerge: ['acme/thing'], records: { 'stray.json': 'not json' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await mergeProbe($)
   expect(out.deny).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456, unreadable record stray.json.')
   expect(fingerprintRuns(seen)).toEqual([])
 })
@@ -2948,9 +2813,9 @@ test('a review record that does not parse at a later head of the same diff is no
     ...earlier(CLEAN_OLD),
     ...earlier([['review.20261101T110000Z.p-review.json', '']], RECORDS + '/acme/thing/' + LATER),
   }
-  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  const seen = await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
   for (const read of [1, 2]) {
-    const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+    const out: any = await mergeProbe($)
     expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
     expect(seen.logs[read - 1]).toBe('github: acme/thing#12: no review record carried to 0123456:'
       + ' 1111111\'s record review.20261101T110000Z.p-review.json does not parse')

@@ -112,6 +112,34 @@ test('open findings record a fail', async () => {
   expect(recordCalls(calls)[0].detail).toBe('1 fixed, 0 passed, 2 open')
 })
 
+test('findings set aside with their reason leave nothing open: a pass that keeps the reason', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  const out = await m.done($, { open: 0, fixed: 1, passed: 0, setAside: 2, reason: 'a rule\nthe codebase  widely violates' })
+  expect(out.result).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls)[0].result).toBe('pass')
+  expect(recordCalls(calls)[0].detail).toBe('1 fixed, 0 passed, 2 set aside (a rule the codebase widely violates), 0 open')
+})
+
+test('findings set aside without a reason are refused, and a finding left open still fails', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  calls.length = 0
+  for (const input of [{ open: 0, fixed: 0, passed: 0, setAside: 1 }, { open: 0, fixed: 0, passed: 0, setAside: 1, reason: '  ' }, { open: 0, fixed: 0, passed: 0, setAside: -1, reason: 'x' }]) {
+    expect((await m.done($, input)).isError).toBe(true)
+  }
+  expect(calls).toEqual([])
+  await m.done($, { open: 1, fixed: 0, passed: 0, setAside: 1, reason: 'not critical' })
+  expect(recordCalls(calls)[0].result).toBe('fail')
+  expect(recordCalls(calls)[0].detail).toBe('0 fixed, 0 passed, 1 set aside (not critical), 1 open')
+})
+
 test('the pull request is read through the github tool', async () => {
   resetCache()
   const calls: any[] = []

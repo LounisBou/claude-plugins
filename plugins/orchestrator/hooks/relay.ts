@@ -22,14 +22,15 @@ import type { SessionRow } from './supervision.ts'
 export const RELAY_CAP = 4000
 
 // An orchestrator waits on the operator or is done; an agent of one (parseStatus) has
-// delivered, is blocked or asks, `blocks` then its status line's own words.
+// delivered, is blocked, asks or waits on its own background work, `blocks` then its status
+// line's own words.
 // A wait on the operator its sender marked `(urgent)` carries `urgent: true`; the plain
 // form carries no such field. In the fingerprint, so a wait marked urgent or unmarked is
 // entered again, but never in the round entry's id (round.ts roundEntryId): the same entry.
 export type Wait =
   | { kind: 'operator'; blocks: string; question: string; urgent?: true }
   | { kind: 'done'; question: string }
-  | { kind: 'delivered' | 'blocked' | 'question'; blocks: string; question: string }
+  | { kind: 'delivered' | 'blocked' | 'question' | 'waiting'; blocks: string; question: string }
 export type WaitKind = Wait['kind']
 
 // The turn's answer read for its machine line, the stop gate's own regex over the stop
@@ -64,10 +65,11 @@ export function confirmsTakeover(text: string): boolean {
   return /^takeover confirmed\b/i.test(machineLine(text.split('\n').find(line => line.trim() !== '') ?? ''))
 }
 
-// An agent's last line, its brief's own: `status: done|blocked|question — <one line>`,
+// An agent's last line, its brief's own: `status: done|blocked|question — <one line>`, or
+// `status: waiting — <what is watched>` while its own background work runs (agent-stop.ts),
 // read over the stop gate's normalisation. The text above it is its report or question.
-const STATUS_LINE = /^status:\s*(done|blocked|question)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i
-const STATUS_KIND = { done: 'delivered', blocked: 'blocked', question: 'question' } as const
+const STATUS_LINE = /^status:\s*(done|blocked|question|waiting)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i
+const STATUS_KIND = { done: 'delivered', blocked: 'blocked', question: 'question', waiting: 'waiting' } as const
 
 export function parseStatus(answer: string): Wait | null {
   const matched = STATUS_LINE.exec(machineLine(answer))
@@ -123,6 +125,7 @@ export function relayText(name: string, wait: Wait, since: string, context: stri
   if (wait.kind === 'done') return `[module] ${name} reports its work done and proposes to be closed\n${reply}`
   const header = wait.kind === 'operator' ? `[module] ${name} waits for the operator since ${since} — blocks: ${wait.blocks}`
     : wait.kind === 'delivered' ? `[module] ${name} reports its delivery; verify on the artifact${context ? ` — context ${context}` : ''}`
+    : wait.kind === 'waiting' ? `[module] ${name} waits on its background work`
     : `[module] ${name} ${wait.kind === 'blocked' ? 'is blocked' : 'asks'}`
   const said = 'blocks' in wait && wait.kind !== 'operator' && wait.blocks ? ` — ${wait.blocks}` : ''
   if (!wait.question) return `${header}${said}\n${reply}`

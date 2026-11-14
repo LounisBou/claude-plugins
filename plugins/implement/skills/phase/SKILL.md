@@ -67,12 +67,8 @@ fi
 echo "$CODENAME on $BRANCH, artifacts $MODE, state $DOCS/IMPLEMENTATION.md"
 ```
 
-Both artifact paths are tested one by one, and the test inverts in `committed` mode
-rather than being skipped there. An explicit `--docs <path>` skips it altogether:
-the caller named a directory the repository's excludes know nothing about, and took
-the responsibility for it. The guard reads `docs/features/probe`, not
-`docs/features`: before the directory exists, `check-ignore` on the bare path reads
-not ignored, while the inner path is matched by every form the pattern takes.
+Both artifact paths are tested one by one, the test inverting in `committed` mode. An
+explicit `--docs <path>` skips it: the caller took the responsibility for that directory.
 
 `IMPLEMENTATION.md` is the only source of truth for progress, in the method's
 state-file shape: a header, then one row per phase, status `todo`, `doing` or `done`.
@@ -170,8 +166,9 @@ left, say that `implement:close` is next.
 | The plan does not settle a scope question | the question in one line, then wait — status `question` |
 | An outward-facing or irreversible action is needed that no instruction calls for | name it and wait; it is not taken on the skill's own account |
 
-Each stop asks once, in one line, and waits. No progress narration between
-sub-phases, and no question whose answer is already in the plan.
+Each stop asks once, in one line, and waits: for the operator, and in an orchestrated
+build (`ORCHESTRATOR_SPAWNED` set) for the orchestrator, whose answer stands. No progress
+narration between sub-phases, and no question whose answer is already in the plan.
 
 ---
 
@@ -207,9 +204,10 @@ NEVER mark a phase done while its check is red or its gate is untested
 Read-only search subagents are the one exception, and they read; they do not write.
 
 With this plugin's hooks module loaded, the first line is also held at the call: a
-subagent other than `Explore` runs only on the user's Allow, from this skill's start until
-another implement skill starts, the turn is interrupted, or `/implement:release-guard`. A refusal is a stop to report, never a wall to go
-around.
+subagent other than `Explore` runs only on the user's Allow; in an orchestrated build the
+orchestrator decides and releases the guard with `/implement:release-guard`. The guard lasts
+from this skill's start until another implement skill starts, the turn is interrupted, or that
+release. A refusal is a stop to report, never a wall to go around.
 
 This skill's own steps end at the branch. A push and a draft pull request need no consent;
 taking it out of draft and the merge follow the method's ready gate and consent rules.

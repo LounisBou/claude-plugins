@@ -116,8 +116,9 @@ changed by a pull request that edits this file and the code it governs together.
   (`ci`, `core`, `docs`).
 - One plugin per pull request, except a contract change, which moves its owner and every
   consumer in the same one.
-- A shipped change raises the plugin's version (SemVer: a contract change that breaks a
-  consumer is MAJOR).
+- A pull request raises no version. One release pull request raises the version of every plugin
+  changed since the last release, then runs `npm run marketplace` (SemVer: a contract change
+  that breaks a consumer is MAJOR).
 - A generated file in a merge conflict (`.claude-plugin/marketplace.json`, a plugin's `core/`,
   `ci/prompts.json`) is taken from the base, then regenerated (`npm run marketplace`,
   `npm run core`, `npm run prompts -- --lower`); a conflict of versions keeps the higher one, or

@@ -190,28 +190,10 @@ environment brings the enforce phase forward, where it is refused.
 
 ## Guards
 
-**Writing rules read.** Before a session writes a commit (`git commit`), opens, edits
-or comments a pull request or an issue (`gh pr create`, `gh issue create`, `gh pr
-comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh
-issue edit` with a title or a body), or calls the tool with a text, it reads
-the files of `engine/writing/` that its kind of text needs, whole: `commits.md`,
-`pull-requests.md` or `comments.md`, and `references.md`; the Read tool from a file's first
-line to its last, or a Bash `cat` or `sed -n '1,$p'` of it. Each subagent reads for itself, and a
-compaction asks for one more read. Commands are read word by word, so a message
-that only mentions one passes. Until then the call is refused with:
-
-```
-github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
-```
-
-A failure of the guard itself lets the call through with one transcript line,
-and the writing rules above still apply.
-
-**Ready.** Marking a pull request `Ready`, taking it out of draft and merging it
+**Ready.** Taking a pull request out of draft and merging it
 (`gh pr merge --auto` included) need the four conditions above, through the tool
-(`pr-ready`, `pr-merge`, `pr-readiness ready`, `label-add Ready`) and through the
-shell (`gh pr ready`, `gh pr merge`, `gh pr edit` or `gh issue edit` with
-`--add-label Ready`, `gh api` on a pull request's merge or labels, and the
+(`pr-ready`, `pr-merge`) and through the
+shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
 Under enforce
 the act is refused before anyone is asked, and a pull request still carrying
@@ -258,9 +240,7 @@ The command is read as text and word by word with the shell's quotes removed (so
 a record with the Read tool passes. `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
-producer. A waiver quotes words the operator typed in the session, or their answer
-in a consent record of an E2E waiver of that pull request (core's
-`consent-record.ts`, at least 8 characters), with their date. Once a
+producer. The waiver's rule is in `engine/REFERENCE.md`, « Records ». Once a
 day at most, the start of a session prunes the head directories whose newest
 record is older than 90 days.
 

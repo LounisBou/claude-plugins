@@ -12,7 +12,7 @@ import { register as registerGuards } from './guards.ts'
 import { register as registerWait } from './wait.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay } from './supervision.ts'
 import { register as registerAnswered } from './answered.ts'
-import { register as registerAccept } from './accept.ts'
+import { register as registerReview } from './review.ts'
 import { register as registerCommands } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
@@ -37,7 +37,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerPaneTool(on)
   registerCloseRelay(on)
   registerAnswered(on)
-  registerAccept(on)
+  registerReview(on)
   registerCommands(on)
   registerNaming(on)
   registerMoving(on)

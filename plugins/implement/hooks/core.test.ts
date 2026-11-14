@@ -225,6 +225,9 @@ describe('the guards', () => {
     expect(agentDecision(phase, 'Explore')).toBeNull()
     expect(agentDecision(phase, 'general-purpose')).toContain('writes the work itself')
     expect(agentDecision(phase, undefined)).toContain('general-purpose refused')
+    expect(agentDecision(phase, 'general-purpose')).not.toContain('orchestrator')
+    expect(agentDecision(phase, 'general-purpose', true)).toContain('your orchestrator decides, not the operator')
+    expect(agentDecision(phase, 'Explore', true)).toBeNull()
     expect(agentDecision(close, 'general-purpose')).toBeNull()
   })
 

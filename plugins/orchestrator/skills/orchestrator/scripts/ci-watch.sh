@@ -1,7 +1,11 @@
 #!/bin/bash
 # ci-watch.sh — the one way to wait on a pull request's checks.
 #
-#   ci-watch.sh <pr> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base]
+#   ci-watch.sh <pr | owner/name#pr | pull request url> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base]
+#
+# The repository is the one the target names (`owner/name#12`, or its URL), else `--repo`; the
+# two must agree. With neither, it is the clone the command runs in: from any other directory,
+# pass one of them, or the watch says `unread` and asks for `--repo`, and reads nothing.
 #
 # Meant to be started by the orchestrator with the host's background run (`run_in_background`,
 # timeout 7 200 000 ms), once per pull request: a command that exits on the event costs no

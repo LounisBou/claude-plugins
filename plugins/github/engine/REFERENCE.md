@@ -39,7 +39,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR. An unknown number exits 4 |
 | `pr-list` | | Open PRs |
-| `pr-status` | `<pr>` | State, draft flag, head and base |
+| `pr-status` | `<pr> [--json]` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format` gives the full pull request |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
@@ -194,6 +194,7 @@ shape is asked for.
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
+| `pr-summary` | `pr-status` | its default five lines |
 | `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
@@ -214,10 +215,6 @@ bytes, so uploading the same screenshot twice issues no write at all and reports
 `https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true` link — it goes
 through github.com, so it renders for anyone who can see the repository, private
 ones included.
-
-GitHub's web upload endpoint would produce a `user-attachments` URL, but it
-authenticates with browser session cookies rather than a scoped token. That route is
-deliberately not used: it would mean whole-account credentials on disk.
 
 `--title T` puts the screenshot's descriptive title above its image, as a bold line
 followed by the image with the title as alt text (`writing/pull-requests.md` « Pull request
@@ -284,9 +281,9 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` beside the failed review its detail names at the same head; `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
+- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
 - The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest; named in the `Ready` line; a `fail` still holds.
-- A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted, no acceptance and no E2E pass (`<kind> carried from <head7>`).
+- A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
 - Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
 
@@ -299,8 +296,8 @@ names no consumer.
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the review agents' findings blocks: `pass` on a clean exit; at the pass limit or after a reviewer's one pass (`review_only`), `pass` when nothing Critical or Important was reported, else `fail` (unknown severity too). None on dirty tracked files or with no PR: the answer gains `record: none — <why>` |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
-| orchestrator `mcp__orchestrator__accept` | review `accepted` | `over` names the latest review record at the head, a `fail`; another `over` is refused with the file to pass |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason, files with no runtime (below), and a session that did not push the head |
+| orchestrator `mcp__orchestrator__review` | review | `{pr, repo?, dir?, verdict: pass\|fail\|accepted, set_asides?, detail?}` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason and files with no runtime (below) |
 
 A review record is refused from the session that pushed the head it reviews.
 
@@ -317,7 +314,7 @@ Both routes are `hooks/e2e-scope.ts`'s.
   first when left out. One file per PR in `<data dir>/check-plans/`, posted on the PR. It may grow stricter, never laxer; a waiver lifts only a required E2E.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator as a waiver does, or a consent record
+  `exempt: false` revokes it. `detail` quotes the operator's dated words typed in the session, or a consent record
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing.
 
@@ -336,30 +333,16 @@ Never « external terminal ».
 
 ## Guards
 
-**Writing rules read.** A commit (`git commit`), `gh pr create`, `gh issue create`, `gh pr
-comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue edit` with
-a title or a body, and every call of this tool carrying a text wait until the `writing/` files
-the refusal names were read whole in the context that writes: Read from first line to last, or
-Bash `cat` or `sed -n '1,$p'`. Each subagent reads for itself; a compaction asks one more read.
-The command is read word by word: a text that only mentions these commands passes. Until then:
-
-```
-github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
-```
-
-**Ready.** `pr-ready`, `pr-merge`, `pr-readiness ready`, `label-add` with `Ready` and
+**Ready.** `pr-ready`, `pr-merge` and
 `pr-create` out of draft, and in the shell `gh pr ready` (not `--undo`; `--undo=false` is
-none), `gh pr merge` (not `--disable-auto`), `gh pr edit` and `gh issue edit` with `--add-label
-Ready`, `gh pr create` without `--draft`, `gh api` (a path or a full URL) with `PUT` or `POST`
-on `repos/<o>/<r>/pulls/<n>/merge` or `…/issues/<n>/labels`, or `PATCH` on `…/issues/<n>` or
-`…/pulls/<n>`, naming `Ready` (`labels[]=Ready`, `labels='["Ready"]'`) or with a body it cannot
-read (`--input`), `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
+none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `gh api` (a path or a full URL) with `PUT` or `POST`
+on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
 ready at its head: a clean review, a passed norms check and passed or waived E2E recorded at
 the head `pr-gate` reads (« Records » above), and green CI. A `--match-head-commit` or a
-`pr-merge --sha` other than that head is not ready either. The `Ready` label is refused so in
-both phases; under enforce every other act is too, before any question, with `github: <act>
+`pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
+act: the gate alone decides readiness. Under enforce every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
 still carrying `Ready` goes back to `Not Ready`.
 
