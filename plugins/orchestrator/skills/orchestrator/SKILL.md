@@ -56,8 +56,8 @@ words.
 8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: paste
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
-   after asking it with `ask`, then `declare_wait` with what the turn waits on; close its
-   answer with `settle`.
+   after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
+   you launched wakes you undeclared.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; a deferred decision opens its
     dispatch-record row at once. A removal he decides is dispatched in the turn of his
