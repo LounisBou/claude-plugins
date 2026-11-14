@@ -3533,8 +3533,9 @@ export async function readRemoteRows($: any): Promise<RemoteRow[]> {
   return rows
 }
 
-// The machine's deck (deck.ts): the store, the remote rows, the round, the chains and the
-// sleepers read once and written to the state directory's deck.json, only when it is news against
+// The machine's deck (deck.ts): the store, the remote rows, the round (its entries and its questions
+// asked with `ask`), the chains and the sleepers read once and written to the state directory's
+// deck.json, only when it is news against
 // the file as it stands, whichever session wrote it last: every session of the machine computes
 // the same view of the same store, so a view another one already wrote is not written again, and
 // the stamp's refresh (DECK_REFRESH_MS) is the machine's, not each session's. Bounded by its
@@ -3558,7 +3559,8 @@ export async function writeDeck($: any): Promise<void> {
   const deck = deckOf({
     machine: await machineOf($), now, local, chains, prs,
     remote: await readRemoteRows($),
-    round: (await readRound($)).map(read => read.entry),
+    // The relay's entries and the questions asked with `ask`, each its own object in the round.
+    round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).map(askedAsEntry)],
     sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
     gate: await gateEnv($),
   })
