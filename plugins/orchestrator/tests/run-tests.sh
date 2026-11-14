@@ -17,6 +17,8 @@ export LC_COLLATE=C
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORCH_REFS="$ROOT/skills/orchestrator/references"
+# Read by the cases of the rule-owner checks, long before the record's own section.
+REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
 # macOS sets TMPDIR with a trailing slash: every path built on it would carry a double slash
 # the scripts under test collapse, and no expected line would match what they print.
 TMPDIR="${TMPDIR:-/tmp}"
@@ -759,7 +761,6 @@ echo "== dispatch record =="
 # its class. Nothing measured that, so the rule could only ever be applied from memory —
 # and an economy nobody measures is one that always looks free. One row per dispatch,
 # and a summary that names the classes where the drop did not pay.
-REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
 R="$WORK/dispatch.jsonl"
 # A build with no spec still writes its goals file, empty: `open` refuses without one.
 bash "$REC" goals "$R" init --spec none >/dev/null
