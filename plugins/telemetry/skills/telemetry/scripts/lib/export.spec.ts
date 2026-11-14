@@ -494,3 +494,54 @@ test('a lock left by a holder that died is taken over after its stale age, not b
     assert.equal(exportExclusive(options, { waitMs: 0 }).code, 0)
   })
 })
+
+/** Sets the age of `lock` to `ageMs`: a holder that last showed life that long ago. */
+function ageLock(lock: string, ageMs: number): void {
+  const at = new Date(Date.now() - ageMs)
+  utimesSync(lock, at, at)
+}
+
+test('the export keeps its lock alive while it works: a rival cannot take it over between two transcripts', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const files = plantFiles(root, { [THIRD]: prompt('one'), [S]: prompt('two'), [OTHER]: prompt('three') })
+    append(eventsDir(state), daily([S, OTHER, THIRD]), new Map())
+    const lock = join(state, 'export.lock')
+    const options = { stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }
+    let copying = false
+    let copied = 0
+    let rival: { busy: boolean } | undefined
+    const transcript = (session: string): string | undefined => {
+      if (!copying) return files[session]
+      copied++
+      // The first takes an hour, say: when the second is reached that time has passed.
+      if (copied === 1) ageLock(lock, 3_600_000)
+      // A rival export arrives, and waits no time for the lock.
+      if (copied === 2) rival = exportExclusive(options, { waitMs: 0 })
+      return files[session]
+    }
+    const watching: Git = (args, cwd) => {
+      if (args[0] === 'ls-tree') copying = true
+      return git(args, cwd)
+    }
+    assert.equal(exportExclusive({ ...options, git: watching, transcript }, { waitMs: 0 }).code, 0)
+    assert.equal(rival?.busy, true)
+  })
+})
+
+test('the export keeps its lock alive across its git commands, a push of minutes included', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const lock = join(state, 'export.lock')
+    const ages: Record<string, number> = {}
+    const watching: Git = (args, cwd) => {
+      // What each command finds of the lock, after the one before took its hour.
+      ages[args[0] ?? ''] = Date.now() - statSync(lock).mtimeMs
+      ageLock(lock, 3_600_000)
+      return git(args, cwd)
+    }
+    assert.equal(exportExclusive({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git: watching }, { waitMs: 0 }).code, 0)
+    for (const command of ['clone', 'fetch', 'add', 'commit', 'push']) assert.ok((ages[command] ?? Infinity) < 60_000, `${command}: the lock was ${ages[command]} ms old`)
+  })
+})

@@ -2,9 +2,10 @@
 // clone of the logs repository and pushed, after the scan of every day file finds no secret and
 // every transcript is passed through the redaction. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readText, withLock, writeAtomic } from '../../../../core/store.ts'
+import { lockOf } from '../../../../core/store-io.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
 import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
@@ -35,6 +36,8 @@ export interface ExportOptions {
   readonly transcript?: (session: string) => string | undefined
   /** What one export takes of the transcripts: the defaults, `MAX_TRANSCRIPT_BYTES` and `MAX_RUN_BYTES`, unless a caller passes another. */
   readonly limits?: { readonly transcriptBytes?: number; readonly runBytes?: number }
+  /** Called before each git command and each transcript: the export is alive, and goes on. */
+  readonly heartbeat?: () => void
 }
 
 /**
@@ -56,7 +59,11 @@ export interface ExportResult {
   readonly code: number
 }
 
-/** A lock older than this is a holder that died: longer than the slowest export (every git command is bounded). */
+/**
+ * A lock not refreshed for this long is a holder that died. A running export refreshes it before each git
+ * command (bounded at 60 s, `GIT_TIMEOUT_MS`) and each transcript (bounded by `MAX_TRANSCRIPT_BYTES`: a read
+ * and a redaction of seconds), so what must stay under it is the slowest of those steps, never the whole export.
+ */
 export const EXPORT_LOCK_STALE_MS = 600_000
 
 /** The logs repository: the environment's value, else ~/.env's. */
@@ -230,6 +237,7 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
   let waiting = 0
   let waitingBytes = 0
   for (const session of [...sessions].sort()) {
+    options.heartbeat?.()
     const source = options.transcript?.(session)
     if (source === undefined) continue
     offered.add(session)
@@ -295,7 +303,11 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
 
 /** Exports the store; answers the lines to print and the exit code. */
 export function exportStore(options: ExportOptions): ExportResult {
-  const { stateDir, secrets, repo, machine, git } = options
+  const { stateDir, secrets, repo, machine } = options
+  const git: Git = (args, cwd) => {
+    options.heartbeat?.()
+    return options.git(args, cwd)
+  }
   const events = eventsDir(stateDir)
   if (repo === undefined) return { lines: [`export: ${REPO_VARIABLE} is not set; the events stay local in ${events}, nothing pushed`], code: 0 }
   const findings = check(events, secrets)
@@ -368,6 +380,17 @@ export function exportStore(options: ExportOptions): ExportResult {
   return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`, ...copied.notes], code: 0 }
 }
 
+/** Marks `lock` as held a moment longer: its age is what tells a holder that died from one that works. */
+function refreshLock(lock: string): void {
+  try {
+    const now = new Date()
+    utimesSync(lock, now, now)
+  } catch (error) {
+    // The lock is gone (taken over, or removed): there is nothing to refresh, and the export is not the one to say so.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
 /**
  * The export, one at a time on this machine: it takes the lock beside the clone and waits for it up to
  * `waitMs`. A holder is a session's export running; when the lock stays held, nothing is pushed.
@@ -377,10 +400,15 @@ export function exportExclusive(
   options: ExportOptions,
   lock: { readonly waitMs: number; readonly when?: () => boolean },
 ): ExportResult & { readonly busy: boolean; readonly skipped?: true } {
+  const name = join(options.stateDir, 'export')
   try {
-    return withLock(join(options.stateDir, 'export'), () => {
+    return withLock(name, () => {
       if (lock.when?.() === false) return { lines: [], code: 0, busy: false, skipped: true as const }
-      return { ...exportStore(options), busy: false }
+      const heartbeat = (): void => {
+        refreshLock(lockOf(name))
+        options.heartbeat?.()
+      }
+      return { ...exportStore({ ...options, heartbeat }), busy: false }
     }, { waitMs: lock.waitMs, staleMs: EXPORT_LOCK_STALE_MS })
   } catch (error) {
     if (error instanceof Error && /stayed locked/.test(error.message)) return { lines: ['export: another export is running, nothing pushed'], code: 1, busy: true }
