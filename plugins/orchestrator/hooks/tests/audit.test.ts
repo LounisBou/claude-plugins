@@ -6,6 +6,7 @@
 // body or command; a journal that cannot be written changes no answer.
 import { expect, test } from 'claude-code/testing'
 import { register, refusalCode, STOP_GATE_CODE } from '../audit.ts'
+import { PULL_URL } from '../audit-events.ts'
 import { guardFallback, killDecision } from '../guards.ts'
 import { MODE_DIALOG_DENY } from '../mode-dialog.ts'
 import { MODELS_DENY } from '../models-guard.ts'
@@ -221,4 +222,9 @@ test('a call nothing in the module watches writes nothing and is answered as the
   const m = mounted()
   expect(await m.on('tool.call', fx.dollar, { tool: 'Read', file_path: '/x' }, { result: 'text' })).toEqual({ result: 'text' })
   expect(fx.journal()).toEqual([])
+})
+
+test('the pull request address every reader of an answer shares: the repository and the number of the first one', () => {
+  expect(PULL_URL.exec('see https://github.com/Acme/app.x/pull/12 and https://github.com/a/b/pull/3')?.slice(1)).toEqual(['Acme/app.x', '12'])
+  expect(PULL_URL.exec('https://github.com/a/b/pull/0')).toBe(null)
 })

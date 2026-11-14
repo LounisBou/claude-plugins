@@ -107,7 +107,8 @@ export function reviewEvents(stamp: Stamp, seen: ReviewSeen, answer: string, con
   ]
 }
 
-const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)/
+/** The address of a pull request on GitHub: its repository and its number. */
+export const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)/
 
 /** A conventional commit's fix: `fix: …`, `fix(scope): …`, `fix!: …`. */
 const FIX_TITLE = /^fix(?:\([^)]*\))?!?:/

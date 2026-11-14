@@ -35,6 +35,19 @@ check "no file is called unreadable" "0" "$(printf '%s\n' "$out" | grep -c 'of t
 printf '%s\n' '{"v":1,"command":"git push"}' > "$CONFIG/github/journal/foreign.json"
 check "a file that is not an event is counted" "1" "$(health | grep -c '1 file in the journals is not an event of the contract')"
 
+OLD_AT=$("${NODE[@]}" -e 'console.log(new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 19) + "Z")')
+OLD_ID="$(printf '%s' "$OLD_AT" | tr -d ':-')-0a1b2c3e"
+printf '%s\n' "$EVENT" | sed -e "s/20261114T101500Z-0a1b2c3d/$OLD_ID/" -e "s/2026-11-14T10:15:00Z/$OLD_AT/" -e 's/github.ready.missing-review/github.ready.old-guard/' > "$CONFIG/github/journal/$OLD_ID.json"
+check "a guard code silent over the window is listed with its days" "1" "$(health | grep -c 'github.ready.old-guard  *github 45 days silent$')"
+
+check "no rulings file says no removal is left" "1" "$(health | grep -A1 '^undelivered removals' | grep -c '^  none$')"
+mkdir -p "$CONFIG/claude-orchestrator/briefs/proj" "$WORK/repo/.git" "$WORK/repo/src"
+printf '%s\n' 'export function legacy() {}' > "$WORK/repo/src/old.ts"
+printf '%s\n' '- 2026-11-14T15:00:00Z « Retire legacy » — removal: src/old.ts::legacy' '- 2026-11-14T15:01:00Z « Retire the gone one » — removal: src/gone.ts' > "$CONFIG/claude-orchestrator/briefs/proj/rulings.md"
+removals() { (cd "$WORK/repo" && "${NODE[@]}" "$SCRIPTS/health.ts" --config "$CONFIG"); }
+check "a decided removal still in the repository is reported" "1" "$(removals | grep -c 'src/old.ts::legacy  *decided 2026-11-14T15:00:00Z (proj)$')"
+check "a delivered removal is not" "0" "$(removals | grep -c 'src/gone.ts')"
+
 "${NODE[@]}" "$SCRIPTS/health.ts" >/dev/null 2>&1; code=$?
 check "a call with no configuration directory exits 2" "2" "$code"
 

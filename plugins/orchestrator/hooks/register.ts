@@ -12,6 +12,7 @@ import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
 import { register as registerWait } from './wait.ts'
 import { register as registerUnattended } from './unattended.ts'
+import { register as registerLedger } from './ledger.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay } from './supervision.ts'
 import { register as registerAnswered } from './answered.ts'
 import { register as registerTodo } from './todo.ts'
@@ -50,4 +51,5 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerMoving(on)
   registerShortCommands(on)
   registerUnattended(on)
+  registerLedger(on)
 }
