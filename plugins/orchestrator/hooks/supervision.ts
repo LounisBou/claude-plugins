@@ -2701,11 +2701,14 @@ export function withConsent(entry: RoundEntry, consent: RoundEntry['consent'] | 
 // The operator's answer to an entry that asks his consent, written as that subject's consent
 // record (core's consent-record.ts), the contract github reads in place of the round. An entry
 // that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
-// is: the failure is one log line.
+// is: an entry that asked a consent and records none says why in one log line.
 export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<void> {
   if (!entry.consent) return
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
-  if (!record) return
+  if (!record) {
+    await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: « ${text.trim()} » names none of its choices`)
+    return
+  }
   try {
     const path = consentPath(await configDir($), record)
     const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 5000 })
