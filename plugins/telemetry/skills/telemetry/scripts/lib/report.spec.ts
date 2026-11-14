@@ -316,7 +316,7 @@ test('a session whose directory is gone is attributed by the checkouts around it
     const out = lines(config, { repositoryAt: dir => repositories[dir] })
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$9\.00 /)
     assert.match(find(out, '  unattributed '), /^ {2}unattributed +unattributed +\$18\.00 /)
-    assert.equal(find(out, '  attribution:'), '  attribution: 2 by the ancestry of a gone directory; 3 left unattributed (1 directory gone, no known checkout around it; 1 directory gone, the checkouts around it name several repositories; 1 no directory and no project)')
+    assert.equal(find(out, '  attribution:'), '  attribution: 2 by the ancestry of a directory that names no repository; 3 left unattributed (1 directory names no repository, no known checkout around it; 1 directory names no repository, the checkouts around it name several; 1 no directory and no project)')
     assert.equal(find(out, '  cap '), "  cap     tool 31 % of the week's spend (range 31–93 %: 62 % unattributed), cost known for 8 of 8 sessions: above the 20 % cap (suspended)")
   })
 })
@@ -365,4 +365,64 @@ test('a resumed session whose cumulative cost restarted lower is summed from its
     // S(1) 3 (1 + 2, not 0 nor the excess), S(3) 5 (cumulative, no restart), S(4) 4: the three known; S(2) is n/a.
     assert.match(find(out, '  acme/app '), /^ {2}acme\/app +product +\$12\.00 /)
   })
+})
+
+test('ancestry: several siblings that agree, the nearest checkout above wins over those below, a session with an explicit project still anchors its directory, and a line says only what happened', () => {
+  const only = (events: Record<string, unknown>[], repositories: Record<string, string>): string[] => {
+    let out: string[] = []
+    scratch({ events }, config => { out = lines(config, { repositoryAt: dir => repositories[dir] }) })
+    return out
+  }
+  const siblings = only([ended('2026-11-10', S(1), 1, { cwd: '/w/tool/a' }), ended('2026-11-10', S(2), 1, { cwd: '/w/tool/b' }), ended('2026-11-10', S(3), 5, { cwd: '/w/tool/gone' })], { '/w/tool/a': 'acme/tool', '/w/tool/b': 'acme/tool' })
+  assert.match(find(siblings, '  acme/tool '), /^ {2}acme\/tool +tool +\$7\.00 /)
+  assert.equal(find(siblings, '  attribution:'), '  attribution: 1 by the ancestry of a directory that names no repository; 0 left unattributed')
+  assert.equal(find(siblings, '  restarted:'), 'missing   restarted:')
+  const nested = only([ended('2026-11-10', S(1), 1, { cwd: '/q/main' }), ended('2026-11-10', S(2), 1, { cwd: '/q/main/nested' }), ended('2026-11-10', S(3), 5, { cwd: '/q/main/gone' })], { '/q/main': 'acme/app', '/q/main/nested': 'acme/other' })
+  assert.match(find(nested, '  acme/app '), /^ {2}acme\/app +product +\$6\.00 /)
+  const explicit = only([ended('2026-11-10', S(1), 1, { cwd: '/p/a', project: 'acme/other' }), ended('2026-11-10', S(2), 5, { cwd: '/p/gone' })], { '/p/a': 'acme/app' })
+  assert.match(find(explicit, '  acme/app '), /^ {2}acme\/app +product +\$5\.00 /)
+  assert.match(find(explicit, '  acme/other '), /^ {2}acme\/other +product +\$1\.00 /)
+  const alone = only([ended('2026-11-10', S(1), 5, { cwd: '/z/gone' })], {})
+  assert.equal(find(alone, '  attribution:'), '  attribution: 0 by the ancestry of a directory that names no repository; 1 left unattributed (1 directory names no repository, no known checkout around it)')
+  // The nearest checkout above wins over the checkouts below a nearer directory, nested repositories included.
+  const mono = only([ended('2026-11-10', S(1), 1, { cwd: '/w/mono' }), ended('2026-11-10', S(2), 1, { cwd: '/w/mono/vendor/lib' }), ended('2026-11-10', S(3), 5, { cwd: '/w/mono/vendor/gone' })], { '/w/mono': 'acme/app', '/w/mono/vendor/lib': 'acme/other' })
+  assert.match(find(mono, '  acme/app '), /^ {2}acme\/app +product +\$6\.00 /)
+})
+
+test('a restart of the cumulative cost is told from a late or equal line, and summed from the turns of the window only when each has its cost', () => {
+  const turn = (ts: string, session: string, cost: number, turnCost?: number): Record<string, unknown> => ev(ts, 'turn_end', session, { cost_usd: cost, project: 'acme/app', ...(turnCost === undefined ? {} : { turn_cost_usd: turnCost }) })
+  const run = (events: Record<string, unknown>[]): string[] => {
+    let out: string[] = []
+    scratch({ events }, config => { out = lines(config) })
+    return out
+  }
+  // A turn then a session end at the same cumulative cost: no restart, the cumulative figure counts.
+  const equal = run([turn('2026-11-09T10:00:00Z', S(1), 4, 3), ev('2026-11-09T11:00:00Z', 'session_end', S(1), { cost_usd: 4, project: 'acme/app' })])
+  assert.match(find(equal, '  acme/app '), /^ {2}acme\/app +product +\$4\.00 /)
+  assert.equal(find(equal, '  restarted:'), 'missing   restarted:')
+  // A rise (1, 5) then a restart (2): the sum of the turns, not the highest cost.
+  const rise = run([turn('2026-11-09T10:00:00Z', S(1), 1, 1), turn('2026-11-09T11:00:00Z', S(1), 5, 4), turn('2026-11-09T12:00:00Z', S(1), 2, 2)])
+  assert.match(find(rise, '  acme/app '), /^ {2}acme\/app +product +\$7\.00 /)
+  // The session end of a restarted session carries no turn cost: it is no turn.
+  const ending = run([turn('2026-11-07T10:00:00Z', S(1), 10, 10), turn('2026-11-09T10:00:00Z', S(1), 1, 1), ev('2026-11-09T11:00:00Z', 'session_end', S(1), { cost_usd: 1, project: 'acme/app' })])
+  assert.match(find(ending, '  acme/app '), /^ {2}acme\/app +product +\$1\.00 /)
+  // Two summed, one with no turn in the window: n/a, and the counts are told apart.
+  const counts = run([
+    turn('2026-11-09T10:00:00Z', S(1), 1, 1), turn('2026-11-09T11:00:00Z', S(1), 5, 4), turn('2026-11-09T12:00:00Z', S(1), 2, 2),
+    turn('2026-11-07T10:00:00Z', S(2), 10, 10), turn('2026-11-09T10:00:00Z', S(2), 1, 1),
+    turn('2026-11-07T10:00:00Z', S(3), 10, 10), ev('2026-11-09T11:00:00Z', 'session_end', S(3), { cost_usd: 1, project: 'acme/app' }),
+  ])
+  assert.equal(find(counts, '  restarted:'), '  restarted: 3 resumed sessions whose cumulative cost restarted lower: 2 summed from their per-turn costs, 1 n/a')
+  assert.match(find(counts, 'spend'), /cost known for 2 of 3 sessions/)
+  // A turn with no figure at all (no cost, no turn cost): the sum is incomplete, n/a.
+  const bare = run([turn('2026-11-07T10:00:00Z', S(1), 10, 10), turn('2026-11-09T10:00:00Z', S(1), 1, 1), ev('2026-11-09T11:00:00Z', 'turn_end', S(1), { project: 'acme/app' })])
+  assert.match(find(bare, '  restarted:'), /0 summed from their per-turn costs, 1 n\/a$/)
+  // A restarted session with nothing in the window is no session of the week.
+  const idle = run([turn('2026-11-03T10:00:00Z', S(1), 10, 10), turn('2026-11-04T10:00:00Z', S(1), 1, 1), turn('2026-11-09T10:00:00Z', S(2), 2, 2)])
+  assert.equal(find(idle, '  restarted:'), 'missing   restarted:')
+  assert.match(find(idle, 'spend'), /cost known for 1 of 1 sessions/)
+  // One turn with its cost and one without: a partial sum is never printed.
+  const mixed = run([turn('2026-11-07T10:00:00Z', S(1), 10, 10), turn('2026-11-09T10:00:00Z', S(1), 1, 1), turn('2026-11-09T11:00:00Z', S(1), 3)])
+  assert.equal(find(mixed, '  restarted:'), '  restarted: 1 resumed sessions whose cumulative cost restarted lower: 0 summed from their per-turn costs, 1 n/a')
+  assert.match(find(mixed, 'spend'), /cost known for 0 of 1 sessions/)
 })

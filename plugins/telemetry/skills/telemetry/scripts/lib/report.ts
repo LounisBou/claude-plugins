@@ -85,6 +85,8 @@ interface Session {
   turnCost: number
   turnCosted: number
   turnUncosted: boolean
+  /** An event of the session fell in the window. */
+  inside: boolean
   tokens: number
   life: number | undefined
   firstContext: number | undefined
@@ -117,7 +119,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       const id = text(e['session'])
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
-      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
+      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
       s.project = text(e['project']) ?? s.project
@@ -129,22 +131,24 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       if (cost !== undefined && day <= end) {
         const at = Date.parse(text(e['ts']) ?? '')
         // A later event under the highest cost so far is a restart of the host's cumulative figure, not a late line.
+        // A host that reads turns ending together out of order may look like one: the session is then summed from
+        // its per-turn costs, which are exact, or n/a, never a wrong figure.
         if (s.peak !== undefined && cost < s.peak.cost && at > s.peak.at) s.restarted = true
         if (s.peak === undefined || cost >= s.peak.cost) s.peak = { cost, at }
         if (day < start) s.before = Math.max(s.before, cost)
         s.upTo = Math.max(s.upTo ?? 0, cost)
-        if (inWindow && kind === 'turn_end') {
-          const turn = num(e['turn_cost_usd'])
-          if (turn === undefined) s.turnUncosted = true
-          else {
-            s.turnCost += turn
-            s.turnCosted++
-          }
-        }
       }
       if (!inWindow) continue
+      s.inside = true
       if (kind === 'session_start') s.began = true
       if (kind === 'turn_end') {
+        // A turn with no figure of its own (the host gave none) leaves a sum of the window's turns incomplete.
+        const turnCost = num(e['turn_cost_usd'])
+        if (turnCost === undefined) s.turnUncosted = true
+        else {
+          s.turnCost += turnCost
+          s.turnCosted++
+        }
         const context = num(e['context_tokens'])
         if (context !== undefined) turns.push({ session: id, tokens: context })
         s.firstContext ??= context
@@ -250,7 +254,7 @@ export function report(input: ReportInput): string[] {
     if (s.restarted) cost = s.turnCosted > 0 && !s.turnUncosted ? s.turnCost : undefined
     // A session seen before the week with no cost before it has no baseline: its cost is unknown, not all of the week's.
     else cost = s.upTo === undefined || (s.seenBefore && s.before === 0) ? undefined : s.upTo - s.before
-    if (s.tokens === 0 && (cost ?? 0) === 0 && !s.restarted) continue
+    if (s.tokens === 0 && (cost ?? 0) === 0 && !(s.restarted && s.inside)) continue
     if (s.restarted && cost === undefined) restartedUnknown++
     else if (s.restarted) restartedSummed++
     kept.push({ s, cost })
@@ -258,7 +262,7 @@ export function report(input: ReportInput): string[] {
   // The checkouts that exist: the directories of the kept sessions that name a repository through git.
   const checkouts = new Map<string, string>()
   for (const { s } of kept) {
-    const repo = s.project?.includes('/') || s.cwd === undefined ? undefined : repositoryAt(s.cwd)
+    const repo = s.cwd === undefined ? undefined : repositoryAt(s.cwd)
     if (s.cwd !== undefined && repo !== undefined) checkouts.set(s.cwd, repo)
   }
   const unattributed = { gone: 0, ambiguous: 0, none: 0 }
@@ -271,19 +275,24 @@ export function report(input: ReportInput): string[] {
     }
     const direct = checkouts.get(s.cwd)
     if (direct !== undefined) return direct
-    // A directory gone from the disk (a deleted worktree): the repository of the nearest known checkout
-    // above it, or of the checkouts below the nearest directory that holds some, when they all agree.
-    for (let dir = dirname(s.cwd); dir !== dirname(dir); dir = dirname(dir)) {
-      const above = checkouts.get(dir)
+    // A directory that names no repository (a deleted worktree): the repository of the nearest known checkout
+    // above it; else of the checkouts below the nearest directory that holds some, when they all agree.
+    const ancestors: string[] = []
+    for (let dir = dirname(s.cwd); dir !== dirname(dir); dir = dirname(dir)) ancestors.push(dir)
+    const above = ancestors.map(dir => checkouts.get(dir)).find(repo => repo !== undefined)
+    if (above !== undefined) {
+      byAncestry++
+      return above
+    }
+    for (const dir of ancestors) {
       const below = new Set([...checkouts].filter(([path]) => path.startsWith(`${dir}/`)).map(([, repo]) => repo))
-      if (above === undefined && below.size === 0) continue
-      const repos = above === undefined ? below : new Set([above])
-      if (repos.size === 1) {
-        byAncestry++
-        return [...repos][0]
+      if (below.size === 0) continue
+      if (below.size > 1) {
+        unattributed.ambiguous++
+        return undefined
       }
-      unattributed.ambiguous++
-      return undefined
+      byAncestry++
+      return [...below][0]
     }
     unattributed.gone++
     return undefined
@@ -322,8 +331,8 @@ export function report(input: ReportInput): string[] {
   out.push(spent === 0 || tools.length === 0 ? `  cap     ${NA(tools.length === 0 ? 'no tool repository' : 'no cost known in the week')}` : `  cap     tool ${low} % of the week's spend (range ${low}–${upper} %: ${Math.round(unattributedShare)} % unattributed), cost known for ${known} of ${active} sessions: ${verdict}`)
   const left = unattributed.gone + unattributed.ambiguous + unattributed.none
   if (left > 0 || byAncestry > 0) {
-    const why = [[unattributed.gone, 'directory gone, no known checkout around it'], [unattributed.ambiguous, 'directory gone, the checkouts around it name several repositories'], [unattributed.none, 'no directory and no project']] as const
-    out.push(`  attribution: ${byAncestry} by the ancestry of a gone directory; ${left} left unattributed${left > 0 ? ` (${why.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join('; ')})` : ''}`)
+    const why = [[unattributed.gone, 'directory names no repository, no known checkout around it'], [unattributed.ambiguous, 'directory names no repository, the checkouts around it name several'], [unattributed.none, 'no directory and no project']] as const
+    out.push(`  attribution: ${byAncestry} by the ancestry of a directory that names no repository; ${left} left unattributed${left > 0 ? ` (${why.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join('; ')})` : ''}`)
   }
   if (restartedSummed + restartedUnknown > 0) out.push(`  restarted: ${restartedSummed + restartedUnknown} resumed sessions whose cumulative cost restarted lower: ${restartedSummed} summed from their per-turn costs, ${restartedUnknown} n/a`)
   for (const [name, g] of [...groups].sort(([, a], [, b]) => b.cost - a.cost || b.tokens - a.tokens)) {
