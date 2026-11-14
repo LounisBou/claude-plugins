@@ -1459,10 +1459,8 @@ test('a typed prompt that does not speak of auto-merge adds no line', async ($, 
 
 // ---- the operator's words, quoted inside a wrapping ----
 
-// The moment the prompts are received and the day the module dates them: noon in UTC, a day
-// everywhere the tests run.
+// The moment the module reads on its clock: noon in UTC, a day everywhere the tests run.
 const RECEIVED = Date.UTC(2026, 10, 2, 12, 0, 0)
-const RECEIVED_DAY = '2026-11-02'
 test('auto-merge-set accepts a quote of the operator\'s typed words that names auto-merge in itself', async ($, on) => {
   const seen = await world($, on)
   await typed($, 'thing : ' + HIS_WORDS)
@@ -2058,11 +2056,16 @@ test('a consent record of a waiver of one pull request does not exempt the repos
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
-test('an exemption is refused undated, without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
+test('the operator\'s words exempt a repository with no date in them', async ($, on) => {
   const seen = await world($, on)
-  await typed($, 'plus de dérogation E2E sur ce dépôt')
-  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur ce dépôt'))
-  expect(undated.deny).toContain('with their date (YYYY-MM-DD)')
+  await typed($, 'plus de dérogation E2E sur thing')
+  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur thing'))
+  expect(undated.deny).toBeUndefined()
+  expect(exemptionOf(seen).exempt).toBe(true)
+})
+
+test('an exemption is refused without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
+  const seen = await world($, on)
   await typed($, HIS_EXEMPTION)
   const unnamed: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { repo: 'thing' }))
   expect(unnamed.deny).toContain('{"repo": "owner/name"}')
@@ -2082,14 +2085,13 @@ test('words that grant no exemption, or do not name the repository, exempt nothi
 })
 
 test('the repository named outside the operator\'s quoted words does not count', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
   const seen = await world($, on)
   await typed($, 'plus de dérogation E2E pour docs/')
-  const outside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E pour docs/ » — operator about acme/thing, ' + RECEIVED_DAY, { paths: ['docs/'] }))
+  const outside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E pour docs/ » — operator about acme/thing', { paths: ['docs/'] }))
   expect(outside.deny).toContain('an E2E exemption quotes the operator')
   expect(seen.files[EXEMPTION]).toBeUndefined()
   await typed($, 'plus de dérogation E2E sur thing pour docs/')
-  const inside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E sur thing pour docs/ » — operator, ' + RECEIVED_DAY, { paths: ['docs/'] }))
+  const inside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E sur thing pour docs/ » — operator', { paths: ['docs/'] }))
   expect(inside.deny).toBeUndefined()
 })
 
@@ -2764,10 +2766,11 @@ test('a run that failed at an earlier head before the « Accorder » leaves it s
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
 })
 
-test('a waived record with no « Accorder » recorded is refused, and names the question to put', async ($, on) => {
+test('a waived record with no « Accorder » recorded is refused, and names the question to put and where it goes', async ($, on) => {
   const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
-  const out: any = await $.tool.call(waiveCall('the operator said so, 2026-11-03'))
+  const out: any = await $.tool.call(waiveCall('the operator said so'))
   expect(out.deny).toContain('github: an E2E waiver is the operator\'s « Accorder » to one question, « Dispense d\'E2E pour acme/thing#12 : <why> »')
+  expect(out.deny).toContain('asked as method:lifecycle « Questions to the operator » says')
   expect(recordRun(seen)).toBeUndefined()
 })
 

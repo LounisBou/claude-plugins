@@ -2224,10 +2224,10 @@ path=$(env -u CLAUDE_CONFIG_DIR HOME="$WORK/homerec" python3 "$RECORD" --repo ac
 check "record.py writes under HOME/.claude without CLAUDE_CONFIG_DIR" \
   "$WORK/homerec/.claude/pr-records/acme/thing/$HEAD40" "$(dirname "$path")"
 
-path=$(recbase --kind e2e --result waived --detail "waived by the operator on 2026-11-02: no browser here")
-check "record.py accepts an e2e waiver whose detail carries a date" "0" "$?"
-recbase --kind norms --result waived --detail "operator: Accorder (tab, 2026-11-02T10:00:00Z)" >/dev/null
-check "record.py accepts a norms waiver whose detail carries a date" "0" "$?"
+path=$(recbase --kind e2e --result waived --detail "operator: Accorder (pane, 2026-11-02T10:00:00Z)")
+check "record.py accepts an e2e waiver carrying the operator's answer" "0" "$?"
+recbase --kind norms --result waived --detail "operator: Accorder" >/dev/null
+check "record.py accepts a norms waiver whose detail carries no date" "0" "$?"
 check "record.py lowercases an upper-case head" "$WORK/cfgrec/pr-records/acme/thing/$HEAD40" \
   "$(dirname "$(rec --repo acme/thing --pr 12 --head "$(printf %s "$HEAD40" | tr a-f A-F)" --kind review --result pass --producer x)")"
 
@@ -2251,8 +2251,8 @@ for case in \
   # shellcheck disable=SC2086
   check_status "record.py refuses a $name with exit 2" 2 rec ${case#*|}
 done
-check_status "record.py refuses a waiver whose detail has no date with exit 2" 2 \
-  rec --repo acme/thing --pr 12 --head "$HEAD40" --kind e2e --result waived --detail "the operator said so" --producer x
+check_status "record.py refuses a waiver whose detail is blank with exit 2" 2 \
+  rec --repo acme/thing --pr 12 --head "$HEAD40" --kind e2e --result waived --detail "  " --producer x
 check_status "record.py refuses a detail past 500 characters with exit 2" 2 \
   rec --repo acme/thing --pr 12 --head "$HEAD40" --kind review --result pass --detail "$long" --producer x
 check "record.py prints one error line on a usage error" "1" \
