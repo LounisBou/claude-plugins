@@ -172,6 +172,17 @@ test('redactValue: a token in an identifier field, nested or at the top level, i
   assert.deepEqual(hits, ['github-token', 'github-token', 'github-token', 'github-token'])
 })
 
+test('redactValue: an object key is redacted like a value, at any depth', () => {
+  const value = 'a-long-enough-value'
+  const token = join('gh', 'p_', RANDOM, 'abcd')
+  const event = { [value]: 1, nested: { [value]: { deeper: [{ [value]: 'kept', [token]: true }] } } }
+  const redacted = redactValue(event, new Map([['SERVICE_PASS', value]]))
+  assert.deepEqual(redacted.value, { '[REDACTED:env]': 1, nested: { '[REDACTED:env]': { deeper: [{ '[REDACTED:env]': 'kept', '[REDACTED:github-token]': true }] } } })
+  assert.deepEqual(redacted.hits, ['env', 'env', 'env', 'github-token'])
+  assert.ok(!JSON.stringify(redacted.value).includes(value))
+  assert.ok(!JSON.stringify(redacted.value).includes(token))
+})
+
 test('redactValue: identifiers held to their shape, every other string scanned, other values kept', () => {
   const event = {
     v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69',

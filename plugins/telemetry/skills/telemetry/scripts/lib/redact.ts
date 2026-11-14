@@ -233,9 +233,9 @@ export function redactText(text: string, secrets: EnvSecrets = new Map(), option
 }
 
 /**
- * An event with every string redacted, at any depth, and what matched. The identifier fields of
- * the event itself (its top level only) are held to their shape as well; a nested field of the
- * same name is plain text.
+ * An event with every string redacted, at any depth, and what matched; an object's keys are
+ * redacted as strings too. The identifier fields of the event itself (its top level only) are held
+ * to their shape as well; a nested field of the same name is plain text.
  */
 export function redactValue(value: unknown, secrets: EnvSecrets): { value: unknown; hits: string[] } {
   return walk(value, secrets, undefined, 0)
@@ -262,9 +262,11 @@ function walk(value: unknown, secrets: EnvSecrets, key: string | undefined, dept
     const hits: string[] = []
     const out: Record<string, unknown> = {}
     for (const [k, item] of Object.entries(value)) {
+      // A key is text a secret can sit in as well as a value; the field's shape is still read from the key as written.
+      const name = redactText(k, secrets)
       const r = walk(item, secrets, k, depth + 1)
-      hits.push(...r.hits)
-      out[k] = r.value
+      hits.push(...name.hits, ...r.hits)
+      out[name.text] = r.value
     }
     return { value: out, hits }
   }
