@@ -39,6 +39,7 @@ jobs:
         name: what this tree already passed
         if: github.event_name == 'push'
         continue-on-error: true
+        timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types --no-warnings scripts/tested-tree.ts "$GITHUB_SHA"

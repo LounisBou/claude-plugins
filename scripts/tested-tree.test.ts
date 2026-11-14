@@ -168,6 +168,12 @@ describe('the decision for a push to main', () => {
     assert.deepEqual(decision.covered, ['alpha|ubuntu-latest|'])
   })
 
+  it('covers no cell that is not yet blocking, even when its job passed', async () => {
+    const jobs = { jobs: [job('repository rules'), job('alpha on ubuntu-latest (not yet blocking)'), job('beta on ubuntu-latest')] }
+    const { git, api } = world({ jobs })
+    assert.deepEqual((await decide(MERGE, REPO, git, api)).covered, ['beta|ubuntu-latest|'])
+  })
+
   it('finds the matching run among several', async () => {
     const second = { ...pullRequestRun(), id: 8 }
     const { git, api } = world({ runs: { workflow_runs: [pullRequestRun('failure'), second] } })
@@ -179,7 +185,10 @@ describe('the names of the jobs', () => {
   it('reads a plugin cell, its part and its platform', () => {
     assert.equal(cellOfJob('alpha on macos-latest'), 'alpha|macos-latest|')
     assert.equal(cellOfJob('orchestrator on ubuntu-latest (part 3)'), 'orchestrator|ubuntu-latest|3')
-    assert.equal(cellOfJob('drift on ubuntu-latest (not yet blocking)'), 'drift|ubuntu-latest|')
+  })
+
+  it('reads no cell in a job not yet blocking: its suite may have failed under a warning', () => {
+    assert.equal(cellOfJob('drift on ubuntu-latest (not yet blocking)'), undefined)
   })
 
   it('reads no cell in the jobs that are not one', () => {
@@ -217,6 +226,16 @@ describe('the matrix of main without the cells already passed', () => {
     assert.equal(coveredCells('').size, 0)
     assert.equal(coveredCells('{"a":1}').size, 0)
     assert.equal(coveredCells('[1, null]').size, 0)
+  })
+})
+
+describe('the workflow step', () => {
+  it('is bounded: a hung lookup ends in two minutes and main runs everything', () => {
+    const workflow = readFileSync(join(import.meta.dirname, '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+    const step = /- id: tested\n(?:        .*\n)+/.exec(workflow)?.[0]
+    assert.ok(step !== undefined, 'the tested step')
+    assert.match(step, /\n {8}timeout-minutes: 2\n/)
+    assert.match(step, /\n {8}continue-on-error: true\n/)
   })
 })
 

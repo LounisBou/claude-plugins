@@ -48,8 +48,11 @@ export interface Api {
 
 const RUN_EVERYTHING = (reason: string): Decision => ({ repository: false, covered: [], reason: `run everything: ${reason}` })
 
-/** `<plugin> on <os>[ (part <n>)][ (not yet blocking)]`, the name of a plugin job in the workflow. */
-const CELL_JOB = new RegExp(`^(\\S+) on (${PLATFORMS.join('|')})(?: \\(part (\\d+)\\))?(?: \\(not yet blocking\\))?$`)
+/**
+ * `<plugin> on <os>[ (part <n>)]`, the name of a plugin job in the workflow. A cell not yet blocking is
+ * named with a suffix and passes with a warning when its suite fails: it is never covered.
+ */
+const CELL_JOB = new RegExp(`^(\\S+) on (${PLATFORMS.join('|')})(?: \\(part (\\d+)\\))?$`)
 
 /** The key of the cell a job name stands for, `undefined` for a job that is not a plugin cell. */
 export function cellOfJob(name: string): string | undefined {
@@ -169,12 +172,15 @@ function gitIn(root: string): Git {
   return (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
+/** A call that hangs is a lookup that failed: main runs everything rather than wait. */
+export const API_TIMEOUT_MS = 30_000
+
 /* node:coverage ignore next 16 */
 function githubApi(token: string | undefined): Api {
   const get = async (path: string): Promise<Response> => {
     if (token === undefined || token === '') throw new Error('no GH_TOKEN')
     // A log is a redirect to a signed address: fetch drops the token on the way, as it must.
-    const response = await fetch(`https://api.github.com/${path}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' } })
+    const response = await fetch(`https://api.github.com/${path}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(API_TIMEOUT_MS) })
     if (!response.ok) throw new Error(`HTTP ${response.status} for ${path.split('?')[0]}`)
     return response
   }
