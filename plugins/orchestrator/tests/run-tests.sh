@@ -13011,6 +13011,12 @@ check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ens
 
 fi
 
+# The implementer reviews its own change before its pull request (the method's « Self-review »):
+# the phase brief orders it and allows its readers, the standing rules except them, the review brief
+# and the review round read its section first and size the round by risk.
+check "the self-review is ordered, its readers allowed, its section read first, the round sized by risk" "yes|yes|yes|yes|yes|yes|yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" "- Self-review (\`method:lifecycle\`): each finding fixed")|$(spells "$ROOT/templates/agent-phase-brief.md" "and the self-review's \`orchestrator:lens\` readers only")|$(spells "$ROOT/templates/agent-phase-brief.md" "The « Self-review » section (§4) goes in too.")|$(spells "$ORCH_REFS/standing-rules.md" "the \`orchestrator:lens\` readers of its own self-review (\`method:lifecycle\`)")|$(spells "$ORCH_REFS/brief.md" "then the self-review (\`method:lifecycle\`)")|$(spells "$ROOT/templates/agent-review-brief.md" "(its « Self-review » section first)")|$(spells "$ORCH_REFS/review-round.md" "reads the pull request's « Self-review » section first, and you size the round by risk")"
+
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
 [ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"

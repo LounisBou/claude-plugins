@@ -197,7 +197,9 @@ orchestrator decides and releases the guard with `/implement:release-guard`. The
 from this skill's start until another implement skill starts, the turn is interrupted, or that
 release. A refusal is a stop to report, never a wall to go around.
 
-This skill's own steps end at the branch; consent, ready and merge are `method:lifecycle`'s.
+This skill's own steps end at the branch; the self-review before the pull request, consent, ready
+and merge are `method:lifecycle`'s. Its lens readers are subagents this guard refuses until
+`/implement:release-guard`.
 
 ---
 

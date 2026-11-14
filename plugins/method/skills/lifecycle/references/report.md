@@ -19,4 +19,4 @@ status:    done|blocked|question — <one line>
   end: background work runs.
 - An exit code is the one read from the run. A section with nothing to say says `none`.
 - A role may add lines it owns (a pull request, an `E2E:` line) after `files:`, never drop one.
-- The last line is parsed by code (`reportStatus` in core): nothing follows it.
+- The last line is parsed by code: nothing follows it.
