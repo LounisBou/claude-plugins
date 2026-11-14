@@ -36,6 +36,10 @@
 #   waiting <orchestrator> | done since <UTC time>
 #     (an orchestrator whose last turn ended on its machine line, read from the wait file the
 #     hooks module keeps for its live session; the module also enters that wait in the round once)
+#   unattended <orchestrator> | PR délaissées : <repository>#<n> (sans agent depuis <UTC minute>), ...
+#     (the open pull requests nobody attends, as the hooks module of a live orchestrator read them
+#     against the forge at its last turn end and wrote them on its row; « unattended » is core's
+#     pr-ledger.ts, docs/contracts.md; a repository the forge did not list is said unknown)
 #   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>
 #     (an orchestrator on another machine, its row as the hooks module received it; <wait> is
 #     « operator since <UTC time or ?> | blocks: <what it blocks> », « done since <UTC time or ?> »
@@ -524,6 +528,19 @@ waiting_rows() {
                          else print "waiting " $2 " | done since " $4 }' <(awk '{ print $1 }' "$T/ps") -
 }
 
+# unattended_rows: the pull requests nobody attends, one line per live orchestrator whose row in the
+# hooks module's store carries the line its module last read (hooks/unattended.ts), kept while its
+# pid is in the process table read above. Display only: the line is printed as the module wrote it.
+unattended_rows() {
+    local store="$MODULE/store/sessions"
+    [ -d "$store" ] || return 0
+    find "$store" -type f ! -name '*.tmp-*' -exec cat {} + 2>/dev/null \
+        | jq -R -r 'fromjson? | select(.role == "orchestrator" and (.unattended.line | type) == "string")
+            | [(.pid // "" | tostring), (.name // "unnamed"), .unattended.line] | @tsv' 2>/dev/null \
+        | awk -F'\t' 'FILENAME == ARGV[1] { live[$1] = 1; next }
+            $1 in live { print "unattended " $2 " | " $3 }' <(awk '{ print $1 }' "$T/ps") -
+}
+
 # --- The round. ----------------------------------------------------------------------------
 
 ROUND="$STATE/round"
@@ -649,6 +666,7 @@ cmd_facts() {
         'root != "" && index($1, root "/") == 1 { print "checkout " $1 " | " $2 " | " $3 }' "$T/places"
     awk -F'\t' '{ print "heavy " $1 " | " $2 " | " $3 }' "$T/heavy"
     waiting_rows
+    unattended_rows
     remote_lines
 
     # Joined on the count, never on `k in l`: mawk creates l[k] for the assignment before it reads the test.

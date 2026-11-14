@@ -10565,6 +10565,18 @@ check "facts shows a live orchestrator waiting on the operator, and no dead one,
 cp "$CSTORE/s-alpha" "$CSTORE/s-alpha.tmp-1-abcdef"
 check "facts reads no temporary file beside the waits as a wait" "1" "$(cfacts facts 2>/dev/null | grep -c '^waiting ')"
 rm -f "$CSTORE/s-alpha.tmp-1-abcdef"
+# The pull requests nobody attends, as each live orchestrator's module last read them on its row
+# (hooks/unattended.ts): its line, said the same way; none from a dead one, one with none, or a
+# broken row.
+CSESS="$CCFG/claude-orchestrator/store/sessions"; mkdir -p "$CSESS"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: alpha","pid":"100","updated_at":"t","unattended":{"at":"t","line":"PR délaissées : o/app#9 (sans agent depuis 2026-10-14T09:00Z)","prs":[],"unread":[]}}' > "$CSESS/s-alpha"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: gone","pid":"999","updated_at":"t","unattended":{"at":"t","line":"PR délaissées : o/app#3 (sans agent depuis ?)","prs":[],"unread":[]}}' > "$CSESS/s-gone"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: beta","pid":"101","updated_at":"t","unattended":{"at":"t","line":null,"prs":[],"unread":[]}}' > "$CSESS/s-beta"
+printf 'not json\n' > "$CSESS/s-broken"
+check "facts shows a live orchestrator's unattended pull requests, and none of a dead one, one with none or a broken row" \
+  "unattended Orch: alpha | PR délaissées : o/app#9 (sans agent depuis 2026-10-14T09:00Z)" \
+  "$(cfacts facts 2>/dev/null | grep '^unattended ')"
+rm -rf "$CSESS"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
   "pr forge.example/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
