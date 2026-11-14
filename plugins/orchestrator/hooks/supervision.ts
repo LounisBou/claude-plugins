@@ -31,7 +31,7 @@ import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { declaredConsent } from './wait.ts'
-import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
+import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
@@ -3636,7 +3636,9 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
     await logLine($, 'supervision', `receive: a marked row was refused (${body.length} characters)`)
     return { consumed: 'orchestrator: a malformed supervision row, refused' }
   }
-  await writeAtomic($, `${await storeOf($)}/${remoteKey(row.name)}`, JSON.stringify(row) + '\n')
+  const path = `${await storeOf($)}/${remoteKey(row.name)}`
+  const io = storeIo($)
+  await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(row) + '\n'))
   await reconcileRound($)
   return { consumed: 'orchestrator: a supervision row, stored' }
 }
@@ -3663,21 +3665,34 @@ async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<type
 }
 
 // The rows received from other machines, each checked again as it is read; a stale or
-// unreadable one is removed as it is met, so the directory never outgrows the live set.
+// malformed one is removed, so the directory never outgrows the live set. A row met dead is read
+// again under the lock its writer takes (receiveRow), and removed only when it is still dead: a
+// sender's newer row landing between the first read and the removal, or a read that failed once,
+// never loses a live row.
 const REMOTE_READ_CAP = 64
 export async function readRemoteRows($: any): Promise<RemoteRow[]> {
   const dir = `${await storeOf($)}/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
-  const dead: string[] = []
   const now = Date.now()
-  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
-    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
-    const row = parseRemoteRow(`${ROW_MARKER}${String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))}`)
-    if (row && !isRemoteStale(row, now, REMOTE_STALE_AFTER_MS)) rows.push(row)
-    else dead.push(`${dir}/${entry.name}`)
+  const live = (text: string | undefined) => {
+    const row = text === undefined ? null : parseRemoteRow(`${ROW_MARKER}${text}`)
+    return row && !isRemoteStale(row, now, REMOTE_STALE_AFTER_MS) ? row : null
   }
-  if (dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  const io = storeIo($)
+  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
+    if (!entry || entry.kind !== 'file' || isTemporary(entry.name) || entry.name.endsWith(STORE_CONTRACT.lock_suffix)) continue
+    const path = `${dir}/${entry.name}`
+    const row = live(await io.read(path))
+    if (row) { rows.push(row); continue }
+    const kept = await withLockOver(io, path, async () => {
+      const text = await io.read(path)
+      const again = live(text)
+      if (!again && text !== undefined) await io.run(removeArgv(path))
+      return again
+    }, { tries: 5 }).catch(() => null)
+    if (kept) rows.push(kept)
+  }
   return rows
 }
 

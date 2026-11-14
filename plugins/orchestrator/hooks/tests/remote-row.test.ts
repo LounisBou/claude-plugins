@@ -306,6 +306,60 @@ test('a received row is read back from the store, and a stale one is swept as it
   expect(fx.files.has(`${STORE}/remote/Orch__old`)).toBe(false)
 })
 
+test('a row written again between its stale read and the sweep is kept, never removed', async () => {
+  const fx = fake()
+  const path = `${STORE}/remote/Orch__far`
+  fx.files.set(path, JSON.stringify(remote({ updated_at: '2020-01-01T00:00:00.000Z' })))
+  const fresh = JSON.stringify(remote({ context_percent: 40 }))
+  const read = fx.dollar.fs.read
+  let landed = false
+  fx.dollar.fs.read = async (p: string) => {
+    const text = await read(p)
+    // The coordinator's module writes the sender's newer row right after this stale read.
+    if (p === path && !landed) { landed = true; fx.files.set(path, fresh) }
+    return text
+  }
+  const rows = await readRemoteRows(fx.dollar)
+  expect(fx.files.get(path)).toBe(fresh)
+  expect(rows.map(r => r.context_percent)).toEqual([40])
+})
+
+test('a live row whose read fails once is not swept', async () => {
+  const fx = fake()
+  const path = `${STORE}/remote/Orch__far`
+  fx.files.set(path, JSON.stringify(remote()))
+  const read = fx.dollar.fs.read
+  let failed = false
+  fx.dollar.fs.read = async (p: string) => {
+    if (p === path && !failed) { failed = true; throw new Error('EIO') }
+    return read(p)
+  }
+  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
+  expect(fx.files.has(path)).toBe(true)
+})
+
+test('a received row is written under the lock the sweep takes, and the lock is no row', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const path = `${STORE}/remote/Orch__far`
+  fx.files.set(`${path}.lock`, '1\n')
+  fx.mtimes.set(`${path}.lock`, Date.now())
+  const run = fx.dollar.process.run
+  let polled = 0
+  fx.dollar.process.run = async (argv: readonly string[]) => {
+    const out = await run(argv)
+    if (out.exitCode !== 0 && String(argv[4] ?? '') === `${path}.lock` && ++polled === 2) fx.files.delete(`${path}.lock`)
+    return out
+  }
+  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  await receive(chains, fx.dollar, envelope(rowText(remote())))
+  expect(polled).toBe(2)
+  expect(JSON.parse(fx.files.get(path)!).name).toBe('Orch: far')
+  fx.files.set(`${path}.lock`, '1\n')
+  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
+  expect(fx.files.has(`${path}.lock`)).toBe(true)
+})
+
 test('the row out of a store row: an orchestrator only, its waits only when shown', () => {
   expect(remoteRowOf(JSON.parse(storeRow({ role: 'agent', name: 'Agent: x' })), 'm')).toBeNull()
   const row = remoteRowOf({ ...JSON.parse(storeRow()), waiting: 'delivered', blocks: 'x' }, 'm.local')!
