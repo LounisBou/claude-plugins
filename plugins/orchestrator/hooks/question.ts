@@ -223,6 +223,17 @@ export function askedLines(entries: readonly Asked[]): AskedLine[] {
   })
 }
 
+/** How the pane styles each kind of line: the asker and the question bold, the context dim, the recommended choice bold in `success`. */
+export function askedLook(look: AskedLine['look']): Record<string, unknown> {
+  switch (look) {
+    case 'asker': return { bold: true, color: 'suggestion' }
+    case 'subject': case 'question': return { bold: true }
+    case 'context': return { dimColor: true }
+    case 'recommended': return { bold: true, color: 'success' }
+    default: return {}
+  }
+}
+
 // The host name, read once per module load: the machine an asker runs on.
 let machine: string | null = null
 async function machineOf($: Host<'process'>): Promise<string> {
