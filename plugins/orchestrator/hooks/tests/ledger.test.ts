@@ -45,7 +45,7 @@ function fake(over: Over = {}) {
   for (const [path, text] of Object.entries(over.rows ?? {})) files.set(path, text)
   const logged: string[] = []
   const runs: string[][] = []
-  const reportsTo = over.reportsTo === undefined ? `${ORCH} [abc123]` : over.reportsTo
+  const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   const dollar: any = {
     plugin: { name: 'orchestrator', root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : undefined) },
