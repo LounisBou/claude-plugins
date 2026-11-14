@@ -29,13 +29,14 @@ import { operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
-  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
+  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
 import { agentStopNudge } from './agent-stop.ts'
+import { machineLine } from '../core/method.ts'
 import { moduleDirOf } from './module-log.ts'
 import { launcherOf } from '../core/orchestration.ts'
 import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from './unanswered-question.ts'

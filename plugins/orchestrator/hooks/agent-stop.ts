@@ -4,7 +4,7 @@
 // work ended on no status line and was reported again each time, and a turn that said it waited
 // on work that was not running woke nobody. The host's own list of the session's tasks decides:
 // pure on purpose, the handler in guards.ts passes the stop's facts in.
-import { parseStatus } from './relay.ts'
+import { reportStatus } from '../core/method.ts'
 
 // The tasks named in the nudge, each cut, so a long command never crowds the line.
 const NAMED = 3
@@ -23,8 +23,8 @@ const ENDINGS = 'status: done|blocked|question — <one line>'
 // or the host gave no task list (`tasks` null, a host that does not say).
 export function agentStopNudge(message: string, tasks: readonly string[] | null): string | null {
   if (tasks === null) return null
-  const status = parseStatus(message)
-  if (status?.kind === 'waiting') {
+  const status = reportStatus(message)
+  if (status?.status === 'waiting') {
     if (tasks.length > 0) return null
     return `Nothing of yours runs in the background: status: waiting fits only while a command, monitor or subagent you started still runs, and nothing will wake you. Run what you announced, or end on ${ENDINGS}.`
   }

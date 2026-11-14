@@ -25,7 +25,8 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds } from './stop-gate.ts'
+import { entryQuestions, machineLine, questionBody, questionShape, type Choice } from '../core/method.ts'
 import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
@@ -36,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, toldText, asksNothing, carriesChoices, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -2728,7 +2729,7 @@ async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: str
 // delivered, or one that throws, keeps the entry answered, is one log line, and the pane says it
 // on that question until its sender is gone or the entry is settled again. A press on an entry
 // whose answer is in flight does nothing. The pane is drawn again: the next open question comes up.
-export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry, choice: RoundChoice, part = 0): Promise<void> {
+export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry, choice: Choice, part = 0): Promise<void> {
   return answerPart($, pane, asked, `${choice.letter} : ${choice.text}`, part)
 }
 

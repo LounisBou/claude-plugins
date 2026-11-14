@@ -14,6 +14,7 @@
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
+import { machineLine } from '../core/method.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
 
 // --- the decision shapes -----------------------------------------------------------------
@@ -192,29 +193,6 @@ export function blocksNothing(line: string): boolean {
 }
 // The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
 const HANDED_OVER = /^handed over$/i
-const MARKUP = /^[`*_ \t]+/g
-const MARKUP_END = /[`*_ \t]+$/g
-
-// normalise() ported (stop_gate.py:291-307): the message's last line as the machine
-// line would read, whatever the markup a model wrote it in — backticks, bold or
-// italics, a quote or a bullet mark, surrounding spaces, one trailing period.
-function normalise(line: string): string {
-  line = line.trim()
-  for (;;) {
-    const before = line
-    line = line.replace(MARKUP, '').replace(MARKUP_END, '')
-    if (line.startsWith('>')) line = line.slice(1)
-    else if (/^[-*]\s/.test(line)) line = line.slice(1)
-    else if (line.endsWith('.')) line = line.slice(0, -1)
-    if (line === before) return line
-  }
-}
-
-export function machineLine(message: string): string {
-  const lines = message.split('\n').filter(l => l.trim() !== '')
-  return lines.length > 0 ? normalise(lines[lines.length - 1]) : ''
-}
-
 // Whether the message ends on the predecessor's last word, `handed over`.
 export function endsOnHandOver(message: string): boolean {
   return HANDED_OVER.test(machineLine(message))

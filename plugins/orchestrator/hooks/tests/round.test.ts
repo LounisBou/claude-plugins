@@ -1,10 +1,11 @@
 // hooks/tests/round.test.ts
-// The coordinator's round as the module keeps it (round.ts): the lettered choices and the
-// recommendation read out of a question in the decide shape, near misses read as none, the
-// entry built from an orchestrator's wait, and the order the round takes its open entries in.
+// The coordinator's round as the module keeps it (round.ts): the entry built from an
+// orchestrator's wait, and the order the round takes its open entries in. The question's own
+// parsing (choices, recommendation, numbering, fields) is core's, tested in method.test.ts.
 import { expect, test } from 'claude-code/testing'
-import { operatorAnswer, recordedAnswer, recordedText, parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
-import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED, SHAPED_SUBJECT, SHAPED_CONTEXT, SHAPED_RECOMMENDATION, FIRST_B, SECOND_RECOMMENDATION_START } from './fixtures.ts'
+import { operatorAnswer, recordedAnswer, recordedText, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
+import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED } from './fixtures.ts'
+import { entryQuestions, parseChoices } from '../../core/method.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
@@ -16,123 +17,6 @@ const DECIDE = [
   '_Recommendation_ : A — it is green and nothing waits on it',
   'You decide: A, B or C?',
 ].join('\n')
-
-// --- the choices ----------------------------------------------------------------------------
-
-test('a question in the decide shape gives its lettered choices and its recommendation', () => {
-  expect(parseChoices(DECIDE)).toEqual({
-    choices: [
-      { letter: 'A', text: 'merge it now — one click, the release goes out today' },
-      { letter: 'B', text: 'wait for the next review — a day lost, one more pair of eyes' },
-      { letter: 'C', text: 'close it — the work is dropped' },
-    ],
-    recommendation: 'A',
-  })
-})
-
-test('every separator the shape allows is read, and the recommendation by its shape', () => {
-  const question = [
-    '* **A**. first',
-    '- **B**) second',
-    '  - **C** — third',
-    '- **D** – fourth',
-    '- **E** - fifth  ',
-    '_Recommendation_ : C',
-  ].join('\n')
-  expect(parseChoices(question)).toEqual({
-    choices: [
-      { letter: 'A', text: 'first' },
-      { letter: 'B', text: 'second' },
-      { letter: 'C', text: 'third' },
-      { letter: 'D', text: 'fourth' },
-      { letter: 'E', text: 'fifth' },
-    ],
-    recommendation: 'C',
-  })
-  expect(parseChoices('- **A**: one\n- **B**: two\n_Recommended._ B').recommendation).toBe('B')
-  expect(parseChoices('- **A**: one\n- **B**: two\n_Recommendation_ : B. one more review').recommendation).toBe('B')
-  expect(parseChoices('- **A**: one\n- **B**: two\n_Recommendation_: **A** — it ships today').recommendation).toBe('A')
-})
-
-test('a line of another shape names no recommendation', () => {
-  const choices = '- **A** : one\n- **B** : two\n'
-  expect(parseChoices(`${choices}_Context._ A new pane`).recommendation).toBeNull()
-  expect(parseChoices(`${choices}Recommendation: B`).recommendation).toBeNull()
-  expect(parseChoices(`${choices}_Context._ A new pane\n_Recommendation_ : B`).recommendation).toBe('B')
-})
-
-for (const [label, question] of [
-  ['a lone choice', '- **A** : the only one\n_Recommendation_ : A'],
-  ['letters out of order', '- **A** : one\n- **C** : two\n_Recommendation_ : A'],
-  ['letters that do not start at A', '- **B** : one\n- **C** : two\n_Recommendation_ : B'],
-  ['a letter twice', '- **A** : one\n- **A** : two\n_Recommendation_ : A'],
-  ['six choices', '- **A** : 1\n- **B** : 2\n- **C** : 3\n- **D** : 4\n- **E** : 5\n- **F** : 6\n_Recommendation_ : A'],
-  ['no lettered line at all', 'Merge it now?\n_Recommendation_ : A'],
-] as const) {
-  test(`${label}: no choices, so no recommendation`, () => {
-    expect(parseChoices(question)).toEqual({ choices: [], recommendation: null })
-  })
-}
-
-test('a recommendation naming an absent letter is none, and only the first recommendation line counts', () => {
-  expect(parseChoices('- **A** : one\n- **B** : two\n_Recommendation_ : C')).toEqual({
-    choices: [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }],
-    recommendation: null,
-  })
-  expect(parseChoices('- **A** : one\n- **B** : two\n_Recommendation_ : D\n_Recommendation_ : B').recommendation).toBeNull()
-  expect(parseChoices('- **A** : one\n- **B** : two').recommendation).toBeNull()
-  // A lowercase word after the label is no choice letter.
-  expect(parseChoices('- **A** : one\n- **B** : two\n_Recommendation_ : a cheap one').recommendation).toBeNull()
-})
-
-// --- the method's question format -----------------------------------------------------------
-
-// Two to five lettered choices, the free answer, the recommendation with its argument.
-const FIVE = [
-  '**Question 2 of 3**',
-  '_Subject_ : the release',
-  '_Context_ : The release is green.',
-  '_Question_ : which way do we ship?',
-  '_Choices_ :',
-  '- **A** : merge now — cost: none — gain: today',
-  '- **B** : wait a day — cost: a day — gain: one more review',
-  '- **C** : split it — cost: two pull requests — gain: a smaller risk',
-  '- **D** : drop it — cost: the work — gain: no maintenance',
-  '- **E** : hand it over — cost: a briefing — gain: a fresh reader',
-  '_Free answer_ : A different way is welcome, in your own words.',
-  '_Recommendation_ : E — a fresh reader finds what two reviews missed, which merging now and waiting a day both forgo',
-].join('\n')
-
-test('five choices, the free answer and an argued recommendation are read whole, the free answer taking no letter', () => {
-  const read = parseChoices(FIVE)
-  expect(read.choices.map(choice => choice.letter)).toEqual(['A', 'B', 'C', 'D', 'E'])
-  expect(read.recommendation).toBe('E')
-  const shape = questionShape(FIVE, read.choices)
-  expect(shape?.fields.map(field => field.label)).toEqual(['Subject', 'Context', 'Question', 'Choices'])
-  expect(shape?.recommendation?.text).toMatch(/^E — a fresh reader/)
-})
-
-test('a free answer opening on the article A is no recommendation, whatever the pane draws', () => {
-  const text = FIVE.replace('_Recommendation_ : E', '_Recommendation_ : B')
-  const free = text.replace('A different way is welcome, in your own words.', 'A different answer, in your own words.')
-  expect(questionShape(free, parseChoices(free).choices)?.recommendation?.text).toMatch(/^B — /)
-  const withoutRecommendation = free.split('\n').slice(0, -1).join('\n')
-  expect(questionShape(withoutRecommendation, parseChoices(withoutRecommendation).choices)?.recommendation).toBeNull()
-})
-
-test('a sixth choice makes the choices unreadable as lettered ones', () => {
-  const sixth = FIVE.replace('_Free answer_', '- **F** : the sixth — cost: x — gain: y\n_Free answer_')
-  expect(parseChoices(sixth).choices).toEqual([])
-})
-
-test('a letter followed by a word, with no punctuation, names no recommendation', () => {
-  const choices = '- **A** : one\n- **B** : two\n'
-  expect(parseChoices(`${choices}_Recommendation_ : B the cheapest`).recommendation).toBeNull()
-  const text = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : D the cheapest')
-  expect(questionShape(text, parseChoices(text).choices)?.recommendation).toBeNull()
-  const free = FIVE.replace('A different way is welcome, in your own words.', 'B the cheapest, in your own words.')
-  expect(questionShape(free, parseChoices(free).choices)?.recommendation?.text).toMatch(/^E — /)
-})
 
 // --- the entry ------------------------------------------------------------------------------
 
@@ -208,69 +92,6 @@ test('a 2,500-character question is kept whole in its entry', () => {
   expect(roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT).question).toBe(question)
 })
 
-test('the question as the pane shows it leaves out the choice lines and the recommendation it draws below', () => {
-  const entry = roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'phase 3', question: DECIDE }, SINCE, AT)
-  expect(questionBody(entry)).toBe([
-    'Question 1 of 1 — merge the scraper pull request now?',
-    '_Context._ It is green and reviewed.',
-    'You decide: A, B or C?',
-  ].join('\n'))
-  // No lettered choices read: the text is shown as it is, its lines that look like choices included.
-  expect(questionBody({ question: 'Merge it?\n- **A** : alone\n', choices: [] })).toBe('Merge it?\n- **A** : alone')
-})
-
-
-test('a question in the decide shape gives its number, its fields as labelled and its recommendation, nothing else', () => {
-  const { choices, recommendation } = parseChoices(SHAPED)
-  expect(choices.map(c => c.letter)).toEqual(['A', 'B'])
-  expect(recommendation).toBe('A')
-  expect(questionShape(SHAPED, choices)).toEqual({
-    number: 'Question 5 sur 6',
-    fields: [
-      { label: 'Sujet', separator: ' : ', text: SHAPED_SUBJECT },
-      { label: 'Contexte', separator: ' : ', text: SHAPED_CONTEXT },
-      { label: 'Question', separator: ' : ', text: 'laquelle garder ?' },
-      { label: 'Propositions', separator: ' : ', text: '' },
-    ],
-    recommendation: { label: 'Recommandation de l\'orchestrateur', separator: ' : ', text: SHAPED_RECOMMENDATION },
-  })
-})
-
-test('the fields are read by their shape in any language, the separator as written', () => {
-  const english = '**Question 2 of 3**\n_Subject_: the merge\n_Question_: merge it?\n- **A** : yes\n- **B** : no\n_Recommendation_: B'
-  const shape = questionShape(english, parseChoices(english).choices)!
-  expect(shape.number).toBe('Question 2 of 3')
-  expect(shape.fields.map(f => `${f.label}${f.separator}${f.text}`)).toEqual(['Subject: the merge', 'Question: merge it?'])
-  expect(shape.recommendation).toEqual({ label: 'Recommendation', separator: ': ', text: 'B' })
-})
-
-test('without a bold numbering line the shape has no number, and a bold line without two numbers is none', () => {
-  const plain = '_Sujet_ : x\n_Question_ : y ?'
-  expect(questionShape(plain, [])!.number).toBeNull()
-  expect(questionShape(`**Important**\n${plain}`, [])!.number).toBeNull()
-  expect(questionShape(plain, [])!.fields.map(f => f.label)).toEqual(['Sujet', 'Question'])
-})
-
-test('a field after the choices that names no choice letter is no recommendation, and nothing after the recommendation is read', () => {
-  const question = '_Question_ : y ?\n- **A** : one\n- **B** : two\n_Note_ : a cheap one\n_Recommandation_ : B\n_Autre_ : A'
-  const shape = questionShape(question, parseChoices(question).choices)!
-  expect(shape.fields.map(f => f.label)).toEqual(['Question'])
-  expect(shape.recommendation).toEqual({ label: 'Recommandation', separator: ' : ', text: 'B' })
-})
-
-test('a question in today\'s shape has no labelled field before its choices: it is no shaped question', () => {
-  expect(questionShape(DECIDE, parseChoices(DECIDE).choices)).toBeNull()
-  expect(questionShape('Merge it?', [])).toBeNull()
-  expect(questionShape('Question 1 of 1 — **merge** it?\n_Context._ The review is green.', [])).toBeNull()
-})
-
-test('a recommendation label of several words is read by parseChoices too, and dropped from the old body', () => {
-  const question = 'Merge it?\n- **A** : one\n- **B** : two\n_Recommandation de l\'orchestrateur_ : B — the reason'
-  const read = parseChoices(question)
-  expect(read.recommendation).toBe('B')
-  expect(questionBody({ question, choices: read.choices })).toBe('Merge it?')
-})
-
 test('the id of a wait\'s entry is the one its entry carries', () => {
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: DECIDE }
   expect(roundEntryId('a/b', wait)).toBe(roundEntry('a/b', 'Orch: belt', wait, SINCE, AT).id)
@@ -344,33 +165,6 @@ test('an urgent question of a later sender comes first, and within each level it
 
 // --- several questions in one entry ------------------------------------------------------------
 
-test('an entry holding two numbered questions is split at each numbering line, the first keeping what precedes it', () => {
-  const parts = questionParts(`Recorded: B.\n\n${TWO_QUESTIONS}`)
-  expect(parts.length).toBe(2)
-  expect(parts[0].startsWith('Recorded: B.')).toBe(true)
-  expect(parts[0]).toContain('**Question 3 sur 4**')
-  expect(parts[0]).not.toContain('Question 4 sur 4')
-  expect(parts[1].startsWith('**Question 4 sur 4**')).toBe(true)
-  // One numbering line, or none: one question, the text whole.
-  expect(questionParts('**Question 5 of 6**\n_Question_ : which?')).toEqual(['**Question 5 of 6**\n_Question_ : which?'])
-  expect(questionParts('Merge it?')).toEqual(['Merge it?'])
-})
-
-test('the real entry of two questions gives each its own choices, recommendation and number', () => {
-  const asked = { question: TWO_QUESTIONS, choices: [], recommendation: null }
-  const parts = entryQuestions(asked)
-  expect(parts.map(part => [part.number, part.choices.map(c => c.letter), part.recommendation])).toEqual([
-    ['Question 3 sur 4', ['A', 'B'], 'A'],
-    ['Question 4 sur 4', ['A', 'B'], 'A'],
-  ])
-  expect(parts[0].choices[1].text).toBe(FIRST_B)
-  expect(parts[1].choices[0].text.startsWith('une release par module converti.')).toBe(true)
-  const shape = questionShape(parts[1].question, parts[1].choices)!
-  expect(shape.fields.map(f => f.label)).toEqual(['Sujet', 'Contexte', 'Question', 'Choix'])
-  expect(shape.fields[0].text).toBe('rythme de publication de la v2')
-  expect(shape.recommendation!.text.startsWith(SECOND_RECOMMENDATION_START)).toBe(true)
-})
-
 test('the entry of two questions records the first one\'s choices, so the round reads it as a question with choices', () => {
   const wait: Wait = { kind: 'operator', blocks: 'the version', question: TWO_QUESTIONS }
   const entry = roundEntry('s-1', 'Orch: s', wait, '2026-10-25T11:52:50.299Z', '2026-10-25T11:52:50.302Z')
@@ -387,13 +181,6 @@ test('an entry of several questions asks nothing only when none of them carries 
   expect(asksNothing({ question: mixed, choices: [], recommendation: null })).toBe(false)
   const bare = '**Question 1 of 2**\nShall I go on?\n\n**Question 2 of 2**\nAnd tag it?'
   expect(asksNothing({ question: bare, choices: [], recommendation: null })).toBe(true)
-})
-
-test('an entry of one question keeps the choices it recorded', () => {
-  const choices = [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }]
-  expect(entryQuestions({ question: 'Merge it?', choices, recommendation: 'B' })).toEqual([
-    { question: 'Merge it?', number: null, choices, recommendation: 'B' },
-  ])
 })
 
 // --- the text's own marks --------------------------------------------------------------------
@@ -488,23 +275,6 @@ test('a reference whose owner is unknown stays plain text', () => {
   ])
   expect(prPieces('no reference here', new Map())).toEqual(['no reference here'])
   expect(prPieces('', new Map())).toEqual([''])
-})
-
-test('two bold version lines are no numbering: the text is not split at them', () => {
-  const text = '**Version 1.2**\n_Subject_ : a\n**Version 1.3**\n_Subject_ : b'
-  expect(questionParts(text)).toEqual([text])
-  expect(questionShape(text, [])!.number).toBeNull()
-  expect(questionParts('**Question 3/4**\n_Subject_ : a\n**Question 4/4**\n_Subject_ : b').length).toBe(2)
-  expect(questionParts('**3 sur 4**\n_Subject_ : a\n**4 sur 4**\n_Subject_ : b').length).toBe(1)
-})
-
-test('a woken entry of several questions reads each question\'s choices from its text, whatever it recorded', () => {
-  const stale = [{ letter: 'A', text: 'stale one' }, { letter: 'B', text: 'stale two' }]
-  const parts = entryQuestions({ question: TWO_QUESTIONS, choices: stale, recommendation: 'B' })
-  expect(parts.map(part => [part.choices.map(c => c.text.slice(0, 6)), part.recommendation])).toEqual([
-    [['1.15.0', '2.0.0,'], 'A'],
-    [['une re', 'une se'], 'A'],
-  ])
 })
 
 test('the sender\'s numbering drawn as its two numbers', () => {
