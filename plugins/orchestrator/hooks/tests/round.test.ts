@@ -1,11 +1,11 @@
 // hooks/tests/round.test.ts
 // The coordinator's round as the module keeps it (round.ts): the entry built from an
-// orchestrator's wait, and the order the round takes its open entries in. The question's own
+// orchestrator's wait, and the marks and links of its text. The question's own
 // parsing (choices, recommendation, numbering, fields) is core's, tested in method.test.ts.
 import { expect, test } from 'claude-code/testing'
-import { operatorAnswer, recordedAnswer, recordedText, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
-import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED } from './fixtures.ts'
-import { entryQuestions, parseChoices } from '../../core/method.ts'
+import { textSpans, plainText, prReferences, prPieces, repositoryOwners, roundEntry, roundEntryId, roundPath, isDue, type RoundEntry } from '../round.ts'
+import { TWO_QUESTIONS, GLUED_BLOCKS } from './fixtures.ts'
+import { parseChoices } from '../../core/method.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
@@ -112,57 +112,6 @@ test('the entry file sits in the round directory of the state directory', () => 
   expect(roundPath('/state', 's-one-12-ab')).toBe('/state/round/s-one-12-ab.json')
 })
 
-// --- the order ------------------------------------------------------------------------------
-
-function entry(from: string, since: string, status: RoundEntry['status'] = 'open', kind: RoundEntry['kind'] = 'operator'): RoundEntry {
-  return {
-    id: `${from}-${since}`, from, session: from, kind, since, blocks: kind === 'operator' ? 'x' : null, question: 'q',
-    choices: [], recommendation: null, status, at: since, answer: null,
-  }
-}
-
-test('the open entries come grouped by sender, the groups by their earliest wait, each in its own order', () => {
-  const entries = [
-    entry('Orch: b', '2026-10-18T10:05:00.000Z'),
-    entry('Orch: a', '2026-10-18T10:03:00.000Z'),
-    entry('Orch: b', '2026-10-18T10:01:00.000Z'),
-    entry('Orch: c', '2026-10-18T10:00:00.000Z', 'closed'),
-    entry('Orch: a', '2026-10-18T10:02:00.000Z', 'withdrawn'),
-    entry('Orch: a', '2026-10-18T10:04:00.000Z', 'answered'),
-    entry('Orch: c', '2026-10-18T10:06:00.000Z', 'open', 'done'),
-  ]
-  expect(openEntries(entries).map(e => `${e.from} ${e.since.slice(11, 16)}`)).toEqual([
-    'Orch: b 10:01',
-    'Orch: b 10:05',
-    'Orch: a 10:03',
-    'Orch: c 10:06',
-  ])
-  expect(openEntries([])).toEqual([])
-})
-
-// The operator's ruling of 2026-10-31 (6.2): urgent first, then grouped by orchestrator within each
-// level, oldest first.
-test('an urgent question of a later sender comes first, and within each level its sender\'s questions stay together', () => {
-  const urgent = (e: RoundEntry): RoundEntry => ({ ...e, urgent: true })
-  const entries = [
-    entry('Orch: a', '2026-10-18T10:00:00.000Z'),
-    urgent(entry('Orch: b', '2026-10-18T10:01:00.000Z')),
-    entry('Orch: b', '2026-10-18T10:02:00.000Z'),
-    urgent(entry('Orch: a', '2026-10-18T10:03:00.000Z')),
-    entry('Orch: b', '2026-10-18T10:06:00.000Z'),
-    entry('Orch: a', '2026-10-18T10:07:00.000Z'),
-    urgent(entry('Orch: a', '2026-10-18T10:04:00.000Z', 'answered')),
-  ]
-  expect(openEntries(entries).map(e => `${e.from} ${e.since.slice(11, 16)}${e.urgent ? ' urgent' : ''}`)).toEqual([
-    'Orch: b 10:01 urgent',
-    'Orch: a 10:03 urgent',
-    'Orch: a 10:00',
-    'Orch: a 10:07',
-    'Orch: b 10:02',
-    'Orch: b 10:06',
-  ])
-})
-
 // --- several questions in one entry ------------------------------------------------------------
 
 test('the entry of two questions records the first one\'s choices, so the round reads it as a question with choices', () => {
@@ -172,15 +121,6 @@ test('the entry of two questions records the first one\'s choices, so the round 
   expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
   expect(entry.choices[0].text.startsWith('1.15.0, puis des 1.x.')).toBe(true)
   expect(entry.recommendation).toBe('A')
-})
-
-test('an entry of several questions asks nothing only when none of them carries a choice or a labelled field', () => {
-  // Its first question a bare line, its second the decide shape: the entry asks something.
-  const mixed = '**Question 1 of 2**\nShall I go on?\n\n**Question 2 of 2**\n_Question_ : which?\n- **A** : this\n- **B** : that'
-  expect(entryQuestions({ question: mixed, choices: [], recommendation: null })[0].choices).toEqual([])
-  expect(asksNothing({ question: mixed, choices: [], recommendation: null })).toBe(false)
-  const bare = '**Question 1 of 2**\nShall I go on?\n\n**Question 2 of 2**\nAnd tag it?'
-  expect(asksNothing({ question: bare, choices: [], recommendation: null })).toBe(true)
 })
 
 // --- the text's own marks --------------------------------------------------------------------
@@ -275,63 +215,4 @@ test('a reference whose owner is unknown stays plain text', () => {
   ])
   expect(prPieces('no reference here', new Map())).toEqual(['no reference here'])
   expect(prPieces('', new Map())).toEqual([''])
-})
-
-test('the sender\'s numbering drawn as its two numbers', () => {
-  expect(numberLabel('Question 3 sur 4')).toBe('Question 3 / 4')
-  expect(numberLabel('Question 5 of 6')).toBe('Question 5 / 6')
-  expect(numberLabel('3/4')).toBe('3 / 4')
-})
-
-// --- the record: his answer, read before he is asked again ------------------------------------
-
-const asked = (session: string, from: string, question = SHAPED, blocks = 'pane numbering') =>
-  roundEntry(session, from, { kind: 'operator', blocks, question }, '2026-11-14T08:00:00.000Z', '2026-11-14T08:00:00.000Z')
-const answered = (entry: RoundEntry, answer: RoundEntry['answer'], status: RoundEntry['status'] = 'answered'): RoundEntry => ({ ...entry, id: `${entry.id}-done`, status, answer })
-
-test('his own answer an entry holds: the pane\'s, the coordinator\'s settle, a choice typed in the tab; nothing else', () => {
-  const entry = asked('s-pred', 'Orch: belt')
-  const at = '2026-11-14T08:05:00.000Z'
-  expect(operatorAnswer(answered(entry, { text: 'B : celle du pane — elle compte la file', by: 'pane', at }))).toEqual({ letter: 'B', text: 'celle du pane — elle compte la file', by: 'pane', at })
-  expect(operatorAnswer(answered(entry, { text: 'answered from the pane: A : x', by: 'pane', at }, 'closed'))!.letter).toBe('A')
-  expect(operatorAnswer(answered(entry, { text: 'A', by: 'coordinator', at }, 'closed'))).toEqual({ letter: 'A', text: 'celle de l\'orchestrateur — elle suit sa vague', by: 'coordinator', at })
-  expect(operatorAnswer(answered(entry, { text: 'keep both for a week', by: 'coordinator', at }, 'closed'))).toEqual({ letter: null, text: 'keep both for a week', by: 'coordinator', at })
-  expect(operatorAnswer(answered(entry, { text: 'withdrawn: tab', by: 'tab', at, typed: 'b' }, 'withdrawn'))!.letter).toBe('B')
-  for (const answer of [
-    { text: 'withdrawn: settled meanwhile — merged', by: 'coordinator' as const, at, evidence: 'merged' },
-    { text: 'withdrawn: tab', by: 'tab' as const, at, typed: 'go on with the next phase' },
-    { text: 'superseded by x', by: 'sender' as const, at },
-    { text: 'answered by a message from Coord: c', by: 'message' as const, at, author: 'Coord: c' },
-  ]) expect(operatorAnswer(answered(entry, answer, 'withdrawn'))).toBeNull()
-})
-
-test('a successor asking the same question block of the same project, for the same blocks, finds his answer, the newest', () => {
-  const pred = asked('s-pred', 'Orch: belt')
-  const older = answered(pred, { text: 'A : celle de l\'orchestrateur — elle suit sa vague', by: 'pane', at: '2026-11-14T08:05:00.000Z' })
-  const newer = { ...answered(pred, { text: 'B', by: 'coordinator', at: '2026-11-14T09:00:00.000Z' }, 'closed'), id: 'newer' }
-  // Another preamble and another numbering: the same question block.
-  const again = asked('s-succ', 'Orch : belt', SHAPED.replace('Décision notée : B, la vague continue.', 'Relève faite.').replace('Question 5 sur 6', 'Question 1 sur 2'))
-  expect(recordedAnswer([older, newer, again], again)).toEqual({ entry: newer, answer: { letter: 'B', text: 'celle du pane — elle compte la file', by: 'coordinator', at: '2026-11-14T09:00:00.000Z' } })
-  expect(recordedText(again, recordedAnswer([older], again)!)).toBe(
-    `[module] Answered from the record, not asked again: the operator answered this question on 2026-11-14T08:05:00.000Z by pane — A : celle de l'orchestrateur — elle suit sa vague (entry ${older.id}; question since ${again.since}, blocks: pane numbering)`)
-})
-
-test('another project, other blocks, another context, another consent, no shape or no answer of his: no record', () => {
-  const record = answered(asked('s-pred', 'Orch: belt'), { text: 'A', by: 'pane', at: 'T' })
-  const misses = [
-    asked('s-succ', 'Orch: other'),
-    asked('s-succ', 'Orch: belt', SHAPED, 'pane numbering, row 7'),
-    asked('s-succ', 'Orch: belt', SHAPED.replace('Deux numéros', 'Trois numéros')),
-    { ...asked('s-succ', 'Orch: belt'), consent: { kind: 'auto-merge' as const, repo: 'acme/thing' } },
-    asked('s-succ', 'Orch: belt', 'Merge it?\n- **A** : yes\n- **B** : no'),
-  ]
-  for (const entry of misses) expect(recordedAnswer([record, entry], entry)).toBeNull()
-  // An auto-deploy answered for one environment never answers it for another.
-  const deploy = (env: 'staging' | 'prod') => ({ ...asked('s-succ', 'Orch: belt'), consent: { kind: 'auto-deploy' as const, repo: 'acme/thing', env } })
-  const staging = answered(deploy('staging'), { text: 'A', by: 'pane', at: 'T' })
-  expect(recordedAnswer([staging, deploy('prod')], deploy('prod'))).toBeNull()
-  expect(recordedAnswer([staging, deploy('staging')], deploy('staging'))?.entry).toBe(staging)
-  const none = answered(asked('s-pred', 'Orch: belt'), { text: 'superseded', by: 'sender', at: 'T' }, 'withdrawn')
-  const again = asked('s-succ', 'Orch: belt')
-  expect(recordedAnswer([none, again], again)).toBeNull()
 })

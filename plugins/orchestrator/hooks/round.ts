@@ -2,16 +2,15 @@
 // The coordinator's round, as the module keeps it on this machine: one file per wait an
 // orchestrator ended its turn on, under the state directory's round/ (roundPath), written
 // whole and renamed into place by the relay (supervision.ts) in place of a message, so a
-// question waits in the round without costing the coordinator's model a turn. The pane of
-// the coordinator draws the first open question whole, with its lettered choices the operator
-// answers from (the entry then `answered` by the pane, his choice sent); the coordinator
-// reads the round with `coordinator.sh round` when the operator speaks to it, and closes an
-// entry with the coordinator's `settle`. A file that does not parse is skipped by every
-// reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
-import { fingerprint, type HeldQuestion, type Wait } from './relay.ts'
-import { answersChoice, CONSENT_GRANT, CONSENT_REFUSE, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
-import { entryQuestions, numberOfLine, parseChoices, questionParts, questionShape, type Choice } from '../core/method.ts'
-import { parseSessionName } from '../core/names.ts'
+// closing proposal waits in the round without costing the coordinator's model a turn. The
+// questions for the operator are asked with `ask` (question.ts), whose objects share the
+// directory; the coordinator reads the round with `coordinator.sh round` when the operator
+// speaks to it, and closes an entry with the coordinator's `settle`. A file that does not
+// parse is skipped by every reader, never repaired. Pure on purpose, like relay.ts: the
+// handler holds the $.
+import { fingerprint, type Wait } from './relay.ts'
+import { type ConsentSubject } from '../core/consent-record.ts'
+import { parseChoices, type Choice } from '../core/method.ts'
 
 export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
@@ -21,9 +20,9 @@ export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`settle`, withdrawn) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (tabText in supervision.ts); `text` keeps the reason. An entry answered from
-// the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
-// that holds it.
+// with the cut said (tabText in supervision.ts); `text` keeps the reason. A question answered
+// from the record before it reached him repeats that answer, `record` naming the question that
+// holds it (question.ts).
 export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
@@ -42,7 +41,6 @@ export type RoundEntry = {
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
   origin?: { machine: string; address: string; line?: 'q' } // a sender on another machine (remote-round.ts): its machine's label, the address its ask came from, and `q` when it came by the event line (none: an older machine's ask line, answered in that line), written by this machine's module on receipt; absent for a sender on this machine
   delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by the coordinator's `settle`
-  partial?: string[]            // the answers the pane gave so far to an entry that asks several questions, each with its question's number
   consent?: ConsentSubject      // the subject the question asks the operator's consent on, as its sender declared it (declare_wait): his answer is written as its consent record
 }
 
@@ -153,33 +151,6 @@ export function prPieces(text: string, owners: ReadonlyMap<string, string>): (st
   return pieces
 }
 
-// The sender's numbering (`Question 3 of 4`, in its language) drawn as its two numbers with a
-// slash between them, the same in every language: `Question 3 / 4`.
-export function numberLabel(number: string): string {
-  return number.replace(/(\d+)\D+?(\d+)/, '$1 / $2')
-}
-
-// The sender's latest row as the reconciliation reads it: when its reading was made and the operator
-// questions it holds open, whatever the session is doing; null when the row does not say (a row of an
-// older release, a wait file that vouches for nothing): unknown, never « none open ».
-export type SenderState = { at: string; held: readonly HeldQuestion[] | null }
-
-// How old an entry is before a row can drop it: the sender writes the entry, then its wait file, and a
-// reading made between the two holds nothing yet.
-export const SETTLE_MS = 5000
-
-// An open operator question its sender's latest row no longer holds: the row is newer than the entry,
-// says what it holds, and the question is not among it. An entry moved to a successor is the
-// successor's by construction, and a question with choices stands beside another the sender holds
-// (a wait that asks nothing never withdraws it, supervision.ts supersede).
-export function droppedBy(entry: RoundEntry, sender: SenderState | null, now: number): boolean {
-  if (!sender?.held || entry.status !== 'open' || entry.kind !== 'operator' || entry.movedFrom !== undefined) return false
-  const [placed, read] = [Date.parse(entry.at), Date.parse(sender.at)]
-  if (!Number.isFinite(placed) || !Number.isFinite(read) || read <= placed || now - placed < SETTLE_MS) return false
-  if (sender.held.some(held => held.since === entry.since && held.blocks === (entry.blocks ?? ''))) return false
-  return !(carriesChoices(entry) && sender.held.length > 0)
-}
-
 // The fingerprint of the wait an entry was written for, as the sender's wait file keeps it.
 export function entryFingerprint(entry: Pick<RoundEntry, 'kind' | 'blocks' | 'question' | 'urgent'>): string {
   return fingerprint(entry.kind === 'operator'
@@ -195,39 +166,10 @@ export function roundEntryId(sessionId: string, wait: Wait): string {
   return `${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint(plain)}`
 }
 
-// The two choices of a consent question as the tool's description words them, « Accorder » then
-// « Refuser », each a bold label opening a line with no letter before it: read as A and B, the
-// label alone the choice's text (the answer a record quotes). The entry keeps the lines in its
-// question; the pane draws them through `withLetteredChoices`, once, as it draws lettered ones.
-const NAMED_CHOICE = /^\s*[-*]\s+\*\*([^*\n]+)\*\*\s*(?:[:.)]|—|–|-|$)/
-function namedChoices(question: string): { choices: Choice[]; at: number[] } {
-  const lines = question.split('\n')
-  const first = Math.max(0, lines.findLastIndex(line => numberOfLine(line) !== null))
-  const at = lines.flatMap((line, i) => (i >= first && NAMED_CHOICE.test(line) ? [i] : []))
-  const labels = at.map(i => NAMED_CHOICE.exec(lines[i] ?? '')?.[1]?.trim() ?? '')
-  const [grant, refuse] = [CONSENT_GRANT, CONSENT_REFUSE]
-  return labels.length === 2 && labels[0]?.toLowerCase() === grant.toLowerCase() && labels[1]?.toLowerCase() === refuse.toLowerCase()
-    ? { choices: [{ letter: 'A', text: grant }, { letter: 'B', text: refuse }], at }
-    : { choices: [], at: [] }
-}
-
-// The question as the pane reads it: the two unlettered choice lines of a consent question put in
-// the lettered form its choices were read as, their own text left out, so the choices are drawn
-// once, under the question's own field, and not again among its fields.
-export function withLetteredChoices(question: string, choices: readonly Choice[]): string {
-  const named = namedChoices(question)
-  if (named.at.length === 0 || choices.length !== named.choices.length) return question
-  const lines = question.split('\n')
-  named.at.forEach((line, i) => { lines[line] = `- **${named.choices[i]?.letter}** : ${named.choices[i]?.text}` })
-  return lines.join('\n')
-}
-
 // The entry of an orchestrator's wait, open and unanswered, its question whole.
 export function roundEntry(sessionId: string, from: string, wait: Wait, since: string, at: string): RoundEntry {
   if (wait.kind !== 'operator' && wait.kind !== 'done') throw new Error(`a ${wait.kind} wait is no round entry`)
-  const parsed = parseChoices(wait.question)
-  const { recommendation } = parsed
-  const choices = parsed.choices.length > 0 || wait.kind !== 'operator' ? parsed.choices : namedChoices(wait.question).choices
+  const { choices, recommendation } = parseChoices(wait.question)
   return {
     id: roundEntryId(sessionId, wait),
     from,
@@ -247,62 +189,6 @@ export function roundEntry(sessionId: string, from: string, wait: Wait, since: s
 
 export function roundPath(stateDir: string, id: string): string {
   return `${stateDir}/round/${id}.json`
-}
-
-// The open entries in the round's own order, the operator's ruling of 2026-10-31 (6.2): the
-// urgent first, then the others; within each level grouped by sender, so one orchestrator's
-// questions stay together, the groups by their earliest wait in that level, each in the order its
-// waits began. `coordinator.sh round` prints the same order, with or without --by-urgency. The
-// stamps are the module's own ISO strings, compared as text.
-export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
-  const open = entries.filter(entry => entry.status === 'open')
-  const bySince = (a: RoundEntry, b: RoundEntry) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0)
-  return [true, false].flatMap(urgent => {
-    const groups = new Map<string, RoundEntry[]>()
-    for (const entry of open.filter(e => (e.urgent === true) === urgent).sort(bySince)) groups.set(entry.from, [...(groups.get(entry.from) ?? []), entry])
-    return [...groups.values()].flat()
-  })
-}
-
-// A wait whose text asks nothing the pane could offer: no question of it carries a lettered
-// choice or a labelled field. A status report still waiting on an answer asked earlier, say.
-export function asksNothing(entry: Pick<RoundEntry, 'question' | 'choices' | 'recommendation'>): boolean {
-  return entryQuestions(entry).every(part => part.choices.length === 0 && questionShape(part.question, part.choices) === null)
-}
-
-// A question asked in prose: its text, by its last non-empty line trimmed, ends with « ? ». The
-// pane draws it as a card with its free-text field, though it has no lettered choice and no
-// labelled field; a status report ends otherwise and stays a line.
-export function endsAsQuestion(entry: Pick<RoundEntry, 'question'>): boolean {
-  const lines = entry.question.split('\n').map(line => line.trim()).filter(line => line !== '')
-  return lines.length > 0 && (lines.at(-1) ?? '').endsWith('?')
-}
-
-// What the pane draws as a card: an operator entry that asks something, by its shape or by its
-// closing « ? ». `asksNothing` alone stays the relay's reading of a wait, which withdraws nothing.
-function isPaneQuestion(entry: RoundEntry): boolean {
-  return entry.kind === 'operator' && (!asksNothing(entry) || endsAsQuestion(entry))
-}
-
-// An operator question that carries lettered choices, in any of its questions: the one a later
-// wait asking nothing never withdraws. A closing proposal is none, whatever its text.
-export function carriesChoices(entry: RoundEntry): boolean {
-  return entry.kind === 'operator' && entryQuestions(entry).some(part => part.choices.length > 0)
-}
-
-// The open operator questions in the order the pane draws them: those that carry choices
-// first, in the round's order among themselves, then those without. A question the operator can
-// only answer in its session never hides one he can answer from the pane. A wait that asks
-// nothing, with no lettered choice, no labelled field and no closing « ? », is no question: it has
-// no card and is not counted. An entry that asks several questions is read by its first.
-export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
-  const read = openEntries(entries)
-    .filter(isPaneQuestion)
-    .map(entry => ({ entry, first: entryQuestions(entry)[0] }))
-  return [
-    ...read.filter(({ first }) => (first?.choices.length ?? 0) > 0),
-    ...read.filter(({ first }) => (first?.choices.length ?? 0) === 0),
-  ].map(({ entry }) => entry)
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
@@ -334,72 +220,3 @@ export function dueText(entries: readonly RoundEntry[]): string {
 // The prefix of the answer an entry the coordinator was shown is closed with by the pane.
 export const PANE_CLOSED = 'answered from the pane: '
 
-// The operator's own answer an entry holds, the record every later session of its project reads
-// before he is asked again (recordedAnswer): his choice, its letter and text, or his own words,
-// with its channel and the module's date. Given in the pane's picker, through the coordinator's
-// settle, or typed in the sender's tab when it names one choice unambiguously
-// (answersChoice). A withdrawal on evidence, a sender's own settling or an answer relayed by
-// message holds none.
-export type RecordedAnswer = { letter: string | null; text: string; by: RoundAnswer['by']; at: string }
-export function operatorAnswer(entry: RoundEntry): RecordedAnswer | null {
-  const answer = entry.answer
-  if (entry.kind !== 'operator' || !answer) return null
-  const stamp = { by: answer.by, at: answer.at }
-  if (answer.by === 'tab') {
-    const chosen = answer.typed === undefined ? undefined : answersChoice(answer.typed, entry.choices)
-    return chosen ? { letter: chosen.letter, text: chosen.text, ...stamp } : null
-  }
-  const own = answer.by === 'pane' || (answer.by === 'coordinator' && answer.evidence === undefined)
-  if (!own) return null
-  const text = answer.by === 'pane' && answer.text.startsWith(PANE_CLOSED) ? answer.text.slice(PANE_CLOSED.length) : answer.text
-  return { ...givenAnswer(text, entry.choices), ...stamp }
-}
-
-const flatText = (text: string) => plainText(text).replace(/\s+/g, ' ').trim()
-
-// What makes two questions one for the record, exactly: the sender's project (its session name's
-// subject), what the question blocks (its parts split by `, `, spacing and case aside), the consent
-// it asks, and the question block itself, its labelled fields, choices and recommendation as
-// questionShape reads them, so that neither the text above the numbering line nor the numbering
-// counts. An entry of several questions, a question in no shape or one that blocks nothing has no
-// key, and is never answered from the record.
-export function questionKey(entry: RoundEntry): string | null {
-  if (entry.kind !== 'operator' || questionParts(entry.question).length !== 1) return null
-  const shape = questionShape(entry.question, entry.choices)
-  const blocks = (entry.blocks ?? '').split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
-  if (!shape || blocks.length === 0) return null
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
-  return JSON.stringify([
-    parseSessionName(entry.from)?.subject ?? entry.from, blocks, consent,
-    shape.fields.map(field => [flatText(field.label), flatText(field.text)]),
-    entry.choices.map(choice => [choice.letter, flatText(choice.text)]),
-    shape.recommendation ? flatText(shape.recommendation.text) : null,
-  ])
-}
-
-// The record that answers an entry before it reaches the operator: of the entries of the round
-// and its archive asking the same (questionKey), the newest answer of his own. The file of the
-// entry's own id counts: the same session asking the same wait again lands on it.
-export function recordedAnswer(entries: readonly RoundEntry[], entry: RoundEntry): { entry: RoundEntry; answer: RecordedAnswer } | null {
-  const key = questionKey(entry)
-  if (key === null) return null
-  let found: { entry: RoundEntry; answer: RecordedAnswer } | null = null
-  for (const other of entries) {
-    if (questionKey(other) !== key) continue
-    const answer = operatorAnswer(other)
-    if (answer && (!found || answer.at > found.answer.at)) found = { entry: other, answer }
-  }
-  return found
-}
-
-// His recorded answer as it reads: the choice's letter and text, or his own words.
-export function recordedChoice(answer: Pick<RecordedAnswer, 'letter' | 'text'>): string {
-  return answer.letter === null ? answer.text : `${answer.letter} : ${answer.text}`
-}
-
-// What the asking session receives for a question answered from the record: when and where he
-// answered it, and his answer.
-export function recordedText(entry: RoundEntry, record: { entry: RoundEntry; answer: RecordedAnswer }): string {
-  return `[module] Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — `
-    + `${recordedChoice(record.answer)} (entry ${record.entry.id}; question since ${entry.since}, blocks: ${entry.blocks})`
-}
