@@ -19,5 +19,5 @@ status:    done|blocked|question — <one line>
   end: background work runs.
 - An exit code is the one read from the run. A section with nothing to say says `none`.
 - A defect names its installed version (`claude plugin list --json`).
-- A role may add lines it owns (a pull request, an `E2E:` line) after `files:`, never drop one.
-- The last line is parsed by code (`reportStatus` in core): nothing follows it.
+- A role may add lines it owns (a pull request, `E2E:`) after `files:`, never drop one.
+- The last line is parsed by code: nothing follows it.
