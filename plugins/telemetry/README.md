@@ -33,6 +33,33 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.
 
+## Retention
+
+The operator's answer of 2026-11-14 (`docs/specs/learning-design.md`, question 9): the day files of
+events are kept for ever (a few MB a day, about a tenth of that packed), and the raw transcripts
+90 days in the logs repository. Git never forgets, so dropping them is a rewrite of the
+repository, once a year, and the operator's act: no command, hook or schedule does it.
+
+### Yearly rewrite
+
+Once a year, from a clone of the repository `CLAUDE_LOGS_REPO` names, with no export running:
+
+1. List the transcripts older than 90 days: those under `machines/<machine>/transcripts/` whose
+   last commit is more than 90 days old (`git log -1 --format=%cs -- <path>`).
+2. Rewrite the history without them (`git filter-repo --invert-paths --path <file> …`, or
+   `--paths-from-file` with the list), keeping the day files and `index/`. A pointer to a
+   transcript that is gone is missing evidence to the retrospective.
+3. Check that the day files are all still there, then force-push `main`, and expire the old objects
+   (`git reflog expire --expire=now --all && git gc --prune=now --aggressive`) in every clone,
+   the machine's own included.
+
+The export does not put them back: it leaves out a transcript last written over 90 days ago
+(`MAX_TRANSCRIPT_AGE_DAYS` in `lib/export.ts`) and says how many, though the host keeps its file 365
+days. A transcript the repository holds already, whose file has not changed, stays until a rewrite.
+
+The host keeps its own copy of each transcript 365 days (`cleanupPeriodDays`), which this does
+not touch. The yearly size to expect: about 6 GB packed at 365 days, about 1.6 GB at 90.
+
 ## Redaction
 
 Applied to every line before it is written, and run again by the export: the values of

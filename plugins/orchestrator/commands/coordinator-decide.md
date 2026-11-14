@@ -1,6 +1,6 @@
 ---
 description: Decide the open questions of every orchestrator
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage, mcp__orchestrator__settle
 ---
 
 Run a DECISION ROUND as the COORDINATOR described in `orchestrator:coordination`, over the
@@ -32,8 +32,8 @@ the sender's, verbatim, and you add nothing of your own. Only what follows diffe
    found settled on its artifact is withdrawn as the skill's step 5 says; write it back in the
    ledger and present the next one instead, the count moving with it.
 5. **The relay, on each answer, in the same turn.** « Recorded: <his ruling> »; for an entry of
-   the round, `coordinator.sh round-close <id> --answer "<his words>"` alone,
-   which your module sends, dated, to the sender as soon as it returns; for a question that reached you by message, the ruling
+   the round, `settle` on its id (`answered-here`, answer: his words) alone,
+   which sends it, dated, to the sender in the same call; for a question that reached you by message, the ruling
    verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender, by `SendMessage` to its
    exact `ListAgents` name, « the operator answered »; marked sent in the ledger; then
    the next question in full in the same message. The relay goes with each answer, never held

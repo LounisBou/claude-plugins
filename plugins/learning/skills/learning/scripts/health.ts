@@ -11,7 +11,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { journalDir, LEARNING_CONTRACT, LEARNING_WINDOW_DAYS, parseAuditEvent, parseLearningEvent, type AuditEvent, type LearningEvent } from '../../../core/learning.ts'
+import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, LEARNING_WINDOW_DAYS, parseAuditEvent, parseFolded, parseLearningEvent, type AuditEvent, type LearningEvent } from '../../../core/learning.ts'
 
 export const HEALTH_USAGE = 'usage: health.ts --config <dir>'
 
@@ -27,6 +27,8 @@ export interface Journal {
   readonly events: readonly LearningEvent[]
   /** The audit trail's events, version 2 of the contract, counted apart. */
   readonly audit?: readonly AuditEvent[]
+  /** The events the writer dropped past its retention, held as weekly counts in the fold file. */
+  readonly folded?: number
   /** The `.json` files that are not an event of the contract: unparseable, or naming a field it does not. */
   readonly unreadable: number
 }
@@ -57,6 +59,8 @@ export interface Summary {
   readonly older: number
   /** The audit trail's events inside the window. */
   readonly audit: number
+  /** The events the journals dropped past their retention, held as weekly counts. */
+  readonly folded: number
   readonly unreadable: number
   readonly kinds: Readonly<Record<LearningEvent['kind'], number>>
   /** Refusals per code, most first, then by name. */
@@ -85,13 +89,20 @@ export function readJournals(config: string): Journal[] {
     const events: LearningEvent[] = []
     const audit: AuditEvent[] = []
     let unreadable = 0
+    let folded = 0
     for (const file of readdirSync(dir).filter(f => f.endsWith('.json')).sort()) {
+      if (file === JOURNAL_FOLD_FILE) {
+        const counts = parseFolded(readFileSync(join(dir, file), 'utf8'))
+        if (counts === undefined) unreadable++
+        else folded = counts.reduce((sum, line) => sum + line.count, 0)
+        continue
+      }
       const parsed = parseFile(join(dir, file))
       if (parsed === undefined) unreadable++
       else if ('fact' in parsed) audit.push(parsed)
       else events.push(parsed)
     }
-    journals.push({ plugin: name, events, audit, unreadable })
+    journals.push({ plugin: name, events, audit, folded, unreadable })
   }
   return journals
 }
@@ -127,7 +138,7 @@ export function summarize(journals: readonly Journal[], now: number): Summary {
     .filter(([code]) => !codes.has(code))
     .map(([code, { plugin, ms }]) => ({ code, plugin, days: Math.floor((now - ms) / DAY_MS) }))
     .sort((a, b) => b.days - a.days || (a.code < b.code ? -1 : 1))
-  return { plugins: journals.length, events, older, audit, unreadable: journals.reduce((n, j) => n + j.unreadable, 0), kinds, refusals, silent, findings }
+  return { plugins: journals.length, events, older, audit, unreadable: journals.reduce((n, j) => n + j.unreadable, 0), kinds, refusals, silent, findings, folded: journals.reduce((n, j) => n + (j.folded ?? 0), 0) }
 }
 
 /** The removals the rulings of every project under `<config>/claude-orchestrator/briefs` state in the fixed form, in project then line order. */
@@ -192,6 +203,7 @@ export function render(s: Summary, removals?: readonly Removal[]): string {
   ]
   if (removals !== undefined) lines.push(...removalLines(removals))
   if (s.audit > 0) lines.push(`${s.audit} audit events`)
+  if (s.folded > 0) lines.push(`${s.folded} older events folded into weekly counts (${JOURNAL_FOLD_FILE} of each journal)`)
   if (s.unreadable > 0) lines.push(`${s.unreadable} file${s.unreadable === 1 ? '' : 's'} in the journals ${s.unreadable === 1 ? 'is' : 'are'} not ${s.unreadable === 1 ? 'an event' : 'events'} of the contract.`)
   lines.push('not read yet: review rounds and escapes of the dispatch records, check runs, cost, eval baselines.')
   return lines.join('\n')

@@ -36,6 +36,8 @@ export interface ExportOptions {
   readonly transcript?: (session: string) => string | undefined
   /** What one export takes of the transcripts: the defaults, `MAX_TRANSCRIPT_BYTES` and `MAX_RUN_BYTES`, unless a caller passes another. */
   readonly limits?: { readonly transcriptBytes?: number; readonly runBytes?: number }
+  /** The time, in milliseconds, against which a transcript's age is read; the clock's unless a caller passes another. */
+  readonly now?: () => number
   /** Called before each git command and each transcript: the export is alive, and goes on. */
   readonly heartbeat?: () => void
 }
@@ -53,6 +55,14 @@ export const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024
  * a git command (60 s, `GIT_TIMEOUT_MS`). The rest waits for the next export, and the day files never wait.
  */
 export const MAX_RUN_BYTES = 256 * 1024 * 1024
+
+/**
+ * A transcript last written longer ago than this is not copied into the repository: the operator
+ * keeps raw transcripts 90 days there, and the host keeps its own file longer (365 days), so a
+ * transcript dropped by the yearly rewrite would otherwise be copied back. One the repository holds
+ * already and whose file has not changed stays.
+ */
+export const MAX_TRANSCRIPT_AGE_DAYS = 90
 
 export interface ExportResult {
   readonly lines: string[]
@@ -288,6 +298,8 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
   let taken = 0
   let waiting = 0
   let waitingBytes = 0
+  let old = 0
+  const oldest = (options.now ?? Date.now)() - MAX_TRANSCRIPT_AGE_DAYS * 86_400_000
   for (const session of [...sessions].sort()) {
     options.heartbeat?.()
     const source = options.transcript?.(session)
@@ -307,6 +319,10 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
     if (before?.size === stamp.size && before.mtimeMs === stamp.mtimeMs && held.has(path)) {
       exported.add(session)
       stamps.set(session, stamp)
+      continue
+    }
+    if (stamp.mtimeMs < oldest) {
+      old++
       continue
     }
     if (stamp.size > cap) {
@@ -349,6 +365,7 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
     stamps.set(session, stamp)
     written++
   }
+  if (old > 0) notes.push(`export: ${old} transcript(s) last written over ${MAX_TRANSCRIPT_AGE_DAYS} days ago left out`)
   if (waiting > 0) notes.push(`export: ${waiting} transcript(s) left for the next export (${waitingBytes} bytes; a run takes up to ${bound})`)
   return { exported, offered, written, stamps, notes }
 }

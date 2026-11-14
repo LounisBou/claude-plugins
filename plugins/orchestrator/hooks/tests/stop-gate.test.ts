@@ -2536,6 +2536,38 @@ test('a turn that declared its question passes the stop whatever its prose, firs
   expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
 })
 
+// A question this session asked with `ask` (question.ts), open in the round.
+const ASKED_HERE = JSON.stringify({
+  v: 2, id: 'q-a1b2c3-1', sender: { session: 'a1b2c3', name: 'Orch: belt', role: 'orchestrator', machine: 'box-1' },
+  subject: 'the report', context: 'what is known', ask: 'Which one?', choices: [], recommended: null, why: null,
+  blocks: 'the mode', status: 'open', at: '2026-11-14T10:00:00Z', answer: null, seq: 1,
+})
+
+test('an operator wait without `question` waits on the questions asked with ask: their blocks unless it names its own, none asked refused', () => {
+  const asked = [{ id: 'q-1', blocks: 'the mode' }, { id: 'q-2', blocks: 'acme/app#1' }]
+  expect(parseDeclaration({ kind: 'operator' }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'the mode; acme/app#1', asked: ['q-1', 'q-2'] } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: true }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', urgent: true, asked: ['q-1', 'q-2'] } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', question: ASKED }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', question: ASKED } })
+  const none = parseDeclaration({ kind: 'operator', blocks: 'G1' }, [])
+  expect('error' in none && none.error).toContain('ask it first with `ask`')
+  expect('error' in parseDeclaration({ kind: 'tool' }, asked)).toBe(true)
+})
+
+test('a turn that asked with ask and declared its wait without question passes the stop, first stop and re-fired alike', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const declared = await declare(wait, fx.dollar, { kind: 'operator' })
+  expect(declared).toEqual({ result: 'Wait declared: waiting: operator — blocks: the mode. End the turn now.' })
+  const first = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends votre choix.', ...NOTHING_RUNS }))
+  expect(first.answer).toBe(first.passed)
+  const refired = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends toujours.', stop_hook_active: true, ...NOTHING_RUNS }))
+  expect(refired.answer).toBe(refired.passed)
+  expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
+  // With no question asked here, the same call is refused, as before.
+  const bare = fakeDollar({})
+  expect((await declare(waitMounted(), bare.dollar, { kind: 'operator', blocks: 'the mode' })).isError).toBe(true)
+})
+
 test('a message ending in an open code fence still carries the declared question, the fence closed first', async () => {
   const wait = waitMounted()
   const fx = fakeDollar({})
