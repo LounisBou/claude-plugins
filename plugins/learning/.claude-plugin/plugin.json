@@ -1,0 +1,13 @@
+{
+  "name": "learning",
+  "description": "Reads the learning journals that the plugins write and answers, with no model turn, what they hold: refusals per guard code, findings by severity, answers and escapes over a window.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Lounis Bou",
+    "email": "lounis.bou@gmail.com"
+  },
+  "homepage": "https://github.com/LounisBou/claude-plugins",
+  "repository": "https://github.com/LounisBou/claude-plugins",
+  "license": "MIT",
+  "keywords": ["learning", "journal", "health", "refusals", "findings"]
+}

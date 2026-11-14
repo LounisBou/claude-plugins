@@ -263,6 +263,22 @@ test('the loop ends after pass 5', () => {
   expect(sixth.passes).toBe(5)
 })
 
+test('a loop started in a session the orchestrator spawned runs one pass', async ($, on) => {
+  spawnedEnv(on, '1')
+  const started = await loopCall($, { action: 'start' })
+  expect(String(started.result)).toContain('"max_passes": 1')
+  expect(String((await loopCall($, { action: 'begin_pass' })).result)).toContain('"pass": 1')
+  loop.reports.push(null)
+  await loopCall($, { action: 'findings', keys: ['k1'] })
+  expect(String((await loopCall($, { action: 'begin_pass' })).result)).toContain('"exit": "max_passes"')
+})
+
+test('a loop started outside such a session keeps its five passes', async ($, on) => {
+  spawnedEnv(on, '')
+  const started = await loopCall($, { action: 'start' })
+  expect(String(started.result)).toContain('"max_passes": 5')
+})
+
 test('the Stop gate refuses a stop mid-loop once, naming the pass', async ($, on) => {
   on('classic.Stop', () => ({}))
   on('process.run', () => ({ value: ok }))
@@ -364,9 +380,9 @@ const loopCall = ($: any, args: Record<string, unknown>): Promise<any> =>
   $.tool.call({ tool: 'mcp__pr-review__loop', ...args } as any)
 
 // Each pass, one agent reports three findings, `blocking` of them Important; none reported without it.
-async function runToMaxPasses($: any, blocking?: number): Promise<any> {
+async function runToMaxPasses($: any, blocking?: number, passes = 5): Promise<any> {
   await loopCall($, { action: 'start' })
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= passes; i++) {
     await loopCall($, { action: 'begin_pass' })
     await review($, blocking === undefined ? undefined : [0, 1, 2].map((n) => ({ severity: n < blocking ? 'important' : 'suggestion' })))
     await loopCall($, { action: 'findings', keys: ['a' + i, 'b' + i, 'c' + i] })
@@ -1801,7 +1817,7 @@ test('the verdict line names the files of the blocking findings left', async ($,
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireRecord(on, stubs)
   spawnedEnv(on, '1')
-  const out = await runToMaxPasses($, 2)
+  const out = await runToMaxPasses($, 2, 1)
   expect(String(out.result).split('\n').at(-1)).toBe(`claude-review#12 ${REVIEWED_HEAD.slice(0, 7)} — review fail (max_passes) — blocking: f0, f1 — report: ${WRITTEN}`)
 })
 
