@@ -34,7 +34,7 @@ import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
@@ -51,6 +51,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeas
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -84,7 +85,12 @@ export type SessionRow = {
   // by the measure's merge: the deck takes every session's from here. Absent until the first
   // read completes; null when its transcript is not found.
   usage?: DeckUsage | null
+  // An orchestrator's pull requests nobody attends, read at its last turn end (unattended.ts): the
+  // line its context and the coordinator's facts say, and the list the pane draws in local time.
+  unattended?: UnattendedView | null
 }
+
+export type UnattendedView = { at: string; line: string | null; prs: readonly Unattended[]; unread: readonly string[] }
 
 // A row lives while its session's host process does: a session idle for hours —
 // waiting on a long agent phase, on a CI watch — is still there, and one that
@@ -327,7 +333,7 @@ export function wrapWords(text: string, width: number): string[] {
 }
 
 // The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
-async function storeOf($: any): Promise<string> {
+export async function storeOf($: any): Promise<string> {
   return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
 }
 
@@ -507,6 +513,16 @@ async function publishUsage($: any, id: string, usage: DeckUsage | null): Promis
   })
 }
 
+// The turn end's reading of the pull requests nobody attends, into the session's own row: the
+// row's stamp is the measure's and stays; a row gone meanwhile (the session ended) is not written again.
+export async function publishUnattended($: any, id: string, view: UnattendedView): Promise<void> {
+  await onOwnRow(async () => {
+    const path = `${await storeOf($)}/${sessionKey(id)}`
+    const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
+    if (row) await writeAtomic($, path, JSON.stringify({ ...row, unattended: view }) + '\n')
+  })
+}
+
 // One row per live session: every file under the store's sessions directory,
 // minus the dead (isStale) and the unreadable (a line caught mid-write). The
 // files of the dead and the empty ones are removed as they are met — $.fs has
@@ -649,6 +665,14 @@ export type PaneRow = {
   status: string | null
   blocked: string | null
   waiting: WaitKind | null
+  // The pull requests nobody attends its last turn end read, in local time; null when none.
+  unattended: string | null
+}
+
+// A row's unattended pull requests as the pane says them: the same line its context reads, in local time.
+export function unattendedOfRow(row: SessionRow): string | null {
+  const view = row.unattended
+  return view ? unattendedLine(view.prs, view.unread, localMinute) : null
 }
 // The pane's rows, the store read end to end and sorted by rotation urgency:
 // the sessions past the gate first (they are the rotation's next moves), then
@@ -675,6 +699,7 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
         label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
         key, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
+        unattended: unattendedOfRow(row),
       }
     })
     .sort((a, b) => b.urgency - a.urgency)
@@ -1841,6 +1866,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
+      let ownUnattended: string | null = null
       const coordinator = pane.opened?.role === 'coordinator'
       if (coordinator) {
         const store = await readStore($)
@@ -1896,19 +1922,25 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const views = pane.opened.tty ? await withDeadline(agentViews($, pane.opened.tty), await sideReadBoundMs($)) : []
         rows = isDegradedPass(views) ? [] : agentPaneRows(views)
         none = isDegradedPass(views) ? 'the agents could not be read in time' : 'no agent running'
+        // Its own pull requests nobody attends, read at its last turn end, above its agents.
+        const own = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(await $.session.id())}`).catch(() => '')))
+        ownUnattended = own ? unattendedOfRow(own) : null
       }
       const el = $.ui.resolve(e)
       if (!coordinator) {
         return el.Box({
           flexDirection: 'column',
-          children: rows.length === 0
-            ? [el.Text({ children: none })]
-            // The default text colour with the name bold; a row past the gate is warning, each
-            // piece carrying the colour itself.
-            : rows.map(row => {
-              const tint = row.urgency >= GATE_URGENCY_FLOOR ? { color: 'warning' } : {}
-              return el.Text({ children: [el.Text({ ...tint, bold: true, children: row.name }), el.Text({ ...tint, children: row.rest })] })
-            }),
+          children: [
+            ...(ownUnattended !== null ? [el.Text({ color: 'warning', children: ownUnattended })] : []),
+            ...(rows.length === 0
+              ? [el.Text({ children: none })]
+              // The default text colour with the name bold; a row past the gate is warning, each
+              // piece carrying the colour itself.
+              : rows.map(row => {
+                const tint = row.urgency >= GATE_URGENCY_FLOOR ? { color: 'warning' } : {}
+                return el.Text({ children: [el.Text({ ...tint, bold: true, children: row.name }), el.Text({ ...tint, children: row.rest })] })
+              })),
+          ],
         })
       }
       // Every piece below is drawn with the rows it takes at the content's width: the host tells
@@ -1981,13 +2013,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
               ...(tabWait !== undefined ? [el.Box({ paddingLeft: 2, children: [el.Text({ children: tabLine })] })] : []),
+              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, children: [rich(row.unattended, { color: 'warning' })] })] : []),
             ],
           }),
           rows: (i > 0 ? 1 : 0)
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
-            + (tabWait !== undefined ? rowsOf(plainText(tabLine), width - 2) : 0),
+            + (tabWait !== undefined ? rowsOf(plainText(tabLine), width - 2) : 0)
+            + (row.unattended !== null ? rowsOf(takesRows(row.unattended), width - 2) : 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
