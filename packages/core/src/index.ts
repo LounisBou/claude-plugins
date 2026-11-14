@@ -14,3 +14,4 @@ export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS
 export { INSTALL_TIMEOUT_MS, installPlaywright, locatePlaywright, lockfileOf, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PACKAGES, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'
 export { KILL_GRACE_MS, runInGroup, signalGroup } from './process-group.ts'
 export { cutAt, reportPathOf, shorten, VERDICT_LIMIT, verdictLine, type Shortened, type Verdict } from './verdict.ts'
+export { GATE_PERCENT, GATE_TOKENS, gateTokensOf, hasFigures, LAUNCHER, launcherOf, MEASURE_DIR, MEASURE_VERSION, measureFilePath, MODULE_DIR, moduleDirOf, ORCHESTRATION_CONTRACT, parseMeasure, peersOf, selfOf, spawnArgv, tripGate, type GateThresholds, type ListedSession, type MeasureReading, type MeasureStart, type Spawn } from './orchestration.ts'
