@@ -114,6 +114,28 @@ test('plugin tool calls: a plugin that answers in place of next hides its call f
   assert.deepEqual(calls.slice(1).map(e => [e['mcp_server'], e['mcp_tool']]), [['github', 'gh'], ['orchestrator', 'review']])
 })
 
+test('plugin tool calls: a resumed session\'s earlier calls are not written again', async () => {
+  const { $, runs } = host({ messages: F('session.messages') })
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({}))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const calls = runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'tool_call')
+  assert.deepEqual(calls.map(e => e['tool_use_id']), [])
+})
+
+test('plugin tool calls: a call running at one read is written at the next that holds its result', async () => {
+  const use = { tool_use_id: 'toolu_01Late', tool: 'mcp__orchestrator__review', input: { pr: 4 } }
+  let held: unknown[] = [{ role: 'assistant', text: '', toolUses: [use] }]
+  const { $, runs } = host()
+  $.session.messages = async () => held
+  const { hook } = hooks()
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  held = [{ role: 'assistant', text: '', toolUses: [{ ...use, text: 'done' }] }]
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const calls = runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'tool_call')
+  assert.deepEqual(calls.map(e => [e['tool_use_id'], e['outcome']]), [['toolu_01Late', 'ok']])
+})
+
 test('plugin tool calls: a subagent\'s turn end reads that agent\'s own conversation; a host that cannot read it loses no turn_end', async () => {
   const asked: unknown[] = []
   const { $, runs } = host({ messages: F('session.messages') })

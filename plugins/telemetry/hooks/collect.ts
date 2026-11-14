@@ -510,6 +510,21 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   return events
 }
 
+/** The ids of the plugin and MCP calls a conversation already holds, answered or not. */
+export function transcriptCallIds(messages: unknown): string[] {
+  const ids: string[] = []
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const uses = record(message)['toolUses']
+    for (const raw of Array.isArray(uses) ? uses : []) {
+      const use = record(raw)
+      const id = text(use['tool_use_id'])
+      const tool = text(use['tool'])
+      if (id !== undefined && tool !== undefined && mcpOf(tool) !== undefined) ids.push(id)
+    }
+  }
+  return ids
+}
+
 /**
  * The `tool_call` events of the plugin and MCP tools a conversation holds that the `tool.call` hook
  * never saw. A plugin serves its own tool by answering `tool.call` in place of `next`, and a hook
@@ -518,7 +533,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
  * a call's id is new, and records it, so a call is written once however often the transcript is
  * read. A call without its result is still running: it is left for the next read. The transcript
  * holds no clock and no permission check, so these events carry neither a duration nor a `check`,
- * and their `ts` is the read's.
+ * and their `ts` is the read's. A call that never gets a result (an aborted turn) is never written.
  */
 export function transcriptToolEvents(at: number, session: string, messages: unknown, agent: string | undefined, claim: (id: string) => boolean): Event[] {
   const events: Event[] = []

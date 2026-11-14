@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptToolEvents,
+  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
@@ -127,6 +127,10 @@ export function mount(on: On, collector: Collector): void {
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
     })
+    // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.
+    await quietly($, 'session.start calls', async () => {
+      for (const id of transcriptCallIds(await $.session.messages())) collector.claim(id)
+    })
     return result
   })
 
@@ -147,7 +151,7 @@ export function mount(on: On, collector: Collector): void {
       const at = await $.clock.now()
       const agent = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
       const messages = await $.session.messages(agent === undefined ? undefined : { agentId: agent })
-      collector.push(...transcriptToolEvents(at, await $.session.id(), messages, agent, id => collector.claim(id)))
+      await add($, collector, transcriptToolEvents(at, await $.session.id(), messages, agent, id => collector.claim(id)))
     })
     await quietly($, 'turn.complete', async () => {
       const at = await $.clock.now()
@@ -181,8 +185,8 @@ export function mount(on: On, collector: Collector): void {
     const result = await next(e)
     await quietly($, 'tool.call', async () => {
       const at = await $.clock.now()
-      const check = collector.takeCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
       if (typeof e['tool_use_id'] === 'string' && mcpOf(String(e['tool'])) !== undefined) collector.claim(e['tool_use_id'])
+      const check = collector.takeCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
       await add($, collector, toolEvents(at, await $.session.id(), e, result, check, started === undefined ? 0 : Math.max(0, at - started)))
       collector.setTitle(renamedTo(e, result, check))
     })
