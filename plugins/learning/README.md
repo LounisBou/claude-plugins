@@ -12,7 +12,7 @@ repository; the event's contract is `packages/core/src/learning.ts`.
   it from `skills/learning/scripts/health.ts`; the markdown command runs the same script where the
   module does not load.
 
-No plugin writes a journal yet, so the report says so.
+The orchestrator's hooks write the audit trail into its journal (`plugins/orchestrator/hooks/audit.ts`); where no journal exists the report says so.
 
 ## Tests
 
