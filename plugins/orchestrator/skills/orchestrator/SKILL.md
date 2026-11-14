@@ -39,7 +39,7 @@ words.
    choice, authorises a change. His explicit instruction on the point replaces this skill:
    say the contradiction in one line and carry it out. His terms are the specification; a
    method he names is a format, opened before you present. Told you erred, check your own
-   doing first. Asked a third time, repeat the answer alone, at the top.
+   doing first. Asked a third time, repeat the answer alone, at the top. A request of his for later or for another session is a `todo`.
 4. **Re-read before you ask, propose or report.** He acts between your turns: the state of
    an item, and the premise of a question, are read on the artifact in the same turn, never
    from the state file or memory. An item found done is reported done, with its evidence. A
