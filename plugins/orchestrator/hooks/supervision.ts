@@ -2358,6 +2358,12 @@ async function dropMark($: any): Promise<void> {
   if (now?.typed) await writeWait($, sessionId, withoutMark(now))
 }
 
+// Whether a session of this role puts its operator questions into the round: an orchestrator, a
+// coordinator and an auditor do, as one rule for the turn's end, the prompt and the answered tool.
+export function entersRound(role: string | null): boolean {
+  return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
+}
+
 // A turn's end, read and reported. The role comes from the session's row (the measure's
 // walk named it), else from a walk of its own. An orchestrator's machine line goes to the
 // coordinator: an entry of its round when it runs on this machine, a message when it runs
@@ -2397,17 +2403,18 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     }
   }
   const role = roleOf(name)
-  if (!name || (role !== 'orchestrator' && role !== 'agent')) return
+  const orchestrating = entersRound(role)
+  if (!name || (!orchestrating && role !== 'agent')) return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   if (role === 'agent') answer = heldReport(answer)
-  const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
+  const wait = orchestrating ? parseWait(answer) : parseStatus(answer)
   // The ending of a turn whose open work the operator deferred (`waiting: deferred — <n> items`): no
   // wait, nothing entered or sent, the wait cleared like a tool wait's.
-  const deferred = role === 'orchestrator' && deferredIds(machineLine(answer)) !== null
+  const deferred = orchestrating && deferredIds(machineLine(answer)) !== null
   // The mark of a prompt the operator typed while a question was held (withdrawOnTyped): it
   // belongs to this turn alone and is never written back. The question is withdrawn already,
   // unless that failed, and a fingerprint the withdrawal forgot stays forgotten.
-  const typed = role === 'orchestrator' ? (await readWait($, sessionId))?.typed ?? null : null
+  const typed = orchestrating ? (await readWait($, sessionId))?.typed ?? null : null
   let forgotten = false
   let heldKey: string | null = null
   let swept = false
@@ -2434,7 +2441,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   const relayedId = relayed !== null && relayed === (before?.relayed ?? null) ? before?.relayed_id ?? null : null
   // A turn that ends on « handed over »: the successor holds the work, and the questions.
   if (!wait && role === 'orchestrator' && handsOver(answer)) await handOver($, sessionId)
-  if (!wait && role === 'orchestrator') {
+  if (!wait && orchestrating) {
     if (before?.waiting || typed) await writeWait($, sessionId, { ...clearedWait(before!), relayed, relayed_id: relayedId, name, pid })
     return
   }
@@ -2450,16 +2457,16 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   if (relayed === key) {
     // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
     // message, which forgets nothing) or archived blocks nothing: only an entry still open does.
-    if (role !== 'orchestrator' || !wait || (wait.kind !== 'operator' && wait.kind !== 'done')) return
+    if (!orchestrating || !wait || (wait.kind !== 'operator' && wait.kind !== 'done')) return
     coordinator = await coordinatorAddress($)
     if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return
-  } else if (role === 'orchestrator') {
+  } else if (orchestrating) {
     coordinator = await coordinatorAddress($)
   }
   // A coordinator on this machine reads its round: the wait is entered there, and its model
   // is not woken for it. The fingerprint is kept once the entry is in place, as a delivery's.
   if (coordinator?.local && wait && patch) {
-    const asked = role === 'orchestrator' && wait.kind === 'operator' ? consent : null
+    const asked = orchestrating && wait.kind === 'operator' ? consent : null
     const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), asked)
     const kept = entry.kind === 'operator' && entry.choices.length === 0 ? await keptChoices($, entry) : null
     if (kept) {
@@ -2483,7 +2490,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     if (!swept) await supersede($, entry)
     return
   }
-  const to = role === 'orchestrator'
+  const to = orchestrating
     ? coordinator?.to ?? null
     : await orchestratorOn($, tty, name, 'relay')
   if (!to) {
@@ -2494,7 +2501,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
   // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
   // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
-  if (role === 'orchestrator' && wait && patch) {
+  if (orchestrating && wait && patch) {
     // The consent rides on the ask line, unless its repository is longer than the line holds: then
     // the ask goes without it, and the log names it.
     const asked = wait.kind === 'operator' ? consent : null
@@ -2511,7 +2518,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context, answer)
-  const sent = role === 'orchestrator' ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
+  const sent = orchestrating ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
@@ -2579,7 +2586,7 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
     const walked = await walkWithinBound($, sessionId)
     if (walked.known) name = walked.name
   }
-  if (!name || roleOf(name) !== 'orchestrator') return
+  if (!name || !entersRound(roleOf(name))) return
   const coordinator = await coordinatorAddress($)
   if (!coordinator) return
   const prior = await readWait($, sessionId)
@@ -3085,10 +3092,15 @@ export function withdrawnText(entry: RoundEntry, evidence: string): string {
   return `[module] The coordinator withdrew your question since ${entry.since}, settled meanwhile: ${evidence} (blocks: ${entry.blocks})`
 }
 
-// Whether the session is an orchestrator: the name its row holds, else the name its walk reads.
-export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+// The role of the session: the name its row holds, else the name its walk reads.
+async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null) === 'orchestrator'
+  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null)
+}
+
+// Whether the session is an orchestrator.
+export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+  return (await sessionRole($, sessionId)) === 'orchestrator'
 }
 
 // The message for an entry the coordinator closed: a withdrawal when its answer carries the
@@ -3097,13 +3109,13 @@ function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): s
   return typeof entry.answer?.evidence === 'string' ? withdrawnText(entry, entry.answer.evidence) : coordinatorAnswerText(entry, answer, at)
 }
 
-// The orchestrator acted on an answer that reached it by a message (a relay from another session):
+// The session acted on an answer that reached it by a message (a relay from another session):
 // its open operator entries, or only `only` when named, are marked `answered`, by `message`, with
 // the message's author. Answers the ids still open, for the tool's reply, or null for a session
-// that is no orchestrator.
+// that is no orchestrator, coordinator or auditor.
 export async function answerByMessage($: any, author: string, only: string | null): Promise<string[] | null> {
   const sessionId = await $.session.id()
-  if (!(await isOrchestratorSession($, sessionId))) return null
+  if (!entersRound(await sessionRole($, sessionId))) return null
   await tellSettled($, await withdrawStale($, sessionId, null, `answered by a message from ${author}`,
     entry => entry.kind !== 'operator' || (only !== null && entry.id !== only), { author }))
   return (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open').map(({ entry }) => entry.id)
