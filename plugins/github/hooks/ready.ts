@@ -587,7 +587,7 @@ export function carries(record: PrRecord): boolean {
   return accepts(record)
 }
 
-// What a pull request misses to be ready at its head: the four conditions,
+// What a pull request misses to be ready at its head: the three conditions,
 // and before them an act that cannot be ready at all (closed, moved head).
 // e2eExempt: the operator's exemption that covers it, standing for its E2E unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
@@ -602,6 +602,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, e2eE
     const record = latest.get(kind)
     if (record && accepts(record)) continue
     if (kind === 'e2e' && e2eExempt && record?.result !== 'fail') continue
+    if (kind === 'norms' && !record) continue // on demand: only a norms check that ran at the head counts
     if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
@@ -635,7 +636,7 @@ export function carriesReady(gate: Gate): boolean {
   return gate.labels.some((label) => label.toLowerCase() === READY)
 }
 
-// The label the gate puts on an open pull request, or undefined to leave it: Ready when the four
+// The label the gate puts on an open pull request, or undefined to leave it: Ready when the three
 // hold and it does not carry Ready alone, Not Ready when it carries Ready and they no longer hold.
 // A closed or merged one keeps its labels.
 export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
@@ -657,11 +658,11 @@ const tail = (missing: string[], carried: Carried[] = []) =>
 
 // Why leaving draft is refused outside auto-merge, whatever the route.
 const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
-  + ' by the gate once the four conditions hold'
+  + ' by the gate once the three conditions hold'
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
-    + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
+    + '. A pull request is ready when a clean review, passed E2E and'
     + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
 }
 
@@ -730,7 +731,7 @@ export function ciUndraftLine(repo: string, pr: number): string {
 export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, e2eExempt?: string,
   carried: Carried[] = []): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
-    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', a passed norms check, '
+    + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', '
     + (e2eExempt ? 'no E2E needed (' + e2eExempt + ')' : 'passed E2E') + ' and green CI hold at its head'
     + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }

@@ -410,10 +410,10 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "no|yes|yes|yes" \
   "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)|$(spells "$ORCH_REFS/briefs.md" "**Scratch lives in the session's own host scratchpad directory**")"
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
-# agent's report is capped, the « wrong or doubtful » line excepted, and no brief still
+# agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs cap the report" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" 'is never cut to fit the cap'; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes|yes" \
+  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
 check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
@@ -422,13 +422,10 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
-# The cap leaves the machine line where the orchestrator's gate reads it: last.
-check "the review report still ends with the norms-check line" "yes" \
-  "$(sed -n '/^## 4\. Report shape/,/^## 5\./p' "$ROOT/templates/agent-review-brief.md" | grep -v '^## 5\.' | grep -v '^$' | tail -1 | grep -qF 'End the report with one machine line and nothing after it: `norms-check:' && echo yes || echo no)"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
-# would cut the reviewer's words out of them.
-check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
-  "$(spells "$ROOT/templates/agent-comments-brief.md" "except the per-thread assessments: each is sent in full, the reviewer's words included")"
+# and the verdict limit would cut the reviewer's words out of them, so each goes whole to a file.
+check "the comments brief sends each per-thread assessment whole, in a file" "yes" \
+  "$(spells "$ROOT/templates/agent-comments-brief.md" "each per-thread assessment, the reviewer's words included, goes in full to a file its message names")"
 # The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
 # briefs ask for the status line it reads and no longer for a context read by hand, which
 # cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
@@ -1165,10 +1162,8 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review and its norms check before
-# its verdict » was written in the rulebook and in the review template, and was still broken
-# twice in one day: two rounds replaced the project's norms tool by a hand reading of its
-# norms file. A rule only prose carries is applied from memory. `review` records what a round
+# The gate. « Every agent-produced pull request gets its review before its verdict » was written
+# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
 # actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
@@ -1260,7 +1255,6 @@ check_status "a norms value that is neither tool nor none is refused" 1 bash "$R
 check "a refused review leaves the row as it was" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
-check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
 check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
 check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
@@ -2241,21 +2235,14 @@ check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1
 check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
-# and holding it to one would make the check noise nobody reads. What it IS held to is the
-# line its report must end on: a round that never reports its norms check leaves the
-# orchestrator nothing to record, and the readiness gate then refuses a head whose round did
-# read it. The rule lived in prose on both sides of the round and was skipped twice in one
-# day, so the brief is read for it before the dispatch rather than after.
+# and holding it to one would make the check noise nobody reads.
 review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"
-printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
 check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
 
 review_brief "$B/review-nogate.md"
-check_status "a review brief with no norms-check line is a finding" 1 bash "$LINT" "$B/review-nogate.md"
-check "the missing report line is named" "1" "$(bash "$LINT" "$B/review-nogate.md" 2>&1 | grep -c 'norms-check:')"
-check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 2>&1 | grep -c 'norms-check')"
+check_status "a review brief with no norms-check line passes: norms is on demand" 0 bash "$LINT" "$B/review-nogate.md"
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
@@ -3341,7 +3328,7 @@ check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1
 check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
   "$(aud --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit: x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit: x' | grep -c "an audit title is an auditor's")"
 check "and that refusal exits 1" "1" "$(aud --title 'Audit: x' >/dev/null 2>&1; echo $?)"
-for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
+for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "an auditor refuses $AUDFLAG" "1|1" \
     "$(aud --auditor --title 'Audit: x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit: x' $AUDFLAG | grep -c "is not an auditor's")"
@@ -3350,6 +3337,14 @@ check "an auditor with no readable pair is refused, naming where its transcript 
   "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p 2>&1 | grep -cF "no transcript for session s-aud-none under $ORCHESTRATOR_PROJECTS_DIR")"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit: x' | grep -c -- '--model aud-model')"
+# An auditor given its pair runs on it (the caller's pair is read only when none is given).
+AUDPAIR=$(aud --auditor --model m-x --effort low --title 'Audit: tm')
+check "an auditor given --model and --effort runs on that pair, not its caller's" "1|0" \
+  "$(printf '%s' "$AUDPAIR" | grep -c -- '--model m-x --effort low')|$(printf '%s' "$AUDPAIR" | grep -c -- '--model aud-model')"
+check "an auditor given neither runs on its caller's model and effort" "1" \
+  "$(audl --auditor --title 'Audit: tm' | grep -c -- '--model aud-model --effort high')"
+check "an auditor given a model without an effort is refused" "1" \
+  "$(aud --auditor --model m-x --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
 
 # An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
 # a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
@@ -4411,8 +4406,8 @@ check "a tier bound without an effort types the shipped tier effort" "1" "$(pcmd
 check "an unknown effort on spawn is a refusal" \
   "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p --effort huge 2>&1 | tail -1)"
-check "an auditor refuses an effort: it runs as its caller runs" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+check "an auditor given an effort alone is refused: it takes the pair, or neither" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'an auditor takes --model and --effort together')"
 check "rotate forwards the effort to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
@@ -5529,7 +5524,7 @@ check "the Live state section replaces reading the journal, which is read by gre
 # 2026-11-04 on the cap, its template line).
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
+  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
 # Every successor measures its takeover at the same point, the turn that sends « takeover
 # confirmed », so one orchestration's takeover figures compare from one succession to the next:
 # step 4 keeps the figure recorded when that turn ends, and step 5 reports that reading only.
@@ -5537,7 +5532,7 @@ check "step 5 announces the successor's own measured context from its measure fi
 # sends « takeover confirmed » is the turn before's, or no file at all on a first turn. The
 # figure is the one recorded when that turn ends, read at the next turn's first tool call.
 check "step 4 takes the takeover figure the module records when the « takeover confirmed » turn ends" "yes|yes|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « at takeover confirmed » figure is the `context_tokens` the module records when the turn that sends « takeover confirmed » ends')|$(spells "$ORCH_REFS/lifecycle.md" 'read your measure file at the first tool call of your next turn and keep that figure')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« at takeover confirmed » at the end of the turn that sends it (woken from a pause, the turn that ends step 3)')|$(spells "$ORCH_REFS/lifecycle.md" 'read each at the first tool call of the next turn')|$(spells "$ORCH_REFS/lifecycle.md" 'immediately before the message')"
 check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures, never a later reading' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'The announcement gives these two, never a later reading')"
 # The successor also keeps its first turn's reading: the gap between it and the « takeover
@@ -5546,13 +5541,13 @@ check "step 5 reports the context kept at « takeover confirmed », never a late
 # module writes it only when a turn ends. The « first turn » figure is the one recorded at
 # the end of the first turn, read at the second turn's first tool call.
 check "step 1 says the measure file is written only when a turn ends, and asks no reading before" "yes|no|no" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'the module writes it only when a turn of yours ends, so it is not there during your first turn')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'written when a turn of yours ends')|$(spells "$ORCH_REFS/lifecycle.md" 'Your FIRST tool call, ahead of any skill load, reads your own measure file')|$(spells "$ORCH_REFS/lifecycle.md" 'at this call')"
 check "step 1's « first turn » figure is the one recorded at the end of the first turn, read at the next turn's first tool call" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens` it records when your first turn ends: read the file at the first tool call of your next turn and keep that figure')"
+  "$(spells "$ORCH_REFS/lifecycle.md" '« First turn » is its `context_tokens` at the end of your first turn')"
 # A file still missing when it is read — a first turn the host could not measure — gets the
 # four agent briefs' guard: no figure rather than an estimate.
 check "step 1 guards the measure file missing when it is read" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Missing, say so and give no figure')"
 check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1" \
   "$(printf '%s' "$SUCC5" | grep -oF 'on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')"
 check "the design names both figures and why: their gap is the takeover's verification cost" "yes|yes" \
@@ -5638,8 +5633,8 @@ check "the template reads Instructions, then Source, then Expected result, each 
   "$(i=$(succ_at '^# Instructions$'); a=$(succ_at '^## Analysis$'); f=$(succ_at '^## Your first task'); s=$(succ_at '^# Source$'); l=$(succ_at '^## Live state'); e=$(succ_at '^# Expected result$')
      [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
-check "the template names its rulings file, read whole at step 1, and carries no rulings field" "1|1|0|0" \
-  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
+check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
+  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
 check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
   "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
 check "the template carries the predecessor's tty and home server, the launcher and the scripts" "yes|yes|yes|yes" \
@@ -7759,6 +7754,10 @@ reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
   "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
+reset_home
+out=$(home close --tty /dev/ttys901 --expect-title '' 2>&1)
+check "an empty title to expect is refused before anything is closed, a blank one too" "1|0|1|0" \
+  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[kill-window\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[kill-window\]')"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
@@ -12641,9 +12640,11 @@ leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+# The servers an orchestrator never calls: its agents run them.
+LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
 check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
   "$(leanl --title 'Agent: x' | leanset)"
-check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
+check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
   "$(leanl --title-free --title probe | leanset)"
@@ -12651,12 +12652,12 @@ check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
-check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
+check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
-check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
+check "a woken orchestrator and an opened one keep the three and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
   "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
   "$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent: x' | leanset | grep -c .)|$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
@@ -12673,10 +12674,12 @@ check "--drop-tool given the same name twice removes it once, on the launch line
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
-check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
+check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
+check "--drop-tool on a name the role keeps removes it" "$LEANBASE $LEANORCH mcp__orchestrator__end_session" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
@@ -12686,7 +12689,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \

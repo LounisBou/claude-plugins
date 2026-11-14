@@ -24,9 +24,7 @@ The orchestrator sized this round by the work, its volume, its scope and its cri
 
 {{LENSES}}
 
-One lens is fixed and is not one of the above to choose from: **norms**. `{{NORMS_CHECK}}` — the project's norms check invocation, or the word `none`. When it names a command, run it over the diff range and take its report as the norms lens's findings, each one carrying the rule or the precedent it cites; when it reads `none`, the lens reads `{{NORMS}}` by hand instead. Either way the report says which of the two was done. The check is read, never obeyed: its report is findings, its fix path is not yours to take.
-
-Where `{{NORMS_CHECK}}` names a command, you RUN it. Neither the resource envelope of §7 nor the fan-out that command makes is a reason to put a hand reading of `{{NORMS}}` in its place: if this machine cannot afford the run, say so in your report and stop there, do not substitute. The hand reading belongs to `none` and to nothing else, because a tool that never ran and a project that ships none are not the same evidence, and only one of them is a fact about the project.
+The norms check is no default lens: it runs only when the pull request's check plan says `norms: required`, and then the orchestrator names its command here.
 
 When the delivery creates or substantially modifies a frontend surface, or creates the interface of a new feature, one more check is fixed: the screenshots on the pull request against the diff. They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding. A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules. Your report opens this check with one line, `frontend surface: yes|minor|no`, and with `yes`, the number of images in the description. With `yes`, you also open and audit every image, one by one, against the checklist in `{{SCREENSHOT_CHECKLIST}}`. Your report carries one line per image, `<image>: clean` or `<image>: <the defect>`, and every defect is also a finding: a capture that shows a defect is never a pass, whatever the diff says. Screenshots you cannot read are reported under « what the readers could not show », never as a pass.
 
@@ -34,13 +32,11 @@ One more check is fixed on every delivery: its E2E line, from the implementer's 
 
 Every sub-agent is read-only: no edits, no commits, no long runs, no verdicts on the whole. It reports to you; you consolidate.
 
-## 4. Report shape — one message to the orchestrator
+## 4. Report shape — a file, and one message to the orchestrator
 
-The findings are the report's substance and the orchestrator verifies each, so their number is not capped; each finding is ONE line of at most 200 characters — `[severity] file:line — the claim — the evidence in a few words — proposed fix` — with no prose around it. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. No recommendation on the whole; the verdict is the orchestrator's.
+Write the report to `{{REPORT_PATH}}`. The findings are its substance and the orchestrator verifies each, so their number is not capped; each finding is ONE line of at most 200 characters — `[severity] file:line — the claim — the evidence in a few words — proposed fix` — with no prose around it. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. No recommendation on the whole; the verdict is the orchestrator's. Then what was read, a « what the readers could not show » line for anything the fixtures or the environment hid, which of the norms lens's two modes was done, and one line for anything you saw that is wrong or doubtful outside the findings.
 
-Report cap: everything else in the report — what was read, a « what the readers could not show » line for anything the fixtures or the environment hid, which of the norms lens's two modes was done — is at most 1,000 characters. One line says anything you saw that is wrong or doubtful outside the findings — this line is never cut to fit the cap.
-
-End the report with one machine line and nothing after it: `norms-check: tool {{HEAD}}` when the command ran, `norms-check: none {{HEAD}}` when `{{NORMS_CHECK}}` reads `none`.
+Your message is one line: `<repo>#{{PR}} {{HEAD}} — <n> findings — blocking: <file:line of each blocker and major, …|none> — report: {{REPORT_PATH}}`.
 
 ## 5. Forbidden
 
