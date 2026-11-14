@@ -52,18 +52,15 @@ find docs/features -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r d
 ```
 
 The clean-tree test excludes the two artifact paths: a prepared feature leaves a
-design, a plan and a roadmap line on disk, and refusing to start over them would
-make `implement:prepare` unusable. Both paths are tested for the ignore rule one by
-one, and the test inverts in `committed` mode rather than being skipped there. The
-guard reads `docs/features/probe`, not `docs/features`: before the directory exists,
-`check-ignore` on the bare path reads not ignored, while the inner path is matched by
-every form the pattern takes.
+design, a plan and a roadmap line on disk, and refusing over them would make
+`implement:prepare` unusable. Both paths are tested for the ignore rule, the test
+inverting in `committed` mode. The guard reads `docs/features/probe`, not
+`docs/features`: before the directory exists, `check-ignore` on the bare path reads not
+ignored.
 
-The last line lists the prepared features: a directory with a design and a plan and
-no state file is one `implement:prepare` left ready. The listing is reached whether
-`docs/features` is absent or empty, because a shell that refuses an unmatched glob
-(zsh, the session's shell) prints `no matches found` in both cases, and a guard on
-the directory's existence covered only the first.
+The last line lists the prepared features: a directory with a design and a plan and no
+state file. It runs whether `docs/features` is absent or empty, since zsh prints
+`no matches found` in both cases.
 
 ---
 
@@ -76,8 +73,7 @@ already carries. Three things are skipped because their output is already on dis
 the brainstorm of Step 2, the design write of Step 3 and the plan generation of
 Step 5. What remains is the one question, the branch, the state file, the summary.
 
-Its line in `ROADMAP.md` goes too: the roadmap lists what is prepared and not yet
-started, and this feature is being started now.
+Its `ROADMAP.md` line goes too: the roadmap lists what is prepared and not started.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
