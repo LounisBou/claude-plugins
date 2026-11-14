@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
+  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
@@ -23,6 +23,7 @@ export interface Host {
     model(): Promise<string>
     usage(): Promise<unknown>
     info(): Promise<unknown>
+    messages(args?: { agentId: string }): Promise<unknown>
     repo(): Promise<unknown>
   }
   readonly ui: { log(text: string, options?: { to?: string }): void }
@@ -126,6 +127,10 @@ export function mount(on: On, collector: Collector): void {
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
     })
+    // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.
+    await quietly($, 'session.start calls', async () => {
+      for (const id of transcriptCallIds(await $.session.messages())) collector.claim(id)
+    })
     return result
   })
 
@@ -142,11 +147,18 @@ export function mount(on: On, collector: Collector): void {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    await quietly($, 'turn.complete tool calls', async () => {
+      const at = await $.clock.now()
+      const agent = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
+      const messages = await $.session.messages(agent === undefined ? undefined : { agentId: agent })
+      await add($, collector, transcriptToolEvents(at, await $.session.id(), messages, agent, id => collector.claim(id)))
+    })
     await quietly($, 'turn.complete', async () => {
       const at = await $.clock.now()
       const session = await $.session.id()
       if (e['agentId'] === undefined) await readTitle($, collector)
-      const events = [turnEnd(at, session, e, usageFacts(await $.session.usage()))]
+      const usage = usageFacts(await $.session.usage())
+      const events = [turnEnd(at, session, e, usage, collector.turnCost(usage.costUsd))]
       const child = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
       const spawnedAt = collector.closing(child)
       if (child !== undefined && spawnedAt !== undefined) events.push(agentClosed(at, session, child, spawnedAt, e))
@@ -173,6 +185,7 @@ export function mount(on: On, collector: Collector): void {
     const result = await next(e)
     await quietly($, 'tool.call', async () => {
       const at = await $.clock.now()
+      if (typeof e['tool_use_id'] === 'string' && mcpOf(String(e['tool'])) !== undefined) collector.claim(e['tool_use_id'])
       const check = collector.takeCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
       await add($, collector, toolEvents(at, await $.session.id(), e, result, check, started === undefined ? 0 : Math.max(0, at - started)))
       collector.setTitle(renamedTo(e, result, check))
