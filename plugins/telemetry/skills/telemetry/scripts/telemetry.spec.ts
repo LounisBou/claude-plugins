@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { backfillEvent, enrich, readSecrets, realGit, run, type Deps } from './telemetry.ts'
+import { backfillEvent, enrich, readSecrets, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const FIXTURE = fileURLToPath(new URL(`../../../tests/fixtures/${S}.jsonl`, import.meta.url))
@@ -25,6 +25,7 @@ function harness(work: (config: string, deps: Deps & { outs: string[]; errs: str
   const deps = {
     env: { TELEMETRY_ENV_FILE: envFile, TELEMETRY_MACHINE: 'box' }, stdin: () => stdin, out: (l: string) => outs.push(l), err: (l: string) => errs.push(l),
     git: realGit, now: () => Date.parse('2026-11-13T21:00:00Z'), detach: (dir: string) => { detached.push(dir) }, exportWaitMs: 0, outs, errs, detached,
+    gh: realGh, repositoryAt: () => undefined, cwd: root,
   }
   try {
     work(config, deps, text => { stdin = text })
@@ -196,5 +197,27 @@ test('a plain export waits its turn behind a running one, and exits 1 saying so 
     assert.equal(deps.outs.at(-1), 'export: another export is running, nothing pushed')
     rmSync(lock)
     assert.equal(run(['export', '--config', config], { ...deps, env: logs.env }), 0)
+  })
+})
+
+test('report: the week\'s report is printed, an option it does not know refused', () => {
+  harness((config, deps) => {
+    assert.equal(run(['report', '--config', config, '--week', '2026-11-08', '--tool', 'acme/tool'], { ...deps, gh: () => ({ status: 1, stdout: '', stderr: 'offline' }) }), 0)
+    assert.equal(deps.outs[0], 'weekly report 2026-11-08 → 2026-11-14 (Europe/Paris), tool: acme/tool')
+    assert.equal(run(['report', '--config', config, '--day', 'x'], deps), 2)
+    assert.equal(deps.errs.at(-1), 'report: --day x: expected --week <YYYY-MM-DD> or --tool <owner/name>')
+  })
+})
+
+test('gh and the repository of a directory, read for real: a failure is a status, a remote is its owner/name, none is nothing', () => {
+  harness((_config, deps) => {
+    assert.notEqual(realGh(['--no-such-flag']).status, 0)
+    const dir = join(deps.cwd, 'clone')
+    mkdirSync(dir)
+    assert.equal(realRepositoryAt(dir), undefined)
+    spawnSync('git', ['init', '--quiet', dir], { env: { ...process.env, ...gitEnv } })
+    assert.equal(realRepositoryAt(dir), undefined)
+    spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:acme/tool.git'], { env: { ...process.env, ...gitEnv } })
+    assert.equal(realRepositoryAt(dir), 'acme/tool')
   })
 })

@@ -4,7 +4,7 @@
 # repository), then the command line end to end: events appended, a planted secret found by
 # `check` and refusing `export`, an export to a scratch bare repository creating its `main`, the
 # generated index beside the day files, two exports at once, and the automatic export a session's
-# end starts as a detached process.
+# end starts as a detached process, and the weekly report over a scratch store.
 #
 # Requires bash, git, node and the claude CLI. No network: the logs repository is a scratch one.
 set -u
@@ -85,6 +85,13 @@ check "the detached export has ended on its own" "yes" "$ended"
 commits=$(git -C "$WORK/logs2.git" rev-list --count main)
 end_line 2026-11-14T10:00:01Z | cli append
 check "a second end the same day starts nothing" "$commits:yes" "$(git -C "$WORK/logs2.git" rev-list --count main):$(gone && echo yes)"
+
+# The weekly report, from a directory that is no repository (so no call to gh): the first line, the
+# per-day rows, and a figure no source holds said n/a.
+out=$(cd "$WORK" && cli report --week 2026-11-08); code=$?
+check "report prints its heading and seven day rows, exit 0" "0|weekly report 2026-11-08 → 2026-11-14 (Europe/Paris), tool: n/a — not run in a repository and no --tool|7" \
+  "$code|$(printf '%s\n' "$out" | head -1)|$(printf '%s\n' "$out" | grep -c '^2026-11-')"
+check "report says a figure with no source is n/a, with why" "yes" "$(printf '%s\n' "$out" | grep -q '^1 agents on every runnable line: n/a — ' && echo yes || echo no)"
 
 [ "$fail" -eq 0 ] && echo "telemetry: all checks passed"
 exit "$fail"
