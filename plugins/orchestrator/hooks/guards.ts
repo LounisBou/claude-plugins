@@ -24,6 +24,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
+import { DECLARATIONS, type Declarations } from './wait.ts'
 import { operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
@@ -275,7 +276,8 @@ async function transcriptHasAnswer($: any, path: string): Promise<boolean> {
 // How many times a re-fired stop is refused again for an operator wait with no question block.
 export const REFIRED_REFUSALS = 2
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+// `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
+export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, declarations: Declarations = DECLARATIONS) {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
   // place and the unmeasured line are the session's own, keyed by its id: after a
   // /clear the id changes and no session.start fires, so a memo held across it
@@ -654,6 +656,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         tasks: hostTasks(e.background_tasks, e.session_crons),
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
+        declared: declarations.current(),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
         questionOpen: pending !== null || ownOpen,
       })

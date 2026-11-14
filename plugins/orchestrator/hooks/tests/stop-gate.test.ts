@@ -10,9 +10,9 @@ import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
   machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
-  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
+  checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, TOOL_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
@@ -187,7 +187,7 @@ test('the blocks-nothing refusal says what the operator wait is for in one claus
   const { handlers } = mounted()
   const { dollar } = fakeDollar({})
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
-  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing: that line is for a question he must answer.')
+  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing: that wait is for a question he must answer.')
   expect((refused.answer as any).block).not.toContain('the coordinator would put it to him')
 })
 
@@ -220,7 +220,7 @@ test('an open dispatch row holds the stop and names the row', () => {
   expect(d.decision).toBe('block')
   expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
     + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
-    + 'and end on waiting: deferred — <n> items.')
+    + 'and declare a deferred wait.')
 })
 
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {
@@ -382,6 +382,22 @@ test('the heads path is per session and sanitised', () => {
 
 // --- check 1 -----------------------------------------------------------------------------
 
+// The declare_wait call a test stands for: the machine line its message ends on, declared as the
+// turn would have declared it. The gate itself reads only the declaration (stop-gate.ts, checkWake).
+function declaredBy(message: string): DeclaredWait | null {
+  const line = machineLine(message)
+  const matched = MACHINE_LINE.exec(line)
+  if (matched?.[1]) return { kind: 'operator', blocks: matched[1].trim(), ...(URGENT_LINE.test(line) ? { urgent: true as const } : {}) }
+  if (matched?.[2]) return { kind: 'done', blocks: '' }
+  const tool = TOOL_LINE.exec(line)
+  if (tool) return { kind: 'tool', blocks: tool[1].trim() }
+  if (/^waiting:\s*operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:$/i.test(line)) return { kind: 'operator', blocks: '' }
+  const ids = deferredIds(line)
+  return ids === null ? null : { kind: 'deferred', blocks: ids }
+}
+const checkWake = (facts: Parameters<typeof gateWake>[0]) => gateWake({ declared: declaredBy(facts.message), ...facts })
+
+
 const AGENT_BUSY = { label: 'Agent: belt-p3', state: 'busy' as const, tty: '/dev/ttys002' }
 const AGENT_IDLE = { label: 'Agent: idle-p3', state: 'idle' as const, tty: '/dev/ttys003' }
 
@@ -420,7 +436,7 @@ test('the done line holds the stop on its agents and on open rows, and no longer
     reason: 'Not done: Agent: idle-p3 is still there. Finish it, or say what blocks it. '
       + 'Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
       + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
-      + 'and end on waiting: deferred — <n> items.',
+      + 'and declare a deferred wait.',
   })
 })
 
@@ -428,15 +444,30 @@ test('the remaining cases: idle agents and nothing to wake are flagged for the l
   expect(checkWake({ agents: [AGENT_IDLE], resident: false, delivered: [], message: 'I stopped.' })).toEqual({
     warn: 'idle-agents', detail: 'Agent: idle-p3',
   })
-  // A malformed machine line has no refusal of its own: a « waiting: » one is read as a question that blocks nothing declared.
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x' }) as any).case).toBe('question-without-blocks')
+  // A malformed machine line, and a question, declare no wait: the host's list of work in flight alone decides.
+  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x', tasks: [] }) as any).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting operator blocks the order', tasks: ['sleep 90'] })).toBeNull()
-  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
-    case: 'question-without-blocks',
-    reason: 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.',
-  })
+  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?', tasks: [] }) as any).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: true, delivered: [], message: 'stopped.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
+})
+
+test('the wake check decides on the declared wait alone: the same line written by the model releases nothing', () => {
+  const none = { agents: [], resident: false, delivered: [], tasks: [] as string[] }
+  const refused = { case: 'nothing-will-wake' as const }
+  // Each kind is released by its declaration.
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'done', blocks: '' } })).toBe('read-what-is-left')
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'deferred', blocks: '2 items' } })).toBe('read-what-is-left')
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'tool', blocks: 'the deploy run' }, watching: true })).toEqual({ tool: 'the deploy run' })
+  // The model's own last line, with no declaration, is no wait: nothing wakes it.
+  for (const line of ['waiting: operator — blocks: the report', 'waiting: done', 'waiting: deferred — 2 items', 'waiting: tool — the deploy run', 'waiting: your call?', 'Your call?']) {
+    expect(gateWake({ ...none, message: `x\n${line}` })).toMatchObject(refused)
+  }
+  // A declaration is read as it is, whatever the message says.
+  expect(gateWake({ ...none, message: 'waiting: done', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
+  // The predecessor's last word is no wait: it stays read on the line.
+  expect(gateWake({ ...none, message: 'Takeover confirmed.\nhanded over' })).toBeNull()
 })
 
 // --- check 2 -----------------------------------------------------------------------------
@@ -708,9 +739,12 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
   return { dollar, written, ran, wrote, stamp, inits }
 }
 
-function mounted(): { handlers: Record<string, Function>; matchers: Record<string, object | undefined> } {
+// `declarations`: given, the gate reads it as the host does and the caller declares; omitted, each stop
+// declares the machine line its message ends on, as a turn that called declare_wait with it would.
+function mounted(declarations?: Declarations): { handlers: Record<string, Function>; matchers: Record<string, object | undefined> } {
   const handlers: Record<string, Function> = {}
   const matchers: Record<string, object | undefined> = {}
+  const own = declarations ?? new Declarations()
   registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
     // The two tool calls the guards watch are told apart by their tool: Bash keeps the
     // event's own key, SendMessage gets its own.
@@ -720,7 +754,16 @@ function mounted(): { handlers: Record<string, Function>; matchers: Record<strin
     // The engine's on returns a registration taking one .catch; the fake accepts it and
     // drops it — the body's own catch is what the wiring tests.
     return { catch: () => undefined }
-  })
+  }, own)
+  const gate = handlers['classic.Stop']
+  if (declarations === undefined) {
+    handlers['classic.Stop'] = (dollar: any, e: any, next: Function) => {
+      own.turnStarted()
+      const wait = declaredBy(String(e.last_assistant_message ?? ''))
+      if (wait !== null) own.declare(wait)
+      return gate(dollar, e, next)
+    }
+  }
   return { handlers, matchers }
 }
 
@@ -998,9 +1041,9 @@ test('the interval is read from the environment, a longer one holding the sweep 
 test('a refused stop runs no sweep', async () => {
   const { handlers } = mounted()
   const { dollar, ran, wrote } = fakeDollar({ stampMtimeMs: OLD_STAMP })
-  // Nothing-will-wake no longer refuses: a question that blocks nothing declared is the refusal left to hold the sweep.
-  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x' }))
-  expect((refused.answer as any).block).toContain('Your question blocks nothing declared')
+  // A turn with no wait declared, and nothing the host lists in flight, is the refusal left to hold the sweep.
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x', background_tasks: [], session_crons: [] }))
+  expect((refused.answer as any).block).toContain('Nothing will wake you')
   expect(sweepLine(ran)).toBeUndefined()
   expect(wrote[STAMP]).toBeUndefined()
 })
@@ -1420,8 +1463,8 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
   expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
-  // A bare question still blocks nothing declared.
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' }) as any).case).toBe('question-without-blocks')
+  // A bare question declares no wait: it wakes nothing.
+  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
 })
 
 // --- the spec's goals (goals.md beside a registered record) --------------------------------
@@ -1441,9 +1484,9 @@ const NO_ROWS = { records: [''] }
 test('the done branch names open goals and faults in their own texts, after what is left and the rows', () => {
   const open = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: ['G3', 'G4'] })
   expect(open?.reason).toBe('Not done against the spec: G3, G4 open. Dispatch the work that meets it and record its evidence '
-    + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled: '
-    + 'waiting: operator — blocks: <G>: <what he must rule> — or, if he deferred it, record his ruling with '
-    + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and end on waiting: deferred — <n> items.')
+    + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled, '
+    + 'with an operator wait that blocks on <G> — or, if he deferred it, record his ruling with '
+    + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and declare a deferred wait.')
   const faulty = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsFaults: ['G1 met without evidence on disk: x does not exist', '4 rows, the spec\'s Goals list 5'] })
   expect(faulty?.reason).toBe("goals.md is not a record of the spec: G1 met without evidence on disk: x does not exist; 4 rows, the spec's Goals list 5.")
   const all = checkWakeDone({ agents: [AGENT_IDLE], checkouts: ['/tmp/c'], deferred: ['r-1 (x)'], goalsOpen: ['G3'], goalsFaults: ['G4 ruled out without the operator\'s words'] })!
@@ -1608,7 +1651,7 @@ test('a tool line is refused when the host says nothing of the session runs, the
   const reason = String((held.answer as any).block)
   expect(reason.startsWith('Nothing of yours runs in the background')).toBe(true)
   expect(reason).toContain('Launch it with run_in_background')
-  expect(reason).toContain('waiting: done')
+  expect(reason).toContain('declare done')
   expect(held.passed).toBe(null)
   expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool-not-running'))).toBe(true)
 })
@@ -1705,7 +1748,7 @@ test('a plain ending is refused when the host lists nothing in flight, the short
   const reason = String((held.answer as any).block)
   expect(reason.startsWith('Nothing will wake you')).toBe(true)
   expect(reason).toContain('run_in_background')
-  expect(reason).toContain('waiting: done')
+  expect(reason).toContain('declare done')
   expect(held.passed).toBe(null)
   expect(fx.written.some(l => l.endsWith('| stop gate: check1 nothing-will-wake'))).toBe(true)
 })
@@ -1819,16 +1862,16 @@ test('a wait on the operator that blocks nothing is refused, the right line name
   for (const blocks of ['nothing', 'Nothing.', 'none', 'NONE', 'nothing yet', 'nothing to ask', 'none for now', 'nothing.', 'n/a', 'N/A', '-', '']) {
     const held = checkWake({ ...base, message: `Watching the deploys.\nwaiting: operator — blocks: ${blocks}` }) as any
     expect([blocks, held.case]).toEqual([blocks, 'blocks-nothing'])
-    expect(held.reason).toContain('waiting: done')
+    expect(held.reason).toContain('declare done')
   }
   const urgent = checkWake({ ...base, message: 'waiting: operator (urgent) — blocks: nothing.' }) as any
   expect(urgent.case).toBe('blocks-nothing')
   const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
-  expect(running.reason).toContain('waiting: tool — <what is watched>')
+  expect(running.reason).toContain('declare a tool wait naming what is watched')
   expect(running.reason).toContain('tail -f deploy.log')
   const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
   expect(busy.case).toBe('blocks-nothing')
-  expect(busy.reason).toContain('An agent of yours is busy: end on no machine line')
+  expect(busy.reason).toContain('An agent of yours is busy: declare no wait')
   // What blocks something is still the operator's wait.
   expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing else than the merge' })).toEqual({ blocks: 'nothing else than the merge' })
   expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing but G5' })).toEqual({ blocks: 'nothing but G5' })
@@ -1893,18 +1936,18 @@ test('a deferred ending is refused while an open row or goal is not deferred, na
   expect(held.reason).toContain('Not done against the spec: G4 open')
   expect(held.reason).toContain('record his ruling with dispatch-record.sh defer')
   expect(held.reason).toContain('goals <record> defer <G>')
-  expect(held.reason).toContain('end on waiting: deferred — <n> items')
+  expect(held.reason).toContain('declare a deferred wait')
 })
 
 test('a deferred ending with nothing deferred is refused: the done line fits', () => {
   const held = checkWakeDone({ agents: [], checkouts: [], deferred: [], ending: 'deferred' })!
   expect(held.reason).toContain('Nothing is deferred')
-  expect(held.reason).toContain('waiting: done')
+  expect(held.reason).toContain('declare done')
 })
 
 test('a done ending is refused on deferred work, which names the deferred line', () => {
   const held = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)'], deferredRows: ['5 (a)'], goalsDeferred: ['G5'] })!
-  expect(held.reason).toBe('Not done: row 5 (a), G5 deferred by the operator, still open. End on waiting: deferred — <n> items, not on waiting: done.')
+  expect(held.reason).toBe('Not done: row 5 (a), G5 deferred by the operator, still open. Declare a deferred wait, not done.')
   // An open row that is not deferred keeps its own reason beside it.
   const both = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)', '6 (b)'], deferredRows: ['5 (a)'] })!
   expect(both.reason).toContain('row 6 (b) is open')
@@ -1936,7 +1979,7 @@ test('the deferred line is refused beside a row that is not deferred, and the do
   const done = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect((refused.answer as any).block).toContain('deferred by the operator')
-  expect((refused.answer as any).block).toContain('waiting: deferred')
+  expect((refused.answer as any).block).toContain('Declare a deferred wait, not done')
 })
 
 // The ids after « waiting: deferred — » are compared with the deferred items: a line that names
@@ -1968,8 +2011,8 @@ test('the short deferred line with a wrong count is refused, the message giving 
   const left = { agents: [], checkouts: [], deferred: ['5 (a)', '7 (b)'], deferredRows: ['5 (a)', '7 (b)'], goalsDeferred: ['G5', 'G6'], ending: 'deferred' as const }
   const wrongRows = checkWakeDone({ ...left, ids: '3 rows G2' })!
   expect(wrongRows.case).toBe('not-done')
-  expect(wrongRows.reason).toContain('the right line is waiting: deferred — 4 items.')
-  expect(checkWakeDone({ ...left, ids: '2 rows' })!.reason).toContain('the right line is waiting: deferred — 4 items.')
+  expect(wrongRows.reason).toContain('the right count is 4 items.')
+  expect(checkWakeDone({ ...left, ids: '2 rows' })!.reason).toContain('the right count is 4 items.')
   expect(checkWakeDone({ ...left, ids: '5, 7, G5, G6' })).toBeNull()
 })
 
@@ -1984,8 +2027,8 @@ test('the items line with a wrong count is refused, the message giving the total
   const left = { agents: [], checkouts: [], deferred: ['5 (a)', '7 (b)'], deferredRows: ['5 (a)', '7 (b)'], goalsDeferred: ['G5', 'G6'], ending: 'deferred' as const }
   const wrong = checkWakeDone({ ...left, ids: '2 items' })!
   expect(wrong.case).toBe('not-done')
-  expect(wrong.reason).toContain('waiting: deferred — <n> items must give the number of deferred rows and goals together')
-  expect(wrong.reason).toContain('the right line is waiting: deferred — 4 items.')
+  expect(wrong.reason).toContain('A deferred wait must give the number of deferred rows and goals together')
+  expect(wrong.reason).toContain('the right count is 4 items.')
   expect(checkWakeDone({ ...left, ids: '2 rows G2' })).toBeNull()
 })
 
@@ -2008,16 +2051,16 @@ test('the items line with a wrong count is refused at the stop, naming the total
   const { handlers } = mounted()
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'All that can move has moved.\nwaiting: deferred — 2 items' }))
-  expect((held.answer as any).block).toContain('the right line is waiting: deferred — 3 items.')
+  expect((held.answer as any).block).toContain('the right count is 3 items.')
 })
 
-// A deferred line with no ids is no machine line and no longer has a refusal naming the form: it is
-// read as a question that blocks nothing declared.
+// A deferred line with no ids is no machine line and no longer has a refusal naming the form: it
+// declares no wait.
 test('waiting: deferred with no ids is no malformed machine line, at the gate and at the stop', async () => {
   const base = { agents: [], resident: false, delivered: [] }
   for (const message of ['waiting: deferred', 'Nothing left.\nwaiting: deferred —', '**waiting: deferred**']) {
     const held = checkWake({ ...base, message }) as any
-    expect([message, held.case]).toEqual([message, 'question-without-blocks'])
+    expect([message, held]).toEqual([message, { warn: 'nothing-will-wake', detail: '' }])
   }
   const { handlers } = mounted()
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
@@ -2029,7 +2072,7 @@ test('waiting: deferred with no ids is no malformed machine line, at the gate an
 // must name the deferred ending beside the others.
 test('the lines that fit name the deferred ending', () => {
   const base = { agents: [], resident: false, delivered: [] }
-  const NAMED = 'if the operator deferred it, his ruling recorded: waiting: deferred — <n> items'
+  const NAMED = 'if the operator deferred it, his ruling recorded, declare a deferred wait'
   expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing' }) as any).reason).toContain(NAMED)
   // A tool line with nothing running is no longer a refusal: it has no text to name the ending in.
   expect((checkWake({ ...base, message: 'waiting: tool — the monitor' }) as any).reason).toBeUndefined()
@@ -2048,7 +2091,7 @@ test('goals alone deferred, no open row: the deferred line passes and the done l
   const done = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
   const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect((refused.answer as any).block).toContain('G5, G6 deferred by the operator')
-  expect((refused.answer as any).block).toContain('waiting: deferred')
+  expect((refused.answer as any).block).toContain('Declare a deferred wait, not done')
   const unnamed = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
   const short = await stop(handlers['classic.Stop'], unnamed.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — G5' }))
   expect((short.answer as any).block).toContain('missing G6')
@@ -2184,18 +2227,22 @@ test('the register\'s own record is held to its owner file too', async () => {
 
 // --- the declared wait (hooks/wait.ts) ---------------------------------------------------------
 
+// The declarations each wait mounting holds: the gate chained after it reads the same ones.
+const WAITS = new WeakMap<Record<string, Function>, Declarations>()
 function waitMounted(): Record<string, Function> {
   const handlers: Record<string, Function> = {}
+  const declarations = new Declarations()
   registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
     handlers[args[0]] = args[args.length - 1] as Function
     return { catch: () => undefined }
-  }, new Declarations())
+  }, declarations)
+  WAITS.set(handlers, declarations)
   return handlers
 }
 
 // The stop as the engine chains it: the declared wait's handler first, then the gate.
 async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
-  const gate = mounted().handlers['classic.Stop']
+  const gate = mounted(WAITS.get(wait)).handlers['classic.Stop']
   let passed: unknown = null
   const answer = await wait['classic.Stop'](dollar, e, (x: unknown) => gate(dollar, x, (y: unknown) => { passed = y; return y }))
   return { answer, passed }
@@ -2248,13 +2295,15 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   expect(String((held.answer as any).block)).toContain('Nothing will wake you')
 })
 
-test('with no wait declared, the gate reads the last line, and its refusal teaches the call', async () => {
+test('with no wait declared, the last line the model wrote decides nothing, and the refusal teaches the call', async () => {
   const wait = waitMounted()
   const { dollar } = fakeDollar({})
   const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('declare_wait(')
+  expect(String((held.answer as any).block)).toContain('`declare_wait` tool')
   const done = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'All of it shipped.\nwaiting: done', ...NOTHING_RUNS }))
-  expect(done.answer).toBe(done.passed)
+  expect(String((done.answer as any).block)).toContain('Nothing will wake you')
+  const asked = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the report`, ...NOTHING_RUNS }))
+  expect(String((asked.answer as any).block)).toContain('Nothing will wake you')
 })
 
 test('a declared operator wait releases the stop whatever the last line says', async () => {
