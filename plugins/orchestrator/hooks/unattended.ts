@@ -11,7 +11,7 @@ import {
 import { updateOver } from '../core/store-io.ts'
 import { launcherOf } from '../core/orchestration.ts'
 import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
-import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
+import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 
 // The bound of one reading: the forge's lists, the launcher's, the records and the archive writes.
@@ -72,16 +72,32 @@ async function linesOf($: any, records: readonly string[], own?: string | null):
   return read
 }
 
-// The pull requests the other orchestrators on this machine record: theirs to attend.
-async function othersClaims($: any, state: string, sessionId: string): Promise<Set<string>> {
+// Whether another orchestrator's line still claims its pull request: its session is live (the store's
+// own rule, isStale), or the line is a wait set again within the age the module reads for its own
+// lines, through unattended() with no agent running. A dead session's stale line claims nothing.
+function claims(line: LedgerLine, sessionLive: boolean, now: number): boolean {
+  if (sessionLive) return true
+  return line.status === 'waiting' && unattended({ open: [{ repo: line.repo, pr: line.pr, createdAt: null }], lines: [line], live: new Set(), now }).length === 0
+}
+
+// The pull requests the other orchestrators on this machine record, while their claim is alive: theirs to attend.
+async function othersClaims($: any, state: string, sessionId: string, now: number): Promise<Set<string>> {
   const store = await storeOf($)
   const entries: { name: string; kind: string }[] = await $.fs.list(`${store}/sessions`).catch(() => [])
-  const claimed = new Set<string>()
+  const others: { name: string; row: SessionRow }[] = []
   for (const entry of entries) {
     if (entry.kind !== 'file' || entry.name.includes('.tmp-') || entry.name === safe(sessionId)) continue
     const row = parseSessionRow(await readOr($, `${store}/sessions/${entry.name}`))
-    if (row?.role !== 'orchestrator') continue
-    for (const { lines } of await linesOf($, await registered($, state, entry.name))) for (const line of lines) claimed.add(prKey(line.repo, line.pr))
+    if (row?.role === 'orchestrator') others.push({ name: entry.name, row })
+  }
+  // One process listing for every row, as the store's reader takes it; one that failed knows no death.
+  const argv = livePidsArgv(others.map(({ row }) => String(row.pid ?? '')))
+  const ps = argv ? await $.process.run(argv, { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null) : null
+  const alive: ProcessTable | null = argv ? livePids(ps) : new Map()
+  const claimed = new Set<string>()
+  for (const { name, row } of others) {
+    const live = !isStale(row, now, alive)
+    for (const { lines } of await linesOf($, await registered($, state, name))) for (const line of lines) if (claims(line, live, now)) claimed.add(prKey(line.repo, line.pr))
   }
   return claimed
 }
@@ -137,7 +153,7 @@ export async function readUnattended($: any, sessionId: string, now: number = Da
     if (launched && launched.exitCode === 0) live = liveNames(listing(String(launched.stdout ?? '')))
     else await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running")
   }
-  const list = unattended({ open, lines: kept, live, now, claimed: await othersClaims($, state, sessionId) })
+  const list = unattended({ open, lines: kept, live, now, claimed: await othersClaims($, state, sessionId, now) })
   return { list, unread, line: unattendedLine(list, unread) }
 }
 

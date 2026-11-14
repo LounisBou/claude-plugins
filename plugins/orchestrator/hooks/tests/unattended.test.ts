@@ -17,10 +17,11 @@ const NOW = Date.parse('2026-11-14T11:00:00Z')
 const line = (pr: number, status: string, detail: Record<string, string>, updated = '2026-11-14T10:50:00Z') =>
   JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr, status, ...detail, since: '2026-11-14T09:00:00Z', updated })
 
-const row = (role: string, name: string, repo: string | null = 'acme/app') =>
-  JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: '2026-11-14T10:00:00Z' })
+// A row measured now: a live session on the clock a hook reads (the turn end) as on the fixed one of a reading.
+const row = (role: string, name: string, repo: string | null = 'acme/app', extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null }
+type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null }
 
 function world(answers: Answers = {}) {
   const files = new Map<string, string>([
@@ -67,6 +68,9 @@ function world(answers: Answers = {}) {
           const answer = forge[argv[4]]
           return answer === null || answer === undefined ? { exitCode: 1, stdout: '', stderr: 'HTTP 502' } : { exitCode: 0, stdout: answer, stderr: '' }
         }
+        if (argv[0] === 'ps') {
+          return answers.ps === undefined || answers.ps === null ? { exitCode: 1, stdout: '', stderr: '' } : { exitCode: 0, stdout: answers.ps, stderr: '' }
+        }
         if (argv[0] === 'bash' && argv[2] === 'list') {
           const listed = answers.launcher === undefined ? 'w1/t1 | /dev/ttys001 | ✳ Agent: seven | Agent: seven\nw1/t2 | /dev/ttys002 | zsh | Agent: five' : answers.launcher
           return listed === null ? { exitCode: 1, stdout: '', stderr: '' } : { exitCode: 0, stdout: listed, stderr: '' }
@@ -92,6 +96,30 @@ test('an open pull request with no live agent, a stale wait or no line is unatte
   expect(reading?.list.map(u => u.pr)).toEqual([8, 9])
   expect(reading?.unread).toEqual([])
   expect(reading?.line).toBe('PR délaissées : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-19T08:00Z)')
+})
+
+test('another orchestrator\'s line claims a pull request only while that claim is alive: its session is live, or its line a wait set again within 30 minutes', async () => {
+  // Its row, no pid, last measured over an hour before: a session gone (the store's own rule).
+  const gone = row('orchestrator', 'Orch: web', 'acme/app', { updated_at: '2026-11-14T08:00:00Z' })
+  const fresh = line(10, 'waiting', { on: 'la CI' }, '2026-11-14T10:45:00Z')
+  const stale = line(10, 'waiting', { on: 'la CI' }, '2026-11-14T10:29:59Z')
+  const unattendedWith = async (otherRow: string, otherLine: string, ps?: string) => {
+    const { dollar, files } = world({ ps })
+    files.set(`${MODULE}/store/sessions/s-other`, otherRow)
+    files.set(OTHER_RECORD, `${otherLine}\n`)
+    return (await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)
+  }
+  // The live session claims whatever its line says; the record of a dead one claims only a fresh wait.
+  expect(await unattendedWith(row('orchestrator', 'Orch: web'), line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9])
+  expect(await unattendedWith(gone, line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9, 10])
+  expect(await unattendedWith(gone, line(10, 'parked', { ruling: 'plus tard, 2026-11-14' }))).toEqual([8, 9, 10])
+  expect(await unattendedWith(gone, stale)).toEqual([8, 9, 10])
+  expect(await unattendedWith(gone, fresh)).toEqual([8, 9])
+  // A row naming a pid is gone with it, as the pane judges it; a process table that cannot be read knows no death.
+  const pid = row('orchestrator', 'Orch: web', 'acme/app', { pid: '4242' })
+  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }), '  999 Ss ttys001\n')).toEqual([8, 9, 10])
+  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }), ' 4242 Ss ttys001\n')).toEqual([8, 9])
+  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9])
 })
 
 test('the line of a pull request the forge no longer lists open moves to the archive beside its record', async () => {
