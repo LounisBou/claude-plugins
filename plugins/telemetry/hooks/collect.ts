@@ -109,8 +109,33 @@ export function titleFromTranscriptHead(head: string): string | undefined {
 /** The head of a transcript read for the title: its first bytes hold the entry. */
 export const TRANSCRIPT_HEAD_BYTES = 8192
 
-/** The last path segment, the project a directory names. */
-export function projectOf(cwd: string | undefined): string | undefined {
+/**
+ * The `owner/name` a git remote names, in its https, ssh and scp forms (credentials, port and `.git`
+ * dropped); the last two segments of the path when a forge nests groups. A local path names none.
+ */
+export function repositoryOf(remote: string | null | undefined): string | undefined {
+  if (remote === undefined || remote === null) return undefined
+  const url = remote.trim()
+  const path = /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/(.+)$/i.exec(url)?.[1] ?? /^(?:[^@/:]+@)?[^/:]+:(?!\/)(.+)$/.exec(url)?.[1]
+  const parts = (path ?? '').replace(/\/+$/, '').replace(/\.git$/, '').split('/')
+  const [owner, name] = parts.slice(-2)
+  return parts.length >= 2 && owner !== '' && name !== '' && owner !== undefined && name !== undefined ? `${owner}/${name}` : undefined
+}
+
+/** The command that lists a repository's remotes, `remote.<name>.url <url>` a line each, from any of its worktrees. */
+export function remoteUrlsArgv(root: string): string[] {
+  return ['git', '-C', root, 'config', '--get-regexp', '^remote\\..*\\.url$']
+}
+
+/** The url of the first remote line of `remoteUrlsArgv`'s answer. */
+export function firstRemoteUrl(stdout: string): string | undefined {
+  const line = stdout.split('\n').find(l => /^remote\..*\.url /.test(l))
+  return line === undefined ? undefined : line.slice(line.indexOf(' ') + 1).trim() || undefined
+}
+
+/** The project a session belongs to: its repository (`owner/name`) when it has one, else the last segment of its directory. */
+export function projectOf(cwd: string | undefined, repository?: string): string | undefined {
+  if (repository !== undefined) return repository
   if (cwd === undefined) return undefined
   const parts = cwd.replace(/\/+$/, '').split('/')
   return parts[parts.length - 1] || undefined
@@ -118,12 +143,12 @@ export function projectOf(cwd: string | undefined): string | undefined {
 
 // ----- session -----
 
-export function sessionStart(at: number, session: string, input: unknown, facts: { model?: string | undefined; startedAt?: number | undefined; spawned?: boolean | undefined }): Event {
+export function sessionStart(at: number, session: string, input: unknown, facts: { model?: string | undefined; startedAt?: number | undefined; spawned?: boolean | undefined; repository?: string | undefined }): Event {
   const e = record(input)
   const cwd = text(e['cwd'])
   return makeEvent('session_start', at, session, {
     cwd,
-    project: projectOf(cwd),
+    project: projectOf(cwd, facts.repository),
     model: facts.model,
     interactive: bool(e['isInteractive']),
     surface: text(e['surface']),

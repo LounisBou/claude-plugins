@@ -13,7 +13,7 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number } = {}) {
+function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string } = {}) {
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
@@ -28,6 +28,7 @@ function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string
           if (options.head instanceof Error) throw options.head
           return { exitCode: options.headExit ?? 0, stdout: options.head ?? '', stderr: '' }
         }
+        if (argv[0] === 'git') return { exitCode: 0, stdout: options.remotes ?? '', stderr: '' }
         return { exitCode: options.exitCode ?? 0, stdout: options.stdout ?? 'export: done\n', stderr: '' }
       },
     },
@@ -39,6 +40,10 @@ function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string
         return fixture['usage']
       },
       info: async () => ({ transcriptPath: options.transcript ?? '' }),
+      repo: async () => {
+        if (options.repo instanceof Error) throw options.repo
+        return options.repo === undefined ? null : options.repo
+      },
     },
     ui: { log: text => logs.push(text) },
   }
@@ -200,5 +205,35 @@ test('who: a transcript that cannot be read gives no title, no error and no seco
     assert.ok(heads(runs).length <= 1)
     assert.ok(lines(runs).every(l => l['title'] === undefined && l['role'] === undefined))
     assert.ok(logs.every(line => !line.includes('skipped')), logs.join('\n'))
+  }
+})
+
+const projectOfStart = async (options: Parameters<typeof host>[0]): Promise<{ project: unknown; runs: readonly (readonly string[])[]; calls: number }> => {
+  const { $, runs } = host(options)
+  let calls = 0
+  const counted = $.session.repo
+  ;($ as { session: Host['session'] }).session = { ...$.session, repo: async () => (calls++, counted()) }
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({ cwd: '/w' }))
+  await hook('session.end')($, { sessionId: S, reason: 'other' }, through({}))
+  const written = lines(runs)
+  return { project: written.find(l => l['event'] === 'session_start')?.['project'], runs: runs.filter(r => r.argv[0] === 'git').map(r => r.argv), calls }
+}
+
+test('session.start: the project is the repository of the host\'s origin remote, read once, no git call', async () => {
+  const got = await projectOfStart({ repo: { root: '/r', remote: 'git@github.com:LounisBou/claude-plugins.git', internal: false } })
+  assert.deepEqual(got, { project: 'LounisBou/claude-plugins', runs: [], calls: 1 })
+})
+
+test('session.start: no origin, one bounded git call names the first remote', async () => {
+  const got = await projectOfStart({ repo: { root: '/r', remote: null, internal: false }, remotes: 'remote.up.url https://github.com/acme/tool.git\n' })
+  assert.deepEqual(got.project, 'acme/tool')
+  assert.equal(got.runs.length, 1)
+  assert.deepEqual(got.runs[0]?.slice(0, 3), ['git', '-C', '/r'])
+})
+
+test('session.start: not a repository, no remote or a host that fails: the directory\'s last segment', async () => {
+  for (const options of [{ repo: undefined }, { repo: { root: '/r', remote: null, internal: false } }, { repo: new Error('no repo') }]) {
+    assert.equal((await projectOfStart(options)).project, 'claude-plugins', JSON.stringify(options))
   }
 })

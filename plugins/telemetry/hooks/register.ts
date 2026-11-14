@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstTurn, renamedTo, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
+  agentClosed, agentSpawned, checkOf, Collector, firstRemoteUrl, firstTurn, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
@@ -23,6 +23,7 @@ export interface Host {
     model(): Promise<string>
     usage(): Promise<unknown>
     info(): Promise<unknown>
+    repo(): Promise<unknown>
   }
   readonly ui: { log(text: string, options?: { to?: string }): void }
 }
@@ -31,6 +32,8 @@ export interface Host {
 export const WRITE_TIMEOUT_MS = 10_000
 /** The read of a transcript's head is given this long. */
 export const HEAD_READ_TIMEOUT_MS = 2_000
+/** The read of a repository's remotes is given this long. */
+export const REMOTES_READ_TIMEOUT_MS = 2_000
 /** The export clones and pushes: it is given longer. */
 export const EXPORT_TIMEOUT_MS = 120_000
 
@@ -86,6 +89,25 @@ async function readTitle($: Host, collector: Collector): Promise<void> {
   } catch { /* the title stays unknown */ }
 }
 
+/**
+ * The session's repository as `owner/name`, from the host's origin remote or, when it has none, the
+ * first remote git lists. Read once, at the session's start; undefined when the directory is no
+ * repository, has no remote or the read fails.
+ */
+async function readRepository($: Host): Promise<string | undefined> {
+  try {
+    const repo = await $.session.repo()
+    if (typeof repo !== 'object' || repo === null) return undefined
+    const { root, remote } = repo as { root?: unknown; remote?: unknown }
+    if (typeof remote === 'string') return repositoryOf(remote)
+    if (typeof root !== 'string' || root === '') return undefined
+    const run = await $.process.run(remoteUrlsArgv(root), { timeoutMs: REMOTES_READ_TIMEOUT_MS })
+    return run.exitCode === 0 ? repositoryOf(firstRemoteUrl(run.stdout)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Buffers `events`, and writes them once the buffer reaches its threshold. */
 async function add($: Host, collector: Collector, events: readonly Event[]): Promise<void> {
   if (collector.push(...events)) await flush($, collector)
@@ -101,7 +123,7 @@ export function mount(on: On, collector: Collector): void {
       collector.launchedAt = usage.startedAt
       collector.setTitle(sessionTitleOf(e))
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
-      await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned })])
+      await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
     })
     return result
   })
