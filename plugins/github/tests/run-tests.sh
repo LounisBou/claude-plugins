@@ -2516,6 +2516,26 @@ check "light_ci run cut by its budget writes nothing and says to run it from Bas
 lcproject '{"command": ["python3", "-c", "print(1)"], "prepare": ["python3", "-c", "import sys; sys.exit(1)"]}'
 check "light_ci run writes nothing when prepare fails" "1 1 $n" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'prepare python3 -c import sys; sys.exit(1) exited 1, no tests run, nothing recorded' "$LC/err") $(lccount)")"
+
+# The guards of a run: a pull request no longer open, a head that moves while the tests run, a record that cannot be written.
+lcproject '{"command": ["python3", "-c", "print(1)"]}'
+lcpull_as() { printf '%s' '{"number":12,"state":"'"$1"'","merged_at":'"$2"',"head":{"sha":"'"$LCHEAD"'","ref":"feat-b"},"base":{"ref":"feat-a"}}' > "$LC/fix/GET_repos_acme_thing_pulls_12.json"; }
+lcpull_as closed null
+check "light_ci run refuses a closed pull request, and writes nothing" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'acme/thing#12 is closed' "$LC/err") $(lccount)")"
+lcpull_as closed '"2026-11-14T10:00:00Z"'
+check "light_ci run refuses a merged pull request, and writes nothing" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'acme/thing#12 is merged' "$LC/err") $(lccount)")"
+lcpull "$LCHEAD"
+lcproject '{"command": ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-qm", "moved"]}'
+check "light_ci run writes nothing when the checkout moved off the head while the tests ran" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c "the checkout moved off ${LCHEAD:0:7} while the tests ran: nothing recorded" "$LC/err") $(lccount)")"
+lcgit reset -q --hard "$LCHEAD"
+lcproject '{"command": ["python3", "-c", "print(1)"]}'
+mv "$LC/cfg/pr-records" "$LC/cfg/pr-records.kept"; : > "$LC/cfg/pr-records"
+check "light_ci run exits 1 and says so when its record cannot be written" "1 1" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'error: cannot write the tests record' "$LC/err")")"
+rm "$LC/cfg/pr-records"; mv "$LC/cfg/pr-records.kept" "$LC/cfg/pr-records"
 check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
 check "light_ci.py imports nothing outside the standard library and the engine" "" \
   "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|base64|datetime|json|os|re|signal|statistics|subprocess|sys|tempfile|time|urllib\.parse|record|ghlib)( |$)')"
