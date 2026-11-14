@@ -120,7 +120,7 @@ def labels_ensure(args):
 
 def _set_readiness(owner, name, pr, state):
     """Put the label the state names on the pull request and take the other off.
-    Returns the lines created and whether anything changed."""
+    Returns the lines created, whether anything changed and the name the label carries."""
     wanted, other = _STATES[state]
     lines, names = _ensure(owner, name)
     created = [line for line in lines if line.startswith("created ")]
@@ -138,21 +138,22 @@ def _set_readiness(owner, name, pr, state):
             "/repos/%s/%s/issues/%s/labels/%s" % (owner, name, pr, quote(carried[names[other].lower()], safe="")),
         )
         changed = True
-    return created, changed
+    return created, changed, names[wanted]
 
 
 def pr_readiness(args):
     owner, name = repo.owner_repo()
-    created, changed = _set_readiness(owner, name, args.pr, args.state)
+    created, changed, _ = _set_readiness(owner, name, args.pr, args.state)
     return fmt.Lines("\n".join(created + [args.state + ("" if changed else " (unchanged)")]))
 
 
 def follow_readiness(owner, name, pr, state):
     """The labelling a pull request command does after its own work. A failure
     here never fails that command: it is printed on its own line on stderr. A
-    network failure is an OSError, which http._request does not convert."""
+    network failure is an OSError, which http._request does not convert. Answers the
+    label put on the pull request, or None when the labelling failed."""
     try:
-        _set_readiness(owner, name, pr, state)
+        return _set_readiness(owner, name, pr, state)[2]
     except errors.GhError as exc:
         print("error: label %s on pull request %s failed: %s" % (state, pr, exc.message), file=sys.stderr)
     except OSError as exc:
