@@ -213,16 +213,40 @@ test('the loop counts passes, sorts findings into new and seen, and ends clean',
   expect(act({ action: 'findings', keys: ['a.ts::x', 'b.ts::y'] }).new).toEqual(['a.ts::x', 'b.ts::y'])
   act({ action: 'fixed', key: 'a.ts::x', sha: 'abc', description: 'fix x' })
   expect(act({ action: 'begin_pass' }).pass).toBe(2)
-  loop.reports.push([])
+  loop.reports.push([{ severity: 'important', file: 'c.ts', summary: 'z' }])
   const second = act({ action: 'findings', keys: ['b.ts::y', 'c.ts::z'] })
   expect(second.seen).toEqual(['b.ts::y'])
   expect(second.new).toEqual(['c.ts::z'])
   act({ action: 'reverted', sha: 'abc' })
+  act({ action: 'begin_pass' })
   loop.reports.push([])
   const clean: any = act({ action: 'findings', keys: [] })
   expect(clean.exit).toBe('clean')
   expect(clean.fixes).toEqual([])
   expect(clean.reverted).toEqual([{ sha: 'abc', key: 'a.ts::x' }])
+})
+
+test('a pass with only suggestions ends the loop clean, one with an Important finding goes on', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  loop.reports.push([{ severity: 'suggestion', file: 'a.ts', summary: 'x' }, { severity: 'important', file: 'b.ts', summary: 'y' }])
+  const goes: any = act({ action: 'findings', keys: ['a.ts::x', 'b.ts::y'] })
+  expect(goes.exit).toBeUndefined()
+  expect(loop.isActive).toBe(true)
+  act({ action: 'begin_pass' })
+  loop.reports.push([{ severity: 'suggestion', file: 'a.ts', summary: 'x' }])
+  const done: any = act({ action: 'findings', keys: ['a.ts::x'] })
+  expect(done.exit).toBe('clean')
+  expect(loop.isActive).toBe(false)
+})
+
+test('a pass whose agents left no block does not end clean on the suggestions it names', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  loop.reports.push(null)
+  const out: any = act({ action: 'findings', keys: ['a.ts::x'] })
+  expect(out.exit).toBeUndefined()
+  expect(loop.isActive).toBe(true)
 })
 
 test('a clean exit is computed: refused without an agent, with a silent agent, or against their findings', () => {
@@ -321,12 +345,12 @@ for (const rounds of [2, 1]) {
     const stubs: Stubs = { records: [], prCalls: 0, plan: planAnswer({ need: 'required', reason: '', max: rounds }) }
     wireRecord(on, stubs)
     spawnedEnv(on, '1')
-    const out = await runToMaxPasses($, 0, rounds)
+    const out = await runToMaxPasses($, 2, rounds)
     expect(String(out.result)).toContain('"exit": "max_passes"')
     expect(String(out.result)).toContain(`"passes": ${rounds}`)
     expect(stubs.records.length).toBe(1)
-    expect(stubs.records[0].result).toBe('pass')
-    expect(stubs.records[0].detail).toBe(`3 findings left after ${rounds} passes, none Critical or Important`)
+    expect(stubs.records[0].result).toBe('fail')
+    expect(stubs.records[0].detail).toBe(`3 findings left after ${rounds} passes, 2 Critical or Important`)
   })
 }
 
@@ -496,14 +520,18 @@ test('a loop that started outside a git checkout leaves no record and says why',
   expect(String(out.result)).toContain('record: none — the loop started outside a git checkout (fatal: not a git repository)')
 })
 
-test('max_passes with no blocking finding left writes pass, with the leftover count', async ($, on) => {
+test('a pass with only suggestions left ends the loop clean and writes a passing record', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireRecord(on, stubs)
-  const out = await runToMaxPasses($, 0)
-  expect(String(out.result)).toContain('"exit": "max_passes"')
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'suggestion' }, { severity: 'suggestion' }])
+  const out = await loopCall($, { action: 'findings', keys: ['a.ts::naming', 'b.ts::order'] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(String(out.result)).toContain('"passes": 1')
   expect(stubs.records.length).toBe(1)
   expect(stubs.records[0].result).toBe('pass')
-  expect(stubs.records[0].detail).toBe('3 findings left after 3 passes, none Critical or Important')
+  expect(stubs.records[0].detail).toBe('clean at pass 1, 1 review agents reporting no Critical or Important finding')
 })
 
 test('max_passes with blocking findings left writes fail', async ($, on) => {
@@ -557,7 +585,7 @@ test('max_passes without a blocking count writes fail, severity unknown', async 
   expect(stubs.records[0].detail).toBe('3 findings left after 3 passes, severity unknown: no findings block from code-reviewer')
 })
 
-test('only the last pass decides the blocking count', async ($, on) => {
+test('only the last pass decides the blocking count: earlier Critical findings do not hold the loop', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireRecord(on, stubs)
   await loopCall($, { action: 'start' })
@@ -566,9 +594,9 @@ test('only the last pass decides the blocking count', async ($, on) => {
     await review($, [{ severity: i === 3 ? 'suggestion' : 'critical' }])
     await loopCall($, { action: 'findings', keys: ['k' + i] })
   }
-  await loopCall($, { action: 'begin_pass' })
+  expect(stubs.records.length).toBe(1)
   expect(stubs.records[0].result).toBe('pass')
-  expect(stubs.records[0].detail).toBe('1 findings left after 3 passes, none Critical or Important')
+  expect(stubs.records[0].detail).toBe('clean at pass 3, 1 review agents reporting no Critical or Important finding')
 })
 
 test('a branch with no pull request leaves no record and says why', async ($, on) => {

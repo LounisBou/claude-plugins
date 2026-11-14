@@ -52,18 +52,18 @@ to this repository only once it is proved stable (`docs/migration.md`).
 
 ## State on main (2026-11-14)
 
-What the code on `main` (`6a0cd839`) holds for each goal, read from the code and CI, not from
+What the code on `main` (`b36f7ae2`) holds for each goal, read from the code and CI, not from
 the history. Pull requests are named with the repository, `claude-plugins#N`. « Open » says what is
 left and why; a goal is met only when its row says so. Goals 2, 16 and 17 are operator steps
 outside this repository.
 
 | # | State | Evidence | Open, and why |
 |---|---|---|---|
-| 1 | partly met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | bugs-bot's `deploy_check` still runs with `shell=True` (`bugs_bot/agent.py:254`): the risk is narrowed to the operator's own command, not removed |
+| 1 | met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is run without a shell, its command split into words (`_check_argv`), and refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | — |
 | 2 | operator step | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check` | an install in a separate profile on the operator's machine; nothing in this repository can run it |
-| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent and PR records, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, github, implement, norms, orchestrator, pr-review and statusbar as a copy; the shell reader replaced its copies (claude-plugins#29, claude-plugins#73); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: `resolve_github.py` (norms, pr-review), the session-name shape, the negative-phrase list; `logLine` is defined in 11 orchestrator hook files, `configDir` in 6 |
+| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent and PR records, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies (claude-plugins#29, claude-plugins#73); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: `resolve_github.py` (norms, pr-review), the session-name shape, the negative-phrase list, the read/write classification of cloudflare |
 | 4 | partly met | typed in core with a version: PR records (tested from both sides, `scripts/contracts.test.ts`), consent records (claude-plugins#78), the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`); the launcher's `spawn` line and the `ListAgents` reading are core's | `deck.json` and the declared wait kinds are not typed in core, and the launcher's command lines carry no version (`docs/contracts.md`) |
-| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, orchestrator and telemetry skill scripts, eight of the orchestrator's hook files and two of telemetry's | the other hook files of every plugin are outside the strict check (36 files still type `$` as `any`) |
+| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, ten of the orchestrator's hook files, three of telemetry's and one of learning's | the other hook files of every plugin are outside the strict check (36 files still type `$` as `any`) |
 | 6 | met | `ci/plugins.json`: eleven plugins block on Linux and macOS, drift on Linux and only at the release and the night (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); macOS runs at the release and each night | — |
 | 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
 | 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); a check plan is accepted only from the orchestrator (claude-plugins#164) | norms' pass is still computed from the figures the model passes to `check_done` (`plugins/norms/hooks/record.ts`) |
@@ -166,8 +166,8 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
   replays only at the account and zone it lies under.
 
 **bugs-bot**
-- `bugs_bot/agent.py:223`: `deploy_check` runs with `shell=True` from `.bugs-bot.json`, under the blanket `Bash(bugs-bot:*)` rule. (Phase 0.) **Partly**: still `shell=True`, run only
-  when the project file is the operator's alone.
+- `bugs_bot/agent.py:223`: `deploy_check` runs with `shell=True` from `.bugs-bot.json`, under the blanket `Bash(bugs-bot:*)` rule. (Phase 0.) **Fixed**: the command is split into words and run
+  without a shell, only when the project file is the operator's alone.
 - `bugs_bot/registry.py:91-121`: `add`/`remove` read-modify-write without the lock; `jsonio.py:13` uses a fixed `.tmp` name. **Fixed** (#25).
 - `tests/test_tm_bugs.py:394`: fails by the calendar (the purge reads the wall clock, `pull.py:24,113`). **Fixed** (#25).
 - `hooks/guard.ts:83-124`: the group-post guard fails open. **Fixed** (#16).
