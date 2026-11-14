@@ -3286,6 +3286,21 @@ test('a question asked with ask is told to the coordinator once, and wakes it wh
   expect(fx.submitted.length).toBe(1)
 })
 
+test('a question asked with ask claimed by his prompt in its asker\'s tab is neither told nor woken for, until that turn\'s end gives it back', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const claimed = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true, claimed: { typed: 'B', at: minutesAgo(0) } })
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(claimed) + '\n')
+  fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: a' })) + '\n')
+  await tick()
+  expect(fx.notices).toEqual([])
+  expect(fx.submitted).toEqual([])
+  const { claimed: _typed, ...given } = claimed
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(given) + '\n')
+  await tick()
+  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)'])
+  expect(fx.submitted.length).toBe(1)
+})
+
 // --- what the pane leaves out, and what it shows, said in its log ---------------------------------
 
 // The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on

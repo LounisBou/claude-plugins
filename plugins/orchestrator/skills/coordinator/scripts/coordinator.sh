@@ -556,10 +556,12 @@ round_entries() {
 
 # round_entries_of: the entry one file holds, as one compact JSON line, nothing when it does not parse.
 # A question asked with `ask` (hooks/question.ts, `v` 2) is read as an entry: its sender's name and
-# session, its stamp for its start, its block written from its fields.
+# session, its stamp for its start, its block written from its fields. One claimed by the operator's
+# prompt in its asker's tab has left the pane until that turn's end: it is no entry.
 round_entries_of() {
     jq -s -c 'select(length == 1) | .[0]
-        | if type == "object" and .v == 2 and (.sender | type) == "object" then
+        | if type == "object" and .v == 2 and (.claimed | type) == "object" then empty
+          elif type == "object" and .v == 2 and (.sender | type) == "object" then
             . + {from: .sender.name, session: .sender.session, kind: "operator", since: .at,
               question: ([ "_Subject_ : \(.subject)", "_Context_ : \(.context)", "_Question_ : \(.ask)" ]
                 + (if (.choices | length) > 0 then [ "_Choices_ :" ] + (.choices | map("- **\(.letter)** : \(.text)")) else [] end)

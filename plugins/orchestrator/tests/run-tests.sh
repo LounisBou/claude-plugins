@@ -10950,6 +10950,12 @@ check "round prints a question asked with ask from its fields, due when urgent" 
     - **B** : acme/app#2 first
     _Recommendation_ : A — no rebase" \
   "$(ORCHESTRATOR_STATE_DIR="$VROUND" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
+# A question asked with `ask` that the operator's prompt in its asker's tab claimed is no entry: not printed, open or due.
+VCLAIM="$WORK/coord-v2-claimed"
+mkdir -p "$VCLAIM/round"
+jq '. + {claimed: {typed: "B", at: "2026-10-18T10:03:00.000Z"}}' "$VROUND/round/q-s-v2-1.json" > "$VCLAIM/round/q-s-v2-1.json"
+check "round prints no question asked with ask that the operator's prompt claimed" "" \
+  "$(ORCHESTRATOR_STATE_DIR="$VCLAIM" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
 check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord_status round)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round 2>&1)|$(mkdir -p "$WORK/coord-empty-round/round" && ORCHESTRATOR_STATE_DIR="$WORK/coord-empty-round" bash "$COORD" round 2>&1)"
 # round-archive moves the entries settled over a day ago into round/archive/, the withdrawn into

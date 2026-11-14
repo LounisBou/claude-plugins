@@ -1254,10 +1254,13 @@ async function wakeForDue($: any): Promise<void> {
   const store = await readStore($)
   const local = store.rows
   const relayed = (await readRound($)).map(found => found.entry)
-  // The questions asked with `ask`, told and due as the relay's entries are, read through them only.
-  const read = [...relayed, ...(await readAsked($)).map(askedAsEntry)]
+  // The questions asked with `ask`, told and due as the relay's entries are, read through them only;
+  // one claimed by his prompt in its asker's tab has left the pane, and is neither told nor due
+  // until that turn's end, while its id stays one the round holds.
+  const asked = await readAsked($)
+  const read = [...relayed, ...asked.filter(entry => !entry.claimed).map(askedAsEntry)]
   const paneOpen = await paneIsOpen($)
-  const present = new Set(read.map(entry => entry.id))
+  const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
   if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
