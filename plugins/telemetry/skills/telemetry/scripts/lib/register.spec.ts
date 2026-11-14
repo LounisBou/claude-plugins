@@ -13,7 +13,8 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string } = {}) {
+function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string } = {}) {
+  const costs = [...(options.costs ?? [])]
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
@@ -37,7 +38,8 @@ function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string
       model: async () => 'claude-opus-5-5',
       usage: async () => {
         if (options.failUsage) throw new Error('no usage')
-        return fixture['usage']
+        const cost = costs.shift()
+        return cost === undefined ? fixture['usage'] : { ...fixture['usage'], cost: { usd: cost } }
       },
       info: async () => ({ transcriptPath: options.transcript ?? '' }),
       repo: async () => {
@@ -96,6 +98,16 @@ test('a session: every result passes through, the events are written at the main
   assert.equal(runs.length, 2)
   const last = JSON.parse(runs[1]?.stdin ?? '{}') as Record<string, unknown>
   assert.deepEqual([last['event'], last['turns']], ['session_end', 1])
+})
+
+test('turn_end: each turn records its own cost, and the turns\' costs add up to the session\'s cumulative figure', async () => {
+  const { $, runs } = host({ costs: [0.5, 1.25, 1.25, 4.0] })
+  const { hook } = hooks()
+  for (const name of ['turn.complete', 'turn.complete.child', 'turn.complete', 'turn.complete']) await hook('turn.complete')($, F(name), through({ text: '' }))
+  const turns = runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'turn_end')
+  assert.deepEqual(turns.map(e => e['cost_usd']), [0.5, 1.25, 1.25, 4])
+  assert.deepEqual(turns.map(e => e['turn_cost_usd']), [0.5, 0.75, 0, 2.75])
+  assert.equal(turns.reduce((sum, e) => sum + (e['turn_cost_usd'] as number), 0), 4)
 })
 
 test('past the threshold a tool call writes without waiting for the turn\'s end', async () => {
