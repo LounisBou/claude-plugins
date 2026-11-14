@@ -38,6 +38,20 @@
     "command": "R=/s/record.jsonl; /p/scripts/dispatch-record.sh open /s/record.jsonl --class plugin --model sonnet --effort high --label 'x' && /p/scripts/dispatch-record.sh close /s/record.jsonl 68 --verdict merged"
   },
   "tool.call.skill": { "tool": "Skill", "tool_use_id": "toolu_01Skill", "skill": "method:lifecycle" },
+  "session.messages": [
+    { "role": "user", "text": "merge it", "toolUses": [] },
+    {
+      "role": "assistant",
+      "text": "",
+      "toolUses": [
+        { "tool_use_id": "toolu_01Bash", "tool": "Bash", "input": { "command": "ls" }, "text": "a.txt" },
+        { "tool_use_id": "toolu_01Plug", "tool": "mcp__github__gh", "input": { "command": "pr-merge", "args": { "pr": 12 }, "repo": "acme/app" }, "result": { "merged": true }, "text": "merged" },
+        { "tool_use_id": "toolu_01Fail", "tool": "mcp__orchestrator__review", "input": { "pr": 7, "repo": "acme/app", "verdict": "pass" }, "text": "A plugin refused: no record", "isError": true },
+        { "tool_use_id": "toolu_01Wait", "tool": "mcp__orchestrator__declare_wait", "input": { "kind": "operator", "urgent": true } },
+        { "tool_use_id": "toolu_01Seen", "tool": "mcp__github__gh", "input": { "command": "pr-get", "args": { "pr": 3 } }, "text": "{}" }
+      ]
+    }
+  ],
   "agent.spawn": {
     "tool_use_id": "toolu_01Agent", "prompt": "never kept", "description": "Explore the store", "subagentType": "Explore",
     "provider": { "plugin": "engine", "tier": "core" }, "model": "haiku", "parentModel": "claude-opus-5-5", "background": false, "fork": false
