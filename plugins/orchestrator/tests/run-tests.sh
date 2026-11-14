@@ -71,6 +71,10 @@ fi
 # effort is empty), followed by a compaction request on another pair, which is not the
 # main thread's and must never be read as it.
 export ORCHESTRATOR_PROJECTS_DIR="$WORK/projects"
+# The dispatch record, the CI watch and the succession check write the audit trail into the
+# orchestrator's journal under the configuration directory: every run of the suite wrote the
+# operator's own. Its journal is the suite's.
+export ORCHESTRATOR_JOURNAL_DIR="$WORK/journal"
 pair_transcript() {
   local config='' ; [ -n "$3" ] && config=",\"output_config\":{\"effort\":\"$3\"}"
   mkdir -p "$ORCHESTRATOR_PROJECTS_DIR/p"
@@ -746,6 +750,11 @@ bash "$REC" goals "$R" init --spec none >/dev/null
 
 id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
 check "open prints the row id" "1" "$id1"
+check "the record's audit trail goes to the suite's journal, never to a configuration directory" "1|no" \
+  "$(ls "$ORCHESTRATOR_JOURNAL_DIR" | wc -l | tr -d ' ')|$(JH="$WORK/journal-home"; JR="$WORK/journal-rec.jsonl"
+    HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" goals "$JR" init --spec none >/dev/null 2>&1
+    HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" open "$JR" --class corrective --tier light >/dev/null 2>&1
+    [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ] && [ ! -e "$JH/.claude/orchestrator/journal" ] && echo no || echo yes)"
 check "the row is one line of json" "1" "$(wc -l < "$R" | tr -d ' ')"
 check "the row carries what was asked" "behaviour-phase|standard|phase 1|0|open" \
   "$(jq -r '[.class,.tier,.label,.rounds,.state]|join("|")' "$R")"

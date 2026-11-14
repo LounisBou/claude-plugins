@@ -152,11 +152,15 @@ With the paths `command -v` gives, for example in `/etc/sudoers.d/caddy`
 (edited with `visudo -f`):
 
 ```
-deploy ALL=(root) NOPASSWD: SETENV: /usr/bin/caddy version, \
+deploy ALL=(root) NOPASSWD: /usr/bin/cat /etc/caddy/Caddyfile, \
+    /usr/bin/tee /etc/caddy/Caddyfile, \
+    SETENV: /usr/bin/caddy version, \
     /usr/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile, \
-    /usr/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile, \
-    /usr/bin/cat /etc/caddy/Caddyfile, /usr/bin/tee /etc/caddy/Caddyfile
+    /usr/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
+
+`SETENV` applies to every command after it on the line: `cat` and `tee` come first, so
+only the caddy calls, the ones that keep the envfile's variables, carry it.
 
 Every command is named with its exact arguments, never with `*`: in a sudoers
 rule `*` also matches spaces, so `cp … /etc/caddy/Caddyfile.bak-*` or

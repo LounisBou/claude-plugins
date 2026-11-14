@@ -101,6 +101,10 @@ const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
 // The sender's own numbering: a line wholly bold holding two numbers, a word before the first and
 // a word or a slash between them, `**Question 5 of 6**`; `**Version 1.2**` is no numbering.
 const NUMBER = /^\s*\*\*([^*\n\d]*\p{L}[^*\n\d]*\d+[^*\n\d]*[\p{L}/][^*\n\d]*\d+[^*\n]*)\*\*\s*$/u
+// The sender's numbering a line holds (`Question 1 of 2`), or null: the line is no numbering.
+export function numberOfLine(line: string): string | null {
+  return NUMBER.exec(line)?.[1]?.trim() ?? null
+}
 // A field after the choices whose text starts with a lone choice letter: the recommendation.
 const NAMES_LETTER = /^\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
 

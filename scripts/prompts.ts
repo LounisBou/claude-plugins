@@ -4,6 +4,8 @@
 //
 //   npm run prompts              check against ci/prompts.json
 //   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured (the release runs it)
+//   npm run prompts -- --base <ref>   also refuse a ceiling lowered since <ref>, unless a commit since is the release
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
@@ -84,6 +86,26 @@ export function breaches(measured: Measure, ceilings: Ceilings): string[] {
   return faults
 }
 
+/** One line per ceiling lower than at the base, which only the release lowers; none when `released`. */
+export function loweredOutsideRelease(ceilings: Ceilings, base: Ceilings, released: boolean): string[] {
+  if (released) return []
+  const faults: string[] = []
+  for (const [plugin, before] of Object.entries(base.budgets)) {
+    const now = ceilings.budgets[plugin]
+    if (now !== undefined && now < before) faults.push(`${plugin}: budget lowered from ${before} to ${now}, which only the release does`)
+  }
+  if (ceilings.duplicates < base.duplicates) faults.push(`duplicates: ceiling lowered from ${base.duplicates} to ${ceilings.duplicates}, which only the release does`)
+  return faults
+}
+
+/** The ceilings at `ref`, and whether a commit since `ref` is a release. */
+function sinceBase(root: string, ref: string): { readonly base: Ceilings; readonly released: boolean } {
+  const git = (args: readonly string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const base = parseCeilings(JSON.parse(git(['show', `${ref}:${CEILINGS_PATH}`]))).ceilings
+  const released = git(['log', '--format=%s', `${ref}..HEAD`]).split('\n').some(subject => subject.startsWith('chore(release):'))
+  return { base, released }
+}
+
 /** The ceilings, and the file's authored fields to keep when it is rewritten. */
 export function parseCeilings(raw: unknown): { readonly ceilings: Ceilings; readonly authored: Readonly<Record<string, unknown>> } {
   if (!isRecord(raw) || !isRecord(raw['budgets']) || typeof raw['duplicates'] !== 'number') {
@@ -114,7 +136,14 @@ export function run(root: string, args: readonly string[], io: Io): number {
   const lower = args.includes('--lower')
   const measured = measure(promptFiles(root))
   const { ceilings, authored } = parseCeilings(JSON.parse(readFileSync(join(root, CEILINGS_PATH), 'utf8')))
+  const at = args.indexOf('--base')
+  const ref = at >= 0 ? args[at + 1] : undefined
+  if (at >= 0 && ref === undefined) throw new Error('--base needs a git ref')
   const faults = breaches(measured, ceilings)
+  if (ref !== undefined) {
+    const { base, released } = sinceBase(root, ref)
+    faults.push(...loweredOutsideRelease(ceilings, base, released))
+  }
   for (const fault of faults) io.err(fault)
   for (const { sentence, paths } of measured.duplicates) io.out(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
   if (faults.length > 0) return 1
