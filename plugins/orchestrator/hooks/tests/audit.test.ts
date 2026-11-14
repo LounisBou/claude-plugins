@@ -153,14 +153,14 @@ test('a verdict refused, an error, or a check plan writes no review', async () =
 test('a pull request opened ends its implementation and is linked to the session; a fix naming others is the method\'s failure', async () => {
   const fx = fake()
   const m = mounted()
-  const created = { result: '{"number": 181, "html_url": "https://github.com/LounisBou/claude-plugins/pull/181"}' }
-  const call = { tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix(github): the gate reads the latest run', body: 'Fixes what claude-plugins#180 broke; see claude-plugins#181.' } }
+  const created = { result: '{"number": 181, "html_url": "https://github.com/Acme/widgets/pull/181"}' }
+  const call = { tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix(github): the gate reads the latest run', body: 'Fixes what widgets#180 broke; see widgets#181.' } }
   expect(await m.on('tool.call', fx.dollar, call, created)).toEqual(created)
-  const subject = { repo: 'lounisbou/claude-plugins', pr: 181, head: null }
+  const subject = { repo: 'acme/widgets', pr: 181, head: null }
   expect(fx.journal().map(e => [e.kind, e.fact, e.subject])).toEqual([
     ['step', { step: 'implement', edge: 'end', record: null, row: null, result: null }, subject],
     ['link', { record: null, row: null, session: 'sess-1', goal: null, prs: [] }, subject],
-    ['failure', { failure: 'fix-after-merge', count: null, prs: ['claude-plugins#180'] }, subject],
+    ['failure', { failure: 'fix-after-merge', count: null, prs: ['widgets#180'] }, subject],
   ])
   expect(JSON.stringify(fx.journal()).includes('latest run')).toBe(false)
 })
@@ -168,7 +168,7 @@ test('a pull request opened ends its implementation and is linked to the session
 test('a feature names no failure, a merge is the merge step, and a call that failed writes nothing', async () => {
   const fx = fake()
   const m = mounted()
-  await m.on('tool.call', fx.dollar, { tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'feat(x): y, after claude-plugins#180' } },
+  await m.on('tool.call', fx.dollar, { tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'feat(x): y, after widgets#180' } },
     { result: 'https://github.com/o/n/pull/9' })
   await m.on('tool.call', fx.dollar, { tool: 'mcp__github__gh', command: 'pr-merge', repo: 'o/n', args: { pr: 9 } }, { result: '{"merged": true}' })
   await m.on('tool.call', fx.dollar, { tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 10 } }, { result: 'HTTP 405', isError: true })
