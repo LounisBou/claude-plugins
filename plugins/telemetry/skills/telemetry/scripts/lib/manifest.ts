@@ -57,7 +57,7 @@ export const MANIFEST_FIELDS: readonly FieldSpec[] = [
   {
     name: 'sessions',
     type: 'object[]',
-    description: 'One entry per session with an event that day: `session`, `role` (null when neither the end nor the spawn says it), `title`, `project`, `models`, `effort`, `spawned`, `first` and `last` (ISO 8601 UTC), `events`, `turns`, `cost_usd` (the latest cumulative figure), `ended`, and `transcript`: the path of the session\'s redacted transcript in this repository (`machines/<machine>/transcripts/<session>.jsonl`), null when the repository holds none: the recording machine no longer had the file, or the export skipped it because it could not be read or redacted.',
+    description: 'One entry per session with an event that day: `session`, `role` (null when neither the end nor the spawn says it), `title`, `project`, `models`, `effort`, `spawned`, `first` and `last` (ISO 8601 UTC), `events`, `turns`, `cost_usd` (the latest cumulative figure), `ended`, and `transcript`: the path of the session\'s redacted transcript in this repository (`machines/<machine>/transcripts/<session>.jsonl`), null when the repository holds none: the recording machine no longer had the file, or the export left it out (unreadable, too large, past the bound of one export, which the next takes).',
   },
   { name: 'pull_requests', type: 'object[]', description: '`{repo, number}` read from `gh pr <sub> <number>` command lines (`repo` from `-R` or `--repo`, else null) and pull request URLs. Calls of the github tool do not name theirs.' },
   { name: 'branches', type: 'string[]', description: 'Branches created, switched to or pushed by Bash command lines (`git checkout -b`, `git switch -c`, `git push`), `main` and `master` excluded.' },

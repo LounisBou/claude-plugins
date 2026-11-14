@@ -2,9 +2,9 @@
 // clone of the logs repository and pushed, after the scan of every day file finds no secret and
 // every transcript is passed through the redaction. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { withLock } from '../../../../core/store.ts'
+import { readText, withLock, writeAtomic } from '../../../../core/store.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
 import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
@@ -33,7 +33,23 @@ export interface ExportOptions {
   readonly kinds?: Readonly<Record<string, KindSpec>>
   /** The file of a session's transcript on this machine; undefined when it is gone. Its redacted copy goes to the repository. */
   readonly transcript?: (session: string) => string | undefined
+  /** What one export takes of the transcripts: the defaults, `MAX_TRANSCRIPT_BYTES` and `MAX_RUN_BYTES`, unless a caller passes another. */
+  readonly limits?: { readonly transcriptBytes?: number; readonly runBytes?: number }
 }
+
+/**
+ * The largest transcript the export takes, in bytes, of its file and of its redacted copy (masking
+ * can lengthen a text): GitHub refuses a file over 100 MB and warns over 50 MB, and the file is read
+ * whole into memory, then parsed and redacted at about 22 MB/s. Over it, the transcript is left out and named.
+ */
+export const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024
+
+/**
+ * The most one export takes of the transcripts' files, in bytes: the first export meets about 6 GB,
+ * and everything it takes goes in one push, held with `git add` and `git commit` to the deadline of
+ * a git command (60 s, `GIT_TIMEOUT_MS`). The rest waits for the next export, and the day files never wait.
+ */
+export const MAX_RUN_BYTES = 256 * 1024 * 1024
 
 export interface ExportResult {
   readonly lines: string[]
@@ -156,6 +172,33 @@ function writeIndex(clone: string, machine: string, files: readonly IndexFile[])
 /** Why a read or a write failed, as the error's code. */
 const codeOf = (error: unknown): string => (error as NodeJS.ErrnoException).code ?? 'unreadable'
 
+/** What a transcript's file was when its copy was pushed: unchanged, it is not read again. */
+interface Stamp {
+  readonly size: number
+  readonly mtimeMs: number
+}
+
+const STAMPS_FILE = 'export-transcripts.json'
+
+/** The stamps of the copies pushed, by session; none when the file is absent or no stamps (everything is then copied again). */
+function readStamps(stateDir: string): Map<string, Stamp> {
+  const stamps = new Map<string, Stamp>()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readText(join(stateDir, STAMPS_FILE)) ?? '{}')
+  } catch {
+    return stamps
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return stamps
+  for (const [session, entry] of Object.entries(parsed)) {
+    const { size, mtimeMs } = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>
+    if (typeof size === 'number' && typeof mtimeMs === 'number') stamps.set(session, { size, mtimeMs })
+  }
+  return stamps
+}
+
+const writeStamps = (stateDir: string, stamps: ReadonlyMap<string, Stamp>): void => writeAtomic(join(stateDir, STAMPS_FILE), `${JSON.stringify(Object.fromEntries(stamps))}\n`)
+
 interface Copied {
   /** The sessions whose transcript is in the repository after this export. */
   readonly exported: ReadonlySet<string>
@@ -163,25 +206,59 @@ interface Copied {
   readonly offered: ReadonlySet<string>
   /** Transcripts written to the clone. */
   readonly written: number
-  /** One line per transcript skipped, for the result. */
+  /** The stamp of each exported session's file. */
+  readonly stamps: ReadonlyMap<string, Stamp>
+  /** What to say of the transcripts left out, for the result. */
   readonly notes: readonly string[]
 }
 
 /**
  * Copies the redacted transcript of each session whose file is here into the clone. A transcript that
- * cannot be read or redacted is skipped and named: it never holds the day files back. Answers what was
- * copied, or the line of a failure of the clone itself.
+ * cannot be read or redacted, or is over the size cap, is skipped and named; one beyond the run's bound
+ * waits for the next export; one the repository holds and whose file has not changed since is left as
+ * it is. None holds the day files back. Answers what was copied, or the line of a failure of the clone itself.
  */
-function copyTranscripts(options: ExportOptions, clone: string, sessions: ReadonlySet<string>): Copied | string {
+function copyTranscripts(options: ExportOptions, clone: string, sessions: ReadonlySet<string>, stamped: ReadonlyMap<string, Stamp>, held: ReadonlySet<string>): Copied | string {
+  const cap = options.limits?.transcriptBytes ?? MAX_TRANSCRIPT_BYTES
+  const bound = options.limits?.runBytes ?? MAX_RUN_BYTES
   const exported = new Set<string>()
   const offered = new Set<string>()
+  const stamps = new Map<string, Stamp>()
   const notes: string[] = []
   let written = 0
+  let taken = 0
+  let waiting = 0
+  let waitingBytes = 0
   for (const session of [...sessions].sort()) {
     const source = options.transcript?.(session)
     if (source === undefined) continue
     offered.add(session)
     const skip = (reason: string): void => void notes.push(`export: transcript ${session} skipped (${reason})`)
+    let stamp: Stamp
+    try {
+      const { size, mtimeMs } = statSync(source)
+      stamp = { size, mtimeMs }
+    } catch (error) {
+      skip(codeOf(error))
+      continue
+    }
+    const path = transcriptPath(options.machine, session)
+    const before = stamped.get(session)
+    if (before?.size === stamp.size && before.mtimeMs === stamp.mtimeMs && held.has(path)) {
+      exported.add(session)
+      stamps.set(session, stamp)
+      continue
+    }
+    if (stamp.size > cap) {
+      skip(`too large: ${stamp.size} bytes, over ${cap}`)
+      continue
+    }
+    if (taken > 0 && taken + stamp.size > bound) {
+      waiting++
+      waitingBytes += stamp.size
+      continue
+    }
+    taken += stamp.size
     let text: string
     try {
       text = readFileSync(source, 'utf8')
@@ -196,17 +273,24 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
       skip(`redaction failed: ${error instanceof Error ? error.name : 'error'}`)
       continue
     }
+    const length = Buffer.byteLength(redacted)
+    if (length > cap) {
+      skip(`too large once redacted: ${length} bytes, over ${cap}`)
+      continue
+    }
     try {
-      const path = join(clone, transcriptPath(options.machine, session))
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, redacted)
+      const file = join(clone, path)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, redacted)
     } catch (error) {
       return `export failed at transcript ${session} (${codeOf(error)})`
     }
     exported.add(session)
+    stamps.set(session, stamp)
     written++
   }
-  return { exported, offered, written, notes }
+  if (waiting > 0) notes.push(`export: ${waiting} transcript(s) left for the next export (${waitingBytes} bytes; a run takes up to ${bound})`)
+  return { exported, offered, written, stamps, notes }
 }
 
 /** Exports the store; answers the lines to print and the exit code. */
@@ -252,7 +336,11 @@ export function exportStore(options: ExportOptions): ExportResult {
   const target = join(clone, 'machines', machine)
   mkdirSync(target, { recursive: true })
   for (const day of days) copyFileSync(join(events, day), join(target, day))
-  const copied = copyTranscripts(options, clone, planned.sessions)
+  // The copies the repository holds now: a transcript is left alone only when its copy is there and its file is as pushed.
+  const listed = git(['ls-tree', '-r', '--name-only', 'HEAD', '--', `machines/${machine}/transcripts`], clone)
+  const held = new Set(listed.status === 0 ? listed.stdout.split('\n') : [])
+  const stamped = readStamps(stateDir)
+  const copied = copyTranscripts(options, clone, planned.sessions, stamped, held)
   if (typeof copied === 'string') return { lines: [copied], code: 1 }
   const counted = `${days.length} day file(s)${copied.written > 0 ? ` and ${copied.written} transcript(s)` : ''}`
   let index = planned.files
@@ -270,11 +358,13 @@ export function exportStore(options: ExportOptions): ExportResult {
     const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${counted} up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
     if (committed.status !== 0) return fail('commit', committed)
   } else if (!unpushed(git, clone)) {
+    writeStamps(stateDir, new Map([...stamped, ...copied.stamps]))
     return { lines: ['export: the logs repository already holds every event, nothing pushed', ...copied.notes], code: 0 }
   }
   // HEAD now holds a commit main lacks: the new files, or a former export's commit whose push was refused.
-  const pushed = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
-  if (pushed.status !== 0) return fail('push', pushed)
+  const sent = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
+  if (sent.status !== 0) return fail('push', sent)
+  writeStamps(stateDir, new Map([...stamped, ...copied.stamps]))
   return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`, ...copied.notes], code: 0 }
 }
 

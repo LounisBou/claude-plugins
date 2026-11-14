@@ -3,12 +3,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { withLock } from '../../../../core/store.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
-import { addressForms, exportExclusive, exportStore, logsRepo, machineName, safeOutput, type Git } from './export.ts'
+import { addressForms, exportExclusive, exportStore, logsRepo, machineName, MAX_RUN_BYTES, MAX_TRANSCRIPT_BYTES, safeOutput, type Git } from './export.ts'
 import { append, eventsDir } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -349,6 +349,85 @@ test('a transcript that cannot be read or redacted is skipped and named; the exp
     })
     const pushed = git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.trim().split('\n')
     assert.deepEqual(pushed.filter(file => file.includes('/transcripts/')), [`machines/box/transcripts/${S}.jsonl`])
+  })
+})
+
+/** One transcript file in `root` per session, each holding the one line it is given; the files by session. */
+function plantFiles(root: string, lines: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(lines).map(([session, line]) => {
+    const file = join(root, `${session}.jsonl`)
+    writeFileSync(file, `${line}\n`)
+    return [session, file]
+  }))
+}
+
+const prompt = (message: string): string => JSON.stringify({ type: 'user', message })
+const daily = (sessions: readonly string[]): string => sessions.map((session, i) => event(`2026-11-13T10:00:0${i}Z`, { session })).join('\n')
+const transcriptsOf = (remote: string): string[] => git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.trim().split('\n').filter(file => file.includes('/transcripts/'))
+
+test('a transcript over the size cap is left out and named, whether its source or its redacted copy is over; the others go', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const secrets = new Map([['SERVICE_PASS', 'abcdefgh']])
+    // OTHER fits as it is, then masking lengthens it past the cap: eight characters become fourteen.
+    const lines = { [THIRD]: prompt('small'), [S]: prompt('x'.repeat(400)), [OTHER]: prompt(Array(10).fill('abcdefgh').join(' ')) }
+    const files = plantFiles(root, lines)
+    append(eventsDir(state), daily([S, OTHER, THIRD]), secrets)
+    const result = exportStore({ stateDir: state, secrets, repo: remote, machine: 'box', git, transcript: session => files[session], limits: { transcriptBytes: 150 } })
+    assert.equal(result.code, 0)
+    assert.deepEqual(result.lines.slice(0, 2), ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository', `export: transcript ${S} skipped (too large: ${Buffer.byteLength(lines[S] ?? '') + 1} bytes, over 150)`])
+    assert.match(result.lines[2] ?? '', new RegExp(`^export: transcript ${OTHER} skipped \\(too large once redacted: \\d+ bytes, over 150\\)$`))
+    assert.equal(result.lines.length, 3)
+    assert.deepEqual(transcriptsOf(remote), [`machines/box/transcripts/${THIRD}.jsonl`])
+    assert.ok(MAX_TRANSCRIPT_BYTES * 2 < 100_000_000, 'well under the 100 MB GitHub refuses')
+  })
+})
+
+test('a run takes transcripts up to its bound; the rest wait and are said, the pushed ones are not redone', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const files = plantFiles(root, { [THIRD]: prompt(THIRD), [S]: prompt(S), [OTHER]: prompt(OTHER) })
+    const size = statSync(files[S] ?? '').size
+    append(eventsDir(state), daily([S, OTHER, THIRD]), new Map())
+    const run = (runBytes: number) => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: session => files[session], limits: { runBytes } })
+    const manifest = () => (JSON.parse(git(['show', 'main:index/box/2026-11-13.json'], remote).stdout) as { sessions: { session: string; transcript: string | null }[] }).sessions
+    assert.deepEqual(run(2 * size), {
+      lines: ['export: 1 day file(s) and 2 transcript(s) of box pushed to the logs repository', `export: 1 transcript(s) left for the next export (${size} bytes; a run takes up to ${2 * size})`],
+      code: 0,
+    })
+    assert.deepEqual(transcriptsOf(remote), [`machines/box/transcripts/${THIRD}.jsonl`, `machines/box/transcripts/${S}.jsonl`])
+    assert.equal(manifest().find(entry => entry.session === OTHER)?.transcript, null)
+    // Room for one: were the two pushed read again they would take it, and the one left would wait again.
+    assert.deepEqual(run(size), { lines: ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository'], code: 0 })
+    assert.equal(transcriptsOf(remote).length, 3)
+    assert.equal(manifest().find(entry => entry.session === OTHER)?.transcript, `machines/box/transcripts/${OTHER}.jsonl`)
+    assert.deepEqual(run(size).lines, ['export: the logs repository already holds every event, nothing pushed'])
+    assert.ok(MAX_TRANSCRIPT_BYTES < MAX_RUN_BYTES)
+  })
+})
+
+test('a transcript is exported again where the repository lacks its copy, and after a push that was refused', () => {
+  scratch((root, first) => {
+    const state = join(root, 'state')
+    const second = join(root, 'second.git')
+    assert.equal(git(['init', '--quiet', '--bare', second], root).status, 0)
+    const files = plantFiles(root, { [S]: prompt('kept') })
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const run = (repo: string) => exportStore({ stateDir: state, secrets: new Map(), repo, machine: 'box', git, transcript: session => files[session] })
+    refusePushes(first, true)
+    assert.equal(run(first).code, 1)
+    refusePushes(first, false)
+    assert.deepEqual(run(first).lines, ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository'])
+    assert.deepEqual(run(first).lines, ['export: the logs repository already holds every event, nothing pushed'])
+    // The same files, another repository with a history of its own: what the first one holds is no proof for this one.
+    const seed = join(root, 'seed')
+    assert.equal(git(['clone', '--quiet', second, seed], root).status, 0)
+    writeFileSync(join(seed, 'README.md'), 'another repository\n')
+    assert.equal(git(['add', 'README.md'], seed).status, 0)
+    assert.equal(git(['commit', '--quiet', '-m', 'seed'], seed).status, 0)
+    assert.equal(git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], seed).status, 0)
+    assert.deepEqual(run(second).lines, ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository'])
+    assert.deepEqual(transcriptsOf(second), [`machines/box/transcripts/${S}.jsonl`])
   })
 })
 
