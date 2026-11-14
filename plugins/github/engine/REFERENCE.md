@@ -37,15 +37,15 @@ Before writing a text, read its rules in `writing/` beside this file.
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR. An unknown number exits 4 |
-| `pr-list` | | Open PRs |
-| `pr-status` | `<pr> [--json]` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format` gives the full pull request |
-| `pr-checks` | `<pr>` | Combined commit status and check runs |
+| `pr-get` | `[--branch B \| --pr N]` | The PR for a branch, defaulting to the current one, or PR `N` (`{"pr": N}` through the tool). Both answer a list of one PR: a count, then a line (`pr-lines`). `--json` answers the full list. An unknown number exits 4 |
+| `pr-list` | | Open PRs: a count, then a line each (`pr-lines`); `--json` for the full list |
+| `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format` gives the full pull request |
+| `pr-checks` | `<pr>` | The verdict, the counts and the failed or skipped names (`checks-summary`); `--json` for the combined commit status and the check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
-| `pr-files` | `<pr>` | Changed paths with their patches, paginated |
-| `pr-commits` | `<pr>` | Commits on the PR, paginated |
+| `pr-files` | `<pr>` | The totals, then a line per changed path (`files-summary`); `--json` adds the patches, paginated |
+| `pr-commits` | `<pr>` | The count, then a line per commit (`commits-summary`); `--json` for the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
@@ -77,10 +77,10 @@ exits 3 naming the request's uuid if the merge fails or times out. Other errors 
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-threads` | `<pr>` | All review threads (GraphQL) |
-| `pr-comments` | `<pr>` | Inline review comments, paginated |
-| `pr-issue-comments` | `<pr>` | General PR comments, paginated |
-| `pr-reviews` | `<pr>` | Review bodies, paginated |
+| `pr-threads` | `<pr>` | The open review threads as a table (`thread-summary`); `--json` for all of them (GraphQL) |
+| `pr-comments` | `<pr>` | The count, then a line per inline review comment (`review-comments`); `--json` for the comments, paginated |
+| `pr-issue-comments` | `<pr>` | General PR comments as a table (`issue-comments-summary`); `--json` for the comments, paginated |
+| `pr-reviews` | `<pr>` | The count, then a line per review (`reviews-summary`); `--json` for the review bodies, paginated |
 | `thread-reply` | `<thread_id> --body-file P` | Reply inside a review thread |
 | `pr-comment` | `<pr> --body-file P` | Post a general PR comment |
 | `comment-edit` | `<comment_id> --body-file P` | Edit a comment |
@@ -111,7 +111,7 @@ submitting is the operator's act, on GitHub.
 | `review-pending-create` | `<pr> --comments-file P` | Open a review left PENDING with inline comments; refuses if the token's user already has one on the PR |
 | `review-pending-add` | `<pr> --review-id ID --path P --line N [--start-line N] --body-file P` | Add an inline thread to the token user's PENDING review (GraphQL `addPullRequestReviewThread`) |
 | `review-pending` | `<pr> [--author LOGIN]` | The PENDING review of a user (default: the token's) with its comments |
-| `repo-review-comments` | `[--author LOGIN] [--limit N]` | The newest review comments of the repository (one page), filtered on a login, default limit 30 |
+| `repo-review-comments` | `[--author LOGIN] [--limit N]` | The newest review comments of the repository (one page), filtered on a login, default limit 30: a count, then a line each (`review-comments`); `--json` for the comments |
 
 `--comments-file` holds a non-empty JSON array of `{path, line, body}` objects; `side`
 defaults to `RIGHT`, a range adds `start_line` (below `line`) and `start_side` (defaults
@@ -136,9 +136,9 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `issue-view` | `<number>` | One issue |
-| `issue-list` | `[--state open\|closed\|all]` | Issues in the repository |
-| `issue-search` | `<term>...` | Search within this repository |
+| `issue-view` | `<number>` | One issue: its header line, its body and its link (`issue-detail`); `--json` for the issue |
+| `issue-list` | `[--state open\|closed\|all]` | Issues in the repository: a count, then a line each (`issue-lines`); `--json` for the issues |
+| `issue-search` | `<term>...` | Search within this repository: how many of how many, then a line each (`issue-lines`); `--json` for the search object |
 | `pr-linked-issues` | `<pr>` | Issues the PR closes |
 
 ### Assets and auth
@@ -179,27 +179,36 @@ rule asks before the write.
 
 ## Formatters
 
-`--format NAME`, default `raw`. Reads leave the unprocessed JSON visible unless a
-shape is asked for.
+`--format NAME`, default: the few lines of the commands listed `default` below, else `raw`. `--json`
+(or `--format raw`) answers the full object, which is what a program parses; a format named beside
+`--json` wins. A command with no default answers its object.
 
 | Format | Input from | Output |
 |---|---|---|
-| `raw` | anything | pretty-printed JSON |
+| `raw` | anything | pretty-printed JSON, the full object |
 | `error-check` | any response | raises on an API error, else nothing |
 | `pr-number` | `pr-get`, `pr-create` | the number, or empty |
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
-| `pr-summary` | `pr-status` | its default five lines |
+| `pr-summary` | `pr-status` (default) | its default five lines |
 | `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
-| `thread-summary` | `pr-threads` | a markdown table of open threads |
+| `thread-summary` | `pr-threads` (default) | a markdown table of open threads |
 | `resolve-status` | `thread-resolve` | `resolved` or `unresolved` |
-| `issue-comments-summary` | `pr-issue-comments` | a markdown table |
+| `issue-comments-summary` | `pr-issue-comments` (default) | a markdown table |
 | `login` | `auth-check`, any list response | the login, or empty |
 | `pending-review-summary` | `review-pending` | `none`, or `id`, `node_id`, `state`, `comments N` and a `path | line | commit_id` table |
 | `comment-bodies` | `repo-review-comments`, `pr-comments` | the bodies only, separated by `---` |
+| `pr-lines` | `pr-get`, `pr-list` (default) | a count, then `owner/name#N: title [state] head -> base \| labels: … \| author` per pull request |
+| `checks-summary` | `pr-checks` (default) | `checks: <RESULT> (<n> total, <n> running, <n> failed, <n> skipped)`, then the failed and skipped names |
+| `review-comments` | `pr-comments`, `repo-review-comments` (default) | a count, then `id \| owner/name#N \| path:line \| author \| first line` per comment |
+| `reviews-summary` | `pr-reviews` (default) | a count, then `id \| state \| author \| first line` per review |
+| `files-summary` | `pr-files` (default) | `<n> files, +A -D`, then `status path +a -d` per file |
+| `commits-summary` | `pr-commits` (default) | a count, then `sha7 \| author \| subject` per commit |
+| `issue-lines` | `issue-list`, `issue-search` (default) | a count (`n of total` for a search), then `owner/name#N: title [state] author \| labels: …` per issue |
+| `issue-detail` | `issue-view` (default) | the issue's line, its body, its link |
 
 ## Image upload
 

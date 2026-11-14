@@ -248,6 +248,8 @@ test('/prs reads each listed PR in detail and opens the pane', async ($, on) => 
   expect(opened).toEqual([{ id: 'github-prs', title: 'PRs', closeOnEscape: true }])
   expect(runs.length).toBe(5) // pr-list + (pr-checks, pr-status) x 2
   expect(runs.filter((r) => r.command === 'pr-status').map((r) => String(r.args.pr)).sort()).toEqual(['11', '12'])
+  // The module parses the pull request list: it asks the full object, as no caller of the tool does.
+  expect(runs.find((r) => r.command === 'pr-list').full).toBe(true)
   // The comment counts are fields of the full pull request: the compact answer carries none.
   expect(runs.filter((r) => r.command === 'pr-status').every((r) => r.args.json === true)).toBe(true)
 })
@@ -449,6 +451,19 @@ test('a deny verdict refuses the call without running gh.py', async ($, on) => {
   expect(JSON.stringify(out)).toContain('denied by mcp__github__gh')
   expect(out.result).toBeUndefined()
   expect(runs.length).toBe(0)
+})
+
+test('a read the model makes is not asked as the full object, which only the module asks', async ($, on) => {
+  const runs: any[] = []
+  await stubMod(on, runs, [])
+  await startSession($)
+
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-list' })
+  expect(runs.length).toBe(1)
+  expect(runs[0].full).toBeUndefined()
+  // A request the tool sends cannot carry it either: the tool's own input is the only thing it forwards.
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-list', full: true })
+  expect(runs[1].full).toBeUndefined()
 })
 
 test('an ask with no rule lets a read through without a dialog', async ($, on) => {

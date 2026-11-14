@@ -34,9 +34,9 @@ is its contract, read it before its first use in a session:
   Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
   freshness, wait, context, their repository and the pull requests they watch), and a pull
   request one of them lists counts as one more orchestrator on it in a `collision pr`.
-- `round` — the round's entries still to rule, the open ones, then the ones he answered from
-  the pane (with the answer sent), then the withdrawn ones, each with its id, sender, `since`,
-  `blocks` and question; `round-close <id> --answer "<text>"` closes one with his answer, which
+- `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`,
+  `blocks` and question, after a line counting the settled ones; `--all` prints those too, the ones
+  he answered from the pane (with the answer sent), then the withdrawn ones; `round-close <id> --answer "<text>"` closes one with his answer, which
   the module then sends to its sender (« Relaying questions to the operator »).
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows

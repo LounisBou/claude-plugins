@@ -16,9 +16,10 @@
 #                            spawn verified; prints "woken <name>"
 #   coordinator.sh drop --name "Orch: <subject>"        abandons one for good: removes its record
 #                            and moves its brief into an abandoned/ directory beside it
-#   coordinator.sh round [--by-urgency]   the round's entries still to be ruled: the open ones,
-#                            then the answered, then the withdrawn, the urgent first, each level
-#                            grouped by sender
+#   coordinator.sh round [--all] [--by-urgency]   the round's entries still to be ruled: the open
+#                            ones, the urgent first, each level grouped by sender, after one line
+#                            counting the answered and the withdrawn ones it leaves out;
+#                            --all prints those too, the answered then the withdrawn
 #                            (--by-urgency prints the same order)
 #   coordinator.sh round-close <id> --answer "<text>"   closes one entry with the answer relayed;
 #                            prints "closed <id>"
@@ -53,10 +54,14 @@
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level>, or none for a
 #     record a pause wrote before an effort was required (its wake passes neither)
 #     [ | session <id>]: the session the close of its home session read, which the wake resumes
-# round prints, for each entry whose status is open, then for each answered one (chosen in the
-# coordinator's pane and sent to the asking orchestrator), then for each withdrawn one, a line
+# round prints, for each entry whose status is open (and with --all, then for each answered one,
+# chosen in the coordinator's pane and sent to the asking orchestrator, then for each withdrawn one),
+# a line
 #   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | sender gone]
-# followed by the question's lines, each indented by four spaces. « due » marks an open question
+# followed by the question's lines, each indented by four spaces. Without --all, the first line is
+#   settled: <n> answered, <n> withdrawn (round --all prints them)
+# when the round holds any of them, and none of theirs is printed: they are done, and a round that
+# keeps them whole grows with every question ever asked. « due » marks an open question
 # the coordinator presents in its tab: its sender marked it urgent, or no pane of the
 # coordinator is open (<state>/pane.json, written by the hooks module while it is, names a pid
 # that is not running, or is absent); any other open question is the pane's alone, however long
@@ -572,9 +577,10 @@ pane_open() {
 }
 
 cmd_round() {
-    local pane=false
+    local pane=false all=false
     while [ $# -gt 0 ]; do
         case "$1" in
+            --all) all=true; shift ;;
             # Still accepted: the decision round asks for it, and it prints the one order.
             --by-urgency) shift ;;
             *) die "round: unexpected argument $1" ;;
@@ -590,7 +596,7 @@ cmd_round() {
     entries=$(round_entries)
     # An entry whose sender's sessions file is absent keeps its place, and its header says the
     # sender is gone: the session ended with its question still open.
-    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" '
+    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson all "$all" '
         # Grouped by sender, the groups by their earliest wait, each in the order its waits began.
         def grouped: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
@@ -602,8 +608,11 @@ cmd_round() {
         # An open question is due in the tab of the coordinator when its sender marked it urgent, or
         # when no pane of the coordinator is open (hooks/round.ts isDue).
         def due: .status == "open" and .kind == "operator" and (.urgent == true or ($pane | not));
-        # The open entries, then those the operator answered from the pane, then the withdrawn.
-        ([("open", "answered", "withdrawn") as $status | map(select(.status == $status)) | ordered] | add)[]
+        # The settled entries are counted in one line, and printed only on --all.
+        def settled: [("answered", "withdrawn") as $status | (map(select(.status == $status)) | length) as $n | select($n > 0) | "\($n) \($status)"];
+        (if $all or (settled | length) == 0 then empty else "settled: \(settled | join(", ")) (round --all prints them)" end),
+        # The open entries, then (with --all) those the operator answered from the pane, then the withdrawn.
+        (([(if $all then ("open", "answered", "withdrawn") else "open" end) as $status | map(select(.status == $status)) | ordered] | add // [])[]
         | (if gone then " | sender gone" else "" end) as $gone
         | (if due then " | due" else "" end) as $due
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
@@ -611,7 +620,7 @@ cmd_round() {
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
           (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): \(if (.answer.text | type) == "string" and .answer.text != "" then .answer.text else "a later turn the operator typed in waits on something else" end)"),
           (select(.status == "withdrawn" and .answer.by? == "tab") | "    withdrawn in the sender\u0027s tab at \(.answer.at // "?"): \(.answer.text // "")\(if (.answer.typed | type) == "string" and .answer.typed != "" then " — he typed: \(.answer.typed | gsub("\\s*\n\\s*"; " "))" else "" end)"),
-          (select(.status == "withdrawn" and (.answer | type) == "object" and .answer.by != "sender" and .answer.by != "tab") | "    withdrawn by \(.answer.by // "?") at \(.answer.at // "?"): \(.answer.text // "")")'
+          (select(.status == "withdrawn" and (.answer | type) == "object" and .answer.by != "sender" and .answer.by != "tab") | "    withdrawn by \(.answer.by // "?") at \(.answer.at // "?"): \(.answer.text // "")"))'
     record_listed "$entries"
 }
 
