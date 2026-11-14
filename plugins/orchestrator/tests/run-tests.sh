@@ -607,8 +607,8 @@ check "the phase brief template reads « under load » as emulated throttling" "
 # The orchestrator writes no guard, not even over its own directives (the freeze of 2026-11-14).
 check "the directives rule lives in the briefs reference, and the orchestrator writes no guard" "yes|no" \
   "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" 'the one instrument you may write yourself')"
-check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
+check "the rounds rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/review.md" '**The check plan'"'"'s `review` max sets the rounds (github `check-plan.ts`), each a review round then a correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
 # review.md, where the round runs it; the rulebook keeps the one line that both readings run.
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
