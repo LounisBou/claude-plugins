@@ -1582,8 +1582,12 @@ async function grantedWaiver($: any, repo: string, pr: number, check: Waivable):
 
 // His newest recorded answer to that waiver question, « Accorder » or « Refuser ».
 async function newestWaiverAnswer($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
-  const subject: ConsentSubject = { kind: waiverSubject(check), repo, pr }
-  const answers = (await consentRecords($, repo)).filter((record) => sameSubject(record.subject, subject))
+  return newestAnswer($, { kind: waiverSubject(check), repo, pr })
+}
+
+// His newest recorded answer to the question that asked consent on the subject, whichever channel wrote it.
+async function newestAnswer($: any, subject: ConsentSubject): Promise<ConsentRecord | undefined> {
+  const answers = (await consentRecords($, subject.repo)).filter((record) => sameSubject(record.subject, subject))
   return answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
 }
 
@@ -1744,15 +1748,23 @@ async function listAutoDeploy($: any): Promise<string> {
   return list.grants.length > 0 ? list.grants.map((g) => g.repo + ' ' + g.env).join('\n') : 'no repository in auto-deploy'
 }
 
-// The refusal of an auto-deploy-set whose words are not the operator's, or undefined.
+// The refusal of an auto-deploy-set whose consent is not the operator's, or undefined. A grant rests on
+// the record alone: his newest answer for the repository and the environment is « Accorder », whatever
+// "words" says. A withdrawal quotes a record of that subject, and its words name auto-deploy.
 async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv, on: boolean): Promise<string | undefined> {
-  if (!AUTO_DEPLOY_WORD.test(words)) {
-    return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
-      + ' "autodeploy" or "auto-déploiement"), in their recorded answer.'
+  const subject: ConsentSubject = { kind: 'auto-deploy', repo, env }
+  if (on) {
+    const newest = await newestAnswer($, subject)
+    if (newest && grants(newest.answer)) return undefined
+  } else {
+    if (!AUTO_DEPLOY_WORD.test(words)) {
+      return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
+        + ' "autodeploy", "auto-déploiement", "déploiement automatique" or "déploiement continu"), in their recorded answer.'
+    }
+    if (await consentAnswered($, words, subject)) return undefined
   }
-  if (await consentAnswered($, words, { kind: 'auto-deploy', repo, env }, on ? grants : undefined)) return undefined
-  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
-    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s ' + askedConsent('auto-deploy', repo, 'consent_env', env) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
+  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': ' + (on ? 'the operator\'s newest answer is not « ' + CONSENT_GRANT + ' » ' : 'its "words" are not the operator\'s answer ')
+    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s ' + askedConsent('auto-deploy', repo, 'consent_env', env) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' »' + (on ? '.' : ', then quote their answer verbatim.')
 }
 
 // The declarations a call adds for its repository, or a refusal naming what is wrong.
