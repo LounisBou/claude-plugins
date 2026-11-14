@@ -67,10 +67,13 @@ function machine(options: { refuse?: string } = {}) {
   return { files, sent, asker: as('s-ask'), coordinator: as('s-coord'), as }
 }
 
-// A question the asker asked with `ask`, its id.
+// A question the asker asked with `ask`, its id. Each asks its own, so that none is answered from
+// the record of one settled before it (question.ts recordedAsked).
+let askedCount = 0
 async function asked(m: ReturnType<typeof machine>, extra: Record<string, unknown> = {}): Promise<string> {
   askTurnStarted()
-  const answer = await callAsk(m.asker, { ...QUESTION, ...extra }, NOW)
+  askedCount += 1
+  const answer = await callAsk(m.asker, { ...QUESTION, context: `${QUESTION.context} (${askedCount})`, ...extra }, NOW)
   return /Asked as (\S+?):/.exec(answer.result)![1]
 }
 

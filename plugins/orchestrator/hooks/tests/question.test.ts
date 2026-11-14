@@ -239,6 +239,33 @@ test('« Question i of N » counts this turn\'s questions only: one asked in a l
   expect(shown.filter(line => /^Question \d+ of \d+/.test(line)).slice(2).map(line => line.slice(0, 14))).toEqual(['Question 2 of ', 'Question 3 of '])
 })
 
+// The operator's answer already recorded (§ 4.7 d): a question of the same project asking the same,
+// answered by him in a tab, the pane or through the coordinator, is answered from it and not asked again.
+test('a question its project already had answered is answered from the newest record, not asked again; a message or a withdrawal is no record', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const [first] = stored(before.files)
+  const answered = (id: string, by: string, at: string, over: Record<string, unknown> = {}) =>
+    JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text: `B from ${id}`, by, at, settler: 'x' }, ...over })
+  const { dollar, files, shown } = world({
+    files: {
+      [`${ROUND}/q-old.json`]: answered('q-old', 'tab', '2026-11-10T10:00:00.000Z'),
+      [`${ROUND}/archive/q-newer.json`]: answered('q-newer', 'coordinator', '2026-11-12T10:00:00.000Z'),
+      [`${ROUND}/q-message.json`]: answered('q-message', 'message', '2026-11-13T10:00:00.000Z'),
+      [`${ROUND}/q-moot.json`]: answered('q-moot', 'sender', '2026-11-13T11:00:00.000Z', { status: 'withdrawn' }),
+      [`${ROUND}/q-other.json`]: answered('q-other', 'tab', '2026-11-13T12:00:00.000Z', { blocks: 'another thing' }),
+    },
+  })
+  const answer = await ask(dollar, fields)
+  const mine = stored(files).find(entry => entry.sender.session === 's-me')!
+  expect(mine.status).toBe('answered')
+  expect(mine.answer).toEqual({ text: 'B from q-newer', by: 'coordinator', at: '2026-11-12T10:00:00.000Z', settler: 'Coord: general [a1b2c3]', record: 'q-newer' })
+  expect(answer.result).toContain('Answered from the record, not asked again')
+  expect(answer.result).toContain('B from q-newer')
+  expect(shown).toEqual([])
+})
+
 test('a subagent\'s call is refused', async () => {
   const { dollar, files } = world()
   expect((await ask(dollar, { ...FULL, agentId: 'agent-1' })).isError).toBe(true)

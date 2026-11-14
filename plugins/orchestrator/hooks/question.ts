@@ -19,6 +19,7 @@ import { updateOver } from '../core/store-io.ts'
 import { CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
+import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
 import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
@@ -55,7 +56,7 @@ export type AskFields = {
 }
 
 /** How a question asked here was settled (settle.ts): the answer or the reason, who settled it, when, and the message's author. */
-export type AskedAnswer = { text: string; by: 'tab' | 'coordinator' | 'sender' | 'message'; at: string; settler: string; author?: string }
+export type AskedAnswer = { text: string; by: 'tab' | 'coordinator' | 'sender' | 'message'; at: string; settler: string; author?: string; record?: string }
 
 /** One question in the round, as `ask` writes it, then as `settle` closes it, its answer's trip to its asker in `delivery`. */
 export type Asked = AskFields & {
@@ -323,6 +324,46 @@ export function askTurnStarted(): void {
   thisTurn.length = 0
 }
 
+const flatText = (text: string): string => plainText(text).replace(/\s+/g, ' ').trim()
+
+/**
+ * What makes two questions one for the record: the asker's project (its session name's subject),
+ * what it blocks (its parts split by `, `, spacing and case aside), the consent it asks, and its
+ * fields, choices and recommendation as given.
+ */
+export function askedKey(entry: Pick<Asked, 'sender' | 'blocks' | 'consent' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'>): string {
+  const blocks = entry.blocks.split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
+  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
+  return JSON.stringify([
+    parseSessionName(entry.sender.name)?.subject ?? entry.sender.name, blocks, consent,
+    [entry.subject, entry.context, entry.ask].map(flatText), entry.choices.map(choice => [choice.letter, flatText(choice.text)]),
+    entry.recommended, entry.why === null ? null : flatText(entry.why),
+  ])
+}
+
+// The answers that are the operator's own: given in the asker's tab, in the pane or through the
+// coordinator. An answer relayed by a message, or a withdrawal, records nothing.
+const OWN_ANSWERS: readonly string[] = ['tab', 'pane', 'coordinator']
+
+/** The newest answer of his own to a question asking the same, in the round or its archive; null when none. */
+export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promise<Asked | null> {
+  const key = askedKey(entry)
+  const archived: Asked[] = []
+  const dir = `${await stateDir($)}/round/archive`
+  for (const file of await $.fs.list(dir).catch(() => [])) {
+    if (file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
+    const read = parseAsked(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
+    if (read !== null) archived.push(read)
+  }
+  let found: Asked | null = null
+  for (const other of [...await readAsked($), ...archived]) {
+    if (other.status !== 'answered' || other.answer === null || !OWN_ANSWERS.includes(other.answer.by) || other.answer.record !== undefined) continue
+    if (askedKey(other) !== key) continue
+    if (found === null || other.answer.at > (found.answer?.at ?? '')) found = other
+  }
+  return found
+}
+
 /** What the tool answers to one call; `now` is the instant it records. */
 export async function callAsk($: Held, e: Record<string, unknown>, now: Date = new Date()): Promise<Answer> {
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
@@ -334,7 +375,12 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   }
   const sessionId = await $.session.id()
   const sender = { session: sessionId, name: me.name, role: me.role, machine: await machineOf($) }
-  const entry = askedEntry(parsed.fields, sender, askId(sessionId, now), now)
+  const made = askedEntry(parsed.fields, sender, askId(sessionId, now), now)
+  // A question its project already had him answer is answered from that record, and not put to him again.
+  const record = await recordedAsked($, made).catch(() => null)
+  const entry: Asked = record?.answer
+    ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
+    : made
   const path = `${await stateDir($)}/round/${entry.id}.json`
   let taken = false
   try {
@@ -347,6 +393,9 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
     return refuse(`the question could not be stored (${messageOf(err)}); nothing was shown to the operator, ask again.`)
   }
   if (taken) return refuse(`a question with the id ${entry.id} is already in the round; ask again.`)
+  if (record?.answer) {
+    return { result: `Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — ${record.answer.text} (question ${record.id}). Stored as ${entry.id}, answered.` }
+  }
   // Numbered among the questions asked in this turn: several asked in one turn read 1 of 1, then 2 of 2;
   // one asked in a later turn reads 1 of 1 again, whatever stays open from before.
   const asked = thisTurn.push(entry.id)
