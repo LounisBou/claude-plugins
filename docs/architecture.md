@@ -120,7 +120,9 @@ A release is its merge: the host installs the version the catalogue names, and n
 Once the release is installed on a machine, every session on it is restarted: a running session
 keeps the plugin version it loaded and runs it until it ends.
 The release pull request also asks the operator whether to re-run the outcome measure (cap
-`measure` of `evals/outcome/caps.json`); nothing runs without their yes.
+`measure` of `evals/outcome/caps.json`) when its monthly run falls due or a learned method change
+awaits its proof, not at each minor version (`docs/specs/learning-design.md`, question 4); nothing
+runs without their yes.
 
 ## What CI holds
 
