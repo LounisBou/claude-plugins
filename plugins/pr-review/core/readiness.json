@@ -46,12 +46,12 @@
       "review": "required"
     },
     "rounds": {
-      "omitted": 1,
+      "omitted": 3,
       "cap": 3
     },
     "former": {
       "review": {
-        "full": 1,
+        "full": 3,
         "one-pass": 1
       }
     }

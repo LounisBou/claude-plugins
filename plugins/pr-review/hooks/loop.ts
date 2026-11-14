@@ -431,7 +431,7 @@ async function isOrchestrated($: any): Promise<boolean> {
 }
 
 // The rounds the pull request's check plan gives its review (core's reviewRounds), read through the
-// github tool's pr-plan from the checkout's pull request; one when no plan is readable.
+// github tool's pr-plan from the checkout's pull request; core's `omitted` when no plan is readable.
 async function plannedPasses($: any, top: { dir: string } | { why: string }): Promise<number> {
   try {
     if (!('dir' in top)) return REVIEW_ROUNDS.omitted

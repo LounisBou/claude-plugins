@@ -57,15 +57,15 @@ describe('readiness', () => {
     assert.deepEqual(WAIVABLE, ['e2e', 'norms'])
   })
 
-  it('reads a review need: required with its rounds from 1 to the cap, none, or a former need as a required review', () => {
+  it('reads a review need: required with its rounds from 1 to the cap, the cap when it names none, none, or a former need as a required review', () => {
     assert.deepEqual(PLAN_NEEDS.review, ['required', 'none'])
     assert.equal(PLAN_OMITTED.review, 'required')
     assert.equal(REVIEW_ROUNDS.cap, 3)
-    assert.deepEqual(reviewNeed('required', ''), { need: 'required', max: 1 })
+    assert.deepEqual(reviewNeed('required', ''), { need: 'required', max: 3 })
     assert.deepEqual(reviewNeed('Required', 'Max 2'), { need: 'required', max: 2 })
     assert.deepEqual(reviewNeed('required', 'max 3'), { need: 'required', max: 3 })
     assert.deepEqual(reviewNeed('none', 'docs only'), { need: 'none' })
-    assert.deepEqual(reviewNeed('full', ''), { need: 'required', max: 1 })
+    assert.deepEqual(reviewNeed('full', ''), { need: 'required', max: 3 })
     assert.deepEqual(reviewNeed('one-pass', 'a typo'), { need: 'required', max: 1 })
     for (const rest of ['max 0', 'max 4', 'max two', 'a big change', 'max 2 rounds']) {
       assert.equal(reviewNeed('required', rest), 'review required runs from 1 to 3 rounds: "required" or "required: max <n>", got: required: ' + rest)
@@ -73,14 +73,14 @@ describe('readiness', () => {
     assert.equal(reviewNeed('maybe', ''), 'review is one of required, none, got: maybe')
   })
 
-  it('gives a loop the rounds of a stored review need, capped, and one for anything else', () => {
+  it('gives a loop the rounds of a stored review need, capped, one for a former one-pass, and the cap for anything else', () => {
     assert.equal(reviewRounds({ need: 'required', reason: '', max: 2 }), 2)
     assert.equal(reviewRounds({ need: 'required', max: 3 }), 3)
     assert.equal(reviewRounds({ need: 'required', max: 9 }), 3)
-    assert.equal(reviewRounds({ need: 'required' }), 1)
+    assert.equal(reviewRounds({ need: 'required' }), 3)
     assert.equal(reviewRounds({ need: 'one-pass', reason: 'x' }), 1)
-    assert.equal(reviewRounds({ need: 'full', reason: '' }), 1)
-    assert.equal(reviewRounds({ need: 'none', reason: 'docs' }), 1)
-    for (const odd of [undefined, null, 'required', [], { need: 'required', max: 0 }, { need: 'required', max: 1.5 }, { need: 'required', max: '2' }]) assert.equal(reviewRounds(odd), 1)
+    assert.equal(reviewRounds({ need: 'full', reason: '' }), 3)
+    assert.equal(reviewRounds({ need: 'none', reason: 'docs' }), 3)
+    for (const odd of [undefined, null, 'required', [], { need: 'required', max: 0 }, { need: 'required', max: 1.5 }, { need: 'required', max: '2' }]) assert.equal(reviewRounds(odd), 3)
   })
 })

@@ -25,13 +25,13 @@ export const READINESS_CONTRACT = {
   // `omitted` need. Only `required` requires; the operator's waiver alone lifts a required E2E or
   // norms check (pr-record's `waivable`). With no plan, the E2E and the review are owed and norms
   // are on demand. A required review runs at most `max` rounds, `required: max <n>` from 1 to the
-  // cap, the review loop's own limit; `required` alone runs `omitted`. A former review need reads
-  // as a required review of its rounds.
+  // cap, the review loop's own limit; a plan silent on them runs `omitted`. A former review need
+  // reads as a required review of its rounds.
   plan: {
     needs: { e2e: ['required', 'none', 'screenshots'], norms: ['required', 'none'], review: ['required', 'none'] },
     omitted: { e2e: 'none: not in the plan', norms: 'none: not in the plan', review: 'required' },
-    rounds: { omitted: 1, cap: 3 },
-    former: { review: { full: 1, 'one-pass': 1 } },
+    rounds: { omitted: 3, cap: 3 },
+    former: { review: { full: 3, 'one-pass': 1 } },
   },
   // A new head starts with no record; one whose own diff is an earlier head's (same commit count,
   // same patch fingerprint) carries every record that passes there. The operator's waiver stands
@@ -88,7 +88,7 @@ export function reviewNeed(need: string, rest: string): ReviewNeed | string {
   return 'review required runs from 1 to ' + REVIEW_ROUNDS.cap + ' rounds: "required" or "required: max <n>", got: required: ' + text
 }
 
-/** The rounds a review loop runs for a plan's stored review need: a required review's max within the cap, one for anything else. */
+/** The rounds a review loop runs for a plan's stored review need: a required review's max within the cap, a former need's, `omitted` for anything else. */
 export function reviewRounds(review: unknown): number {
   const { need, max } = (typeof review === 'object' && review !== null ? review : {}) as Record<string, unknown>
   if (typeof need === 'string' && Object.hasOwn(FORMER_REVIEW, need)) return FORMER_REVIEW[need]!

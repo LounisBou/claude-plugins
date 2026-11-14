@@ -267,14 +267,10 @@ test('the loop ends after pass 3', () => {
   expect(sixth.passes).toBe(3)
 })
 
-test('a loop started in a session the orchestrator spawned runs one pass', async ($, on) => {
+test('a loop started in a session the orchestrator spawned, with no plan readable, runs the cap\'s three passes', async ($, on) => {
   spawnedEnv(on, '1')
   const started = await loopCall($, { action: 'start' })
-  expect(String(started.result)).toContain('"max_passes": 1')
-  expect(String((await loopCall($, { action: 'begin_pass' })).result)).toContain('"pass": 1')
-  loop.reports.push(null)
-  await loopCall($, { action: 'findings', keys: ['k1'] })
-  expect(String((await loopCall($, { action: 'begin_pass' })).result)).toContain('"exit": "max_passes"')
+  expect(String(started.result)).toContain('"max_passes": 3')
 })
 
 test('a loop started outside such a session keeps its three passes', async ($, on) => {
@@ -294,16 +290,22 @@ test('a loop started in a session the orchestrator spawned runs the rounds its p
   expect(stubs.ghCalls?.find((c) => c.command === 'pr-plan')).toEqual({ command: 'pr-plan', args: { pr: 12 }, repo: 'LounisBou/claude-review' })
 })
 
+test('with a former one-pass plan, a loop the orchestrator spawned runs one pass', async ($, on) => {
+  wireRecord(on, { records: [], prCalls: 0, plan: planAnswer({ need: 'one-pass', reason: 'a typo' }) })
+  spawnedEnv(on, '1')
+  expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 1')
+})
+
 for (const [label, plan] of [
-  ['a former plan', planAnswer({ need: 'one-pass', reason: 'a typo' })],
+  ['a plan silent on the review', planAnswer({ need: 'required', reason: '' })],
   ['a review given none', planAnswer({ need: 'none', reason: 'a typo' })],
   ['no plan', { result: 'no check plan for LounisBou/claude-review#12' }],
   ['a github without pr-plan', { deny: 'unknown command pr-plan' }],
 ] as const) {
-  test('with ' + label + ', a loop the orchestrator spawned runs one pass', async ($, on) => {
+  test('with ' + label + ', a loop the orchestrator spawned runs the cap\'s three passes', async ($, on) => {
     wireRecord(on, { records: [], prCalls: 0, plan })
     spawnedEnv(on, '1')
-    expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 1')
+    expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 3')
   })
 }
 
@@ -1861,7 +1863,7 @@ test('the verdict line names the files of the blocking findings left', async ($,
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireRecord(on, stubs)
   spawnedEnv(on, '1')
-  const out = await runToMaxPasses($, 2, 1)
+  const out = await runToMaxPasses($, 2)
   expect(String(out.result).split('\n').at(-1)).toBe(`claude-review#12 ${REVIEWED_HEAD.slice(0, 7)} — review fail (max_passes) — blocking: f0, f1 — report: ${WRITTEN}`)
 })
 
