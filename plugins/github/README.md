@@ -70,7 +70,8 @@ it. `/github:doctor` then confirms everything is ready.
   Outside a repository in auto-merge (below), leaving draft (`draft: false`,
   `pr-ready`) is refused, never asked: it is the operator's, on GitHub after
   their review, a CI undraft aside (« Ready pull requests »); a merge
-  (`pr-merge`) is always asked, whatever the rules allow. An existing
+  (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
+  the pull request is ready. An existing
   description is replaced without asking, under the writing rules.
 - **Ready and Not Ready labels** — `pr-readiness <pr> ready|not-ready` puts
   the `Ready` (`27e760`) or `Not Ready` (`8c1455`) label on a pull request and
@@ -78,7 +79,8 @@ it. `/github:doctor` then confirms everything is ready.
   lacks them. `pr-create` labels the new pull request (`Not Ready` for a draft,
   `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
   `Ready` is the gate's: put by the module once the pull request is ready (« Ready pull
-  requests »), and refused by hand on a pull request that is not ready.
+  requests »). `pr-readiness <pr> ready` puts it only on a pull request the gate reads
+  ready, and refuses with what is missing otherwise.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's recorded answer, and `auto-merge-list`
   prints the list (below).
@@ -234,7 +236,7 @@ A pull request opened out of draft is refused with `github: <act> refused: open 
 as a draft, then leave draft once ready.`, and a readiness GitHub did not answer
 with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
 draft always passes, and `gh pr create --draft` and `gh pr ready --undo` put
-`Not Ready` on, as the tool does. A merge, an undraft or a `Ready` label in the
+`Not Ready` on, as the tool does. A merge or an undraft in the
 shell names its repository, else it is refused with `github: <command> refused: name
 the repository with -R owner/name.`; a GraphQL merge or undraft names none and is
 always refused, with the tool call to run instead.

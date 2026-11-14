@@ -1,6 +1,6 @@
 ---
 name: auto-fix-loop
-description: This skill should be used when the user asks to "review and fix PR", "review-pr-loop", "auto-fix PR issues", "review and correct everything", "fix all PR review issues", "keep reviewing until clean", "auto-review loop", "review-fix cycle", "review and fix everything automatically", or wants an autonomous review-fix-review cycle that automatically corrects all actionable bugs and suggestions, commits each fix, re-runs review, and loops until clean without asking for confirmation.
+description: This skill should be used when the user asks to "review and fix PR", "review-pr-loop", "auto-fix PR issues", "review and correct everything", "fix all PR review issues", "keep reviewing until clean", "auto-review loop", "review-fix cycle", "review and fix everything automatically", or wants an autonomous review-fix-review cycle that automatically corrects every actionable Critical and Important finding, commits each fix, re-runs review, and loops until none is left without asking for confirmation.
 ---
 
 # Autonomous PR Review-Fix Loop
@@ -11,11 +11,11 @@ action. A non-zero exit stops the skill: print its output verbatim and do nothin
 Run `/pr-review-toolkit:review-pr` in a loop. Fix issues. Re-run the review.
 Keep looping. **ONLY TWO EXIT CONDITIONS EXIST:**
 
-1. **The review found ZERO issues** (no Critical, no Important, no Suggestions — completely clean)
+1. **The review found no Critical and no Important issue** (Suggestions never hold the loop)
 2. **`MAX_PASSES` reached** (safety limit): the `max_passes` the loop tool's `start` answers
 
-**NOTHING ELSE stops the loop.** Not "all remaining are SKIP". Not "only suggestions left".
-Not "fixes were applied": after every pass, fixed or skipped, re-run the review.
+**NOTHING ELSE stops the loop.** Not "all remaining are SKIP". Not "fixes were applied":
+after every pass, fixed or skipped, re-run the review.
 
 ## Loop State: the `mcp__pr-review__loop` tool
 
@@ -67,9 +67,9 @@ LOOP:
   # Run review
   results = invoke /pr-review-toolkit:review-pr all
 
-  # EXIT CHECK 2: completely clean
-  if results has ZERO findings (no Critical, no Important, no Suggestions):
-      display "CLEAN — no issues found"
+  # EXIT CHECK 2: nothing blocking
+  if results has no Critical and no Important finding:
+      display "CLEAN — no Critical or Important issue found"
       STOP
 
   # There ARE findings — process them
@@ -195,13 +195,13 @@ Wait for ALL hand-backs (3 tries). Aggregate.
 
 ### Step 4: Check for clean exit
 
-Count ALL findings (Critical + Important + Suggestions); the loop reads each
-agent's closing findings block.
+Report every finding; the loop reads each agent's closing findings block and
+counts the Critical and Important ones.
 
-**If total findings == 0:**
+**If no finding is Critical or Important:**
 → go to Step 7 (Exit Summary) with exit_reason = "clean"
 
-**If total findings > 0:**
+**If a finding is Critical or Important:**
 → go to Step 5 (Apply Fixes)
 
 ### Step 5: Apply fixes
