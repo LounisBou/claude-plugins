@@ -2,8 +2,8 @@
 // The events, built from what the host hands the module's hooks. Pure: no `$`, no node module,
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
-import { parseSessionName } from '../core/names.ts'
-import { simpleCommands } from '../core/shell.ts'
+import { currentSessionName, parseSessionName } from '../core/names.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
 export const EVENT_VERSION = 1
@@ -25,7 +25,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -74,8 +74,77 @@ export function roleOf(title: string | undefined, spawned = false): string {
   return 'other'
 }
 
-/** The last path segment, the project a directory names. */
-export function projectOf(cwd: string | undefined): string | undefined {
+/** The title the host gives a session at its start, when it gives one. */
+export function sessionTitleOf(input: unknown): string | undefined {
+  return titleText(record(input)['session_title'])
+}
+
+function titleText(value: unknown): string | undefined {
+  const title = text(value)?.trim()
+  return title === undefined || title === '' ? undefined : title
+}
+
+/** The title a successful `rename_session` call gives the session. */
+export function renamedTo(input: unknown, result: unknown, check: Check | undefined): string | undefined {
+  const e = record(input)
+  const mcp = mcpOf(text(e['tool']) ?? '')
+  if (mcp?.server !== 'orchestrator' || mcp.name !== 'rename_session' || outcomeOf(result, check).outcome !== 'ok') return undefined
+  const name = titleText(e['name'])
+  return name === undefined ? undefined : currentSessionName(name)
+}
+
+/** The title of the last `custom-title` entry among the complete lines of the head of a transcript. */
+export function titleFromTranscriptHead(head: string): string | undefined {
+  let title: string | undefined
+  for (const line of head.split('\n')) {
+    if (!line.includes('"custom-title"')) continue
+    try {
+      const entry = record(JSON.parse(line))
+      if (entry['type'] === 'custom-title') title = titleText(entry['customTitle']) ?? title
+    } catch { /* a line the read cut, or no JSON: no title from it */ }
+  }
+  return title
+}
+
+/** The head of a transcript read for the title: its first bytes hold the entry. */
+export const TRANSCRIPT_HEAD_BYTES = 8192
+
+/**
+ * The `owner/name` a git remote names, in its https, ssh and scp forms (credentials, port and `.git`
+ * dropped); the last two segments of the path when a forge nests groups. A local path names none.
+ */
+export function repositoryOf(remote: string | null | undefined): string | undefined {
+  if (remote === undefined || remote === null) return undefined
+  const url = remote.trim()
+  const path = /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/(.+)$/i.exec(url)?.[1] ?? /^(?:[^@/:]+@)?[^/:]+:(?!\/)(.+)$/.exec(url)?.[1]
+  const parts = (path ?? '').replace(/\/+$/, '').replace(/\.git$/, '').split('/')
+  const [owner, name] = parts.slice(-2)
+  return parts.length >= 2 && owner !== '' && name !== '' && owner !== undefined && name !== undefined ? `${owner}/${name}` : undefined
+}
+
+/** The command that lists a repository's remotes, `remote.<name>.url <url>` a line each, from any of its worktrees. */
+export function remoteUrlsArgv(root: string): string[] {
+  return ['git', '-C', root, 'config', '--get-regexp', '^remote\\..*\\.url$']
+}
+
+/** The urls of `remoteUrlsArgv`'s answer, in its order. */
+export function remoteUrls(stdout: string): string[] {
+  return stdout.split('\n').filter(l => /^remote\..*\.url /.test(l)).map(l => l.slice(l.indexOf(' ') + 1).trim()).filter(url => url !== '')
+}
+
+/** The url of the first remote line of `remoteUrlsArgv`'s answer. */
+export function firstRemoteUrl(stdout: string): string | undefined {
+  return remoteUrls(stdout)[0]
+}
+
+/** The repository of the first remote of `remoteUrlsArgv`'s answer that names one: a remote that is a local path is passed over. */
+export function firstRepository(stdout: string): string | undefined {
+  return remoteUrls(stdout).map(repositoryOf).find(repository => repository !== undefined)
+}
+
+/** The project a session belongs to: its repository (`owner/name`) when it has one, else the last segment of its directory. */
+export function projectOf(cwd: string | undefined, repository?: string): string | undefined {
+  if (repository !== undefined) return repository
   if (cwd === undefined) return undefined
   const parts = cwd.replace(/\/+$/, '').split('/')
   return parts[parts.length - 1] || undefined
@@ -83,12 +152,12 @@ export function projectOf(cwd: string | undefined): string | undefined {
 
 // ----- session -----
 
-export function sessionStart(at: number, session: string, input: unknown, facts: { model?: string | undefined; startedAt?: number | undefined; spawned?: boolean | undefined }): Event {
+export function sessionStart(at: number, session: string, input: unknown, facts: { model?: string | undefined; startedAt?: number | undefined; spawned?: boolean | undefined; repository?: string | undefined }): Event {
   const e = record(input)
   const cwd = text(e['cwd'])
   return makeEvent('session_start', at, session, {
     cwd,
-    project: projectOf(cwd),
+    project: projectOf(cwd, facts.repository),
     model: facts.model,
     interactive: bool(e['isInteractive']),
     surface: text(e['surface']),
@@ -214,6 +283,100 @@ export function mcpOf(tool: string): { server: string; name: string } | undefine
   return match === null ? undefined : { server: match[1] ?? '', name: match[2] ?? '' }
 }
 
+/** What a GitHub act names, each field present only when the call names it. */
+export interface Target {
+  readonly repo?: string
+  readonly pr?: number
+  readonly head?: string
+}
+
+/** A head is kept to this many characters: a full sha reads as a random run to the redaction. */
+export const HEAD_MAX = 12
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const SHA = /^[0-9a-f]{7,40}$/i
+/** `github.com` on a boundary: the start of the word, a `/`, an `@` or the `.` of a subdomain. */
+const GITHUB = '(?:^|[/@.])github\\.com'
+const PULL_URL = new RegExp(`${GITHUB}/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\\d+)`)
+const PULL_URLS = new RegExp(PULL_URL.source, 'g')
+/** A whole word that is a pull request's URL. */
+const PULL_WORD = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#].*)?$/
+const REMOTE_URL = new RegExp(`${GITHUB}[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\\.git)?(?:/|$)`)
+
+function targetFrom(repo: unknown, pr: unknown, head: unknown): Target {
+  const number = typeof pr === 'number' ? pr : typeof pr === 'string' && /^#?\d{1,9}$/.test(pr) ? Number(pr.replace('#', '')) : undefined
+  return compact({
+    repo: typeof repo === 'string' && REPO.test(repo) ? repo : undefined,
+    pr: number !== undefined && Number.isInteger(number) && number > 0 ? number : undefined,
+    head: typeof head === 'string' && SHA.test(head) ? head.slice(0, HEAD_MAX) : undefined,
+  }) as Target
+}
+
+const merged = (first: Target, second: Target): Target => ({ ...second, ...first })
+
+/** What a result names, from its top-level JSON object (a string of JSON or an object) and its text. */
+function resultOf(result: unknown): { json: Fields; raw: string } {
+  const r = record(result)
+  const body = r['result'] ?? r['text']
+  let json: Fields = typeof body === 'object' ? record(body) : {}
+  const raw = typeof body === 'string' ? body : text(r['text']) ?? ''
+  if (raw.startsWith('{')) {
+    try {
+      json = record(JSON.parse(raw))
+    } catch { /* not JSON: read as text */ }
+  }
+  return { json, raw }
+}
+
+/**
+ * A `mcp__github__gh` call's target. A pr named by the arguments is the target's: the result only
+ * completes its repository and head, from its top-level JSON of that same pr. Else one source,
+ * the result's JSON or its one pull URL, gives repository and pr together.
+ */
+function githubTarget(input: Fields, result: unknown): Target {
+  const args = record(input['args'])
+  const isPr = text(input['command'])?.startsWith('pr-') === true
+  const named = targetFrom(input['repo'] ?? args['repo'], input['pr'] ?? args['pr'] ?? (isPr ? args['number'] : undefined), args['sha'] ?? args['head'] ?? input['sha'] ?? input['head'])
+  const { json, raw } = resultOf(result)
+  const fromJson = targetFrom(json['repo'], json['pr'], json['head'])
+  if (named.pr !== undefined) return fromJson.pr === named.pr ? merged(named, fromJson) : named
+  if (fromJson.pr !== undefined || fromJson.repo !== undefined) return merged(named, fromJson)
+  const urls = new Set([...raw.matchAll(PULL_URLS)].map(m => `${m[1]}#${m[2]}`))
+  const [only] = urls.size === 1 ? urls : []
+  const [repo, pr] = only === undefined ? [] : only.split('#')
+  return merged(named, targetFrom(repo, pr, undefined))
+}
+
+/** A Bash `gh` or `git push` command's target: what its arguments name plainly. */
+export function bashTarget(command: string): Target | undefined {
+  let commands: string[][]
+  try {
+    commands = simpleCommands(command)
+  } catch {
+    return undefined
+  }
+  for (const argv of commands) {
+    const program = BASENAME(argv[0] ?? '')
+    const words = argv.slice(1)
+    let found: Target = {}
+    if (program === 'gh') {
+      const at = words.findIndex(w => w === '-R' || w === '--repo')
+      const inline = words.find(w => w.startsWith('--repo='))
+      const positional = words[0] === 'pr' ? words[2] : undefined
+      const url = at < 0 && inline === undefined && positional !== undefined ? PULL_WORD.exec(positional) : null
+      found = merged(
+        targetFrom(at >= 0 ? words[at + 1] : inline?.slice('--repo='.length), positional, flag(words, '--match-head-commit') ?? flag(words, '--sha')),
+        url === null ? {} : targetFrom(url[1], url[2], undefined),
+      )
+    } else if (program === 'git') {
+      const sub = gitSubcommand(argv)
+      const remote = sub === undefined || argv[sub.at] !== 'push' ? undefined : argv.slice(sub.at + 1).map(w => REMOTE_URL.exec(w)).find(m => m !== null)
+      if (remote !== undefined && remote !== null) found = targetFrom(remote[1], undefined, undefined)
+    }
+    if (Object.keys(found).length > 0) return found
+  }
+  return undefined
+}
+
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 /** The question an AskUserQuestion call put, and the letters chosen, from its input and result. */
@@ -295,6 +458,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   const { outcome, decided_by } = outcomeOf(result, check)
   const bash = tool === 'Bash' && typeof e['command'] === 'string' ? bashOf(e['command']) : undefined
   const mcpCommand = text(e['command'])
+  const target = mcp?.server === 'github' && mcp.name === 'gh' ? githubTarget(e, result) : bash !== undefined ? bashTarget(String(e['command'])) : undefined
   const events: Event[] = [makeEvent('tool_call', at, session, {
     agent,
     tool,
@@ -309,6 +473,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     skill: tool === 'Skill' ? text(e['skill']) : undefined,
     subagent_type: tool === 'Agent' ? text(e['subagent_type']) : undefined,
     command: mcp !== undefined && mcpCommand !== undefined && /^[a-z][a-z0-9-]{0,40}$/.test(mcpCommand) ? mcpCommand : undefined,
+    target: target !== undefined && Object.keys(target).length > 0 ? target : undefined,
   })]
   if (tool === 'AskUserQuestion') events.push(makeEvent('question', at, session, { agent, ...questionOf(e, result), wait_ms: durationMs }))
   if (mcp?.server === 'orchestrator' && mcp.name === 'declare_wait' && text(e['kind']) === 'operator') {
@@ -356,9 +521,35 @@ export class Collector {
   launchedAt: number | undefined
   firstTurnSeen = false
   turns = 0
+  private actor: { title: string; role: string } | undefined
+  private headRead = false
+
+  /** The session's title, once known. */
+  get title(): string | undefined {
+    return this.actor?.title
+  }
+
+  /** Names the session: each event buffered from now on carries its title and role. */
+  setTitle(title: string | undefined): void {
+    if (title !== undefined) this.actor = { title, role: roleOf(title) }
+  }
+
+  /** True once, while the title is unknown: the transcript's head is read at most once per session. */
+  wantsHeadRead(): boolean {
+    if (this.actor !== undefined || this.headRead) return false
+    this.headRead = true
+    return true
+  }
+
+  /** `event` with the session's title and role, but for those its kind carries of its own. */
+  private stamped(event: Event): Event {
+    if (this.actor === undefined) return event
+    const own = text(event['title'])
+    return { ...event, title: own ?? this.actor.title, role: event['role'] ?? (own === undefined ? this.actor.role : roleOf(own)) }
+  }
 
   push(...events: Event[]): boolean {
-    this.buffer.push(...events)
+    this.buffer.push(...events.map(event => this.stamped(event)))
     return this.buffer.length >= FLUSH_AT
   }
 

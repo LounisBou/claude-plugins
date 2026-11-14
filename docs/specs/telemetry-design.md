@@ -20,6 +20,11 @@ sessions that ended before the plugin was installed or ended without a `session.
 Every line: `v`, `ts` (ISO, UTC), `event`, `session` (the host's session id); `agent` when the
 fact happened in a subagent's loop.
 
+`title` and `role` name the session that acted, from the host's `session_title` at the start, a
+successful `rename_session` call, or one read of the first 8 KB of the transcript at the first main
+turn's end, and are absent until one gives it; `tool_call.target` (`repo`, `pr`, `head` cut to 12
+characters) names what a GitHub act (the `github` tool, a Bash `gh` or `git push` line) names.
+
 The kinds, each one's fields with their units and the hook or command line that writes it, are
 declared once in `plugins/telemetry/hooks/schema.ts`. The writer accepts exactly the declared
 kinds, and the export generates the logs repository's schema pages from the same list (« Index »).
@@ -122,6 +127,9 @@ reading every line:
   its sessions (role, models, title, project, cost, span, whether it ended), the pull requests,
   branches and dispatch rows its events name, the github tool's commands by count, and for each
   session the path of its redacted transcript in the repository.
+- `index/projects/<owner-name>/<machine>/<day>.json`: the same manifest per project, over the sessions
+  whose `project` is that repository (`owner/name` of the session's git remote, read once at its
+  start, the same from any worktree; the directory's last segment when it has no remote).
 
 Raw transcripts are exported, redacted (the operator's order of 2026-11-14: everything goes into
 the logs repository, indexed like the rest). The export copies the transcript of each session the

@@ -31,6 +31,8 @@ export const COMMON_FIELDS: readonly FieldSpec[] = [
   { name: 'event', type: 'string', description: 'The kind, one of the pages of this schema.' },
   { name: 'session', type: 'string', description: 'The host\'s session id; the name of the session\'s transcript file, whose redacted copy is in the logs repository.' },
   { name: 'agent', type: 'string', description: 'The subagent whose loop the fact happened in; absent for the session\'s own loop.' },
+  { name: 'title', type: 'string', description: 'The title of the session that acted; absent until the module learns it (the host\'s start, a rename, the transcript\'s head). A launched session\'s spawn and close carry the child\'s own.' },
+  { name: 'role', type: 'string', description: 'The role that title gives: `orchestrator`, `coordinator`, `agent`, `auditor`, `reviewer` or `other`; absent with the title.' },
 ]
 
 const field = (name: string, type: string, description: string, unit?: string): FieldSpec => (unit === undefined ? { name, type, description } : { name, type, unit, description })
@@ -43,7 +45,7 @@ export const EVENT_SCHEMA = {
     writers: ['hook `session.start`; `$.session.usage().startedAt`'],
     fields: [
       field('cwd', 'string', 'The working directory.'),
-      field('project', 'string', 'The last segment of `cwd`.'),
+      field('project', 'string', 'The `owner/name` of the session\'s git remote (`origin`, else the first), the same from any worktree; the last segment of `cwd` when it has no remote.'),
       field('model', 'string', 'The model the session starts on.'),
       field('interactive', 'boolean', 'Whether a person drives the session.'),
       field('surface', 'string', 'The host surface (terminal, desktop, …).'),
@@ -90,6 +92,7 @@ export const EVENT_SCHEMA = {
       field('skill', 'string', 'The skill a `Skill` call loaded.'),
       field('subagent_type', 'string', 'The type an `Agent` call started.'),
       field('command', 'string', 'The `command` argument of an MCP call (`pr-merge`, `pr-gate`, …).'),
+      field('target', 'object', 'What a GitHub act names: `repo`, `pr`, `head` (its first 12 characters), each present when the arguments or the result of the `mcp__github__gh` call, or the `gh` or `git push` line, name it.'),
     ],
   },
   agent_spawned: {

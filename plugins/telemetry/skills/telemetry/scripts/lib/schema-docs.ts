@@ -7,6 +7,9 @@ import { MANIFEST_FIELDS } from './manifest.ts'
 /** The directory of the index in the logs repository. */
 export const INDEX_DIR = 'index'
 
+/** The directory of the per-project views, under the index. */
+export const PROJECTS_DIR = `${INDEX_DIR}/projects`
+
 /** A file of the index: its path in the repository and its text. */
 export interface IndexFile {
   readonly path: string
@@ -51,6 +54,7 @@ function entryPoint(kinds: Readonly<Record<string, KindSpec>>): string {
     '- `machines/<machine>/<day>.jsonl`: the events of one UTC day, one JSON object per line, redacted.',
     '- `machines/<machine>/transcripts/<session>.jsonl`: the raw transcript of a session the day files name, redacted by the export as the day files are (every secret replaced by `[REDACTED:<pattern>]`).',
     '- `index/<machine>/<day>.json`: that day\'s manifest (`schema/manifest.md`): its sessions with role and model, the pull requests, branches and dispatch rows its events name.',
+    '- `index/projects/<owner-name>/<machine>/<day>.json`: the same manifest, per project (the repository `owner/name` of the sessions\' git remote, `/` written `-`; the directory\'s name when it has none), holding only that project\'s sessions.',
     '- `index/schema/<event>.md`: one page per event kind; `index/schema.json` the same, machine-readable.',
     '',
     'Raw transcripts are in this repository, redacted: they hold prompts and may have held secrets. A',

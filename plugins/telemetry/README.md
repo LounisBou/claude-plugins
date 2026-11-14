@@ -12,7 +12,9 @@ Session start and end (role from the title, model, effort, launch latency, time 
 turn, duration, cost, context), each turn's end (duration, tokens, context, cost), each tool call
 (tool, MCP server, outcome, who refused it, duration, a redacted Bash line), subagents and
 launched sessions spawned and closed, questions put to the operator and the letters chosen, and the
-dispatch record's writes. No prompt, answer, message or tool output is kept in the events; the
+dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
+module has learned them) and each GitHub act the repository, pull request and head it names
+(`target`). No prompt, answer, message or tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
 
 ## Commands
@@ -21,7 +23,9 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   commits the day files to `machines/<machine>/` of the repository `CLAUDE_LOGS_REPO` names (in the
   environment or in `~/.env`), with the raw transcript of each session they name, redacted, in
   `machines/<machine>/transcripts/<session>.jsonl`, and the generated `index/` (a schema page per
-  event kind and a manifest per day, pointing at those transcripts), and pushes `main`.
+  event kind and a manifest per day, pointing at those transcripts, and the same manifest per project at
+  `index/projects/<owner-name>/<machine>/<day>.json`), and pushes `main`. A session's project is the
+  `owner/name` of its git remote, the same from any worktree (the directory's name when it has none).
   Unset, it pushes nothing and says so. The export also runs by itself: a session's end starts it,
   detached, at most once a UTC day, one at a time per machine.
 - `telemetry.ts export --auto [--foreground] --config <dir>`: the automatic export.
