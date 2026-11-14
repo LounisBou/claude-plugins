@@ -3286,6 +3286,21 @@ test('a question asked with ask is told to the coordinator once, and wakes it wh
   expect(fx.submitted.length).toBe(1)
 })
 
+test('a question asked with ask claimed by his prompt in its asker\'s tab is neither told nor woken for, until that turn\'s end gives it back', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const claimed = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true, claimed: { typed: 'B', at: minutesAgo(0) } })
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(claimed) + '\n')
+  fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: a' })) + '\n')
+  await tick()
+  expect(fx.notices).toEqual([])
+  expect(fx.submitted).toEqual([])
+  const { claimed: _typed, ...given } = claimed
+  fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(given) + '\n')
+  await tick()
+  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)'])
+  expect(fx.submitted.length).toBe(1)
+})
+
 // --- what the pane leaves out, and what it shows, said in its log ---------------------------------
 
 // The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on
@@ -3487,6 +3502,40 @@ test('an entry moved to a successor not measured yet is due in the tab with the 
   const moved = entry('Orch: belt-2', minutesAgo(1), { session: 's-two', movedFrom: 's-old' })
   const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
   fx.files.delete(`${SESSIONS}/s-two`)
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch: belt-2')
+})
+
+// A question asked with `ask` moved to a successor by its name alone follows the same rule: drawn and
+// due while a live session of that name runs, its session written once known, withdrawn once none runs.
+test('a question asked with ask moved to a successor by its name alone is drawn while a live session of that name runs, and takes its session', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  const tree = await coordinatorRender(fx)
+  expect(JSON.stringify(tree)).toContain('Questions for you — 1 pending')
+  expect(texts(tree)).toContain('Orch: belt-2 · orchestrator · box-1')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.sender.session, read.status, read.seq]).toEqual(['s-two', 'open', 3])
+})
+
+test('a question asked with ask moved to a successor by its name alone is withdrawn once no session of that name runs', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/999.json`, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }))
+  expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.status, read.answer?.by, read.answer?.text]).toEqual(['withdrawn', 'sender', "the sender's session ended"])
+})
+
+test('a question asked with ask moved to a successor by its name alone is due in the tab with the pane closed', async () => {
+  const { fx, tick } = await wakingCoordinator([], { paneClosed: true })
+  const moved = askedObject('', 'Orch: belt-2', minutesAgo(1), { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
   fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
   await tick()
   expect(fx.submitted.length).toBe(1)
