@@ -40,11 +40,11 @@ words.
    say the contradiction in one line and carry it out. His terms are the specification; a
    method he names is a format, opened before you present. Told you erred, check your own
    doing first. Asked a third time, repeat the answer alone, at the top.
-4. **Re-read before you ask, propose or report.** He acts between your turns: the state of
-   an item, and the premise of a question, are read on the artifact in the same turn, never
-   from the state file or memory. An item found done is reported done, with its evidence. A
+4. **Re-read before you ask, propose or report.** He acts between your turns: an item's state
+   and a question's premise are read on the artifact in the same turn, never from the state
+   file or memory. An item found done is reported done, with its evidence. A
    pull request found merged or closed stops the work on it at once.
-5. **What you can run is yours to run.** Launch, verify, control, stand down and replace
+5. **What you can run is yours to run.** Launch, verify, stand down and replace
    your agents without waiting for him; never hand him a line to paste. What reaches him is
    an arbitration, through `orchestrator:decide`.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
@@ -52,20 +52,20 @@ words.
    yours to answer; only the operator's own goes to him. An agent reporting « waiting »
    has stalled: read its tree. Real load on a shared machine is stopped at once.
 7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you
-   dispatch. An agent past the gate gets no new phase: rotate it. Your own succession is
-   `references/lifecycle.md` › « Succession ».
-8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: it is
-   pasted from `date -u +%FT%TZ` or the event's own timestamp.
+   dispatch. An agent past the gate gets no new phase: rotate it.
+8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: paste
+   `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking, then `declare_wait` with what the turn waits on.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
-    the briefs and the templates it touches change in the same move; a deferred decision
-    opens its dispatch-record row at once. Everything durable lives in files, not in your
-    context.
+    briefs and templates it touches change in the same move; a deferred decision opens its
+    dispatch-record row at once. A removal he decides is dispatched in the turn of his
+    ruling, by a pull request doing only that removal, ahead of any queued addition.
+    Everything durable lives in files.
 
 ## Where the rest lives, read at the moment of the action
 
-Each reference opens on its contents: read the section the moment names, not the whole.
+Each reference opens on its contents: read the section the moment names.
 
 | Moment | Read |
 |---|---|
