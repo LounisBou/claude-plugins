@@ -2577,6 +2577,29 @@ printf 'on: [push, pull_request]\njobs: {}\n' > "$LC/co/.github/workflows/ci.yml
 check "light_ci status reads a CI on every pull request as covering stacked bases, and proposes nothing to ask" \
   "CI on stacked bases: yes (ci.yml)|useful: no" "$(lc status | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|useful)' | paste -sd'|' -)"
 
+RUNSFIX="$LC/fix/GET_repos_acme_thing_actions_runs__event=pull_request&status=completed&per_page=10.json"
+cp "$RUNSFIX" "$LC/runs.kept"; printf '{"__status":500,"message":"boom"}' > "$RUNSFIX"
+check "light_ci status says the median is unread and useful: unknown when its read failed" \
+  "median pull request run: unread (boom (HTTP 500))|useful: unknown" \
+  "$(lc status | tr ';' '\n' | sed 's/^ //' | grep -E '^(median|useful)' | paste -sd'|' -)"
+mv "$LC/runs.kept" "$RUNSFIX"
+
+# Read through the API (the checkout's origin is another repository): a directory GitHub does not have reads as none,
+# a read that fails reads as unread, never as « no workflow » or « no known stack », and useful is unknown.
+lcgit remote set-url origin "$LC/origin.git"
+WFFIX="$LC/fix/GET_repos_acme_thing_contents_.github_workflows.json"; TOPFIX="$LC/fix/GET_repos_acme_thing_contents_..json"
+printf '{"__status":404,"message":"Not Found"}' > "$WFFIX"
+printf '{"__status":404,"message":"Not Found"}' > "$TOPFIX"
+check "light_ci status reads a repository with no workflow directory as having no workflow, and no known stack" \
+  "CI on stacked bases: no workflow runs on pull requests|proposed: none (no known stack)|useful: yes" \
+  "$(lc status --repo acme/thing | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|proposed|useful)' | paste -sd'|' -)"
+printf '{"__status":500,"message":"boom"}' > "$WFFIX"
+printf '{"__status":500,"message":"boom"}' > "$TOPFIX"
+check "light_ci status says unread for the facts a failed read leaves unknown, and useful: unknown" \
+  "CI on stacked bases: unread (boom (HTTP 500))|proposed: unread (boom (HTTP 500))|useful: unknown" \
+  "$(lc status --repo acme/thing | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|proposed|useful)' | paste -sd'|' -)"
+rm -f "$WFFIX" "$TOPFIX"
+
 # The workflow reader on the shapes it meets.
 branches() { printf "$1" | python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import light_ci; print(light_ci.pull_request_branches(sys.stdin.read()))' "$ROOT/engine"; }
 check "a pull_request trigger with no branches runs on every base" "None" "$(branches 'on:\n  pull_request:\n  push:\n    branches: [main]\n')"

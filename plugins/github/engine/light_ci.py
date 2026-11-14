@@ -354,10 +354,13 @@ def pull_request_branches(text):
 
 
 class _Files:
-    """The repository's files, from the checkout when its origin is that repository, else from the API."""
+    """The repository's files, from the checkout when its origin is that repository, else from the API. A file or
+    directory that is not there reads as none; a read that fails sets `failed` to why, for the fact being read to
+    say it is unread rather than answer from nothing."""
 
     def __init__(self, owner, name):
         self.owner, self.name = owner, name
+        self.failed = None
         code, url, _ = git("remote", "get-url", "origin")
         self.local = code == 0 and re.search(r"[/:]%s/%s(?:\.git)?/?$" % (re.escape(owner), re.escape(name)), url, re.I) is not None
 
@@ -370,7 +373,10 @@ class _Files:
                 return None
         try:
             got = http.rest("GET", "/repos/%s/%s/contents/%s" % (self.owner, self.name, quote(path)))
-        except (errors.GhError, OSError):
+        except errors.NotFound:
+            return None
+        except (errors.GhError, OSError) as exc:
+            self.failed = getattr(exc, "message", str(exc))
             return None
         if not isinstance(got, dict) or got.get("encoding") != "base64":
             return None
@@ -384,13 +390,18 @@ class _Files:
                 return []
         try:
             got = http.rest("GET", "/repos/%s/%s/contents/%s" % (self.owner, self.name, quote(path)))
-        except (errors.GhError, OSError):
+        except errors.NotFound:
+            return []
+        except (errors.GhError, OSError) as exc:
+            self.failed = getattr(exc, "message", str(exc))
             return []
         return sorted(e.get("name", "") for e in got) if isinstance(got, list) else []
 
 
 def stacked_ci(files):
-    """'yes (<file>)', 'no (<file>: <bases>; …)' or 'no workflow runs on pull requests'."""
+    """(whether the CI runs on stacked bases, its words): 'yes (<file>)', 'no (<file>: <bases>; …)', 'no workflow
+    runs on pull requests', or None and 'unread (<why>)' when a read failed."""
+    files.failed = None
     every, limited = [], []
     for wf in files.listing(".github/workflows"):
         if not wf.endswith((".yml", ".yaml")):
@@ -401,6 +412,8 @@ def stacked_ci(files):
             every.append(wf)
         elif branches:
             limited.append("%s: %s" % (wf, ", ".join(branches)))
+    if files.failed:
+        return None, "unread (%s)" % files.failed
     if every:
         return True, "yes (%s)" % ", ".join(every)
     if limited:
@@ -413,11 +426,12 @@ def _when(text):
 
 
 def median_run(owner, name):
-    """The median minutes of the last completed pull request runs, or the reason none is read."""
+    """(the median minutes of the last completed pull request runs, its words, whether the read failed): no median
+    when none ran or the read failed."""
     try:
         data = http.rest("GET", "/repos/%s/%s/actions/runs?event=pull_request&status=completed&per_page=%d" % (owner, name, RUNS_READ))
     except (errors.GhError, OSError) as exc:
-        return None, "unread (%s)" % getattr(exc, "message", exc)
+        return None, "unread (%s)" % getattr(exc, "message", exc), True
     minutes = []
     for wf_run in (data or {}).get("workflow_runs") or []:
         try:
@@ -425,9 +439,9 @@ def median_run(owner, name):
         except (KeyError, TypeError, ValueError):
             continue
     if not minutes:
-        return None, "no completed pull request run"
+        return None, "no completed pull request run", False
     median = statistics.median(minutes)
-    return median, "%.1f min over %d runs" % (median, len(minutes))
+    return median, "%.1f min over %d runs" % (median, len(minutes)), False
 
 
 def stacked_count(owner, name, now=None):
@@ -529,18 +543,28 @@ def status(args):
         return 0
     files = _Files(owner, name)
     runs_on_stacked, ci = stacked_ci(files)
-    median, median_text = median_run(owner, name)
+    median, median_text, median_unread = median_run(owner, name)
     stacked = stacked_count(owner, name)
+    files.failed = None
     command = proposed(files)
-    useful = state == "missing" and (not runs_on_stacked or (median is not None and median > SLOW_CI_MINUTES))
+    proposal = ("unread (%s)" % files.failed if files.failed
+                else "none (no known stack)" if command is None
+                else command[0] + " (" + command[1] + (", TIA past 2 min: " + command[2] if command[2] else "") + ")")
+    if state != "missing":
+        useful = "no"
+    elif runs_on_stacked is False:
+        useful = "yes"
+    elif runs_on_stacked is None or (median is None and median_unread):
+        useful = "unknown"
+    else:
+        useful = "yes" if median is not None and median > SLOW_CI_MINUTES else "no"
     parts = [
         "%s: %s" % (nwo, state if state == "missing" else "invalid (%s)" % project["why"]),
         "CI on stacked bases: " + ci,
         "median pull request run: " + median_text,
         "stacked pull requests over %d days: %s" % (STACKED_DAYS, stacked),
-        "proposed: " + ("none (no known stack)" if command is None
-                        else command[0] + " (" + command[1] + (", TIA past 2 min: " + command[2] if command[2] else "") + ")"),
-        "useful: " + ("yes" if useful else "no"),
+        "proposed: " + proposal,
+        "useful: " + useful,
         "file: " + path,
     ]
     print("; ".join(parts))
