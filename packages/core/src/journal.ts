@@ -11,6 +11,12 @@ export interface JournalIo extends StoreIo {
   readonly list: (dir: string) => Promise<readonly string[]>
 }
 
+/** The identifier of the event a journal path names. */
+function idOf(path: string): string {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  return name.endsWith('.json') ? name.slice(0, -'.json'.length) : name
+}
+
 /** The random part of an event's identifier: eight lowercase hex digits. */
 export function randomPart(): string {
   const bytes = new Uint8Array(4)
@@ -21,7 +27,8 @@ export function randomPart(): string {
 /**
  * Writes `event` into `dir`; with `prune`, then removes what the journal no longer keeps at `now`,
  * once the removed events are counted into the fold file (learning.ts, `foldDropped`) under its lock.
- * A fold file that cannot be read stops the pruning, which throws.
+ * A fold file that cannot be read stops the pruning, which throws, and so does a removal that fails:
+ * the ids it left behind are pending in the fold, so the next prune does not count them again.
  */
 export async function appendEventOver(io: JournalIo, dir: string, event: { readonly id: string }, now: string, prune: boolean): Promise<void> {
   await writeAtomicOver(io, `${dir}/${journalFileOf(event.id)}`, `${JSON.stringify(event)}\n`)
@@ -31,8 +38,9 @@ export async function appendEventOver(io: JournalIo, dir: string, event: { reado
   if (gone.length === 0) return
   const fold = `${dir}/${JOURNAL_FOLD_FILE}`
   await withLockOver(io, fold, async () => {
-    const next = foldDropped(await Promise.all(gone.map(path => io.read(path))), await io.read(fold))
+    const next = foldDropped(await Promise.all(gone.map(async path => ({ id: idOf(path), text: await io.read(path) }))), await io.read(fold))
     if (next !== undefined) await writeAtomicOver(io, fold, next)
-    await io.run(removeArgv(...gone))
+    const removed = await io.run(removeArgv(...gone))
+    if (removed.exitCode !== 0) throw new Error(`the journal ${dir} could not be pruned${removed.stderr ? `: ${removed.stderr.trim()}` : ''}`)
   })
 }

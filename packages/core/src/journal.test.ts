@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { appendEventOver, randomPart, type JournalIo } from './journal.ts'
 import { appendEvent } from './journal-sync.ts'
-import { JOURNAL_FOLD_FILE, JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseFolded, parseJournalEvent } from './learning.ts'
+import { foldedText, foldWeekly, JOURNAL_FOLD_FILE, JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseFold, parseJournalEvent } from './learning.ts'
 
 const NOW = '2026-11-14T10:15:00Z'
 const scratch = () => mkdtempSync(join(tmpdir(), 'journal-'))
@@ -75,13 +75,30 @@ for (const [label, append] of [
       const second = eventAt(aged(99), '0000000b')
       for (const old of [first, second]) writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
       await append(dir, eventAt(NOW), true)
-      const folded = parseFolded(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))
+      const folded = parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts
       assert.equal(folded?.reduce((sum, line) => sum + line.count, 0), 2)
       assert.ok(folded?.every(line => line.signature === 'refusal:orchestrator.kill.refused'))
       const third = eventAt(aged(98), '0000000c')
       writeFileSync(join(dir, journalFileOf(third.id)), JSON.stringify(third))
       await append(dir, eventAt(NOW, '0000000d'), true)
-      assert.equal(parseFolded(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.reduce((sum, line) => sum + line.count, 0), 3)
+      assert.equal(parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts?.reduce((sum, line) => sum + line.count, 0), 3)
+    })
+
+    it('never counts an event twice: one a removal left behind, already counted and pending, is removed without being counted again', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const left = eventAt(aged(100))
+      writeFileSync(join(dir, journalFileOf(left.id)), JSON.stringify(left))
+      // What the earlier prune wrote before its removal did not happen.
+      writeFileSync(join(dir, JOURNAL_FOLD_FILE), foldedText(foldWeekly([left]), [left.id]))
+      const other = eventAt(aged(99), '0000000b')
+      writeFileSync(join(dir, journalFileOf(other.id)), JSON.stringify(other))
+      await append(dir, eventAt(NOW), true)
+      const folded = parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))
+      assert.equal(folded?.counts.reduce((sum, line) => sum + line.count, 0), 2)
+      assert.deepEqual([...(folded?.pending ?? [])].sort(), [left.id, other.id].sort())
+      assert.ok(!readdirSync(dir).includes(journalFileOf(left.id)))
+      assert.ok(!readdirSync(dir).includes(journalFileOf(other.id)))
     })
 
     it('drops nothing, and says why, when the fold file it holds cannot be read', async () => {
@@ -104,6 +121,20 @@ for (const [label, append] of [
 }
 
 describe('a hooks module\'s journal', () => {
+  it('says a removal that failed, leaves the events, and counts them once when the next prune removes them', async () => {
+    const dir = join(scratch(), 'journal')
+    mkdirSync(dir, { recursive: true })
+    const olds = [eventAt(aged(100)), eventAt(aged(99), '0000000b')]
+    for (const old of olds) writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+    const io = realIo()
+    const failing: JournalIo = { ...io, run: async argv => (argv[0] === 'rm' && argv.some(arg => arg.endsWith('.json')) ? { exitCode: 1, stderr: 'busy' } : io.run(argv)) }
+    await assert.rejects(appendEventOver(failing, dir, eventAt(NOW), NOW, true), /could not be pruned: busy/)
+    assert.ok(olds.every(old => readdirSync(dir).includes(journalFileOf(old.id))))
+    await appendEventOver(realIo(), dir, eventAt(NOW, '0000000c'), NOW, true)
+    assert.ok(olds.every(old => !readdirSync(dir).includes(journalFileOf(old.id))))
+    assert.equal(parseFold(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.counts.reduce((sum, line) => sum + line.count, 0), 2)
+  })
+
   it('lists nothing when asked not to prune', async () => {
     const io = realIo()
     const dir = join(scratch(), 'journal')

@@ -1,12 +1,12 @@
 # The learning system — design
 
-**Status: proposal for the next version, awaiting the operator's confirmation.** Nothing in it
-is decided or scheduled until the operator answers the « Open questions »; the current program
-does not build it. One part is built ahead of the answers, small and undoable: the learning
-event contract of phase L2 (`packages/core/src/learning.ts`), whose window, retention and count are
-the operator's answer to question 9 (a window of 30 days, journals kept 90 days and at most 6,000
-events a plugin). Questions 4 and 9 carry the operator's answer of 2026-11-14; questions 5 to 8, 10
-and 11 resume under the condition stated after question 11.
+**Status: proposal for the next version; the operator has answered questions 4 and 9.**
+They answered « A » to each on 2026-11-14, and questions 5 to 8, 10 and 11 resume under the
+condition stated after question 11. The design is decided or scheduled only as the answers say;
+the current program does not build it. One part is built
+ahead of the answers, small and undoable: the learning event contract of phase L2
+(`packages/core/src/learning.ts`), whose window, retention and count are the operator's answer to
+question 9 (a window of 30 days, journals kept 90 days and at most 6,000 events a plugin).
 The event's kinds and fields are version 1's list, open to additions as new versions (an audit
 trail's events, for one), not a final list.
 

@@ -346,22 +346,29 @@ export function mergeFolded(before: readonly FoldedCount[], added: readonly Fold
   return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, counted]) => counted)
 }
 
-/** The text of a journal's fold file: the counts, whole, on one line. */
-export function foldedText(counts: readonly FoldedCount[]): string {
-  return `${JSON.stringify({ v: FOLD_VERSION, counts })}\n`
+/** What a fold file holds: the counts, and the ids of the events counted whose removal may not have happened. */
+export interface Fold {
+  readonly counts: readonly FoldedCount[]
+  readonly pending: readonly string[]
 }
 
-/** The counts a fold file holds: none when it is absent (undefined text), undefined when it is not a fold of this contract. */
-export function parseFolded(text: string | undefined): FoldedCount[] | undefined {
-  if (text === undefined) return []
+/** The text of a journal's fold file: the counts and the pending ids, whole, on one line. */
+export function foldedText(counts: readonly FoldedCount[], pending: readonly string[] = []): string {
+  return `${JSON.stringify({ v: FOLD_VERSION, counts, pending })}\n`
+}
+
+/** The fold a text holds: an empty one when it is absent (undefined text), undefined when it is not a fold of this contract. */
+export function parseFold(text: string | undefined): Fold | undefined {
+  if (text === undefined) return { counts: [], pending: [] }
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch {
     return undefined
   }
-  const top = fieldsOf(raw, ['v', 'counts'])
-  if (!top || top['v'] !== FOLD_VERSION || !Array.isArray(top['counts'])) return undefined
+  const top = fieldsOf(raw, ['v', 'counts', 'pending'])
+  if (!top || top['v'] !== FOLD_VERSION || !Array.isArray(top['counts']) || !Array.isArray(top['pending'])) return undefined
+  if (!top['pending'].every(id => matches(PATTERNS.id, id))) return undefined
   const counts: FoldedCount[] = []
   for (const entry of top['counts'] as unknown[]) {
     const { signature, week, count } = fieldsOf(entry, ['signature', 'week', 'count']) ?? {}
@@ -370,18 +377,25 @@ export function parseFolded(text: string | undefined): FoldedCount[] | undefined
     if (!sound) return undefined
     counts.push({ signature, week, count })
   }
-  return counts
+  return { counts, pending: top['pending'] as string[] }
+}
+
+/** The counts a fold file holds: none when it is absent (undefined text), undefined when it is not a fold of this contract. */
+export function parseFolded(text: string | undefined): FoldedCount[] | undefined {
+  return parseFold(text)?.counts.map(counted => counted)
 }
 
 /**
- * The text of the fold file once the dropped events, as the texts of their files (undefined for one
- * already gone), are counted into `current`; undefined when none of them is an event, so nothing is
- * written. Throws when `current` is no fold of this contract: a writer never overwrites counts it
- * cannot read, so it drops nothing either.
+ * The text of the fold file once the events about to be dropped (each with its identifier and the text
+ * of its file, undefined for one already gone) are counted into `current`; undefined when none is a new
+ * event, so nothing is written. An event `current` lists as pending was counted by an earlier prune whose
+ * removal did not happen: it is not counted again. The pending ids written are the ones of this batch,
+ * which the writer removes right after the write. Throws when `current` is no fold of this contract: a
+ * writer never overwrites counts it cannot read, so it drops nothing either.
  */
-export function foldDropped(dropped: ReadonlyArray<string | undefined>, current: string | undefined): string | undefined {
-  const events: Foldable[] = []
-  for (const text of dropped) {
+export function foldDropped(dropped: ReadonlyArray<{ readonly id: string; readonly text: string | undefined }>, current: string | undefined): string | undefined {
+  const events: Array<{ readonly id: string; readonly event: Foldable }> = []
+  for (const { id, text } of dropped) {
     if (text === undefined) continue
     let raw: unknown
     try {
@@ -390,12 +404,15 @@ export function foldDropped(dropped: ReadonlyArray<string | undefined>, current:
       continue
     }
     const event = parseJournalEvent(raw)
-    if (event) events.push(event)
+    if (event) events.push({ id, event })
   }
   if (events.length === 0) return undefined
-  const before = parseFolded(current)
+  const before = parseFold(current)
   if (before === undefined) throw new Error(`the fold file ${JOURNAL_FOLD_FILE} is not readable, so nothing is dropped`)
-  return foldedText(mergeFolded(before, foldWeekly(events)))
+  const counted = new Set(before.pending)
+  const added = events.filter(({ id }) => !counted.has(id))
+  if (added.length === 0) return undefined
+  return foldedText(mergeFolded(before.counts, foldWeekly(added.map(({ event }) => event))), events.map(({ id }) => id))
 }
 
 // ----- version 2: the audit trail -----

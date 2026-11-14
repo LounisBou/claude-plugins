@@ -4,7 +4,7 @@ import { DATA_FILES } from './data.ts'
 import {
   AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, eventId, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
-  foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFolded, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
+  foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
 const AT = '2026-11-14T10:15:00Z'
@@ -212,8 +212,8 @@ describe('the weekly fold of the events a journal drops', () => {
 
 describe('the fold file of a journal', () => {
   const line = (signature: string, week: string, count: number) => ({ signature, week, count })
-  const dropped = (at: string, code = 'github.ready.missing-review') =>
-    JSON.stringify(learningEvent({ kind: 'refusal', at, random: '0a1b2c3d', source: { plugin: 'github', code }, trust: 'computed' }))
+  const made = (at: string, code = 'github.ready.missing-review') => learningEvent({ kind: 'refusal', at, random: '0a1b2c3d', source: { plugin: 'github', code }, trust: 'computed' })
+  const dropped = (at: string, code = 'github.ready.missing-review') => ({ id: made(at, code)?.id ?? '', text: JSON.stringify(made(at, code)) })
 
   it('is one file named by the contract, which is not an entry of the journal', () => {
     assert.equal(JOURNAL_FOLD_FILE, 'folded.json')
@@ -238,7 +238,7 @@ describe('the fold file of a journal', () => {
 
   it('folds the dropped events into the current counts, whatever version they are, and skips what is no event', () => {
     const current = foldedText([line('refusal:github.ready.missing-review', '2026-11-09', 4)])
-    const text = foldDropped([dropped('2026-11-10T08:00:00Z'), '{}', undefined, 'not json', dropped('2026-11-17T08:00:00Z')], current)
+    const text = foldDropped([dropped('2026-11-10T08:00:00Z'), { id: 'a', text: '{}' }, { id: 'b', text: undefined }, { id: 'c', text: 'not json' }, dropped('2026-11-17T08:00:00Z')], current)
     assert.deepEqual(parseFolded(text), [
       line('refusal:github.ready.missing-review', '2026-11-09', 5),
       line('refusal:github.ready.missing-review', '2026-11-16', 1),
@@ -246,9 +246,30 @@ describe('the fold file of a journal', () => {
   })
 
   it('writes nothing when no dropped event can be read, and refuses to overwrite a fold it cannot read', () => {
-    assert.equal(foldDropped(['{}', undefined], undefined), undefined)
+    assert.equal(foldDropped([{ id: 'a', text: '{}' }, { id: 'b', text: undefined }], undefined), undefined)
     assert.equal(foldDropped([], foldedText([])), undefined)
     assert.throws(() => foldDropped([dropped('2026-11-10T08:00:00Z')], 'garbled'), /fold/)
+  })
+
+  it('names the events it counted as pending, and counts an event it finds pending once only', () => {
+    const first = dropped('2026-11-10T08:00:00Z')
+    const second = dropped('2026-11-17T08:00:00Z')
+    const counted = foldDropped([first], undefined)
+    assert.deepEqual(parseFold(counted)?.pending, [first.id])
+    // The removal did not happen: the same event comes back, with a new one beside it.
+    const again = foldDropped([first, second], counted)
+    assert.equal(parseFolded(again)?.reduce((sum, line) => sum + line.count, 0), 2)
+    assert.deepEqual(parseFold(again)?.pending, [first.id, second.id])
+    // Only events already counted come back: there is nothing to write, and the removal can go on.
+    assert.equal(foldDropped([first], counted), undefined)
+  })
+
+  it('reads and writes the pending ids with the counts, and refuses an id that is no event\'s', () => {
+    const counts = [line('refusal:a.b', '2026-11-09', 2)]
+    assert.deepEqual(parseFold(foldedText(counts, ['20261114T101500Z-0a1b2c3d'])), { counts, pending: ['20261114T101500Z-0a1b2c3d'] })
+    assert.deepEqual(parseFold(foldedText(counts)), { counts, pending: [] })
+    assert.equal(parseFold('{"v":1,"counts":[],"pending":["x"]}'), undefined)
+    assert.equal(parseFold('{"v":1,"counts":[],"pending":"x"}'), undefined)
   })
 })
 
