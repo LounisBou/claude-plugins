@@ -12,6 +12,7 @@ import { register } from '../register.ts'
 import { parseConsentRecord, quotesConsent } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { SHAPED } from './fixtures.ts'
 import { ROW_MARKER } from '../remote-row.ts'
 import { ASK_MARKER, ACK_MARKER, ANSWER_MARKER, ANSWER_ACK_MARKER, askLine, ackLine, parseAsk, parseAnswer, answerAckLine } from '../remote-round.ts'
 
@@ -2725,4 +2726,89 @@ test('the next turn starting while the typed words are sent to a coordinator els
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
   expect(fx.sent.some(m => m.text.startsWith('[module]'))).toBe(true)
   expect(consentLogs(fx, 'went to a coordinator on another machine')).toEqual([`round: the words typed for Orch: belt since ${wait.waiting_since} went to a coordinator on another machine, no consent recorded`])
+})
+
+// --- the record read before he is asked again ----------------------------------------------------
+
+// The predecessor's question, answered and archived: the record its successor's question meets.
+function recordedFor(fx: ReturnType<typeof fake>, answer: RoundEntry['answer'], status: RoundEntry['status'] = 'closed'): RoundEntry {
+  const pred = roundEntry('s-pred', 'Orch: belt', parseWait(answerOf(SHAPED, 'waiting: operator — blocks: pane numbering'))!, '2026-11-14T07:00:00.000Z', '2026-11-14T07:00:00.100Z')
+  const record = { ...pred, status, answer }
+  fx.files.set(`${ROUND}/archive/${record.id}.json`, JSON.stringify(record) + '\n')
+  return record
+}
+
+test('a successor asking a question its predecessor had answered is answered from the record, never shown again', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const submitted: string[] = []
+  fx.dollar.prompt = { submit: async (p: { text: string }) => { submitted.push(p.text) } }
+  const record = recordedFor(fx, { text: 'answered from the pane: B : celle du pane — elle compte la file', by: 'pane', at: '2026-11-14T07:05:00.000Z' })
+  const again = answerOf(SHAPED.replace('Question 5 sur 6', 'Question 1 sur 1'), 'waiting: operator — blocks: pane numbering')
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(again))
+  const entry = entries(fx).find(e => e.session === 's-one')!
+  expect([entry.status, entry.answer?.by, entry.answer?.at, entry.answer?.record]).toEqual(['answered', 'pane', '2026-11-14T07:05:00.000Z', record.id])
+  expect(paneQuestions(entries(fx))).toEqual([])
+  expect(submitted).toEqual([`[module] Answered from the record, not asked again: the operator answered this question on 2026-11-14T07:05:00.000Z by pane — B : celle du pane — elle compte la file (entry ${record.id}; question since ${entry.since}, blocks: pane numbering)`])
+  expect(fx.row()!.relayed).toBeNull()
+})
+
+test('a question whose earlier ask holds no answer of his, or asks another block, is entered open as ever', async () => {
+  for (const [answer, blocks] of [
+    [{ text: 'withdrawn: settled meanwhile — merged', by: 'coordinator', at: 'T', evidence: 'merged' }, 'pane numbering'],
+    [{ text: 'A', by: 'pane', at: 'T' }, 'pane numbering, row 7'],
+  ] as const) {
+    const chains = mounted()
+    const fx = fake()
+    recordedFor(fx, answer)
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(SHAPED, `waiting: operator — blocks: ${blocks}`)))
+    expect(entries(fx).find(e => e.session === 's-one')!.status).toBe('open')
+  }
+})
+
+// --- a waiver asked in the round: his « Accorder » or « Refuser » is the consent record github reads ---
+
+const WAIVER = { kind: 'e2e-waiver' as const, repo: 'acme/thing', pr: 12 }
+const WAIVER_QUESTION = [
+  '**Question 1 of 1**',
+  '_Subject_ : the E2E of thing#12',
+  '_Context_ : docs only.',
+  '_Question_ : Dispense d\'E2E pour acme/thing#12 : docs only ?',
+  '_Choices_ :',
+  '- **A** : Accorder',
+  '- **B** : Refuser',
+  '_Recommendation_ : A — nothing runs',
+].join('\n')
+
+async function askedWaiver(fx: ReturnType<typeof fake>, chains: Record<string, Function[]>) {
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', consent: WAIVER })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(WAIVER_QUESTION))
+  return entries(fx).find(e => e.session === 's-one' && e.status === 'open')!
+}
+
+for (const [choice, answer] of [[0, 'Accorder'], [1, 'Refuser']] as const) {
+  test(`his « ${answer} » pressed in the pane on a waiver question is its pull request's consent record, « ${answer} »`, async () => {
+    const chains = mounted()
+    const fx = fake()
+    const asked = await askedWaiver(fx, chains)
+    const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+    await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[choice])
+    const records = consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!)
+    expect(records.map(r => [r.subject, r.answer, r.by])).toEqual([[WAIVER, answer, 'pane']])
+  })
+}
+
+test('a waiver question asked again after his answer is answered from the record, and his one consent record stays the only one', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const asked = await askedWaiver(fx, chains)
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[0])
+  // The question asked again, reworded above its block: the round answers it from the record.
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', consent: WAIVER })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(`Asked again after the hand-over.\n\n${WAIVER_QUESTION}`))
+  expect(entries(fx).filter(e => e.status === 'open')).toEqual([])
+  expect(consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!.answer)).toEqual(['Accorder'])
 })
