@@ -549,6 +549,32 @@ for (const [route, call] of UNDRAFT_ACTS) {
   })
 }
 
+/*
+ * The gate puts Ready before a merge or an undraft; when it cannot say whether it did (the label could
+ * not be written, the head moved while it read), the act is refused as an unverified readiness and
+ * nothing runs: never a pass on a label the gate could not put.
+ */
+for (const [route, call, command] of [
+  ...MERGE_ACTS.map(([route, call]) => [route, call, 'pr-merge'] as const),
+  ...UNDRAFT_ACTS.map(([route, call]) => [route, call, 'pr-ready'] as const),
+]) {
+  for (const [label, w, error] of [
+    ['the Ready label cannot be written', { readinessFails: 'error: forbidden' }, 'label not written: error: forbidden'],
+    ['the head moves while the gate reads it', { heads: [HEAD, MOVED] }, 'the head moved from 0123456 to fedcba9 while the gate read it'],
+  ] as const) {
+    test('a ' + route + ' ' + command + ' in auto-merge is refused, nothing run, when ' + label, async ($, on) => {
+      const seen = await world($, on, { ...w, autoMerge: ['acme/thing'] })
+      const out: any = await $.tool.call(call)
+      expect(out.deny).toContain('github: readiness of acme/thing#12 unverified: ')
+      expect(out.deny).toContain(error)
+      expect(actRan(seen, route, command)).toBe(0)
+      expect(seen.asked.length).toBe(0)
+      expect(seen.pull?.labels).toEqual(['Not Ready'])
+    })
+  }
+}
+
+
 // ---- Bash ----
 
 test('a Bash merge or undraft outside auto-merge is refused with the tool call to make', async ($, on) => {
