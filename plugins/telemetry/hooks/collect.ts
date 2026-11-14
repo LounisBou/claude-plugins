@@ -346,6 +346,22 @@ function githubTarget(input: Fields, result: unknown): Target {
   return merged(named, targetFrom(repo, pr, undefined))
 }
 
+/** The directory a pull request record is written to: `pr-records/<owner>/<name>/<head>/`. */
+const RECORD_DIR = /pr-records\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/([0-9a-f]{40})\//i
+
+/**
+ * A review or record call's target: the repository and pull request its arguments name, and the
+ * head of the record its result names by its path, when that record is of the same repository.
+ * The `dir` checkout is not read: that would be a new process.
+ */
+function recordTarget(input: Fields, result: unknown): Target {
+  const named = targetFrom(input['repo'], input['pr'], undefined)
+  const dir = RECORD_DIR.exec(resultOf(result).raw)
+  const written = dir === null ? {} : targetFrom(dir[1], undefined, dir[2])
+  if (named.repo !== undefined && written.repo !== undefined && named.repo.toLowerCase() !== written.repo.toLowerCase()) return named
+  return merged(named, written)
+}
+
 /** A Bash `gh` or `git push` command's target: what its arguments name plainly. */
 export function bashTarget(command: string): Target | undefined {
   let commands: string[][]
@@ -458,7 +474,10 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   const { outcome, decided_by } = outcomeOf(result, check)
   const bash = tool === 'Bash' && typeof e['command'] === 'string' ? bashOf(e['command']) : undefined
   const mcpCommand = text(e['command'])
-  const target = mcp?.server === 'github' && mcp.name === 'gh' ? githubTarget(e, result) : bash !== undefined ? bashTarget(String(e['command'])) : undefined
+  const acts = (mcp?.server === 'github' && mcp.name === 'record') || (mcp?.server === 'orchestrator' && mcp.name === 'review')
+  const target = mcp?.server === 'github' && mcp.name === 'gh'
+    ? githubTarget(e, result)
+    : acts ? recordTarget(e, result) : bash !== undefined ? bashTarget(String(e['command'])) : undefined
   const events: Event[] = [makeEvent('tool_call', at, session, {
     agent,
     tool,

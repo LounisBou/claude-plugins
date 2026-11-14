@@ -830,6 +830,41 @@ export function touchesRecords(line: string, root?: string): boolean {
   return names(line) || simpleCommands(line).some((argv) => argv.some(names))
 }
 
+// The programs that write nothing a line gives them, but through a redirection or one of the
+// options onlyReads refuses. A program outside this list is no read, whatever it is given: a
+// guard that must refuse a write cannot know every writer, so it knows the readers.
+const READERS: ReadonlySet<string> = new Set([
+  'ls', 'cat', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'find', 'stat', 'wc', 'jq', 'diff', 'cmp', 'du',
+  'echo', 'printf', 'test', '[', '[[', 'true', 'pwd', 'basename', 'dirname', 'realpath', 'readlink',
+])
+// find's options that delete, run a program or write a file.
+const FIND_WRITES = /^-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/
+
+// Whether a command line only reads: every simple command it holds, a substitution's and a pipeline's
+// included, is a program of READERS named bare (a path such as `./ls` is any program), `find` carries
+// no writing option, and the line holds no `>` at all, whatever its quoting: the shell reads `>&path`,
+// `1>&path`, a redirection inside `$(…)` or backticks and `$'…'` as writes, and the shell reader
+// gives no redirection target. A line the reader cannot read is no read.
+export function onlyReads(line: string): boolean {
+  try {
+    if (line.includes('>')) return false
+    return readCommands(line).every(({ argv }) => {
+      if (argv.length === 0) return true
+      const program = argv[0] ?? ''
+      if (!READERS.has(program)) return false
+      return program !== 'find' || !argv.some((word) => FIND_WRITES.test(word))
+    })
+  } catch {
+    return false
+  }
+}
+
+// Whether a Bash command line writes into the records or runs their writer: it names them
+// (touchesRecords) and is not a line that only reads.
+export function writesRecords(line: string, root?: string): boolean {
+  return touchesRecords(line, root) && !onlyReads(line)
+}
+
 // The record kind a caller of mcp__github__record may write, by the plugin whose hook made the
 // call: the one the record contract names it the producer of, the open kind (E2E) for the model
 // (the engine) and any other plugin.

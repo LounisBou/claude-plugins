@@ -22,7 +22,7 @@ import {
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
-  kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
+  kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   type Act, type Carried, type Gate, type Labelling, type RecordFile,
 } from './ready.ts'
 
@@ -2126,8 +2126,9 @@ export function register(on: any): void {
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     try {
-      if (touchesRecords(String(e.command), await recordsRoot($))) return { deny: RECORDS_REFUSAL }
-      if (await touchesList($, String(e.command), AUTO_MERGE_FILE)) return { deny: AUTO_MERGE_REFUSAL }
+      // A command that only reads them passes: the records and the auto-merge list are refused a write.
+      if (writesRecords(String(e.command), await recordsRoot($))) return { deny: RECORDS_REFUSAL }
+      if (await touchesList($, String(e.command), AUTO_MERGE_FILE) && !onlyReads(String(e.command))) return { deny: AUTO_MERGE_REFUSAL }
       if (await touchesList($, String(e.command), AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
       if (await touchesExemptions($, String(e.command))) return { deny: EXEMPT_REFUSAL }
     } catch {

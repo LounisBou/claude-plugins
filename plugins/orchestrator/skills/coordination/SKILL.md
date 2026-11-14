@@ -237,9 +237,9 @@ project's orchestrator does not ask you. You never decide it and never offer to.
 recommendation of your own: a fact you read yourself is your own reading, and stays out of a
 relay.
 
-**An order of his meant for the orchestrations** goes verbatim and dated to each `Orch:`
-session it concerns, from a fresh `ListAgents`, asking no acknowledgment unless his order
-asks for one; then tell him to whom it went.
+**An order of his meant for the orchestrations** is a `todo add … to` each `Orch:` session it
+concerns, from a fresh `ListAgents`, his words verbatim, unacknowledged unless it asks for one;
+then tell him to whom.
 
 ## Pausing and waking orchestrators
 
