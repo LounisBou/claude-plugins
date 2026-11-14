@@ -140,3 +140,13 @@ The release pull request also asks the operator whether to re-run the outcome me
 
 What runs when (a pull request, the release, a push to `main`, the night) is the table at the head of
 `scripts/plugin-matrix.ts`.
+
+A push to `main` skips what its tree already passed. The merge of a pull request is usually the very
+tree its `pull_request` run tested; `scripts/tested-tree.ts` finds that run (green, on the pull
+request's head), reads the merge commit its checkout fetched, and when that commit's tree equals the
+pushed tree, `main` leaves out the repository rules and the Linux cells that run passed. It runs
+everything else: a tree that differs (`main` moved and the merge is another tree), a run that failed
+or is gone, a cell the pull request did not run, and any lookup that fails. The `ci` check still
+reports on `main`: a skipped step is a passed job, and a matrix with no cell left runs the cell
+without a suite. It makes the push to `main` a net for what no pull request tested, not a second run
+of what one did.
