@@ -308,6 +308,7 @@ export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.
 export function waiverRefusal(repo: string, pr: number, check: Waivable): string {
   return 'github: ' + (check === 'e2e' ? 'an E2E' : 'a norms') + ' waiver is the operator\'s « ' + CONSENT_GRANT + ' » to one question, « Dispense ' + WAIVER_WORDS[check] + ' pour ' + repo + '#' + pr
     + ' : <why> », choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », asked as method:lifecycle « Questions to the operator » says: none is recorded.'
+    + (check === 'e2e' ? ' Or quote his recorded answer to it, whatever its channel, in "detail".' : '')
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
@@ -1531,10 +1532,15 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject, c
 // The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
 // question, from any channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
 async function grantedWaiver($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
+  const newest = await newestWaiverAnswer($, repo, pr, check)
+  return newest && grants(newest.answer) ? newest : undefined
+}
+
+// His newest recorded answer to that waiver question, « Accorder » or « Refuser ».
+async function newestWaiverAnswer($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
   const subject: ConsentSubject = { kind: waiverSubject(check), repo, pr }
   const answers = (await consentRecords($, repo)).filter((record) => sameSubject(record.subject, subject))
-  const newest = answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
-  return newest && grants(newest.answer) ? newest : undefined
+  return answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
 }
 
 // The operator's answer to a waiver question put by dialog, recorded as the round's answers are
@@ -1935,8 +1941,12 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (waived && planned && planned.need !== 'required') {
     return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
   }
-  const granted = waived ? await grantedWaiver($, repo, pr, waived) : undefined
-  if (waived && !granted) return { deny: waiverRefusal(repo, pr, waived) }
+  const answered = waived ? await newestWaiverAnswer($, repo, pr, waived) : undefined
+  const granted = answered && grants(answered.answer) ? answered : undefined
+  // An E2E waiver with no « Accorder » may quote his recorded answer in his own words, from any channel, unless it refuses.
+  const quoted = waived === 'e2e' && !granted && answered !== undefined && detail.length <= DETAIL_MAX
+    && !/^\s*refus/i.test(answered.answer) && quotesConsent(answered, answered.subject, detail)
+  if (waived && !granted && !quoted) return { deny: waiverRefusal(repo, pr, waived) }
   // The waiver's detail is the operator's answer as recorded, dated by the module that recorded it.
   const written = granted ? 'operator: ' + granted.answer + ' (' + granted.by + ', ' + granted.at + ')' : detail
   let gate: Gate
