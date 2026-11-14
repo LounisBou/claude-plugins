@@ -40,14 +40,14 @@ export function lintContributing(text: string): Finding[] {
     if (inFence) return
     const h = line.match(/^(#{1,6})\s+(.*?)\s*$/)
     if (h) {
-      if (h[1].length === 1) hasH1 = true
-      if (h[1].length <= 2) section = h[2]
-      headings.push({ level: h[1].length, index: i, title: h[2] })
+      if (h[1]!.length === 1) hasH1 = true
+      if (h[1]!.length <= 2) section = h[2]!
+      headings.push({ level: h[1]!.length, index: i, title: h[2]! })
       return
     }
     const bullet = line.match(/^\s*([-*+])(\s+(.*))?$/)
     if (bullet) {
-      if (bullet[1] === '-' || bullet[1] === '*') markers[bullet[1]].push(n)
+      if (bullet[1] === '-' || bullet[1] === '*') markers[bullet[1]]!.push(n)
       if (!(bullet[3] ?? '').trim()) {
         findings.push({ check: 2, severity: 'ERROR', line: n, section, detail: 'Empty bullet: add the intended rule text or remove the entry.' })
         return
@@ -63,12 +63,12 @@ export function lintContributing(text: string): Finding[] {
   // A `##` or `###` heading whose body, up to the next heading of its level
   // or higher, holds nothing but blank lines and headings.
   for (let k = 0; k < headings.length; k++) {
-    const { level, index, title } = headings[k]
+    const { level, index, title } = headings[k]!
     if (level < 2 || level > 3) continue
     let end = lines.length
     for (let j = k + 1; j < headings.length; j++) {
-      if (headings[j].level <= level) {
-        end = headings[j].index
+      if (headings[j]!.level <= level) {
+        end = headings[j]!.index
         break
       }
     }
@@ -81,11 +81,11 @@ export function lintContributing(text: string): Finding[] {
   if (fences === 0) {
     findings.push({ check: 5, severity: 'WARNING', line: null, section: '(file)', detail: 'No code block anywhere: add at least one good/bad example per section.' })
   }
-  if (markers['-'].length && markers['*'].length) {
-    const [minority, other] = markers['-'].length < markers['*'].length ? ['-', '*'] : ['*', '-']
+  if (markers['-']!.length && markers['*']!.length) {
+    const [minority, other] = markers['-']!.length < markers['*']!.length ? ['-', '*'] : ['*', '-']
     findings.push({
-      check: 6, severity: 'WARNING', line: markers[minority][0], section: '(file)',
-      detail: `Mixed list markers: "${minority}" on lines ${markers[minority].join(', ')}; the rest use "${other}".`,
+      check: 6, severity: 'WARNING', line: markers[minority]![0]!, section: '(file)',
+      detail: `Mixed list markers: "${minority}" on lines ${markers[minority]!.join(', ')}; the rest use "${other}".`,
     })
   }
   if (!hasH1) {

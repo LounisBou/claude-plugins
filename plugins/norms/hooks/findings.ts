@@ -33,9 +33,9 @@ export function reportOf(text: string): Finding[] | null {
   const findings: Finding[] = []
   for (const item of list) {
     const entry = (item ?? {}) as Record<string, unknown>
-    const severity = String(entry.severity ?? '').toLowerCase()
+    const severity = String(entry['severity'] ?? '').toLowerCase()
     if (!SEVERITIES.includes(severity)) return null
-    findings.push({ severity: severity as Severity, file: String(entry.file ?? ''), summary: String(entry.summary ?? '') })
+    findings.push({ severity: severity as Severity, file: String(entry['file'] ?? ''), summary: String(entry['summary'] ?? '') })
   }
   return findings
 }
@@ -46,19 +46,19 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const textParts = (body: unknown): string => {
   if (typeof body === 'string') return body
   if (!Array.isArray(body)) return ''
-  return body.map(part => (typeof part === 'string' ? part : isObject(part) && typeof part.text === 'string' ? part.text : '')).join('\n')
+  return body.map(part => (typeof part === 'string' ? part : isObject(part) && typeof part['text'] === 'string' ? part['text'] : '')).join('\n')
 }
 
 // What an agent answered, as text. The host answers an Agent call with a record in `result`: a
 // completed agent's content (or the report its hand-back delivered), or the launch of one running
 // in the background, which is no report. Any other answer is read as the text it carries.
 export function agentText(answer: unknown): string {
-  const body = isObject(answer) ? answer.result ?? answer.text : answer
+  const body = isObject(answer) ? answer['result'] ?? answer['text'] : answer
   if (!isObject(body)) return textParts(body)
-  if (body.status !== 'completed') return ''
-  const report = body.handbackReport
-  if ((body.handback === 'send' || body.handback === 'flagged') && isObject(report) && typeof report.text === 'string') return report.text
-  return body.handback === 'withheld' ? '' : textParts(body.content)
+  if (body['status'] !== 'completed') return ''
+  const report = body['handbackReport']
+  if ((body['handback'] === 'send' || body['handback'] === 'flagged') && isObject(report) && typeof report['text'] === 'string') return report['text']
+  return body['handback'] === 'withheld' ? '' : textParts(body['content'])
 }
 
 // The reports of the running check, by agent type: null for an agent whose answer held no readable
