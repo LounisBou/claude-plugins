@@ -1,5 +1,23 @@
 # The claude-plugins program — design
 
+## Purpose — the operator's words (2026-11-14)
+
+- « Claude Plugins, c'est une suite d'outils à destination des agents de Claude Code que je lance sur divers projets. »
+- « c'est un peu ma bibliothèque de skills […] j'en ai fait des plugins qui soient facilement installables sur tous mes ordinateurs pour qu'ils soient facilement maintenables, facilement mis à jour »
+- « Tous ces plugins, ils contiennent vraiment la méthodologie générale que j'utilise à la fois sur mes projets pro et mes projets perso. »
+- « Des orchestrateurs qui n'écrivent pas le code, mais qui sont garants de l'objectif d'une feature, et qui vont pour implémenter, dispatcher des agents. »
+- « on va faire un design, transformer ce design en plan […] c'est à ce moment-là qu'on allait définir les critères des gates, les reviews, les tests end-to-end, les normes, si c'est du front, toutes les captures d'écran »
+- « C'est l'orchestrateur qui est responsable du travail produit par les agents. […] c'est à l'orchestrateur qui connaît du coup l'objectif de prendre les décisions, qu'est-ce qui doit être touché, qu'est-ce qui n'est pas nécessaire, jusqu'à amener la PR à être prête. »
+- « si on est dans un projet d'automerge, cette PR prête est automatiquement mergée. Sinon, on la signale comme étant prête pour que l'opérateur, moi, puisse la relire et la merger […] à ne pas confondre la relecture et les gates. »
+- « vraiment séparer ceux qui sont les garants, ceux qui écrivent le code et ceux qui contrôlent ce qui a été écrit. […] la séparation des pouvoirs. »
+- « Que tous les contrôles qui peuvent être faits en automatique soient faits en automatique. Mais pas au détriment de l'efficacité dans le développement, pas en mettant des gates qui vont prendre énormément de temps »
+- « pour éviter que ça soit fait à chaque fois de manière agentique et que ça utilise trop de tokens, […] au maximum on essaye de les mettre dans des scripts automatisés »
+- « À chaque fois que je rajoute une règle ou que j'essaye d'automatiser quelque chose, l'objectif c'est de gagner en temps, de gagner en vitesse d'exécution et, peut-être d'éviter que des erreurs se reproduisent »
+- « Toute règle […] qui surproduirait des gates, qui surproduirait des tests, qui corrigerait trop des problèmes qui finalement ne surviennent pas ou ne surviennent que très peu, serait contre-productif »
+- « Claude Plugins est fait pour fluidifier et simplifier mon utilisation au quotidien et mon développement dans Claude Code et pas l'inverse, pas pour venir prévenir de bugs qui ne sont jamais arrivés »
+- « Claude Plugins devient très vite une usine à gaz, avec beaucoup d'incohérences, de contradictions, et finalement il finit par produire l'exact inverse de ce qui est nécessaire. »
+- « Claude Plugins, c'est pas quelque chose qui sert juste à développer Claude Plugins. […] c'est utilisé sur l'ensemble de mes projets perso ou pro, et que c'est ça le cœur du sujet de Claude Plugins »
+
 ## Why
 
 Eight plugins, built in eight repositories by one operator who works with them every day,

@@ -4,7 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
-#   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
+#   dispatch-record.sh fixed   <record> <id> --head <sha>   (the correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
 #   dispatch-record.sh ready   <record> <id> --head <sha>
@@ -18,6 +18,14 @@
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
 #   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | defer <G> --ruling "<his words, dated>"
 #   dispatch-record.sh goals   <record> reopen <G> | check [--json]
+#   dispatch-record.sh pr      <record> <owner/name>#<n> (--working "<agent>" | --waiting "<what>" | --parked "<his words, dated>")
+#   dispatch-record.sh pr-archive <record> <owner/name>#<n>
+#
+# `pr` sets the pull request's one line in the ledger the record carries beside its rows, and
+# prints it in the operator's words; `pr-archive` moves the line to the archive beside the record.
+# The line's shape, its statuses and what « unattended » means are core's (`pr-ledger.ts`,
+# docs/contracts.md); the hooks module archives on its own the line of a pull request the forge no
+# longer lists open.
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then
@@ -36,7 +44,7 @@
 # lands rounds later where nobody attributes it. `summary` names the classes where the
 # drop did not pay, so the reversion is a reading rather than an impression.
 #
-# `review` records the head a review session read, and `fixed` the one correction round the
+# `review` records the head a review session read, and `fixed` the correction round the
 # orchestrator verified on the artifact (with no review, or a second time, it records what it was
 # given and warns). Whether a pull request is ready at its head is the github ready gate's, never
 # this script's: `ready` checks the surface and the screenshots' audit only, and prints no label

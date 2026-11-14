@@ -3400,3 +3400,54 @@ test('an origin read that timed out is read again at the next render, one that a
   await redraw(bare, fresh)
   expect(gits).toBe(4)
 })
+
+// --- the pull requests nobody attends ------------------------------------------------------------
+
+const UNATTENDED = { at: SINCE, line: 'PR délaissées : acme/app#8 (sans agent depuis 2026-10-19T08:05Z)', prs: [{ repo: 'acme/app', pr: 8, since: SINCE }], unread: ['acme/lib'] }
+const local = (iso: string) => { const at = new Date(iso); return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` }
+
+test('an orchestrator with pull requests nobody attends draws them under its block, in local time, the unread repositories said unknown', async () => {
+  const rows = paneRows({ 'sessions/u': orch('Orch: u', { unattended: UNATTENDED }), 'sessions/c': orch('Orch: c') })
+  const said = `PR délaissées : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`
+  expect(rows.map(r => [r.name, r.unattended])).toEqual([['Orch: u', said], ['Orch: c', null]])
+  const tree = await paneTree({ u: orch('Orch: u', { unattended: UNATTENDED }) })
+  const block = tree.props.children[2]
+  expect(block.props.children.length).toBe(2)
+  expect(text(pieces(block.props.children[1]))).toBe(said)
+  expect(pieces(block.props.children[1])[0]?.color).toBe('warning')
+  const none = await paneTree({ c: orch('Orch: c', { unattended: { at: SINCE, line: null, prs: [], unread: [] } }) })
+  expect(none.props.children[2].props.children.length).toBe(1)
+})
+
+test('an orchestrator\'s own pane draws its pull requests nobody attends above its agents', async () => {
+  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: phase-3' })) + '\n')
+  const { handlers } = mounted(registerSupervision)
+  const bare = await coordinatorRender(fx, handlers)
+  expect(JSON.stringify(bare)).not.toContain('PR délaissées')
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: UNATTENDED }) + '\n')
+  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  expect(pieces(tree.props.children[0])).toEqual([{ text: `PR délaissées : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`, color: 'warning', bold: false }])
+})
+
+// --- a consent question worded with unlettered choices draws them once ----------------------------
+
+const CONSENT_ASKED = [
+  '**Question 1 of 1**',
+  '_Subject_ : auto-deploy of acme/thing in prod',
+  '_Question_ : Do you grant it ?',
+  '_Choices_ :',
+  '- **Accorder** : each release installs here as soon as it is cut — cost : a faulty release arrives unattended',
+  '- **Refuser** : each release stays manual — cost : one manual step per release',
+  '_Free answer_ : or in your own words',
+].join('\n')
+
+test('a consent question with unlettered Accorder and Refuser choices shows each choice once in the pane', async () => {
+  const entered = roundEntry('low', 'Orch: low', { kind: 'operator', blocks: 'auto-deploy of acme/thing', question: CONSENT_ASKED }, '2026-10-18T10:03:00.000Z', '2026-10-18T10:03:00.000Z')
+  expect(entered.choices).toEqual([{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }])
+  const { render } = await askingPane([entered])
+  const drawn = JSON.stringify(await render())
+  const once = (word: string) => drawn.split(word).length - 1
+  expect([once('Accorder'), once('Refuser')]).toEqual([1, 1])
+  expect(once('CHOICES')).toBe(1)
+})

@@ -13,6 +13,7 @@ import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } 
 import { messageOf, type Host, type On } from './host.ts'
 import { entryQuestions, fencedLines, numberOfLine, openFence, outsideFences, parseChoices, questionShape, type QuestionField } from '../core/method.ts'
 import { logLine } from './module-io.ts'
+import { holdsDone } from './unattended.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
@@ -127,7 +128,7 @@ function blockEnd(lines: readonly string[], head: number): number {
 
 // The tool's input, validated: the declaration, or why it is none.
 export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { error: string } {
-  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; consent?: unknown; question?: unknown }
+  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; question?: unknown; consent_kind?: unknown; consent_repo?: unknown; consent_pr?: unknown; consent_env?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
   }
@@ -136,10 +137,12 @@ export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { err
   if (e.question !== undefined && kind !== 'operator') return { error: 'only an operator wait carries a question' }
   if (e.urgent !== undefined && typeof e.urgent !== 'boolean') return { error: 'urgent is true or false' }
   if (e.urgent === true && kind !== 'operator') return { error: 'only an operator wait is urgent' }
-  const consent = e.consent === undefined ? undefined : parseConsentSubject(e.consent)
-  if (e.consent !== undefined && kind !== 'operator') return { error: 'only an operator question asks consent' }
-  if (e.consent !== undefined && consent === undefined) {
-    return { error: `consent is {"kind": "e2e-waiver" or "norms-waiver", "repo": "owner/name", "pr": <n>}, {"kind": "e2e-exemption" or "auto-merge", "repo": "owner/name"} or {"kind": "auto-deploy", "repo": "owner/name", "env": "${DEPLOY_ENVS.join('" or "')}"}` }
+  const given = Object.fromEntries([['kind', e.consent_kind], ['repo', e.consent_repo], ['pr', e.consent_pr], ['env', e.consent_env]].filter(([, value]) => value !== undefined))
+  const asksConsent = Object.keys(given).length > 0
+  const consent = asksConsent ? parseConsentSubject(given) : undefined
+  if (asksConsent && kind !== 'operator') return { error: 'only an operator question asks consent' }
+  if (asksConsent && consent === undefined) {
+    return { error: `consent is consent_kind with consent_repo (owner/name): "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env (${DEPLOY_ENVS.join(', ')})` }
   }
   const blocks = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   if (kind === 'done') return { wait: { kind, blocks: '' } }
@@ -209,7 +212,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
-          + 'names it in consent: {kind: "e2e-waiver" or "norms-waiver", repo, pr}, {kind: "e2e-exemption", repo}, {kind: "auto-merge", repo} or {kind: "auto-deploy", repo, env}; its choices are « Accorder » and « Refuser », and his answer is then recorded as that consent. '
+          + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env; its choices are the two lines `- **Accorder** : …` and `- **Refuser** : …`, and his answer is then recorded as that consent. '
           + 'An `operator` wait needs `question`, the whole `**Question i of N**` block. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
@@ -219,11 +222,10 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             blocks: { type: 'string', maxLength: BLOCKS_MAX },
             urgent: { type: 'boolean' },
             question: { type: 'string' },
-            consent: {
-              type: 'object',
-              properties: { kind: { type: 'string', enum: [...CONSENT_KINDS] }, repo: { type: 'string' }, pr: { type: 'integer' }, env: { type: 'string', enum: [...DEPLOY_ENVS] } },
-              required: ['kind', 'repo'],
-            },
+            consent_kind: { type: 'string', enum: [...CONSENT_KINDS] },
+            consent_repo: { type: 'string' },
+            consent_pr: { type: 'integer' },
+            consent_env: { type: 'string', enum: [...DEPLOY_ENVS] },
           },
           required: ['kind'],
         },
@@ -251,6 +253,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
     const parsed = parseDeclaration(e)
     if ('error' in parsed) return { result: parsed.error, isError: true }
+    // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
+    const held = await holdsDone($, parsed.wait)
+    if (held !== null) return { result: held, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
   }).catch(async ($, e, next) => {

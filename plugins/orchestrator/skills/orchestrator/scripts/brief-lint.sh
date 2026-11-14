@@ -1,5 +1,5 @@
 #!/bin/bash
-# brief-lint.sh — refuse a brief before it is dispatched, not after the round.
+# brief-lint.sh — flag a brief before it is dispatched, not after the round.
 #
 #   brief-lint.sh <brief-path> [--expect-created <path>]...
 #

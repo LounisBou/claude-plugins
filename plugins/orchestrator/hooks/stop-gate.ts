@@ -100,7 +100,7 @@ const DECLARE = 'Declare the wait with the `declare_wait` tool, whose descriptio
 
 // The waits that fit a turn, by what will wake it: what the two refusals below name.
 const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you.'
-const OTHER_FITS = 'If a question for the operator truly blocks, declare an operator wait; '
+const OTHER_FITS = 'If only an irreversible or outward act waits for the operator\'s answer, declare an operator wait; '
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
 const runningFits = (what: readonly string[]) =>
@@ -230,6 +230,12 @@ function activity(title: string): 'idle' | 'busy' | null {
 // parenthesised mark — then the title, else the tty.
 function labelOf(row: Row): string {
   return row.name && !row.name.startsWith('(') ? row.name : (row.title || row.tty)
+}
+
+// The names of the sessions the listing shows running, each by its label: a tab whose title carries
+// no host activity glyph runs none. What a ledger line's agent is matched against (core's pr-ledger.ts).
+export function liveNames(rows: readonly Row[]): Set<string> {
+  return new Set(rows.filter(row => activity(row.title) !== null).map(labelOf))
 }
 
 // --- the orchestrator's own agents (stop_gate.py:224-247) --------------------------------

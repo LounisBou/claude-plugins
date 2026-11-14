@@ -1231,7 +1231,7 @@ check_status "two heads sharing no prefix are not refused: the gate compares hea
 check_status "a head is read only to compare an audit: a six-character head on a row with no image is not refused" 0 bash "$REC" ready "$G" "$g2" --head 012345
 check "and says nothing of its length" "0" "$(bash "$REC" ready "$G" "$g2" 2>&1 --head 012345 | grep -c 'too short')"
 
-# The operator's process: ONE review round, the orchestrator's triage, ONE correction round
+# The operator's process: a review round, the orchestrator's triage, a correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
 # review that read the previous one must still let the pull request through at the head the
 # orchestrator verified. `fixed` no longer refuses a row with no review, or a second
@@ -1285,7 +1285,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary or goals)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -1493,11 +1493,11 @@ check "the review brief replays the test, flags one the plan requires and the re
   "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise, the plan requiring one or there being no plan, it is a finding.')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
-# The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
-# question, once, in the host's question tool, his choice the consent.
+# A check the plan required and now judged unneeded is lifted by a new plan; one that cannot run is
+# ONE question, once, in the host's question tool, his choice the consent.
 PRW="$ROOT/../github/engine/writing/pull-requests.md"
 check "review.md asks one waiver question through the round, worded by pull-requests.md, which holds Accorder / Refuser" "yes|yes|yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator,')|$(spells "$RV" '`consent` naming the waiver')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
+  "$(spells "$RV" 'now unneeded: a new check plan, that check `none: <reason>`, no question. One that cannot run: ONE question through the round (`declare_wait` operator,')|$(spells "$RV" '`consent_kind`, `consent_repo`, `consent_pr`), worded as github')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
@@ -10580,6 +10580,18 @@ check "facts shows a live orchestrator waiting on the operator, and no dead one,
 cp "$CSTORE/s-alpha" "$CSTORE/s-alpha.tmp-1-abcdef"
 check "facts reads no temporary file beside the waits as a wait" "1" "$(cfacts facts 2>/dev/null | grep -c '^waiting ')"
 rm -f "$CSTORE/s-alpha.tmp-1-abcdef"
+# The pull requests nobody attends, as each live orchestrator's module last read them on its row
+# (hooks/unattended.ts): its line, said the same way; none from a dead one, one with none, or a
+# broken row.
+CSESS="$CCFG/claude-orchestrator/store/sessions"; mkdir -p "$CSESS"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: alpha","pid":"100","updated_at":"t","unattended":{"at":"t","line":"PR délaissées : o/app#9 (sans agent depuis 2026-10-14T09:00Z)","prs":[],"unread":[]}}' > "$CSESS/s-alpha"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: gone","pid":"999","updated_at":"t","unattended":{"at":"t","line":"PR délaissées : o/app#3 (sans agent depuis ?)","prs":[],"unread":[]}}' > "$CSESS/s-gone"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: beta","pid":"101","updated_at":"t","unattended":{"at":"t","line":null,"prs":[],"unread":[]}}' > "$CSESS/s-beta"
+printf 'not json\n' > "$CSESS/s-broken"
+check "facts shows a live orchestrator's unattended pull requests, and none of a dead one, one with none or a broken row" \
+  "unattended Orch: alpha | PR délaissées : o/app#9 (sans agent depuis 2026-10-14T09:00Z)" \
+  "$(cfacts facts 2>/dev/null | grep '^unattended ')"
+rm -rf "$CSESS"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
   "pr forge.example/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
@@ -12690,16 +12702,22 @@ leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+# The tools only an orchestrator calls: an implementer agent is never given them.
+LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
-check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
+check "an agent loses the five unused tools, the three that move an orchestrator and the four only an orchestrator calls" "$LEANBASE $LEANMOVE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
-check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
+check "a title of no role is read as an agent's: it loses all twelve" "$LEANBASE $LEANMOVE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
-check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
+check "an auditor loses the five and the three, and keeps the four only an orchestrator calls" "$LEANBASE $LEANMOVE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
+check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
+check "--keep-tool brings one of the four back to an agent" "$LEANBASE $LEANMOVE mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait" \
+  "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
 check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
@@ -12716,13 +12734,13 @@ check "with the account's connectors the removed set is followed by the mode" "1
   "$(mcpd --account-connectors --mcp none | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* ReportFindings .* --permission-mode ')"
 
 # The two options.
-check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact | leanset)"
-check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE 'Bash(git push:*)'" \
+check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE $LEANAGENT 'Bash(git push:*)'" \
   "$(leanl --title 'Agent: x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
-check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE WebSearch|1" \
+check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE $LEANAGENT WebSearch|1" \
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
-check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
+check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
 check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
@@ -12734,7 +12752,7 @@ check "an empty name is refused for either option, before any tab exists" "1|1|1
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
-check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE|$LEANBASE $LEANMOVE WebSearch|$LEANBASE $LEANMOVE WebSearch" \
+check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT|$LEANBASE $LEANMOVE $LEANAGENT WebSearch|$LEANBASE $LEANMOVE $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent: x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent: x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
@@ -12748,7 +12766,7 @@ check "rotate passes both options to the replacement it launches" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent: rotated.')"
 check "rotate refuses an empty name and the same name on both, before it spawns anything" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool '' >/dev/null 2>&1; echo $?)|$(leanrot --old-tty /dev/ttys901 --keep-tool X --drop-tool X >/dev/null 2>&1; echo $?)"
-check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool 'Artifact ' | sed -n 's/^launch=//p' | leanset)"
 
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
@@ -12821,6 +12839,8 @@ check "the heaviest loaded tool comes first, with every role that loses it" "loa
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded' | head -1)"
 check "a move tool names the two roles whose default removes it" "1" \
   "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__move_send | [0-9]* | [0-9]* | Audit,Agent$')"
+check "a tool only an orchestrator calls names the one role whose default removes it" "1" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__declare_wait | [0-9?]* | [0-9?]* | Agent$')"
 check "a removed name the transcript lacks is listed with ? for what it cannot say" "loaded | SendFeedback | ? | ? | Orch,Coord,Audit,Agent|loaded | mcp__orchestrator__end_session | ? | ? | Audit,Agent" \
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | SendFeedback ')|$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | mcp__orchestrator__end_session ')"
 check "a removed name that is deferred stays a deferred row, with its roles, and is not listed twice" "deferred | Workflow | 8 | 2 | Orch,Coord,Audit,Agent|0" \

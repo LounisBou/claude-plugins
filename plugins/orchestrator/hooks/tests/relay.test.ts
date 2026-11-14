@@ -2839,3 +2839,60 @@ test('a waiver question asked again after his answer is answered from the record
   expect(entries(fx).filter(e => e.status === 'open')).toEqual([])
   expect(consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!.answer)).toEqual(['Accorder'])
 })
+
+// --- a consent declared in the tool's own fields, its choices worded « Accorder » and « Refuser » without letters ---
+
+const DEPLOY = { kind: 'auto-deploy' as const, repo: 'Acme/Thing', env: 'prod' as const }
+const DEPLOY_QUESTION = [
+  '**Question 1 of 1**',
+  '_Subject_ : auto-deploy of acme/thing in prod',
+  '_Question_ : Do you grant it ?',
+  '_Choices_ :',
+  '- **Accorder** : each release installs here as soon as it is cut — cost : a faulty release arrives unattended',
+  '- **Refuser** : each release stays manual — cost : one manual step per release',
+  '_Free answer_ : or in your own words',
+  '_Recommendation_ : Accorder — a faulty release is fixed by the next one',
+].join('\n')
+
+async function declaredDeploy(fx: ReturnType<typeof fake>, chains: Record<string, Function[]>) {
+  DECLARATIONS.turnStarted()
+  const called = await drive(chains, 'tool.call', fx.dollar, {
+    tool: 'mcp__orchestrator__declare_wait', kind: 'operator', blocks: 'auto-deploy of acme/thing',
+    consent_kind: DEPLOY.kind, consent_repo: DEPLOY.repo, consent_env: DEPLOY.env, question: DEPLOY_QUESTION,
+  })
+  expect(called.isError).toBeUndefined()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(`Done above.\n\n${DEPLOY_QUESTION}`))
+  return entries(fx).find(e => e.session === 's-one' && e.status === 'open')!
+}
+
+test('a consent declared in the tool\'s own fields rides on the entry, and the unlettered Accorder and Refuser are its two choices', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const asked = await declaredDeploy(fx, chains)
+  expect(asked.consent).toEqual(DEPLOY)
+  expect(asked.choices).toEqual([{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }])
+})
+
+for (const [label, press] of [['the choice pressed', 0], ['the words typed in the free field', null]] as const) {
+  test(`his « Accorder » (${label}) in the pane on an unlettered consent question is the consent record, « Accorder »`, async () => {
+    const chains = mounted()
+    const fx = fake()
+    const asked = await declaredDeploy(fx, chains)
+    const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+    const dollar = { ...fx.dollar, ui: { invalidate: () => undefined } }
+    if (press === null) await answerFromPaneText(dollar, pane, asked, 'Accorder')
+    else await answerFromPane(dollar, pane, asked, asked.choices[press])
+    const records = consentFiles(fx).map(p => parseConsentRecord(JSON.parse(fx.files.get(p)!))!)
+    expect(records.map(r => [r.subject, r.answer, r.by])).toEqual([[DEPLOY, 'Accorder', 'pane']])
+  })
+}
+
+test('an answer to a consent question that names none of its choices records nothing and the log says why', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const asked = await declaredDeploy(fx, chains)
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPaneText({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, 'C')
+  expect(consentFiles(fx)).toEqual([])
+  expect(fx.logged.map(l => l.replace(/^.*\| supervision \| /, ''))).toContain(`round: the consent of ${asked.id} (auto-deploy Acme/Thing) was not recorded: « C » names none of its choices`)
+})
