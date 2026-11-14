@@ -444,9 +444,20 @@ describe('plugins library', () => {
     }
   })
 
+  it('knows a script by its path when the path does not resolve', () => {
+    const argv = process.argv
+    process.argv = [argv[0] ?? 'node', '/nowhere/script.ts']
+    try {
+      assert.ok(isEntry('file:///nowhere/script.ts'))
+      assert.ok(!isEntry('file:///elsewhere.ts'))
+    } finally {
+      process.argv = argv
+    }
+  })
+
   it('knows the script node was started with', () => {
     const script = process.argv[1]
-    assert.ok(script !== undefined && isEntry(pathToFileURL(script).href))
+    assert.ok(script !== undefined && isEntry(pathToFileURL(realpathSync(script)).href))
     assert.ok(!isEntry('file:///elsewhere.ts'))
     const argv = process.argv
     process.argv = argv.slice(0, 1)
