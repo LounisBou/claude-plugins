@@ -23,14 +23,8 @@ sessions.
 
 ## Done means ready
 
-A pull request is done at its head when:
-
-- a review by another session left no Critical or Important finding (the orchestrator's review
-  may write it; a point it sets aside, with its reason, is accepted);
-- the checks its plan owes passed (github `writing/pull-requests.md`, « Ready pull requests »);
-- CI is green.
-
-The github ready gate computes it. A content change voids it until three hold.
+A pull request is done when the github ready gate puts `Ready` at its head; core's readiness
+contract (github's `core/readiness.ts`) alone says what that needs, and `pr-readiness` names what is missing.
 
 ## Consent
 

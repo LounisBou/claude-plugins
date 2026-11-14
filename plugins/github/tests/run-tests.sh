@@ -334,6 +334,26 @@ from ghlib import fmt
 ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False, {})
 print(ci["result"], ",".join(ci["failed"]), ci["total"])
 ' "$GHDIR" '[{"id":5,"name":"a","status":"completed","conclusion":"success"},{"id":5,"name":"a","status":"completed","conclusion":"failure"}]')"
+# A fresh head has no check yet: CI has not started, which is not green.
+check "gate_ci reads no check at all as pending, not green" "PENDING 0 0" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+for draft in (False, True):
+    ci = fmt.gate_ci({"statuses": []}, [], draft, {})
+    assert ci["result"] == "PENDING", ci
+ci = fmt.gate_ci(None, [], False)
+print(ci["result"], ci["total"], ci["running"])
+' "$GHDIR")"
+check "gate_ci keeps a commit status alone green" "SUCCESS 1" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+ci = fmt.gate_ci({"statuses": [{"context": "legacy", "state": "success"}]}, [], False, {})
+print(ci["result"], ci["total"])
+' "$GHDIR")"
 check "open-threads keeps only unresolved" "1" \
   "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"
@@ -1882,6 +1902,25 @@ deletion: allowed" "$(gh7 protect-check)"
 gh7 protect-apply >/dev/null
 check "protect-apply updates its own ruleset rather than making a second" "PUT /repos/acme/thing/rulesets/9" "$(sent7 | cut -d' ' -f1-2)"
 
+CI_CHECK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["conditions"]["ci"]["check"])' "$ROOT/core/readiness.json")
+protect_fix ci-bare '[{"type":"non_fast_forward","ruleset_id":3},{"type":"deletion","ruleset_id":3}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+check "protect-check --require-ci names the CI check readiness requires when nothing requires it" "protected main; the $CI_CHECK check not required
+force-push: refused by the ruleset
+deletion: refused by the ruleset
+the $CI_CHECK check: not required" "$(gh7 protect-check --require-ci)"
+gh7 protect-apply --require-ci >/dev/null
+check "protect-apply --require-ci rewrites its ruleset with the CI check readiness names, nothing bypassing it" \
+  'PUT /repos/acme/thing/rulesets/3 {"bypass_actors": [], "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH"]}}, "enforcement": "active", "name": "protect the default branch", "rules": [{"type": "non_fast_forward"}, {"type": "deletion"}, {"parameters": {"required_status_checks": [{"context": "'"$CI_CHECK"'"}], "strict_required_status_checks_policy": false}, "type": "required_status_checks"}], "target": "branch"}' "$(sent7)"
+
+protect_fix ci-held '[{"type":"non_fast_forward","ruleset_id":3},{"type":"deletion","ruleset_id":3},{"type":"required_status_checks","ruleset_id":3,"parameters":{"required_status_checks":[{"context":"'"$CI_CHECK"'"}]}}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+check "protect-apply --require-ci writes nothing when the ruleset requires the check already" "already protected main" "$(gh7 protect-apply --require-ci | head -1)"
+check "protect-apply --require-ci's no-op sends nothing" "" "$(sent7)"
+
+protect_fix ci-other '[{"type":"non_fast_forward","ruleset_id":3},{"type":"required_status_checks","ruleset_id":3,"parameters":{"required_status_checks":[{"context":"'"$CI_CHECK"'"}]}}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+gh7 protect-apply >/dev/null
+check "protect-apply without --require-ci keeps the CI check its ruleset already requires" "required_status_checks" \
+  "$(sent7 | sed -n 's/.*"type": "\(required_status_checks\)".*/\1/p')"
+
 new7 ensure-empty
 check "labels-ensure creates both labels on a bare repository" "created Ready
 created Not Ready" "$(gh7 labels-ensure)"
@@ -2033,7 +2072,7 @@ check "pr-status under a --format answers the full pull request to that format" 
   "$(gh8 pr-status 12 --format pr-merge-status)"
 
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
-check "pr-gate reads no check at all as green, total 0" "SUCCESS   0" "$(ci8)"
+check "pr-gate reads no check at all as pending, total 0" "PENDING   0" "$(ci8)"
 
 gate8 failed "$PULL8" '{"state":"failure","statuses":[{"context":"ci/legacy","state":"error"}]}' '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure"},{"name":"test","status":"completed","conclusion":"success"}]}'
 check "pr-gate names the failed checks and statuses" "FAILURE lint,ci/legacy  3" "$(ci8)"

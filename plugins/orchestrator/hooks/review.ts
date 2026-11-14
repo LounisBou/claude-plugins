@@ -8,6 +8,7 @@
 // request's check plan (github's check-plan.ts), which github takes from this plugin only.
 import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
+import { PLAN_NEEDS } from '../core/readiness.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
@@ -28,6 +29,9 @@ const FINDING = {
 }
 
 export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review verdict or a check plan: the review round and the scope are its own.'
+
+// The needs a plan may give a check, as core's readiness contract lists them.
+export const needsOf = (check: keyof typeof PLAN_NEEDS): string => PLAN_NEEDS[check].join(', ')
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 
@@ -127,9 +131,9 @@ export function register(on: On<Held>): void {
               type: 'object',
               description: 'in place of the verdict: each "<need>" or "<need>: <reason>"',
               properties: {
-                e2e: { type: 'string', description: 'required, none or screenshots' },
-                norms: { type: 'string', description: 'required or none' },
-                review: { type: 'string', description: 'full or one-pass' },
+                e2e: { type: 'string', description: needsOf('e2e') },
+                norms: { type: 'string', description: needsOf('norms') },
+                review: { type: 'string', description: needsOf('review') },
               },
             },
           },

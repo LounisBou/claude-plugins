@@ -112,12 +112,22 @@ test('an unreadable file is named when a kind is missing too', () => {
     .toContain('Missing: e2e: no record at 0123456, unreadable record ' + bad.name + '.')
 })
 
-test('no check at all is green', () => {
-  expect(missingItems(gate({}, { result: 'SUCCESS', total: 0 }), ALL)).toEqual([])
+test('no check at all is not green: CI has not started', () => {
+  expect(missingItems(gate({}, { result: 'PENDING', total: 0, running: 0 }), ALL)).toEqual(['CI still running'])
 })
 
 test('a skipped check is not green, and says so', () => {
   expect(missingItems(gate({}, { result: 'PENDING', skipped: ['test'], running: 0 }), ALL)).toEqual(['CI did not run: test skipped'])
+})
+
+test('the gate\'s share leaves CI to GitHub, which holds it as a required check', () => {
+  const red = gate({}, { result: 'FAILURE', failed: ['lint'] })
+  expect(missingItems(red, ALL, undefined, {}, [], 'gate')).toEqual([])
+  expect(missingItems(red, ALL, undefined, {}, [], 'github')).toEqual(['CI failed: lint'])
+  const noReview = ALL.filter((r) => !r.name.startsWith('review'))
+  expect(missingItems(red, noReview, undefined, {}, [], 'gate')).toEqual(['review: no record at 0123456'])
+  expect(missingItems(red, noReview, undefined, {}, [], 'github')).toEqual(['CI failed: lint'])
+  expect(missingItems(gate({ state: 'closed' }, { result: 'PENDING', running: 1 }), ALL, undefined, {}, [], 'gate')).toEqual(['the pull request is closed'])
 })
 
 test('a closed pull request and a moved head are named first', () => {
@@ -162,6 +172,35 @@ test('the Bash merges and undrafts are recognised with their repository and pull
   expect(bashActs('gh pr create -d -t t -R o/r')).toEqual([{ kind: 'create-draft', name: 'gh pr create', repo: 'o/r' }])
   expect(bashActs('gh pr create --draft --label Ready')[0].kind).toBe('create-draft')
   expect(bashActs('gh pr ready 3 -R o/r --undo')).toEqual([{ kind: 'redraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
+})
+
+test('a gh api merge whose pull request or repository is a shell expansion is an unreadable merge', () => {
+  const unreadable = [{ kind: 'merge', name: 'gh api', unreadable: true }]
+  for (const line of [
+    'gh api repos/o/r/pulls/$PR/merge -X PUT',
+    'gh api repos/o/r/pulls/${PR}/merge -X PUT',
+    'gh api repos/$REPO/pulls/12/merge -X PUT',
+    'gh api repos/o/r/pulls/$(gh pr list -q .[0].number)/merge -X POST',
+    'gh api "repos/o/r/pulls/$(echo 12)/merge" -X POST',
+    'gh api repos/o/r/pulls/$PR/merge -f merge_method=squash',
+  ]) {
+    expect(bashActs(line), line).toEqual(unreadable)
+  }
+  // A read, or another endpoint, is no merge.
+  expect(bashActs('gh api repos/o/r/pulls/$PR/merge')).toEqual([])
+  expect(bashActs('gh api repos/o/r/pulls/$PR/files -X POST')).toEqual([])
+})
+
+test('a merge or an undraft whose pull request is a command substitution is unreadable, never the current branch\'s', () => {
+  const at = (kind: string, name: string, extra = {}) => [{ kind, name, repo: 'o/r', unreadable: true, ...extra }]
+  expect(bashActs('gh pr merge $(gh pr list -q .[0].number) -R o/r')).toEqual(at('merge', 'gh pr merge'))
+  expect(bashActs('gh pr merge `gh pr list -q .[0].number` -R o/r')).toEqual(at('merge', 'gh pr merge'))
+  expect(bashActs('gh pr merge "$(cat number)" -R o/r')).toEqual(at('merge', 'gh pr merge', { branch: '' }))
+  expect(bashActs('gh pr ready $(cat number) -R o/r')).toEqual(at('undraft', 'gh pr ready'))
+  expect(bashActs('bash -c "gh pr merge \\$(cat number) -R o/r"')).toEqual(at('merge', 'gh pr merge'))
+  // A substitution elsewhere in the line leaves a number the line shows readable.
+  expect(bashActs('gh pr merge 12 -R o/r --body "$(cat body)"')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r', pr: 12 }])
+  expect(bashActs('gh pr merge -R o/r')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r' }])
 })
 
 test('gh pr ready --undo is read as gh reads a boolean flag: =false leaves draft', () => {
@@ -320,8 +359,7 @@ test('the records refusals name only the producers the record contract declares'
 test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
-    + ' A pull request is ready when a clean review, passed E2E and green CI are all at its'
-    + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
+    + ' What Ready needs is core\'s readiness contract (core/readiness.ts).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
@@ -331,7 +369,7 @@ test('the refusals read as the guard documents them', () => {
 test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
   expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
     'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
-    + ' and Ready is put by the gate once the three conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
+    + ' and Ready is put by the gate once the pull request is ready (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
   expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
   expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
   expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
