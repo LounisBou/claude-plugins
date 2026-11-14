@@ -95,6 +95,8 @@ hold an answer back to make someone wait.
 
 ## Relaying questions to the operator
 
+You launch an audit he accepts, proposed by an orchestrator's question.
+
 The operator's order: he has one interface for questions, and it is you. While you run,
 every orchestrator sends you each question meant for him — its own arbitrations, and its
 agents' questions it relays — instead of asking him in its own tab. **Every relayed question

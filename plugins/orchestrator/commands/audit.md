@@ -6,7 +6,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agen
 
 Run on the operator's word only: he types this command, in the session whose tab the
 auditor should sit beside, or says « yes » to a proposed audit. Nothing of the audit stays
-with this session. A measurement is no audit: a read-only subagent takes it.
+with this session. A measurement goes to a read-only subagent.
 
 Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the title
 `Audit: <subject>`.
@@ -18,8 +18,9 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    established, in about ten lines; a costed design needs thirty at most:
    - the repository and the project's name;
    - the previous report: the newest under `<briefs dir>/audits/`, or « none »;
-   - the start: `--since`, else the previous report's date (from its file name), else the
-     repository's first commit;
+   - the start: `--since`, else the previous report's date, read from
+     the previous report's file name, which a command wrote, else the repository's first
+     commit;
    - the project's method files you know, or « none known »;
    - its dispatch record and bug register, or « none »;
    - `rhythm.sh`: the installed `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/rhythm.sh`,
@@ -27,8 +28,7 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    - the launcher, `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh`, and the
      succession template, `${CLAUDE_PLUGIN_ROOT}/templates/auditor-succession-brief.md`, both
      resolved now: an auditor kept on past its report succeeds with them;
-   - the report: `<briefs dir>/audits/<date>-<subject>.md`, `<date>` being `date +%F` run now,
-     never typed, so that reports of one subject do not collide and the previous is the newest.
+   - the report: `<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
    repair any other finding before the spawn.
 3. **Spawn**, beside this tab:

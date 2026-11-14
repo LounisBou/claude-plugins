@@ -27,7 +27,7 @@ shell launched by hand. When the launcher cannot make a place it says why and ST
 ## Boundaries that stay yours
 
 - **Environment preparation is orchestrator housekeeping**, not implementation: the phase's checkout (`workspace.sh create`, step 1 above: it copies the project's local material, never the operator's `settings.local.json`), granting test databases; a reader's pinned copy is a detached worktree of your own checkout, not a clone (`workspace.sh pin`).
-- **You propose an audit only for an architecture question that blocks a plan, never your own drift**, by a question: « audit » (6 to 14 $, 10 to 20 minutes, the week's count from `audits/`), « decide without audit » with your recommendation, « measure by a read-only subagent » (about 3 $). After his yes the coordinator launches it, else you.
+- **You propose an audit only for an architecture question that blocks a plan, never your own drift**, by a question: « audit » (6 to 14 $, 10 to 20 minutes, the week's count from `audits/`), « decide without audit » with your recommendation, « measure by a read-only subagent » (about 3 $). After his yes you launch it.
 - An agent may pipeline only when PR N+1 is dispatched to that same agent at the verification of PR N, its context below the pre-dispatch gate: open PR N, report, and continue into PR N+1 while you review — subject to the one-writer rule when N+1 shares the repository.
 
 ## Context rotation

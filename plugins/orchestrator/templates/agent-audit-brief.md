@@ -10,7 +10,7 @@ two to five sub-questions) and what is established, not to remeasure:
 - **measure**: how often, at what cost;
 - **costed design**: what to build, at what price, with what it removes.
 
-You write ONE report and stop (§4).
+You write ONE report (§4).
 
 ## 1. What you read
 
@@ -60,7 +60,6 @@ Tell the operator, in this tab, the report's path, its verdict and its cost. The
 answer his questions if he asks, apply nothing. Relaying a proposal to the
 orchestrator is his word, not yours. He closes this tab; if you succeed, your successor does.
 
-Past the report, he may keep you on for a follow-up. At your
-gate, with his work in hand, you succeed instead of stopping, by the steps of
-the « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read then, the launcher being
-`{{ITERM_AGENT_SH}}` and the repository `{{REPOSITORY}}`.
+Kept on past the report for a follow-up, at your gate you succeed instead of stopping, by the steps of
+the « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read then,
+the launcher being `{{ITERM_AGENT_SH}}` and the repository `{{REPOSITORY}}`.
