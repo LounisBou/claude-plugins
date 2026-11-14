@@ -9,12 +9,14 @@ import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel,
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, answerFromPaneText, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
+import { answerAskedFromPane, callAsk, settle } from '../question.ts'
+import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { parseConsentRecord, quotesConsent } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { SHAPED } from './fixtures.ts'
 import { ROW_MARKER } from '../remote-row.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer, parseAsk as parseOldAsk } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer, parseAsk as parseOldAsk } from '../remote-round.ts'
 
 // The lines this release writes between machines: the event line (remote-round.ts), read back here
 // as the four lines it replaced, so each case below says what it said of them.
@@ -3165,4 +3167,326 @@ test('answers that cross: the pane\'s, first at the owner, is applied; the tab t
   const before = sender.sent.length
   await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'thanks'))
   expect(sender.sent.length).toBe(before)
+})
+
+// --- a question asked with ask, its coordinator on another machine (remote-asked.ts) ------------
+
+// The asker's machine owns the question; the coordinator's machine keeps a replica, which its pane
+// draws and answers. Each module over its own files, a line one sends handed to the other's receive.
+const ASKED_FIELDS = {
+  subject: 'merge order', context: 'Two pull requests touch one file.', question: 'Which merges first?',
+  choice_a: 'acme/app#1 first', choice_b: 'acme/app#2 first', recommended: 'A', why: 'no rebase', blocks: 'acme/app#1',
+}
+const pushes = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQ(s.text)?.event.kind === 'asked')
+const replies = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQ(s.text)?.event.kind === 'reply')
+const qAcks = (fx: ReturnType<typeof fake>, of: string) => fx.sent.filter(s => parseQAck(s.text)?.of === of)
+const objectAt = (fx: ReturnType<typeof fake>, id: string) => JSON.parse(fx.files.get(`${ROUND}/${id}.json`)!)
+
+// The same question asking the operator's consent to auto-deploy: its two choices are the consent record's.
+const CONSENT_ASKED_FIELDS = {
+  ...ASKED_FIELDS, subject: 'auto-deploy', question: 'Auto-deploy Acme/Thing to prod?', choice_a: 'Accorder', choice_b: 'Refuser',
+  consent_kind: DEPLOY.kind, consent_repo: DEPLOY.repo, consent_env: DEPLOY.env,
+}
+// A peer at another address, naming itself the coordinator.
+const FORGER_AT = 'uds:/tmp/cc-socks/666.sock'
+
+async function askedRemotely(fields: Record<string, string> = ASKED_FIELDS) {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  ;(sender.dollar as any).ui.log = () => undefined
+  const coordinator = coordinatorMachine()
+  const asked = await callAsk(sender.dollar as never, { tool: 'mcp__orchestrator__ask', ...fields })
+  const id = /Asked as (q-\S+?):/.exec(asked.result)![1]
+  // The coordinator's address, taught by a message of its own: the only one its replies and acks come from.
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', 'Noted.'))
+  expect(JSON.parse(sender.files.get(LEARNT)!).from).toBe(COORD_AT)
+  return { chains, sender, coordinator, id }
+}
+
+test('a question asked with ask is pushed to the coordinator on another machine, kept there as a replica, and acked', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  expect(pushes(sender).map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 1 })
+  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  expect(typeof consumed.consumed).toBe('string')
+  const replica = objectAt(coordinator, id)
+  expect(replica).toMatchObject({ v: 2, id, status: 'open', seq: 1, origin: { machine: 'unknown', address: SENDER_AT }, sender: { session: 's-one', name: 'Orch: belt' } })
+  expect(replica.replica).toBeUndefined()
+  expect(qAcks(coordinator, 'asked')).toEqual([{ to: SENDER_AT, text: qAckLine({ id, seq: 1, of: 'asked' }) }])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', qAcks(coordinator, 'asked')[0].text))
+  expect(objectAt(sender, id).replica.state).toBe('acked')
+  // The same push again changes nothing and is acked again.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  expect(objectAt(coordinator, id)).toEqual(replica)
+  expect(qAcks(coordinator, 'asked').length).toBe(2)
+})
+
+test('the pane\'s answer on a replica is applied at the owner, told to its asker\'s model, acked, and the replica delivered', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  const done = await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
+  expect(done?.seq).toBe(1)
+  expect(objectAt(coordinator, id)).toMatchObject({ status: 'answered', seq: 1, delivery: { state: 'sent', attempts: 1 } })
+  expect(replies(coordinator).map(s => s.to)).toEqual([SENDER_AT])
+  // No message by name to the asker from the coordinator's machine: the owner tells it.
+  expect(coordinator.sent.filter(s => s.text.startsWith('[module] '))).toEqual([])
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(passed.consumed).toBeUndefined()
+  expect(passed.text).toContain(`[module] The operator answered your question ${id} « merge order » (blocks: acme/app#1) through Coord: ops [abc]`)
+  expect(passed.text).toContain('B : acme/app#2 first')
+  expect(passed.text).not.toContain('[module-q]')
+  const owned = objectAt(sender, id)
+  expect(owned).toMatchObject({ status: 'answered', seq: 2, answer: { text: 'B : acme/app#2 first', by: 'pane', settler: 'Coord: ops [abc]' } })
+  expect(qAcks(sender, 'reply')).toEqual([{ to: COORD_AT, text: qAckLine({ id, seq: 1, of: 'reply' }) }])
+  expect(parseQ(pushes(sender).at(-1)!.text)?.seq).toBe(2)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender).at(-1)!.text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', qAcks(sender, 'reply')[0].text))
+  expect(objectAt(coordinator, id)).toMatchObject({ status: 'answered', seq: 2, answer: { by: 'pane' }, delivery: { state: 'delivered' } })
+  // The same reply again is acked again, applied and told nowhere.
+  const again = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(typeof again.consumed).toBe('string')
+  expect(qAcks(sender, 'reply').map(s => parseQAck(s.text)?.already)).toEqual([undefined, undefined])
+  expect(objectAt(sender, id).seq).toBe(2)
+})
+
+test('answers that cross: the asker\'s own, first at the owner, wins; the pane\'s is said already answered there', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
+  const settled = await settle(sender.dollar as never, { id, outcome: 'answered-here', text: 'A', author: null, work: null })
+  expect(settled.isError).toBeUndefined()
+  const received = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(typeof received.consumed).toBe('string')
+  expect(objectAt(sender, id)).toMatchObject({ status: 'answered', seq: 2, answer: { text: 'A', by: 'tab' } })
+  expect(qAcks(sender, 'reply').map(s => parseQAck(s.text))).toEqual([{ id, seq: 1, of: 'reply', already: true }])
+  // The owner's state, pushed at its settle and again with the « already », replaces the replica's answer.
+  for (const push of pushes(sender)) await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', push.text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', qAcks(sender, 'reply')[0].text))
+  expect(objectAt(coordinator, id)).toMatchObject({ status: 'answered', seq: 2, answer: { text: 'A', by: 'tab' }, delivery: { state: 'failed', reason: 'already answered in its own tab' } })
+})
+
+test('a push not acked is sent again at the asker\'s turn ends every 30 s, three sends in all, then failed', async () => {
+  const { chains, sender, id } = await askedRemotely()
+  const age = () => {
+    const now = objectAt(sender, id)
+    sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  }
+  // Not yet 30 s: nothing sent again.
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd('Done.'))
+  expect(pushes(sender).length).toBe(1)
+  for (const attempts of [2, 3]) {
+    age()
+    await drive(chains, 'turn.complete', sender.dollar, turnEnd('Done.'))
+    expect(pushes(sender).length).toBe(attempts)
+    expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'sent', attempts })
+  }
+  age()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd('Done.'))
+  expect(pushes(sender).length).toBe(3)
+  expect(objectAt(sender, id).replica).toMatchObject({ state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' })
+  expect(sender.logged.filter(l => l.endsWith(`${id} not pushed to the coordinator Coord: ops [abc]: no acknowledgment after 3 sends`)).length).toBe(1)
+})
+
+test('a replica\'s answer not acked is sent again by the round\'s wake every 30 s, three sends in all, then failed', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'A : acme/app#1 first')
+  const age = () => {
+    const now = objectAt(coordinator, id)
+    coordinator.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, delivery: { ...now.delivery, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  }
+  await resendReplies(coordinator.dollar)
+  expect(replies(coordinator).length).toBe(1)
+  for (const attempts of [2, 3]) {
+    age()
+    await resendReplies(coordinator.dollar)
+    expect(replies(coordinator).length).toBe(attempts)
+    expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'sent', attempts })
+  }
+  age()
+  await resendReplies(coordinator.dollar)
+  expect(replies(coordinator).length).toBe(3)
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' })
+})
+
+test('a push reaching a session that is no coordinator is consumed and kept nowhere', async () => {
+  const { chains, sender, id } = await askedRemotely()
+  const elsewhere = fake({ name: 'Orch: other' })
+  const consumed = await drive(chains, 'session.receive', elsewhere.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  expect(typeof consumed.consumed).toBe('string')
+  expect(elsewhere.files.has(`${ROUND}/${id}.json`)).toBe(false)
+  expect(elsewhere.sent).toEqual([])
+})
+
+test('the coordinator\'s withdrawal of a replica by settle is applied at the owner, and told by message to its asker\'s session', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  const settled = await settle(coordinator.dollar as never, { id, outcome: 'withdrawn', text: 'merged meanwhile', author: null, work: null })
+  expect(settled.result).toContain('The answer goes to Orch: belt on its machine now.')
+  expect(objectAt(coordinator, id)).toMatchObject({ status: 'withdrawn', seq: 1, answer: { by: 'coordinator', text: 'merged meanwhile' }, delivery: { state: 'sent', attempts: 1 } })
+  expect(parseQ(replies(coordinator)[0].text)?.event).toMatchObject({ kind: 'reply', reply: { status: 'withdrawn', by: 'coordinator' } })
+  // The reply reaches another session of the owner's machine: the asker's own is sent the message.
+  sender.dollar.session.id = async () => 's-other'
+  const received = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(typeof received.consumed).toBe('string')
+  expect(objectAt(sender, id)).toMatchObject({ status: 'withdrawn', seq: 2, answer: { text: 'merged meanwhile', by: 'coordinator', settler: 'Coord: ops [abc]' } })
+  expect(sender.sent.filter(s => s.text.startsWith('[module] '))).toEqual([{ to: { sessionId: 's-one' }, text: `[module] Coord: ops [abc] withdrew your question ${id} « merge order » (blocks: acme/app#1): merged meanwhile` }])
+})
+
+test('a claim in the asker\'s tab moves the seq and is pushed; the replica keeps the pane\'s answer on its way over that open push', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 2, claimed: { typed: 'let me think' } })
+  const claim = pushes(sender).at(-1)!
+  expect(parseQ(claim.text)?.seq).toBe(2)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', claim.text))
+  const replica = objectAt(coordinator, id)
+  expect(replica).toMatchObject({ status: 'answered', seq: 2, answer: { text: 'B : acme/app#2 first', by: 'pane' }, delivery: { state: 'sent' } })
+  expect(replica.claimed).toBeUndefined()
+})
+
+test('a push older than the replica, arriving after a newer one, changes nothing and is acked', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  const [first, second] = pushes(sender)
+  expect([parseQ(first.text)?.seq, parseQ(second.text)?.seq]).toEqual([1, 2])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', second.text))
+  const replica = objectAt(coordinator, id)
+  expect(replica.seq).toBe(2)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', first.text))
+  expect(objectAt(coordinator, id)).toEqual(replica)
+  expect(qAcks(coordinator, 'asked').map(s => [s.to, parseQAck(s.text)?.seq])).toEqual([[SENDER_AT, 2], [SENDER_AT, 1]])
+})
+
+test('a close its owner makes reaches an open replica, and the coordinator here that was shown it is told', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  coordinator.files.set(`${HOME}/.claude/claude-orchestrator/round-listed.json`, JSON.stringify([id]))
+  await settle(sender.dollar as never, { id, outcome: 'withdrawn', reason: undefined, text: 'moot now', author: null, work: null } as never)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender).at(-1)!.text))
+  expect(objectAt(coordinator, id)).toMatchObject({ status: 'withdrawn', seq: 2 })
+  const told = coordinator.sent.filter(s => s.text.startsWith('[module] Settled'))
+  expect(told.length).toBe(1)
+  expect(told[0].text).toContain(`(entry ${id}) — moot now`)
+})
+
+test('a push arms its own resend: the timer sends it again 30 s on, with no turn of the asker\'s ending', async () => {
+  forgetResendTimer()
+  const { sender, id } = await askedRemotely()
+  const timers = sender.later.filter(t => t.ms > 30_000)
+  expect(timers.length).toBe(1)
+  const now = objectAt(sender, id)
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  await timers[0].fn()
+  expect(pushes(sender).length).toBe(2)
+  expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
+})
+
+test('a push sent after the timer was armed is sent again 30 s on: the tick that finds it too young arms the timer again', async () => {
+  forgetResendTimer()
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', qAcks(coordinator, 'asked')[0].text))
+  expect(objectAt(sender, id).replica.state).toBe('acked')
+  // A second question, pushed while the first push's timer is still armed: no timer of its own.
+  const asked = await callAsk(sender.dollar as never, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS, subject: 'release order', blocks: 'acme/app#3' })
+  const second = /Asked as (q-\S+?):/.exec(asked.result)![1]
+  expect(sender.later.filter(t => t.ms > 30_000).length).toBe(1)
+  await sender.later.filter(t => t.ms > 30_000)[0].fn()
+  expect(pushes(sender).length).toBe(2)
+  const timers = sender.later.filter(t => t.ms > 30_000)
+  expect(timers.length).toBe(2)
+  const now = objectAt(sender, second)
+  sender.files.set(`${ROUND}/${second}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  await timers[1].fn()
+  expect(pushes(sender).length).toBe(3)
+  expect(objectAt(sender, second).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
+})
+
+test('his « Accorder » in the pane on a replica asking consent is the consent record at the owner, none at the coordinator', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
+  expect(objectAt(sender, id).consent).toEqual(DEPLOY)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'A : Accorder')
+  expect(consentFiles(coordinator)).toEqual([])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(objectAt(sender, id)).toMatchObject({ status: 'answered', answer: { text: 'A : Accorder', by: 'pane' } })
+  const records = consentFiles(sender).map(p => parseConsentRecord(JSON.parse(sender.files.get(p)!))!)
+  expect(records.map(r => [r.subject, r.entry, r.answer, r.by])).toEqual([[DEPLOY, id, 'Accorder', 'pane']])
+})
+
+test('the resend timer is armed again by no tick that finds every push acked, nor while its coordinator is on this machine', async () => {
+  forgetResendTimer()
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  const timers = () => sender.later.filter(t => t.ms > 30_000)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', qAcks(coordinator, 'asked')[0].text))
+  await timers()[0].fn()
+  expect(timers().length).toBe(1)
+  // A push still waiting, its coordinator now on this machine: nothing to send it again to.
+  const now = objectAt(sender, id)
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, state: 'sent' } }) + '\n')
+  sender.files.set(RECORD, JSON.stringify({ name: 'Coord: ops [abc]', tty: '/dev/ttys9' }))
+  forgetResendTimer()
+  const armed = timers().length
+  await timers()[0].fn()
+  expect(timers().length).toBe(armed)
+})
+
+test('a reply from another address than the coordinator\'s is refused: no answer, no consent, no acknowledgment', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'A : Accorder')
+  const consumed = await drive(chains, 'session.receive', sender.dollar, delivered(FORGER_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(typeof consumed.consumed).toBe('string')
+  expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 1, answer: null })
+  expect(consentFiles(sender)).toEqual([])
+  expect(qAcks(sender, 'reply')).toEqual([])
+  expect(sender.logged.some(l => l.endsWith(`a remote reply to ${id} from ${FORGER_AT}, not the coordinator's, refused`))).toBe(true)
+})
+
+test('acknowledgments from another address are refused: the push is sent again, the reply stays on its way', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  // A forged acknowledgment of the push stops no resend.
+  await drive(chains, 'session.receive', sender.dollar, delivered(FORGER_AT, 'Coord: ops [abc]', qAckLine({ id, seq: 1, of: 'asked' })))
+  expect(objectAt(sender, id).replica.state).toBe('sent')
+  const now = objectAt(sender, id)
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd('Done.'))
+  expect(pushes(sender).length).toBe(2)
+  // A forged acknowledgment of the pane's reply leaves it on its way.
+  await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: belt', qAckLine({ id, seq: 1, of: 'reply' })))
+  expect(objectAt(coordinator, id).delivery.state).toBe('sent')
+})
+
+test('a push resent by another session of the owner\'s machine, at its own address, updates the replica and is acked there', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  const OTHER_SESSION_AT = 'uds:/tmp/cc-socks/502.sock'
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(OTHER_SESSION_AT, 'Orch: other', pushes(sender).at(-1)!.text))
+  expect(objectAt(coordinator, id)).toMatchObject({ seq: 2, origin: { machine: 'unknown', address: OTHER_SESSION_AT } })
+  expect(qAcks(coordinator, 'asked').map(s => [s.to, parseQAck(s.text)?.seq])).toEqual([[SENDER_AT, 1], [OTHER_SESSION_AT, 2]])
+})
+
+test('a push meeting a question this machine owns is ignored, and a reply to a question never pushed answers nothing', async () => {
+  const { chains, sender, id } = await askedRemotely()
+  const before = objectAt(sender, id)
+  // Its own push, handed back to its machine's coordinator session: never written over the owner's object.
+  const own = coordinatorMachine()
+  own.files.set(`${ROUND}/${id}.json`, JSON.stringify(before) + '\n')
+  await drive(chains, 'session.receive', own.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  expect(objectAt(own, id)).toEqual(before)
+  expect(qAcks(own, 'asked')).toEqual([])
+  // A reply to a question that was never pushed to a coordinator elsewhere.
+  const { replica: _replica, ...unpushed } = before
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify(unpushed) + '\n')
+  const reply = qReplyLine(id, 1, { status: 'answered', text: 'A', by: 'pane', at: '2026-11-14T15:00:00.000Z', settler: 'Coord: ops [abc]' })
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', reply))
+  expect(objectAt(sender, id).status).toBe('open')
+  expect(qAcks(sender, 'reply')).toEqual([])
 })

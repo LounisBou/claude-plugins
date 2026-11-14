@@ -47,8 +47,8 @@ export type Asker = { session: string; name: string; remote: boolean }
 export type Plan = {
   entry: Fields
   asker: Asker
-  /** v2: the answer sent to its asker now; relay: the pending delivery handed to the supervision. */
-  deliver: 'now' | 'pending' | null
+  /** v2: the answer sent to its asker now, or to its owner's machine from a replica; relay: the pending delivery handed to the supervision. */
+  deliver: 'now' | 'pending' | 'remote' | null
   consentBy: Answerer | null
   /** The relay's entry: its fingerprint forgotten, and the coordinator told when the module closed it. */
   relayed: boolean
@@ -69,6 +69,13 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
   const by = request.outcome === 'answered-by-message' ? 'message' : !own ? 'coordinator' : request.outcome === 'withdrawn' ? 'sender' : 'tab'
   const answer = { text: request.text, by, at, settler: me.name, ...(request.author !== null ? { author: request.author } : {}) }
   const answered = request.outcome !== 'withdrawn'
+  // A replica (remote-asked.ts) is settled by its owner: the answer goes there, its seq the owner's, its consent recorded there.
+  if (entry['origin'] !== undefined) {
+    return {
+      entry: { ...entry, status: answered ? 'answered' : 'withdrawn', answer, delivery: { state: 'pending', at, attempts: 0 } },
+      asker: { ...asker, remote: true }, deliver: 'remote', consentBy: null, relayed: false, told: false,
+    }
+  }
   return {
     entry: { ...entry, status: answered ? 'answered' : 'withdrawn', answer, seq: Number(entry['seq'] ?? 0) + 1 },
     asker,
