@@ -50,3 +50,10 @@ test('the journal of a script is the orchestrator\'s, under the configuration di
   assert.ok(parseJournalEvent(JSON.parse(readFileSync(join(journal, name ?? ''), 'utf8'))))
   assert.deepEqual(warned, [])
 })
+
+test('ORCHESTRATOR_JOURNAL_DIR, when set, is the journal a script writes, and the configuration directory gets none', () => {
+  const env = { CLAUDE_CONFIG_DIR: join(dir, 'cfg'), ORCHESTRATOR_JOURNAL_DIR: join(dir, 'suite-journal') }
+  writeAudit(scriptJournal(env, () => NOW, () => {}), auditRun(env, NOW), 'step', 'orchestrator.dispatch.open', FACT)
+  assert.equal(readdirSync(join(dir, 'suite-journal')).length, 1)
+  assert.deepEqual(readdirSync(dir).sort(), ['suite-journal'])
+})

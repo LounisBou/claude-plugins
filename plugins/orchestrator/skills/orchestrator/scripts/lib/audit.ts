@@ -22,11 +22,16 @@ export function stamp(date: Date): string {
   return date.toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
 }
 
-/** The orchestrator's journal under the configuration directory; a write that fails is said through `warn`. */
+/**
+ * The orchestrator's journal under the configuration directory, or ORCHESTRATOR_JOURNAL_DIR when
+ * set: the suite points it at its own directory, so its runs never write the operator's journal.
+ * A write that fails is said through `warn`.
+ */
 export function scriptJournal(env: Env, now: () => Date, warn: (line: string) => void): Journal {
+  const dir = setting(env, 'ORCHESTRATOR_JOURNAL_DIR') ?? journalDir(configDir(env, setting(env, 'HOME')), PLUGIN)
   return event => {
     try {
-      appendEvent(journalDir(configDir(env, setting(env, 'HOME')), PLUGIN), event, stamp(now()))
+      appendEvent(dir, event, stamp(now()))
     } catch (error) {
       warn(`audit: the journal could not be written: ${error instanceof Error ? error.message : String(error)}`)
     }
