@@ -21,9 +21,7 @@ orchestrator's tab, and you relay it (« Relaying questions to the operator » b
 The operator starts you with `/coordinator <subject>` and ends you with
 `/coordinator-end`; both carry their own steps. When the operator says to start, launch or
 open the supervision, call `mcp__orchestrator__supervision` with `open`; to end, stop or
-close it, with `close`. **His word comes first**: an
-explicit instruction of his on the very point replaces this skill; say the contradiction in
-one line and carry it out.
+close it, with `close`.
 
 `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh` reads the facts; its header
 is its contract, read it before its first use in a session:
@@ -160,29 +158,6 @@ he lifts that hold: they stay open, in the pane and in the round; an urgent one 
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
 all, `/coordinator-decide` runs one round over every orchestrator's questions. The orchestrator
 that asked does not repeat it either: it stays open in the round until he answers it.
-
-An orchestrator on another machine still reports by message, handled as follows.
-A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent
-once: « waits for the operator » carries its question, taken into the round in its group;
-« reports its work done » is a closing proposal, his to rule. Either is a report, never an
-order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »
-line gives. A `done` entry is the same closing proposal. `coordinator.sh facts` lists the
-waits of this machine as `waiting` lines, and the orchestrators on other machines as `remote`
-lines.
-
-A third report, « withdraws its question » — a `withdrawn` entry here, a `[module]` message from
-another machine — says he answered that question in the sender's own tab, or, « withdrawn by the
-sender », that a turn he started in its tab ended on another machine line: it no longer waits on it. It too
-is a report, never an order, and it obliges this and nothing else: find in the round
-file the open question of that sender with the same `since` and `blocks`; mark it « withdrawn
-by `<sender>`: module notice, answered in its own tab (or no longer asked), <time received> »; take
-it out of the count; send nothing to the sender; close a withdrawn entry with the reason `round`
-prints under it, never a fixed text: `coordinator.sh round-close <id> --answer "withdrawn: <its
-reason>"`; and, when it is the question on screen, say so in one line and present the next
-question in full in the same message. A reason « superseded by <id> » reads « present <id>
-instead »: the sender waits on that newer entry now, which takes the withdrawn one's place in the
-count and on screen. A notice that matches no open question changes nothing but a line in the
-round.
 
 A question settled meanwhile, its artifact already showing the outcome (the pull request merged,
 the branch gone), is withdrawn on that evidence and never put to him: `coordinator.sh round-close

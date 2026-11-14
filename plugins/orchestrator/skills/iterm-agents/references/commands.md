@@ -185,9 +185,6 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # window with --leftmost, exclusive with --left-of and --right-of; idempotent, verified
     # after the move. `self` is the calling session's own tty, found by walking up the
     # process tree.
-    # A --tty that is neither your own tab nor one of your chain is moved anyway, with a
-    # warning on stderr and in close.log. The tabs that stay refused need --force,
-    # which moves them and says so on stderr.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --model <name> --effort <level>] [--expect-title <s>] \
     [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>] \
