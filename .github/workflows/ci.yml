@@ -61,9 +61,13 @@ jobs:
   plugin:
     name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ matrix.shard && format(' (part {0})', matrix.shard) || '' }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
+    # Without the repository job's matrix (that job failed) the job would be skipped and the checks
+    # list would show its name unevaluated, as its raw expression. It runs
+    # instead, as the one cell without a suite, which is not a name the gate waits for.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.repository.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.repository.outputs.matrix || '{"include":[{"plugin":"no plugin suite","os":"ubuntu-latest","blocking":false}]}') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
