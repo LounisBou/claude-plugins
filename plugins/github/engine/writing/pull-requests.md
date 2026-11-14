@@ -130,11 +130,12 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 
 ## Ready pull requests
 
-A pull request is ready when, at its current head commit, a review came out clean, CI is
-green, and each proof its check plan requires holds (REFERENCE.md « Records », all of them with no plan):
-the E2E passed or waived by the operator (method `lifecycle`). A norms check blocks only when it
-ran there and failed. A new commit voids it until these hold again, a rebase that keeps its
-own commits keeping its records.
+A pull request is ready when a review came out clean at its head, CI is green, and the E2E
+passed or was waived by the operator (method `lifecycle`) unless its check plan needs none.
+Norms block when failed, or missing where planned. A plan requires only what it marks
+`required` (norms `none` with no CONTRIBUTING.md), and a required E2E or norms never goes
+laxer: only the operator's waiver lifts it. A new commit voids readiness, a rebase
+keeping its commits keeps its records.
 
 The `Ready` and `Not Ready` labels carry that fact, and a draft opens `Not Ready`. The plugin
 puts `Ready` once they hold, `Not Ready` back on a push. When CI does not run on a draft,

@@ -2760,7 +2760,7 @@ test('a new plan may require more, never lift a check the plan required', review
   const stricter: any = await planned($, { e2e: 'required', norms: 'required' })
   expect(stricter.deny).toBeUndefined()
   const lifted: any = await planned($, { e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' })
-  expect(lifted.deny).toContain('requires e2e and norms and review: only the operator\'s waiver lifts a required check')
+  expect(lifted.deny).toContain('requires e2e and norms: only the operator\'s waiver lifts a required check')
   expect(JSON.parse(seen.files[PLAN]).e2e.need).toBe('required')
 })
 

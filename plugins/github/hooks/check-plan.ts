@@ -10,22 +10,26 @@ export const PLAN_DIR = 'check-plans'
 // The plan's one writer: the orchestrator's tool, from an orchestrator session, never an implementer.
 export const PLAN_WRITER = { plugin: 'orchestrator', tool: 'mcp__orchestrator__review' } as const
 
-// What each planned check may need, the strictest first: a check left out of a plan needs it. E2E may be
-// replaced by desktop and mobile screenshots; a review may be one review_only pass, a depth the gate does not read.
+// What each planned check may need, the strictest first. E2E may be replaced by desktop and mobile screenshots;
+// a review may be one review_only pass, a depth the gate does not read.
 const NEEDS = { e2e: ['required', 'none', 'screenshots'], norms: ['required', 'none'], review: ['full', 'one-pass'] } as const
 type Planned = keyof typeof NEEDS
+// A check left out of a plan: only an explicit required requires E2E or norms.
+const OMITTED: Record<Planned, string> = { e2e: 'none: not in the plan', norms: 'none: not in the plan', review: 'full' }
+// The checks the gate reads from a plan, which only the operator's waiver lifts once required.
+const GUARDED = ['e2e', 'norms'] as const
 const PLANNED = Object.keys(NEEDS) as Planned[]
 
 export type Check = { readonly need: string; readonly reason: string }
 export type Checks = Record<Planned, Check>
 export type CheckPlan = Checks & { readonly v: number; readonly repo: string; readonly pr: number; readonly at: string }
 
-// The kinds that stand without a record at the head, each with the line naming why.
-export type Excused = Partial<Record<Kind, string>>
+// The kinds that stand without a record at the head, each with the line naming why, and the kinds the plan requires.
+export type Excused = Partial<Record<Kind, string>> & { required?: readonly Kind[] }
 
 // `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason.
 function checkOf(kind: Planned, value: unknown): Check | string {
-  const text = value === undefined ? NEEDS[kind][0] : typeof value === 'string' ? value.trim() : ''
+  const text = value === undefined ? OMITTED[kind] : typeof value === 'string' ? value.trim() : ''
   const at = text.indexOf(':')
   const need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
   const reason = at === -1 ? '' : text.slice(at + 1).trim()
@@ -66,15 +70,15 @@ export function planPath(dataDir: string, repo: string, pr: number): string {
   return dataDir + '/' + PLAN_DIR + '/' + repo.toLowerCase() + '/' + pr + '.json'
 }
 
-/** The checks a new plan makes less strict than the plan before it did: lifted only by the operator's waiver. */
+/** The required E2E or norms a new plan lifts: lifted only by the operator's waiver. */
 export function relaxed(before: CheckPlan | undefined, after: Checks): Planned[] {
-  return before ? PLANNED.filter((kind) => before[kind].need === NEEDS[kind][0] && after[kind].need !== NEEDS[kind][0]) : []
+  return before ? GUARDED.filter((kind) => before[kind].need === 'required' && after[kind].need !== 'required') : []
 }
 
 /** The kinds the plan excuses, each named with the plan's date and reason. */
 export function planExcuses(plan: CheckPlan | undefined): Excused {
-  const excused: Excused = {}
-  if (!plan) return excused
+  if (!plan) return {}
+  const excused: Excused = { required: GUARDED.filter((kind) => plan[kind].need === 'required') }
   const by = 'check plan, ' + plan.at.slice(0, 10) + ': '
   if (plan.e2e.need === 'none') excused.e2e = by + plan.e2e.reason
   if (plan.e2e.need === 'screenshots') excused.e2e = by + 'desktop and mobile screenshots in its place, ' + plan.e2e.reason
@@ -109,5 +113,5 @@ export function grants(answer: string): boolean {
 /** The plan as the pull request shows it, in one comment. */
 export function planText(plan: Checks): string {
   const line = (kind: Planned) => '- ' + kind + ': ' + plan[kind].need + (plan[kind].reason ? ' — ' + plan[kind].reason : '')
-  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required; a waiver lifts only a required E2E.'
+  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required; only the operator\'s waiver lifts one.'
 }

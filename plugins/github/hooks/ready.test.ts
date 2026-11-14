@@ -375,3 +375,14 @@ test('labels gh api reads from a file (-F name=@file) are opaque: any label may 
   // -f sends `@f` as it is: a label named so, read on the line.
   expect(bashLabellings("gh api repos/o/r/issues/12/labels -f 'labels[]=@f'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'] }])
 })
+
+// A check plan that requires norms keeps them as E2E is kept; with no plan, or a plan that does not, norms stay on demand.
+test('a plan that requires norms makes a missing norms record missing', () => {
+  const noNorms = ALL.filter((r) => !r.name.startsWith('norms'))
+  expect(missingItems(gate(), noNorms, undefined, { required: ['norms'] })).toEqual(['norms: no record at 0123456'])
+  expect(missingItems(gate(), noNorms, undefined, { required: ['e2e'] })).toEqual([])
+})
+
+test('with no plan nothing changes: norms on demand, E2E required', () => {
+  expect(missingItems(gate(), [record('review', 'pass')], undefined, {})).toEqual(['e2e: no record at 0123456'])
+})
