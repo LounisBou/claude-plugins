@@ -42,7 +42,7 @@ below, and the `args` object holds the subcommand's arguments.
 `pr-gate` reads the pull request, then at its head the status, check runs and Actions runs
 (`per_page=100`); `state` is `open`, `closed` or `merged`, `head` the full sha. `ci.total`:
 statuses and each check's latest run, less a skipped or neutral one of a run older than its
-workflow's latest (greatest run id) if that has a check, plus each required check not yet reported, as running. `ci.result`: `FAILURE` if one failed
+workflow's latest (greatest run id) if that has a check, plus each required check not yet reported (running). `ci.result`: `FAILURE` if one failed
 (`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
 `skipped`, or `neutral` on a draft), else `SUCCESS`; no check at all is `PENDING` (CI not started). Actions call failed: `error:` on stderr, every
 run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
@@ -113,7 +113,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included, as for `pr-ready`; else answers the label carried and `Missing: …` (« Guards ») |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included; else answers the label carried and `Missing: …` (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
