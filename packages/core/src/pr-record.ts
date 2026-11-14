@@ -7,7 +7,8 @@ export const PR_RECORD_CONTRACT = {
   version: 1,
   kinds: ['review', 'norms', 'e2e'],
   results: ['pass', 'fail', 'waived', 'not-applicable', 'accepted'],
-  waivable: 'e2e',
+  // The kinds the operator's waiver lifts, once a pull request's check plan requires them.
+  waivable: ['e2e', 'norms'],
   // The kind a pull request may need none of, with the reason in its detail: one whose files hold
   // no runtime, the writer checks which.
   not_applicable: 'e2e',
@@ -28,7 +29,8 @@ export const PR_RECORD_CONTRACT = {
     head: '^[0-9a-fA-F]{40}$',
     repo_part: '^[A-Za-z0-9_.-]+$',
     producer: '^[a-z0-9-]+$',
-    waiver_date: String.raw`\b\d{4}-\d{2}-\d{2}\b`,
+    // A day, alone or opening an ISO time (the module dates the operator's answer `YYYY-MM-DDThh:mm:ssZ`).
+    waiver_date: String.raw`\b\d{4}-\d{2}-\d{2}(?:\b|(?=T\d))`,
   },
 } as const
 
@@ -105,7 +107,7 @@ export function parsePrRecord(raw: unknown): PrRecord | undefined {
  * is allowed, or the orchestrator's acceptance of a review.
  */
 export function accepts(record: PrRecord): boolean {
-  return record.result === 'pass' || (record.result === 'waived' && record.kind === contract.waivable)
+  return record.result === 'pass' || (record.result === 'waived' && (contract.waivable as readonly Kind[]).includes(record.kind))
     || (record.result === 'not-applicable' && record.kind === contract.not_applicable)
     || isAcceptance(record)
 }

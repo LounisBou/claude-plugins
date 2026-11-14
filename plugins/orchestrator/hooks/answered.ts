@@ -5,8 +5,8 @@
 // question answered, by message, with the message's author. An unanswered question never
 // leaves the round otherwise.
 import { answerByMessage } from './supervision.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { messageOf, type Host, type On } from './host.ts'
+import { logLine } from './module-io.ts'
 
 // The nouns the answered tool holds; supervision's answerByMessage reads the session and the store through them.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs'>
@@ -31,11 +31,11 @@ export function register(on: On<Held>): void {
         },
       })
     } catch (err) {
-      await logLine($, `answered tool not registered: ${messageOf(err)}`)
+      await logLine($, 'answered', `answered tool not registered: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'answered', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -47,14 +47,7 @@ export function register(on: On<Held>): void {
     if (left === null) return { result: 'Only an orchestrator has a question to withdraw.', isError: true }
     return { result: left.length === 0 ? 'Withdrawn as answered by message.' : `Withdrawn as answered by message; still open: ${left.join(', ')}.` }
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'answered', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the question could not be withdrawn; the log says why', isError: true }
   })
-}
-
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'answered', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

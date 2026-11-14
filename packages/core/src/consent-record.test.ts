@@ -13,11 +13,12 @@ describe('consent records', () => {
     assert.deepEqual(parseConsentRecord(RECORD), RECORD)
     for (const by of ['pane', 'coordinator', 'tab']) assert.equal(parseConsentRecord({ ...RECORD, by })?.by, by)
     assert.deepEqual(parseConsentSubject({ kind: 'auto-merge', repo: 'o/n' }), { kind: 'auto-merge', repo: 'o/n' })
+    assert.deepEqual(parseConsentSubject({ kind: 'norms-waiver', repo: 'o/n', pr: 3 }), { kind: 'norms-waiver', repo: 'o/n', pr: 3 })
   })
 
   it('refuses a record or a subject that breaks any field of it', () => {
     const broken: Record<string, unknown>[] = [
-      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } },
+      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } }, { subject: { kind: 'norms-waiver', repo: 'o/n' } },
       { subject: { kind: 'auto-merge', repo: 'o/n', pr: 3 } }, { subject: { kind: 'merge', repo: 'o/n' } }, { subject: { kind: 'auto-merge', repo: 'o/..' } },
       { entry: '../x' }, { entry: 3 }, { question: 3 }, { answer: 'x'.repeat(20_001) }, { by: 'elsewhere' }, { at: 0 },
     ]
@@ -70,6 +71,23 @@ describe('consent records', () => {
     assert.ok(quotesConsent(exemption, { kind: 'e2e-exemption', repo: 'OWNER/name' }, words))
     assert.ok(!quotesConsent(exemption, { kind: 'auto-merge', repo: 'owner/name' }, words))
     assert.ok(!quotesConsent(exemption, { kind: 'e2e-waiver', repo: 'owner/name', pr: 7 }, words))
+  })
+
+  it('reads an auto-deploy of a repository in one environment, which carries both and no pull request', () => {
+    assert.deepEqual(parseConsentSubject({ kind: 'auto-deploy', repo: 'o/n', env: 'staging' }), { kind: 'auto-deploy', repo: 'o/n', env: 'staging' })
+    for (const env of ['dev', 'staging', 'prod']) assert.ok(parseConsentSubject({ kind: 'auto-deploy', repo: 'o/n', env }))
+    for (const bad of [{}, { env: 'production' }, { env: 3 }, { env: 'staging', pr: 3 }]) {
+      assert.equal(parseConsentSubject({ kind: 'auto-deploy', repo: 'o/n', ...bad }), undefined, JSON.stringify(bad))
+    }
+    assert.equal(parseConsentSubject({ kind: 'auto-merge', repo: 'o/n', env: 'staging' }), undefined)
+  })
+
+  it('lets an auto-deploy quote rest on the record of its own environment only', () => {
+    const words = 'auto-deploy name on staging, yes'
+    const record = parseConsentRecord({ ...RECORD, subject: { kind: 'auto-deploy', repo: 'owner/name', env: 'staging' }, answer: words })!
+    assert.ok(quotesConsent(record, { kind: 'auto-deploy', repo: 'OWNER/name', env: 'staging' }, words))
+    assert.ok(!quotesConsent(record, { kind: 'auto-deploy', repo: 'owner/name', env: 'prod' }, words))
+    assert.ok(!quotesConsent(record, { kind: 'auto-merge', repo: 'owner/name' }, words))
   })
 })
 

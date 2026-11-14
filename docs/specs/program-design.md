@@ -67,13 +67,13 @@ outside this repository.
 | 6 | met | `ci/plugins.json`: ten plugins block on Linux and macOS, drift on Linux (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169) | — |
 | 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
 | 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); a check plan is accepted only from the orchestrator (claude-plugins#164) | norms' pass is still computed from the figures the model passes to `check_done` (`plugins/norms/hooks/record.ts`) |
-| 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78) | the orchestrator's stop gate still reads a turn's last line when it declared no wait (`hooks/stop-gate.ts`, the transitional clause of `orchestrator-refoundation-design.md`) |
+| 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78); the orchestrator's stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, claude-plugins#179) | other readers of an orchestrator turn's last line remain in `hooks/guards.ts` (`operatorWaitRefusal`, `unansweredRefusal`, and `deferredIds` in the done branch), and the relay parses an agent's `status:` line |
 | 10 | met for the guards listed in the defects | github (claude-plugins#15), bugs-bot (claude-plugins#16), norms' push guard (claude-plugins#28) refuse when they cannot decide | — |
 | 11 | met | `npm run permissions`; the installer rules of `docs/contracts.md` (claude-plugins#21) | — |
 | 12 | met | `/github:protect [apply]` (claude-plugins#21); the orchestrator's local push guard removed (claude-plugins#72) | — |
 | 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly |
 | 14 | met | `ci/prompts.json` held by CI; `npm run context`: the orchestrator's start is 1,931 tokens in `build`, 1,266 in `investigate` | — |
-| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; nothing runs them at a release |
+| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; the release pull request asks whether to re-run the measure (`docs/architecture.md`, « Release »), and nothing runs without the operator's yes |
 | 16 | operator step | — | the operator's configuration repository, outside this one |
 | 17 | operator step | `docs/migration.md` | follows goals 2, 6, 15, 16; the criteria need the operator's days of use and a rehearsal |
 | 18 | met for the strict parts | `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured; a part joins the day it is strict |
@@ -140,14 +140,15 @@ cap is the operator's.
 - The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`, `move.ts:95`,
   `skills/coordinator/scripts/coordinator.sh:316`, `skills/iterm-agents/scripts/iterm_agent.py:114`,
   `dispatch-record.sh:168`, and statusbar's prefixes. **Open**: core's `names.ts` is read by
-  implement and `dispatch-record.ts`; the orchestrator's `hooks/naming.ts`, `move.ts`,
-  `session-name.ts`, `iterm_agent.py` and statusbar still hold their own.
+  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts`, `move.ts` and
+  `session-name.ts`; `iterm_agent.py` reads it as `names.json`; `coordinator.sh` and statusbar
+  still hold their own.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`. **Open**,
   and bugs-bot's `gate.py` holds a third copy of the thresholds.
 - The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in `hooks/usage.ts`, read by `routing.py`; one price table, `routing/prices.json` under the orchestrator's state directory.
 - The negative-phrase list in `plugins/github/engine/ghlib/assets.py:25` and `hooks/writing.ts`. **Open**: two copies a test keeps equal.
 - The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Open.**
-- `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Open**: `logLine` is still defined in five hook files, `configDir` in three, `writeAtomic` in `moving.ts`.
+- `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Done**: one module, `hooks/module-io.ts`, imported by every hook file.
 - The gh installer of `plugins/pr-review/install.sh:49-150`, which duplicates github's. **Done** (#29).
 
 ## Verified defects by plugin (goal 13)

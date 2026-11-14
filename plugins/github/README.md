@@ -82,6 +82,9 @@ it. `/github:doctor` then confirms everything is ready.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's words quoted verbatim, and `auto-merge-list`
   prints the list (below).
+- **Deploy list** — `auto-deploy-set` grants a repository's deploy to one environment or
+  withdraws it, on the operator's words quoted verbatim, and `auto-deploy-list` prints
+  the list (« Repositories in auto-deploy »).
 - **`/checks [pr]`** — combined CI status of a PR, with the failed checks
   named, defaulting to the current branch's. It is the ready guard's verdict
   (« Ready pull requests »): a skipped check, or a neutral one on a draft, is
@@ -142,11 +145,49 @@ orchestrator writes them under `<config dir>/consents/`), and `auto-merge-list` 
 an Edit or a shell command on the file is refused. A prompt they type that speaks
 of auto-merge reminds the session to call `auto-merge-set`.
 
+## Repositories in auto-deploy
+
+A deploy is refused unless the repository is listed for its environment in `auto-deploy.json`,
+beside `auto-merge.json` in the plugin's data directory. The file holds the grants and, per
+repository, the commands that are its deploys:
+
+```json
+{
+  "repositories": [{ "repo": "owner/name", "env": "dev|staging|prod" }],
+  "commands": [
+    { "repo": "owner/name", "kind": "command", "argv": ["composer", "deploy:api:prod"], "env": "prod" },
+    { "repo": "owner/name", "kind": "script", "path": "scripts/deploy.sh" },
+    { "repo": "owner/name", "kind": "workflow", "workflow": "deploy.yml", "input": "environment" },
+    { "repo": "owner/name", "kind": "skill", "name": "deploy-staging", "env": "staging" }
+  ]
+}
+```
+
+A Bash line runs a deploy when one of its simple commands (those of a `bash -c` line included)
+is a declared command: the first words of a `command`, a `script` by the end of its path, alone
+or under an interpreter, its environment the later word that names one, a `gh workflow run` of
+a `workflow`, its environment the value of its `input` field. A Skill call is a deploy when it
+names a declared `skill`. The environment reads `dev`, `staging` or `prod` (`production` too).
+A deploy the list does not grant, or whose call names no environment, is refused with one line
+naming how the operator adds it. A path no repository declares is not read here: the host's own
+protections stand behind it. The list only refuses; it never allows, so what is granted
+still meets the host's permission decision. An absent file grants nothing, and an unreadable or
+malformed one declares nothing and says so in one transcript line.
+
+The file changes only through the tool, on the operator's word:
+`auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "<their words>", "commands": [...]}`
+grants or withdraws one environment under a lock on the file, when `words` names auto-deploy
+(« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement ») and is found verbatim
+in a prompt they typed or in their answer in a consent record of auto-deploy on that repository
+and environment (core's `consent-record.ts`). `commands` adds declarations for the repository
+(`repo` implied) and needs the same words; the tool never removes one. `auto-deploy-list` prints
+each granted environment. A Write, an Edit or a shell command on the file is refused.
+
 ## Ready pull requests
 
 A pull request is ready when three things hold at its current head commit: a
-clean review, passed end-to-end tests (or a waiver the operator dated in their
-own words) and green CI, but for what the pull request's check plan does not
+clean review, passed end-to-end tests (or the operator's waiver) and green
+CI, but for what the pull request's check plan does not
 require. A norms check is on demand: it blocks only when it ran at the head and
 failed. The `Ready` label, leaving
 draft and a merge need the three; a draft opens with `Not Ready`, and a push to

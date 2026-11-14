@@ -56,7 +56,8 @@ export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[];
   })
   on('tool.call', { tool: 'Bash' }, (_$: any, e: any) => (m.shell ? m.shell(e) : { result: 'ran' }))
   on('tool.call', { tool: ['Read', 'Grep'] }, () => ({ result: 'read' }))
-  on('tool.check', (_$: any, e: any) => (m.verdicts ?? {})[e.tool] ?? { decision: 'ask' })
+  // A tool a test names no verdict for is granted: the host denies a call its check would put to a person, and no one answers here.
+  on('tool.check', (_$: any, e: any) => (m.verdicts ?? {})[e.tool] ?? { decision: 'allow' })
   on('session.usage', () => {
     if (m.usage === null) throw new Error('no usage')
     return { value: { startedAt: 0, context: m.usage ?? { window: 1_000_000 }, rateLimits: [] } }

@@ -67,6 +67,7 @@ npm run outcome -- pilot   --out <dir> --model <agent model> --judge-model <judg
 npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judge model>
 ```
 
+- At a release, the release pull request asks whether to re-run the measure (`docs/architecture.md`, « Release »).
 - The pilot replays the first case with both arms; the measure the first six. `--case <id>`
   replays one case under the run's caps, the way a reserve replaces a case.
 - The models are named on the command line, never in the repository. Two runs compare only

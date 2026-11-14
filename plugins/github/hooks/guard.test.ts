@@ -12,6 +12,7 @@ const RECORDS = '/cfg/pr-records'
 const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 const WARN_LOG = '/data/guard-warn.log'
 const AUTO_MERGE = '/data/auto-merge.json'
+const AUTO_DEPLOY = '/data/auto-deploy.json'
 const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
 const PLAN = '/data/check-plans/acme/thing/12.json'
 const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
@@ -31,6 +32,8 @@ type World = {
   // pr-get's pull requests, by branch ('' for the current one).
   pulls?: Record<string, any[]>
   autoMerge?: string[]
+  // The deploy list file, as written (an object) or as raw text.
+  deployList?: unknown
   // The CI undrafts the plugin already made, one mark file each.
   ciUndrafts?: Array<{ repo: string; pr: number; head: string }>
   // git's answers, by its argv after git.
@@ -82,7 +85,7 @@ type World = {
 
 type Seen = {
   pull?: Pull
-  runs: any[]; asked: string[]; logs: string[]; writes: Array<{ path: string; text: string }>; bash: string[]
+  runs: any[]; asked: string[]; logs: string[]; writes: Array<{ path: string; text: string }>; bash: string[]; skills: string[]
   // guard-warn.log's text as the disk holds it, when the world starts with one.
   warnLog?: string
   // The files of the plugin's data directory, guard-warn.log apart, by path.
@@ -118,8 +121,9 @@ function gateOf(w: World, pull?: Pull) {
 }
 
 async function world($: any, on: any, w: World = {}): Promise<Seen> {
-  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
+  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], skills: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
+  if (w.deployList !== undefined) seen.files[AUTO_DEPLOY] = typeof w.deployList === 'string' ? w.deployList : JSON.stringify(w.deployList)
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
   if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
@@ -148,6 +152,10 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
   on('tool.call', { tool: 'Bash' }, (_$: any, e: any) => {
     seen.bash.push(e.command)
     return w.bashResult ?? { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  on('tool.call', { tool: 'Skill' }, (_$: any, e: any) => {
+    seen.skills.push(e.skill)
+    return { result: { success: true, commandName: e.skill } }
   })
   for (const tool of ['Write', 'Edit', 'MultiEdit']) on('tool.call', { tool }, () => ({ result: 'written' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === ENFORCE_ENV ? (enforcing ? '1' : undefined) : env[e.name] }))
@@ -1121,24 +1129,6 @@ test('a record is refused on a checkout whose tracked files changed', async ($, 
   expect(recordRun(seen)).toBeUndefined()
 })
 
-test('an E2E waiver quotes words the operator typed in this session', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN })
-  const words = 'no E2E for this docs change, 2026-11-02'
-  const before: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: words } as any)
-  expect(before.deny).toContain('an E2E waiver quotes the operator')
-  await ($ as any).prompt.submit({ text: 'ok: ' + words, origin: { kind: 'composer' }, wait: false })
-  const after: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: words } as any)
-  expect(after.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('a waiver with a dated reason but no consent record is refused', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN })
-  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail: 'docs only, no runtime path to run, 2026-11-14' } as any)
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
 const CONSENTS = '/cfg/consents/acme/thing'
 
 function consentWorld(records: Record<string, unknown>, dir = CONSENTS): World {
@@ -1155,71 +1145,6 @@ const consent = (over: Record<string, unknown> = {}) => ({
 
 const waiveCall = (detail: string) =>
   ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail }) as any
-
-test('an E2E waiver may quote the operator\'s answer in a consent record of that pull request', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent() }))
-  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('an E2E waiver may quote the operator\'s answer typed in the asking session\'s own tab', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent({ by: 'tab' }) }))
-  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-for (const [label, over] of [
-  ['another pull request', { subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }],
-  ['auto-merge', { subject: { kind: 'auto-merge', repo: 'acme/thing' } }],
-  ['another repository', { subject: { kind: 'e2e-waiver', repo: 'acme/other', pr: 12 } }],
-  ['an answer of 3 characters', { answer: 'oui' }],
-  ['another contract version', { v: 2 }],
-  ['an unknown answerer', { by: 'someone' }],
-] as const) {
-  test('a consent record of ' + label + ' does not carry a waiver', async ($, on) => {
-    const seen = await world($, on, consentWorld({ a: consent(over) }))
-    const out: any = await $.tool.call(waiveCall(label === 'an answer of 3 characters' ? 'operator said oui, 2026-11-03' : CONSENT_WORDS))
-    expect(out.deny).toContain('an E2E waiver quotes the operator')
-    expect(recordRun(seen)).toBeUndefined()
-  })
-}
-
-test('an answer the orchestrator\'s round holds is no consent: github never reads round/', async ($, on) => {
-  const round = '/cfg/claude-orchestrator/round'
-  const entry = { question: 'E2E for thing#12: waive it?', blocks: null, status: 'answered', answer: { text: CONSENT_WORDS, by: 'pane', at: 'x' } }
-  const seen = await world($, on, { git: CLEAN, tree: { [round]: { kind: 'dir', mtimeMs: 1 }, [round + '/a.json']: { kind: 'file', mtimeMs: 2, text: JSON.stringify(entry) } } })
-  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('directories named like record files take none of the newest slots: the consent record is still read', async ($, on) => {
-  const crowded = consentWorld({ a: consent() })
-  // More newer directories named *.json than the 200 newest entries a read keeps.
-  for (let i = 0; i < 201; i++) crowded.tree![CONSENTS + '/d' + i + '.json'] = { kind: 'dir', mtimeMs: 5 }
-  const seen = await world($, on, crowded)
-  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('a waiver that quotes no consent is refused, and says both ways to give one', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent(), b: 'not json' }))
-  const out: any = await $.tool.call(waiveCall('some words nobody said, 2026-11-03'))
-  expect(out.deny).toContain('typed in this session')
-  expect(out.deny).toContain('consent record (orchestrator)')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('no consent records carry no waiver and do not crash', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN })
-  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
 
 for (const [plugin, kind, allowed] of [
   ['pr-review', 'review', true], ['pr-review', 'norms', false], ['norms', 'norms', true], ['norms', 'review', false],
@@ -1648,72 +1573,6 @@ test('a typed prompt that does not speak of auto-merge adds no line', async ($, 
 // everywhere the tests run.
 const RECEIVED = Date.UTC(2026, 10, 2, 12, 0, 0)
 const RECEIVED_DAY = '2026-11-02'
-const SENTENCE = 'front-office#1660 est dispensé de tests de bout en bout sur la base de la relecture et des captures !'
-
-test('a quote the operator typed counts inside the wrapping « … » — operator, date', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { git: CLEAN })
-  await typed($, SENTENCE)
-  for (const detail of [
-    '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY,
-    'Operator waived E2E on ' + RECEIVED_DAY + ': "' + SENTENCE + '"',
-    'Operator waived E2E on ' + RECEIVED_DAY + ': “' + SENTENCE + '”',
-  ]) {
-    const out: any = await $.tool.call(waiveCall(detail))
-    expect(out.deny).toBeUndefined()
-  }
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('two quoted spans of one message count, each naming the waiver or the pull request', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  await world($, on, { git: CLEAN })
-  await typed($, 'Pas de tests de bout en bout ici, ok. Et la pull request 12 reste telle quelle, merci.')
-  const both = '« Pas de tests de bout en bout ici, ok. » and « la pull request 12 reste telle quelle » — operator, ' + RECEIVED_DAY
-  expect(((await $.tool.call(waiveCall(both))) as any).deny).toBeUndefined()
-})
-
-test('a one-word answer counts in a quote only when it is the whole prompt', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  await world($, on, { git: CLEAN })
-  const detail = 'Operator waived E2E on ' + RECEIVED_DAY + ' with « B », answering the E2E question'
-  await typed($, 'Bonjour, voyons la suite')
-  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toContain('an E2E waiver quotes the operator')
-  await typed($, 'B')
-  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
-})
-
-test('a waiver quote is refused when it was not typed, names no waiver, or is dated otherwise', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { git: CLEAN })
-  await typed($, SENTENCE + ' Et aussi : je valide la suite des travaux sans réserve.')
-  for (const detail of [
-    '« ' + SENTENCE.replace('dispensé', 'privé') + ' » — operator, ' + RECEIVED_DAY,
-    '« ' + SENTENCE + ' » — operator, 2001-01-01',
-    '« ' + SENTENCE + ' » — operator',
-    '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY + ' and 2001-01-01',
-    'B — ' + RECEIVED_DAY,
-    '« ' + SENTENCE + ' » and « no E2E at all, ever, anywhere » — operator, ' + RECEIVED_DAY,
-    // Free words outside the quote, a quote that says nothing of the waiver.
-    'waived E2E for acme/thing#12 on ' + RECEIVED_DAY + ': « je valide la suite des travaux sans réserve »',
-  ]) {
-    const out: any = await $.tool.call(waiveCall(detail))
-    expect(out.deny).toContain('an E2E waiver quotes the operator')
-  }
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('the date of a waiver is the day its quote was received', async ($, on) => {
-  const clock = mock.clock(on, { now: RECEIVED })
-  await world($, on, { git: CLEAN })
-  await typed($, SENTENCE)
-  await clock.advance(72 * 3600 * 1000)
-  const later = '« ' + SENTENCE + ' » — operator, 2026-11-05'
-  expect(((await $.tool.call(waiveCall(later))) as any).deny).toContain('an E2E waiver quotes the operator')
-  const received = '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY
-  expect(((await $.tool.call(waiveCall(received))) as any).deny).toBeUndefined()
-})
-
 test('auto-merge-set accepts a quote of the operator\'s typed words that names auto-merge in itself', async ($, on) => {
   const seen = await world($, on)
   await typed($, 'thing : ' + HIS_WORDS)
@@ -1734,25 +1593,6 @@ test('auto-merge-set refuses spans that name auto-merge only together or in the 
     expect(out.deny).toContain('github: auto-merge-set')
   }
   expect(seen.files).toEqual({})
-})
-
-test('a prompt typed while the session works, over a running turn, counts as typed', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { git: CLEAN })
-  const detail = '« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY
-  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toContain('an E2E waiver quotes the operator')
-  await ($ as any).prompt.submit({ text: SENTENCE, origin: { kind: 'composer' }, wait: false, turnId: 'turn-1' })
-  expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('a peer\'s message delivered into a running turn is not the operator\'s word', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { git: CLEAN })
-  await ($ as any).prompt.submit({ text: SENTENCE, origin: { kind: 'peer' }, wait: false, turnId: 'turn-1' })
-  const out: any = await $.tool.call(waiveCall('« ' + SENTENCE + ' » — operator, ' + RECEIVED_DAY))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
 })
 
 // ---- leaving draft is the operator's outside auto-merge ----
@@ -2984,3 +2824,358 @@ for (const plugin of ['pr-review', 'norms', 'implement']) {
     expect(seen.files[PLAN]).toBeUndefined()
   })
 }
+
+// ---- the operator's waiver: his answer to one question, from any channel ----
+
+const WAIVER_Q = 'Dispense d\'E2E pour acme/thing#12 : the plan required E2E for its API change, now reverted to docs only'
+const askWaiver = ($: any, question = WAIVER_Q, labels = ['Accorder', 'Refuser']) => $.tool.call({
+  tool: 'AskUserQuestion',
+  questions: [{ question, header: 'E2E', multiSelect: false, options: labels.map((label) => ({ label, description: label })) }],
+})
+const consentWrites = (seen: Seen) => seen.writes.filter((w) => w.path.startsWith(CONSENTS + '/dialog-')).map((w) => JSON.parse(w.text))
+// What the dialog's answer leaves, the module's date being its clock's.
+const DIALOG = { v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, question: WAIVER_Q, by: 'tab', at: '2026-11-02T12:00:00Z' }
+const granted = (over: Record<string, unknown> = {}) => consent({ answer: 'Accorder', ...over })
+
+for (const answer of ['Accorder', 'Refuser']) {
+  test('the operator\'s « ' + answer + ' » to the waiver dialog is recorded once, dated by the module', async ($, on) => {
+    mock.clock(on, { now: RECEIVED })
+    const seen = await world($, on, { records: TWO, answer })
+    await askWaiver($)
+    const [written, ...more] = consentWrites(seen)
+    expect(more).toEqual([])
+    expect(written).toMatchObject({ ...DIALOG, answer })
+    expect(String(written.entry)).toStartWith('dialog-guard-session-')
+  })
+}
+
+test('a dialog that is no waiver question records nothing', async ($, on) => {
+  const seen = await world($, on, { answer: 'Accorder' })
+  await askWaiver($, WAIVER_Q, ['Accorder', 'Plus tard'])
+  await askWaiver($, 'Merge acme/thing#12 ?')
+  expect(consentWrites(seen)).toEqual([])
+})
+
+test('a successor session reads the dialog\'s « Accorder » at a head with no E2E record: Ready, and says the waiver', async ($, on) => {
+  const seen = await world($, on, { records: TWO, ...consentWorld({ x: { ...DIALOG, entry: 'dialog-s-1', answer: 'Accorder' } }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs[0]).toContain('(e2e waived by the operator (tab, 2026-11-02T12:00:00Z)).')
+})
+
+for (const by of ['pane', 'coordinator']) {
+  test('the « Accorder » given in the ' + by + ' counts as the dialog\'s does', async ($, on) => {
+    const seen = await world($, on, { records: TWO, ...consentWorld({ a: granted({ by }) }) })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  })
+}
+
+for (const [label, records] of [
+  ['a « Refuser »', { a: consent({ answer: 'Refuser' }) }],
+  ['a « Refuser » after an « Accorder »', { a: granted(), b: consent({ entry: 'b', answer: 'Refuser', at: '2026-11-04T10:00:00Z' }) }],
+  ['an « Accorder » of another pull request', { a: granted({ subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }) }],
+  ['an answer that is no choice of the question', { a: consent() }],
+] as const) {
+  test('with ' + label + ' the E2E is not waived', async ($, on) => {
+    const seen = await world($, on, { records: TWO, labels: ['Ready'], ...consentWorld(records) })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456'])
+  })
+}
+
+test('a run that failed at an earlier head after the « Accorder » voids it', async ($, on) => {
+  const failedAfter = earlier([at('e2e', 'fail', {}, '2026-11-04T10:00:00Z')])
+  const seen = await world($, on, { records: TWO, labels: ['Ready'], tree: { ...failedAfter, ...consentWorld({ a: granted() }).tree } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456'])
+})
+
+test('a run that failed at an earlier head before the « Accorder » leaves it standing', async ($, on) => {
+  const failedBefore = earlier([at('e2e', 'fail', {}, '2026-11-02T10:00:00Z')])
+  const seen = await world($, on, { records: TWO, tree: { ...failedBefore, ...consentWorld({ a: granted() }).tree } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a waived record with no « Accorder » recorded is refused, and names the question to put', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
+  const out: any = await $.tool.call(waiveCall('the operator said so, 2026-11-03'))
+  expect(out.deny).toContain('github: an E2E waiver is the operator\'s « Accorder » to one question, « Dispense d\'E2E pour acme/thing#12 : <why> »')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a waived record over an « Accorder » carries his answer, dated by the module that recorded it', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: granted() }))
+  const out: any = await $.tool.call(waiveCall(''))
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
+})
+
+// ---- the operator's waiver of required norms: the same question, naming the check ----
+
+const NORMS_Q = 'Dispense de normes pour acme/thing#12 : the plan required the norms check, the repository has no CONTRIBUTING.md'
+// A plan that requires norms and needs no E2E: the review alone is recorded at the head.
+const NORMS_REQUIRED = planOf({ need: 'none', reason: 'docs only' })
+const normsAnswer = (answer: string, over: Record<string, unknown> = {}) =>
+  consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer, ...over })
+const NORMS_MISSING = 'github: acme/thing#12 back to Not Ready at 0123456. Missing: norms: no record at 0123456'
+
+test('the operator\'s « Accorder » to the norms waiver dialog is recorded with the norms subject', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { records: ONLY_REVIEW, answer: 'Accorder' })
+  await askWaiver($, NORMS_Q)
+  const [written, ...more] = consentWrites(seen)
+  expect(more).toEqual([])
+  expect(written).toMatchObject({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer: 'Accorder', by: 'tab' })
+})
+
+test('norms required by the plan and waived by his « Accorder »: Ready with no norms record, and says the waiver', async ($, on) => {
+  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs[0]).toContain('norms waived by the operator (pane, 2026-11-03T10:00:00Z)')
+})
+
+for (const [label, records] of [
+  ['his « Refuser »', { a: normsAnswer('Refuser') }],
+  ['an « Accorder » of the E2E only', { a: granted() }],
+] as const) {
+  test('norms required by the plan with ' + label + ' stay missing', async ($, on) => {
+    const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], ...consentWorld(records) })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(seen.logs).toHaveLength(1)
+    expect(seen.logs[0]).toStartWith(NORMS_MISSING)
+    expect(seen.logs[0]).not.toContain('norms waived')
+  })
+}
+
+test('a norms check that failed at an earlier head after his « Accorder » voids the waiver', async ($, on) => {
+  const failedAfter = earlier([at('norms', 'fail', {}, '2026-11-04T10:00:00Z')])
+  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], tree: { ...failedAfter, ...consentWorld({ a: normsAnswer('Accorder') }).tree } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual([NORMS_MISSING])
+})
+
+test('a waived norms record with no « Accorder » to the norms question is refused', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: granted() }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toContain('github: a norms waiver is the operator\'s « Accorder » to one question, « Dispense de normes pour acme/thing#12 : <why> »')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a waived norms record over his « Accorder » to the norms question is written', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--kind') + 1]).toBe('norms')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
+})
+
+// ---- the deploy list ----
+
+const INFRA = 'acme/infra'
+const DEPLOYS = [
+  { repo: INFRA, kind: 'command', argv: ['composer', 'deploy:api:prod'], env: 'prod' },
+  { repo: INFRA, kind: 'command', argv: ['composer', 'deploy:api:staging'], env: 'staging' },
+  { repo: INFRA, kind: 'skill', name: 'infra-deploy-prod', env: 'prod' },
+  { repo: 'acme/site', kind: 'workflow', workflow: 'deploy.yml', input: 'environment' },
+]
+const deployList = (...grants: Array<[string, string]>) =>
+  ({ repositories: grants.map(([repo, env]) => ({ repo, env })), commands: DEPLOYS })
+const STAGING_ONLY = { deployList: deployList([INFRA, 'staging']) }
+const PROD_DEPLOY = 'cd ~/infra && composer deploy:api:prod -- 1.2.3 > /tmp/log 2>&1'
+const AUTO_DEPLOY_WORDS = 'ok pour infra : staging passe en auto-deploy'
+const setDeploy = (on: boolean, words: string, env = 'prod', extra: Record<string, unknown> = {}, repo = INFRA) =>
+  gh('auto-deploy-set', { repo, env, on, words, ...extra }, undefined as any)
+const deployGrants = (seen: Seen) => JSON.parse(seen.files[AUTO_DEPLOY]).repositories
+
+test('a deploy of a repository the list does not grant for that environment is refused, and never runs', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash(PROD_DEPLOY))
+  expect(out.deny).toContain('acme/infra is not in the deploy list for prod')
+  expect(out.deny).toContain('auto-deploy-set')
+  expect(out.deny).not.toContain('\n')
+  expect(seen.bash).toEqual([])
+})
+
+test('a deploy the list grants is not refused, whatever else the line does', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash('composer deploy:api:staging'))
+  expect(out.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['composer deploy:api:staging'])
+})
+
+test('a workflow, a skill and a script are refused the same way, and a deploy of no declared path is not read', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const flow: any = await $.tool.call(bash('gh workflow run deploy.yml -f environment=prod'))
+  expect(flow.deny).toContain('acme/site is not in the deploy list for prod')
+  const skill: any = await $.tool.call({ tool: 'Skill', skill: 'infra-deploy-prod' } as any)
+  expect(skill.deny).toContain('acme/infra is not in the deploy list for prod')
+  expect(seen.skills).toEqual([])
+  const undeclared: any = await $.tool.call(bash('./scripts/other-deploy.sh prod'))
+  expect(undeclared.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['./scripts/other-deploy.sh prod'])
+})
+
+test('a listed skill runs', async ($, on) => {
+  const seen = await world($, on, { deployList: deployList([INFRA, 'prod']) })
+  const out: any = await $.tool.call({ tool: 'Skill', skill: 'infra-deploy-prod' } as any)
+  expect(out.deny).toBeUndefined()
+  expect(seen.skills).toEqual(['infra-deploy-prod'])
+})
+
+test('the list only denies: a granted deploy and an undeclared prod path both stay with the host\'s own decision', async ($, on) => {
+  await world($, on, { deployList: deployList([INFRA, 'prod']), verdict: { decision: 'ask' } })
+  for (const line of [PROD_DEPLOY, 'ssh deploy@api.prod.example.net ./release.sh']) {
+    expect(((await $.tool.check({ tool: 'Bash', input: { command: line } })) as any).decision, line).toBe('ask')
+  }
+})
+
+test('a deploy whose environment the call does not name is refused', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash('gh workflow run deploy.yml'))
+  expect(out.deny).toContain('its environment is none of dev, staging, prod')
+  expect(seen.bash).toEqual([])
+})
+
+test('with no grant in the file every declared deploy is refused', async ($, on) => {
+  const none = await world($, on, { deployList: { commands: DEPLOYS } })
+  expect(((await $.tool.call(bash('composer deploy:api:staging'))) as any).deny).toContain('not in the deploy list for staging')
+  expect(none.bash).toEqual([])
+})
+
+test('a list that cannot be read lists nothing and says so in one line, and a deploy meets the host\'s decision', async ($, on) => {
+  const seen = await world($, on, { deployList: '{not json' })
+  const out: any = await $.tool.call(bash('composer deploy:api:prod'))
+  expect(out.deny).toBeUndefined()
+  expect(seen.logs.some((l) => l.includes('auto-deploy.json') && l.includes('unread'))).toBe(true)
+})
+
+test('auto-deploy-set grants one environment of a repository on words naming auto-deploy that the operator typed', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS)
+  const set: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
+  expect(set.deny).toBeUndefined()
+  expect(set.isError).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual(DEPLOYS)
+  expect(((await $.tool.call(bash(PROD_DEPLOY))) as any).deny).toBeUndefined()
+})
+
+test('a list change with words the operator never typed is refused, naming both proofs, and writes nothing', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, 'something else entirely')
+  const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(out.deny).toContain('typed in this session')
+  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(seen.writes).toEqual([])
+})
+
+test('a peer\'s message, words of a few characters and words that do not name auto-deploy carry nothing', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS, 'peer')
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))) as any).deny).toContain('typed in this session')
+  await typed($, 'oui')
+  expect(((await $.tool.call(setDeploy(true, 'oui'))) as any).deny).toContain('at least 8 characters')
+  await typed($, 'infra passe en auto-merge, vas-y')
+  expect(((await $.tool.call(setDeploy(true, 'infra passe en auto-merge, vas-y'))) as any).deny).toContain('auto-deploy')
+  expect(seen.writes).toEqual([])
+})
+
+const DEPLOY_ANSWER = 'oui, infra passe en auto-deploy sur staging'
+const deployConsent = () => consentWorld({
+  a: consent({ subject: { kind: 'auto-deploy', repo: INFRA, env: 'staging' }, question: 'Auto-deploy infra on staging?', answer: DEPLOY_ANSWER, by: 'coordinator' }),
+}, '/cfg/consents/acme/infra')
+
+test('auto-deploy-set may quote the operator\'s answer in a consent record of that repository and environment', async ($, on) => {
+  const seen = await world($, on, deployConsent())
+  const out: any = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'staging'))
+  expect(out.deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+})
+
+test('a consent record of auto-deploy on one environment does not carry another', async ($, on) => {
+  const seen = await world($, on, deployConsent())
+  const out: any = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'prod'))
+  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set off takes the environment out, and the deploy is refused again', async ($, on) => {
+  const seen = await world($, on, { deployList: deployList([INFRA, 'staging'], [INFRA, 'prod']) })
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(false, AUTO_DEPLOY_WORDS, 'prod'))) as any).deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(((await $.tool.call(bash(PROD_DEPLOY))) as any).deny).toContain('not in the deploy list for prod')
+})
+
+test('auto-deploy-set names a repository and an environment, and says in or out', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', {}, 'infra'))) as any).deny).toContain('owner/name')
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'production'))) as any).deny).toContain('"env"')
+  expect(((await $.tool.call(gh('auto-deploy-set', { repo: INFRA, env: 'prod', words: AUTO_DEPLOY_WORDS }, undefined as any))) as any).deny).toContain('{"on": true}')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set adds the commands a repository declares as its deploys, and refuses a malformed one', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, AUTO_DEPLOY_WORDS)
+  const declared = { kind: 'script', path: 'scripts/deploy.sh' }
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', { commands: [declared] }))) as any).deny).toBeUndefined()
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual([{ repo: INFRA, ...declared }])
+  const bad: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', { commands: [{ kind: 'cron' }] }))
+  expect(bad.deny).toContain('"script", a "workflow" or a "skill"')
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual([{ repo: INFRA, ...declared }])
+})
+
+test('auto-deploy-set holds the file\'s lock, and releases it', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS)
+  await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(seen.runs.filter((r) => r.argv?.includes(AUTO_DEPLOY + '.lock')).map((r) => r.argv[0])).toEqual(['sh', 'rm'])
+})
+
+test('a malformed deploy list is never overwritten', async ($, on) => {
+  const seen = await world($, on, { deployList: '{"repositories": [1]}' })
+  await typed($, AUTO_DEPLOY_WORDS)
+  const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(out.isError).toBe(true)
+  expect(seen.files[AUTO_DEPLOY]).toBe('{"repositories": [1]}')
+})
+
+test('auto-deploy-set denied by a permission rule is refused', async ($, on) => {
+  const seen = await world($, on, { verdict: { decision: 'deny', reason: 'no' } })
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))) as any).deny).toBe('no')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-list prints each environment granted', async ($, on) => {
+  await world($, on, { deployList: deployList([INFRA, 'staging'], ['acme/site', 'dev']) })
+  expect(((await $.tool.call(gh('auto-deploy-list', {}, undefined as any))) as any).result).toBe('acme/infra staging\nacme/site dev')
+})
+
+test('auto-deploy-list says when no repository is in auto-deploy', async ($, on) => {
+  await world($, on)
+  expect(((await $.tool.call(gh('auto-deploy-list', {}, undefined as any))) as any).result).toBe('no repository in auto-deploy')
+})
+
+test('the deploy list is refused to Write, Edit and Bash, and a read of it is not', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  for (const tool of ['Write', 'Edit']) {
+    const out: any = await $.tool.call({ tool, file_path: AUTO_DEPLOY, content: '{}' } as any)
+    expect(out.deny, tool).toContain('the deploy list changes only through mcp__github__gh auto-deploy-set')
+  }
+  const home: any = await $.tool.call({ tool: 'Write', file_path: '/home/x/.claude/plugins/data/github-lounisbou/auto-deploy.json', content: '{}' } as any)
+  expect(home.deny).toContain('auto-deploy-set')
+  for (const line of ['echo \'{}\' > /data/auto-deploy.json', 'cd ~/.claude/plugins/data/github-lounisbou && jq . auto-deploy.json > x && mv x auto-deploy.json']) {
+    expect(((await $.tool.call(bash(line))) as any).deny, line).toContain('auto-deploy-set')
+  }
+  expect(seen.bash).toEqual([])
+  expect(((await $.tool.call(bash('grep -n auto-deploy.json README.md'))) as any).deny).toBeUndefined()
+})

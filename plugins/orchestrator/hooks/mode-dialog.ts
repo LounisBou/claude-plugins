@@ -8,7 +8,7 @@
 export const MODE_DIALOG_DENY = 'An orchestrator never asks its mode by dialog: a successor reads it from the '
   + '`Mode:` line of its brief, and a session with no mode anywhere asks it in the method\'s question format '
   + '(method:lifecycle, references/questions.md), as orchestrator:decide runs it, so the question reaches the '
-  + 'coordinator\'s pane and the turn ends on its `waiting: operator — blocks: …` line.'
+  + 'coordinator\'s pane and the turn declares its operator wait.'
 
 export const WAITED_ON_DIALOG_DENY = 'A session others wait on never asks in a dialog (method:lifecycle, « Questions '
   + 'to the operator »): a coordinator runs, so end your turn on the question in the method\'s format and its '
