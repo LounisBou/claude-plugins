@@ -128,11 +128,11 @@ The suite also runs the hooks module's tests in `hooks/tests/` in the host's
 kit (`claude plugin test`).
 
 The suite runs offline and needs no GitHub account or installed plugin; it
-resolves the `github` plugin from `CLAUDE_GITHUB_ROOT` (or the platform's own
-install record) purely to check that `/norms:learn` calls only subcommands and
-formats that tool actually exposes. If the `github` plugin can't be resolved,
-the suite fails loudly with an `error:`/`fix:` pair rather than skipping the
-check.
+reads the `github` plugin from `CLAUDE_GITHUB_ROOT` (the sibling directory
+`../github` of the repository when unset) purely to check that `/norms:learn`
+calls only subcommands and formats that tool actually exposes. If the `github`
+plugin is not there, the suite fails loudly rather than skipping the check.
+The `github` plugin owns locating itself: this plugin carries no locator.
 
 ## Licence
 
