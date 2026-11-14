@@ -17,7 +17,8 @@ export const READINESS_CONTRACT = {
     review: { holder: 'gate', means: 'a review record that passes: no blocking finding, or the orchestrator\'s acceptance of its set-asides, unless the check plan excuses it' },
     e2e: { holder: 'gate', means: 'passed, waived by the operator or not applicable, unless the check plan or an exemption excuses it' },
     norms: { holder: 'gate', means: 'passed or waived where the check plan requires it; a failed run at the head blocks anyway' },
-    ci: { holder: 'github', check: 'ci', means: 'the required status check of the default branch, green' },
+    tests: { holder: 'gate', means: 'a stacked pull request only (its base the head branch of another open pull request): the light CI\'s tests record passed at its head, or its checks green there; none where the operator turned light CI off for the repository; a failed run at the head blocks anyway' },
+    ci: { holder: 'github', check: 'ci', means: 'the required status check of the default branch, green; on a stacked pull request the tests condition stands for it, and only a failed check blocks, held by the gate' },
   },
   // The severities a review finding blocks with.
   blocking: ['critical', 'important'],
@@ -62,6 +63,12 @@ export type HeadEvidence = {
   readonly carried: ReadonlySet<Kind>
   // Whether GitHub reads the required CI check green at the head.
   readonly ciGreen: boolean
+  // Whether a check failed at the head (a stacked pull request blocks on it).
+  readonly ciFailed?: boolean
+  // Whether the pull request is stacked: its base is the head branch of another open pull request.
+  readonly stacked?: boolean
+  // Whether the operator turned light CI off for the repository: a stacked pull request needs no tests record.
+  readonly lightCiOff?: boolean
 }
 
 export const CI_CHECK = READINESS_CONTRACT.conditions.ci.check
@@ -114,8 +121,11 @@ const holderOf = (condition: Condition): Holder => READINESS_CONTRACT.conditions
 /** The conditions a pull request misses at its head, in the contract's order; none when it is ready. */
 export function missingEvidence(evidence: HeadEvidence): Missing[] {
   const missing: Missing[] = []
+  const stacked = evidence.stacked === true
   for (const kind of KINDS) {
     const record = evidence.latest.get(kind)
+    // The light CI is a stacked pull request's alone, and none where the operator turned it off.
+    if (kind === 'tests' && (!stacked || evidence.lightCiOff)) continue
     if (record && accepts(record)) continue
     if (record?.result === 'fail') {
       missing.push({ condition: kind, holder: holderOf(kind), record })
@@ -125,9 +135,14 @@ export function missingEvidence(evidence: HeadEvidence): Missing[] {
     // Norms are on demand unless the plan requires them.
     if (kind === 'norms' && !record && !evidence.required.has('norms')) continue
     if (!record && evidence.carried.has(kind)) continue
+    // The required checks green at its head stand for the tests record of a stacked pull request.
+    if (kind === 'tests' && !record && evidence.ciGreen) continue
     missing.push({ condition: kind, holder: holderOf(kind), ...(record ? { record } : {}) })
   }
-  if (!evidence.ciGreen) missing.push({ condition: 'ci', holder: holderOf('ci') })
+  // A stacked pull request needs no green CI, but a check that failed at its head blocks it, and the gate holds that.
+  if (stacked) {
+    if (evidence.ciFailed) missing.push({ condition: 'ci', holder: 'gate' })
+  } else if (!evidence.ciGreen) missing.push({ condition: 'ci', holder: holderOf('ci') })
   return missing
 }
 

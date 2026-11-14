@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { acceptanceDetail, accepts, DETAIL_MAX, KINDS, parsePrRecord } from './pr-record.ts'
+import { acceptanceDetail, accepts, DETAIL_MAX, KINDS, kindFor, parsePrRecord, PR_RECORD_CONTRACT, SCRIPTED } from './pr-record.ts'
 
 const RECORD = {
   v: 1, repo: 'owner/name', pr: 7, head: 'a'.repeat(40), kind: 'review', result: 'pass',
@@ -10,7 +10,7 @@ const RECORD = {
 describe('pull request records', () => {
   it('reads a record that keeps the contract', () => {
     assert.deepEqual(parsePrRecord(RECORD), RECORD)
-    assert.deepEqual(KINDS, ['review', 'norms', 'e2e'])
+    assert.deepEqual(KINDS, ['review', 'norms', 'e2e', 'tests'])
   })
 
   it('refuses a record that breaks any field of it', () => {
@@ -51,6 +51,23 @@ describe('pull request records', () => {
     assert.ok(accepted && accepts(accepted))
     const norms = read({ kind: 'norms', result: 'accepted' })
     assert.ok(norms && !accepts(norms))
+  })
+
+  it('lets a tests record pass only from its script, and never through a waiver, a not applicable or an acceptance', () => {
+    const read = (change: Record<string, unknown>) => parsePrRecord({ ...RECORD, kind: 'tests', producer: SCRIPTED.producer, ...change })
+    const passed = read({ result: 'pass', detail: 'npm test — 12s' })
+    assert.ok(passed && accepts(passed))
+    for (const change of [{ producer: 'session-e2e' }, { producer: 'orchestrator' }]) {
+      const forged = read({ result: 'pass', ...change })
+      assert.ok(forged && !accepts(forged), JSON.stringify(change))
+    }
+    for (const result of ['fail', 'waived', 'not-applicable', 'accepted']) {
+      const other = read({ result, detail: 'x' })
+      assert.ok(other && !accepts(other), result)
+    }
+    assert.deepEqual([SCRIPTED.kind, SCRIPTED.tool, SCRIPTED.results], ['tests', 'mcp__github__light_ci', ['pass', 'fail']])
+    assert.ok(!(PR_RECORD_CONTRACT.waivable as readonly string[]).includes('tests'))
+    assert.equal(kindFor('github'), 'e2e')
   })
 
   it('names each point an acceptance sets aside with its reason, cut to the contract\'s length', () => {

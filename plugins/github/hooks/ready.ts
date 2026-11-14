@@ -4,7 +4,7 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { ACCEPTANCE, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, accepts, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, SCRIPTED, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { carriesAcross, heldBy, missingEvidence, type Holder } from '../core/readiness.ts'
 import { gitSubcommand, innerLine, readCommands, simpleCommands } from '../core/shell.ts'
 import type { Excused } from './check-plan.ts'
@@ -50,6 +50,9 @@ export type Gate = {
   labels: string[]
   // The pull request's commit count at this head.
   commits?: number
+  // Its base branch, and whether that base is the head branch of another open pull request.
+  base?: string
+  stacked?: boolean
   ci: { result: string; failed: string[]; running?: number; skipped?: string[]; unverified?: string[]; total: number }
 }
 
@@ -640,8 +643,9 @@ export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
 // holder: only the conditions that holder refuses a merge on; every condition, omitted.
+// lightCiOff: the date the operator turned light CI off for the repository, when he did: a stacked pull request needs no tests.
 export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = [],
-  holder?: Holder): string[] {
+  holder?: Holder, lightCiOff?: string): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
@@ -653,16 +657,22 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
     required: new Set(excused.required ?? []),
     carried: new Set(carried.map((c) => c.kind)),
     ciGreen: ci.result === 'SUCCESS',
+    ciFailed: ci.result === 'FAILURE',
+    stacked: gate.stacked === true,
+    lightCiOff: lightCiOff !== undefined,
   })
-  const kinds = (holder ? heldBy(lacking, holder) : lacking).flatMap((item) => item.condition === 'ci' ? [] : [item])
+  const held = holder ? heldBy(lacking, holder) : lacking
+  const kinds = held.flatMap((item) => item.condition === 'ci' ? [] : [item])
   for (const { condition, record } of kinds) {
-    if (!record) missing.push(condition + ': no record at ' + head7(gate.head))
+    if (!record && condition === SCRIPTED.kind) missing.push(lightCiMissing(gate))
+    else if (!record) missing.push(condition + ': no record at ' + head7(gate.head))
     else missing.push(condition + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer + (record.detail ? ', ' + record.detail : ''))
   }
   // A file skipped is named only beside a kind it may have been meant for: with
   // the kinds accepted it blocks nothing, as nobody may delete it.
   if (kinds.length > 0) for (const name of skipped) missing.push('unreadable record ' + name)
-  if (holder && holder !== 'github') return missing
+  // CI is named when its holder asks it: GitHub's on the bottom pull request, the gate's failure on a stacked one.
+  if (!held.some((item) => item.condition === 'ci')) return missing
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS') {
     const skippedChecks = ci.skipped ?? []
@@ -673,6 +683,23 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
     else if (unverified.length === 0 || ci.running) missing.push('CI still running')
   }
   return missing
+}
+
+// What a stacked pull request misses with neither a tests record nor its checks green: the light CI's run.
+function lightCiMissing(gate: Gate): string {
+  return SCRIPTED.kind + ': no record at ' + head7(gate.head) + ' and its checks not green: stacked on ' + (gate.base || 'another pull request')
+    + ', run ' + SCRIPTED.tool + ' {"action": "run", "pr": ' + gate.pr + '} from a clean checkout of its head'
+}
+
+// What stands for green CI at a stacked pull request's head, as the Ready line names it, or undefined on the bottom
+// pull request: the operator's refusal of light CI, the tests record (its own or carried), or the checks green.
+export function stackedCi(gate: Gate, files: RecordFile[], carried: Carried[] = [], lightCiOff?: string): string | undefined {
+  if (gate.stacked !== true) return undefined
+  if (lightCiOff !== undefined) return 'the operator\'s refusal of light CI for this repository (' + lightCiOff + ')'
+  const tests = latestByKind(headRecordsRead(gate, files).read).get(SCRIPTED.kind)
+  if (tests && accepts(tests)) return 'passed local tests (' + SCRIPTED.producer + ')'
+  if (!tests && carried.some((c) => c.kind === SCRIPTED.kind)) return 'passed local tests (' + SCRIPTED.producer + ')'
+  return 'green CI'
 }
 
 // An undraft only for the CI to run: the pull request carries Not Ready and no
@@ -797,12 +824,13 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // accepted: the points the orchestrator's acceptance set aside at the head, named in place of a clean review.
 // excused: the kinds the check plan or the exemption stood for, named.
 // carried: the kinds counted at the head from an earlier head of the same diff.
+// ciText: what stands for green CI on a stacked pull request (stackedCi).
 export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, excused: Excused = {},
-  carried: Carried[] = []): string {
+  carried: Carried[] = [], ciText = 'green CI'): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
     + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', '
     + (excused.norms ? 'no norms check needed (' + excused.norms + '), ' : '')
-    + (excused.e2e ? 'no E2E needed (' + excused.e2e + ')' : 'passed E2E') + ' and green CI hold at its head'
+    + (excused.e2e ? 'no E2E needed (' + excused.e2e + ')' : 'passed E2E') + ' and ' + ciText + ' hold at its head'
     + (carried.length > 0 ? ' (' + carriedText(carried) + ').' : '.')
 }
 
@@ -896,6 +924,10 @@ export function recordKindFor(origin: string): string {
 
 // The refusal of a record of a kind its caller does not write, naming the producer the contract declares.
 export function kindRefusal(kind: string, origin: string, owned: string): string {
+  if (kind === SCRIPTED.kind) {
+    return 'github: ' + kind + ' records are written by ' + SCRIPTED.tool + ' alone, from the run of the project\'s command: '
+      + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.'
+  }
   const producers = producersOf(kind)
   const by = producers.length > 0 ? ' (' + producers.map((p) => p.plugin + ', ' + p.tool).join('; ') + ')' : ''
   return 'github: ' + kind + ' records are written by their producer' + by + ': '

@@ -219,6 +219,46 @@ runs in every repository, with one transcript line:
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
 ```
 
+### Stacked pull requests: the light CI
+
+A stacked pull request, whose base is the head branch of another open pull request (neither
+the default branch nor a protected one, so a release pull request's head is no stacked base),
+often runs no CI at all: most workflows filter their pull requests on `main`, `develop` or
+`staging`. Such a pull request is ready on its review and either a `tests` record passed at its
+head or its checks green there; a failed run or a failed check blocks it. The bottom pull
+request keeps the full CI. A `tests` record of an earlier head of the same diff carries, as the
+other kinds do.
+
+The record is written by the **`mcp__github__light_ci`** tool alone, never by
+`mcp__github__record` nor by a waiver:
+
+- `{"action": "run", "pr": <n>, "dir"?}` checks that the checkout is the pull request's head and
+  clean, runs the repository's `prepare` then `command` (argument lists, no shell, under a
+  timeout, `{base}` replaced by the merge base for a tests-impact command such as
+  `npx jest --changedSince={base}`), and records `pass` or `fail` with the command, its time and
+  its test count. The tool stops at 570 seconds, the host's limit, and records nothing then: a
+  longer suite runs as `python3 <github root>/engine/light_ci.py run --pr <n>` in the
+  background.
+- `{"action": "status", "repo"?}` answers in one line what the repository's file holds and the
+  facts of the question an orchestrator asks once per repository: whether its CI runs on
+  stacked bases, the median pull request run, the stacked pull requests of the last 30 days, the
+  command its stack suggests (the full suite by default, the tests-impact variant named beside),
+  and whether light CI is useful there.
+
+Each repository's command lives outside the repository, in
+`${CLAUDE_CONFIG_DIR:-~/.claude}/light-ci/<owner>-<name>.json`:
+
+```json
+{ "command": ["vendor/bin/pest", "--parallel", "--compact"],
+  "prepare": ["docker", "compose", "up", "-d", "--wait", "mysql", "redis"],
+  "timeoutSeconds": 600,
+  "decided": { "at": "2026-11-14T18:30:00Z", "words": "<the operator's answer>" } }
+```
+
+or, for a repository where the operator refused it, `{ "off": "<his words>", "at": "…" }`: its
+stacked pull requests are then ready on their review alone, and the `Ready` line names the date.
+The gate reads that key alone, never the command.
+
 ## Guards
 
 **Ready.** Taking a pull request out of draft and merging it
