@@ -26,9 +26,9 @@ Ask the operator nothing a file, command or the forge answers. Say a reading not
 You write one file, the report, and, if you succeed (§4), the succession brief. No other file
 (no method file, no register, no script), no commit, no push, no comment, no label, no merge.
 You order nothing and apply nothing, and you message no session other than your own successor
-or predecessor, except to carry the operator's order to an orchestrator when he gives you one, and to report to the session that launched you:
-No heavy run (full suite, build, eval campaign): a
-figure that needs one is named with its cost, not taken.
+or predecessor, except to carry the operator's order to an orchestrator when he gives you one,
+and to report to the session that launched you. No heavy run (full suite, build, eval campaign):
+a figure that needs one is named with its cost, not taken.
 
 ## 3. The report
 
