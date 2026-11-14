@@ -334,6 +334,26 @@ from ghlib import fmt
 ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False, {})
 print(ci["result"], ",".join(ci["failed"]), ci["total"])
 ' "$GHDIR" '[{"id":5,"name":"a","status":"completed","conclusion":"success"},{"id":5,"name":"a","status":"completed","conclusion":"failure"}]')"
+# A fresh head has no check yet: CI has not started, which is not green.
+check "gate_ci reads no check at all as pending, not green" "PENDING 0 0" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+for draft in (False, True):
+    ci = fmt.gate_ci({"statuses": []}, [], draft, {})
+    assert ci["result"] == "PENDING", ci
+ci = fmt.gate_ci(None, None, False)
+print(ci["result"], ci["total"], ci["running"])
+' "$GHDIR")"
+check "gate_ci keeps a commit status alone green" "SUCCESS 1" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+ci = fmt.gate_ci({"statuses": [{"context": "legacy", "state": "success"}]}, [], False, {})
+print(ci["result"], ci["total"])
+' "$GHDIR")"
 check "open-threads keeps only unresolved" "1" \
   "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"
@@ -2004,7 +2024,7 @@ check "pr-status under a --format answers the full pull request to that format" 
   "$(gh8 pr-status 12 --format pr-merge-status)"
 
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
-check "pr-gate reads no check at all as green, total 0" "SUCCESS   0" "$(ci8)"
+check "pr-gate reads no check at all as pending, total 0" "PENDING   0" "$(ci8)"
 
 gate8 failed "$PULL8" '{"state":"failure","statuses":[{"context":"ci/legacy","state":"error"}]}' '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure"},{"name":"test","status":"completed","conclusion":"success"}]}'
 check "pr-gate names the failed checks and statuses" "FAILURE lint,ci/legacy  3" "$(ci8)"

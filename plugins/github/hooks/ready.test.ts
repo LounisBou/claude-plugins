@@ -112,8 +112,8 @@ test('an unreadable file is named when a kind is missing too', () => {
     .toContain('Missing: e2e: no record at 0123456, unreadable record ' + bad.name + '.')
 })
 
-test('no check at all is green', () => {
-  expect(missingItems(gate({}, { result: 'SUCCESS', total: 0 }), ALL)).toEqual([])
+test('no check at all is not green: CI has not started', () => {
+  expect(missingItems(gate({}, { result: 'PENDING', total: 0, running: 0 }), ALL)).toEqual(['CI still running'])
 })
 
 test('a skipped check is not green, and says so', () => {

@@ -55,7 +55,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 statuses and each check's latest run, less a skipped or neutral one of a run older than its
 workflow's latest (greatest run id) if that has a check. `ci.result`: `FAILURE` if one failed
 (`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
-`skipped`, or `neutral` on a draft), else `SUCCESS`, also with no check. A skipped check
+`skipped`, or `neutral` on a draft), else `SUCCESS`; with no check at all CI has not started and the result is `PENDING`. A skipped check
 never turns green, in `checks-status` too. Actions call failed: `error:` on stderr, every
 run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
 instead.
