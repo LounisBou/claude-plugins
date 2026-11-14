@@ -300,14 +300,21 @@ const STALE = [
 test('leanSteps brings the reading orders of a standing brief to the template\'s lean form, and leaves a lean one as it is', () => {
   const lean = leanSteps(STALE, '/b/rulings.md')
   assert.equal(lean.refreshed, 4)
+  assert.equal(lean.left, 0)
   assert.ok(lean.text.includes("1. Read the rulings that bind now, `grep -v '\\[for: ' /b/rulings.md`, the rulebook and THIS brief, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it."))
   assert.ok(lean.text.includes("`dispatch-record.sh goals /r.jsonl status | grep -v '| met |'`."))
   assert.ok(lean.text.includes('Then `workspace.sh list acme/belt`: delete'))
   assert.ok(lean.text.includes('`references/succession-successor.md`, « Succession — the successor »'))
   assert.ok(!lean.text.includes('WHOLE') && !lean.text.includes('read whole'))
-  assert.deepEqual(leanSteps(lean.text, '/b/rulings.md'), { text: lean.text, refreshed: 0 })
+  assert.deepEqual(leanSteps(lean.text, '/b/rulings.md'), { text: lean.text, refreshed: 0, left: 0 })
   // A `$` in a path is a character, never a replacement pattern.
   assert.ok(leanSteps(STALE, '/b/$&/r.md').text.includes("`grep -v '\\[for: ' /b/$&/r.md`"))
+  // A title that is no repository name is never put in a command.
+  assert.ok(leanSteps(STALE.replace('acme/belt', 'acme/belt (v2)'), '/b/rulings.md').text.includes('Then `workspace.sh list`: delete'))
+  // A stale order worded otherwise is counted, not rewritten.
+  assert.ok(leanSteps(STALE.replace('acme/belt', 'a$&b'), '/b/rulings.md').text.includes('workspace.sh list`'), 'a title with a dollar sign is no repository name')
+  assert.equal(leanSteps('# Orchestrator succession brief — \n3. Then `workspace.sh list`: x', '').text.includes('workspace.sh list`'), true, 'no project, no rewrite')
+  assert.equal(leanSteps('1. Read the rulings file WHOLE, then the rulebook and more.', '/b/r.md').left, 1)
   // No rulings file to name, no rewrite of the rulings step.
   assert.ok(leanSteps(STALE, 'none').text.includes('Read the rulings file WHOLE'))
 })
@@ -320,6 +327,7 @@ test('live brings a stale standing brief\'s reading steps to the lean form and s
   writeFileSync(w.brief, lean.replace(`1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`, '1. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole.'))
   assert.ok(w.read().includes('Read the rulings file WHOLE'))
   assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.join(''), new RegExp(`chars=${w.read().length} `), 'the figure counts the brief as written')
   assert.ok(!w.read().includes('WHOLE') && w.read().includes(`grep -v '\\[for: ' ${rulings}`))
   assert.deepEqual(w.err, ["succession: 1 reading step(s) of the brief brought to the template's lean form\n"])
   w.err.length = 0

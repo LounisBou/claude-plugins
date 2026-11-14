@@ -254,9 +254,10 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
  * rulings file read by `grep -v` on its entries for one open item, the goals without their met
  * rows, the checkouts of the brief's own project; a brief already lean is left as it is.
  */
-export function leanSteps(brief: string, rulings: string): { readonly text: string; readonly refreshed: number } {
+export function leanSteps(brief: string, rulings: string): { readonly text: string; readonly refreshed: number; readonly left: number } {
   const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
-  // The replacement strings read `$` as a pattern: a path or a name carrying one is escaped.
+  // A title that is no `owner/name` or `name` (spaces, parentheses) is no argument of a command: that step is left alone.
+  // The replacement strings read `$` as a pattern: a path carrying one is escaped.
   const lit = (value: string): string => value.replaceAll('$', '$$$$')
   const steps: [RegExp, string][] = [
     ...(rulings === '' || rulings === 'none' ? [] : [[
@@ -264,7 +265,7 @@ export function leanSteps(brief: string, rulings: string): { readonly text: stri
       `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${lit(rulings)}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
     ] as [RegExp, string]]),
     [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
-    ...(project === '' ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${lit(project)}\`:`] as [RegExp, string]]),
+    ...(!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/.test(project) ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
     [/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'],
   ]
   let text = brief
@@ -274,7 +275,9 @@ export function leanSteps(brief: string, rulings: string): { readonly text: stri
     if (next !== text) refreshed++
     text = next
   }
-  return { text, refreshed }
+  // A stale order worded otherwise is not rewritten: it is counted, so that the caller says it.
+  const left = [/Read the rulings file WHOLE/, /goals [^`\n]* status`, read whole/, /workspace\.sh list`/, /`references\/lifecycle\.md`, « Succession/].filter(marker => marker.test(text)).length
+  return { text, refreshed, left }
 }
 
 /** The open items of the state a brief does not name: each row id, pull request, agent and question id. */
@@ -391,6 +394,7 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
   const lean = leanSteps(written, files.rulings)
   writeAtomic(request.brief, lean.text)
   if (lean.refreshed > 0) io.err(`succession: ${lean.refreshed} reading step(s) of the brief brought to the template's lean form\n`)
+  if (lean.left > 0) io.err(`succession: ${lean.left} reading step(s) of the brief still follow an older template (whole rulings, whole goals, every checkout or the lifecycle.md pointer): word them as templates/orchestrator-succession-brief.md does\n`)
   // A ruling for rows all closed in the dispatch record is carried out: it moves as a `done` one.
   const closed = new Set(parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'closed').map(row => Number(row['id'])))
   const rulings = prune(files.rulings, (text, archive) => pruneRulings(text, archive, closed), now(), io)

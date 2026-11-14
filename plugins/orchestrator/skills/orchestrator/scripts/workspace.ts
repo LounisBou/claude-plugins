@@ -769,13 +769,16 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
 export async function list(ctx: Context, argv: readonly string[] = []): Promise<void> {
   if (argv.length > 1) throw new Refused('list: usage: list [<repo>]')
   // A repository reads as its directory's name: `owner/name` and `name` name the same checkouts.
-  const repo = basename((argv[0] ?? '').replace(/\/+$/, ''))
-  if (!isDir(ctx.root)) return
-  let listed = 0
-  for (const d of checkoutDirs(ctx.root)) {
+  let repo = basename((argv[0] ?? '').replace(/\/+$/, ''))
+  const dirs = isDir(ctx.root) ? checkoutDirs(ctx.root) : []
+  // A name no checkout directory carries (a clone kept under another name) lists everything, said, so that « no line » never reads as « no checkout ».
+  if (repo !== '' && !dirs.some(d => basename(dirname(d)) === repo)) {
+    say(ctx, `list: no directory ${repo} under ${ctx.root}; every checkout follows`)
+    repo = ''
+  }
+  for (const d of dirs) {
     if (repo !== '' && basename(dirname(d)) !== repo) continue
     if (!present(join(d, '.git'))) continue
-    listed++
     const br = chomp((await git(ctx, d, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout)
     const head = chomp((await git(ctx, d, ['rev-parse', '--short', 'HEAD'])).stdout)
     const state = chomp((await git(ctx, d, ['status', '--porcelain'])).stdout) === '' ? 'clean' : 'dirty'
@@ -784,8 +787,6 @@ export async function list(ctx: Context, argv: readonly string[] = []): Promise<
       : chomp((await git(ctx, d, ['log', '--branches', '--not', '--remotes', '--oneline'])).stdout) === '' ? 'pushed' : 'unpushed'
     out(ctx, `${d} | ${br} | ${head} | ${state} | ${pushed}`)
   }
-  // A name that matches nothing is said, so that « no line » is never read as « no checkout » when the name was wrong.
-  if (repo !== '' && listed === 0) say(ctx, `no checkout of ${repo} under ${ctx.root}`)
 }
 
 // --- sweep: the leftovers, decided on facts (design §61) ------------------------------------
