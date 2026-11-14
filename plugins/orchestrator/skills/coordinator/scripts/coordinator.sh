@@ -25,7 +25,7 @@
 #                            prints "closed <id>"
 #   coordinator.sh round-close <id> --withdraw "<evidence>"   closes one entry settled meanwhile,
 #                            on the evidence read on the artifact; prints "closed <id>"
-#   coordinator.sh round-archive   moves every closed entry into round/archive/; prints
+#   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
 #
 # facts prints, one per line:
@@ -98,11 +98,13 @@
 # hooks module sends the answer as soon as that round-close has run in the coordinator's session,
 # and any answer still pending at its next round reading, and writes the outcome there, so the
 # close is the one gesture.
-# round-archive moves each entry file of <state>/round/ whose status is closed into
-# <state>/round/archive/ (created when absent), each in one rename; open, answered and withdrawn
-# entries stay, and so does a file that does not parse. Nothing reads the archive: round and
-# round-close see only the files directly under round/. It also removes the *.json.tmp-* files
-# a write died on, once a day old; a fresher one is a write in flight and stays.
+# round-archive moves each entry file of <state>/round/ settled over a day ago — closed, answered
+# or withdrawn, at its answer's time (else its start), its delivery absent or delivered — into
+# <state>/round/archive/, a withdrawn one into <state>/round/archive/withdrawn/ (created when
+# absent), each in one rename under its lock; an open entry, a delivery pending, sent or failed,
+# and a file that does not parse stay. succession.sh live runs the same move. round sees only the
+# files directly under round/. It also removes the *.json.tmp-* files a write died on, once a day
+# old; a fresher one is a write in flight and stays.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
 # gone"), then "left untouched: <each pull request and checkout, or none>" — the pull requests,
 # their branches and the checkouts are the operator's to close, never this script's.

@@ -18,7 +18,7 @@
 //
 // `live` then prunes the rulings and state files the brief names (`prune.ts`): what is carried
 // out, superseded or older than the live summary moves to an archive beside each, never read at
-// takeover. It prints what moved and the characters a takeover reads, brief and both files,
+// takeover; and it archives the round's entries settled over a day ago (round-archive's rule). It prints what moved and the characters a takeover reads, brief and both files,
 // before and after: after, the rulings without their entries for one open item.
 //
 // `check` refuses (exit 1) a brief that misses an open item of the state: an open row, an open
@@ -33,6 +33,7 @@ import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type 
 import { recordNamedIn } from './lib/record-paths.ts'
 import { auditRun, pointerOf, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { prRefsOf } from '../../../core/learning.ts'
+import { archiveSettled } from '../../coordinator/scripts/round.ts'
 
 export const USAGE =
   'usage: succession.sh live|check <brief> [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
@@ -262,6 +263,17 @@ function prune(path: string, how: (text: string, archive: string) => Pruned, now
   return result
 }
 
+// The round's entries settled over a day ago, moved to its archive as `coordinator.sh round-archive`
+// moves them: a move that fails is said, and the succession goes on.
+function archiveRound(state: string, now: Date, io: Io): number {
+  try {
+    return archiveSettled(join(state, 'round'), now)
+  } catch (error) {
+    io.err(`succession: ${(error as Error).message}\n`)
+    return 0
+  }
+}
+
 export function main(argv: readonly string[], env: Env, io: Io, now: () => Date = () => new Date(), journal?: Journal): number {
   const parsed = parseArgs(argv)
   if ('error' in parsed) {
@@ -322,10 +334,11 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
   const files = prunedFilesOf(written, env['HOME'] ?? '')
   const rulings = prune(files.rulings, pruneRulings, now(), io)
   const state = prune(files.state, pruneState, now(), io)
+  const round = archiveRound(stateRoot(env), now(), io)
   // Before: the rulings file read whole. After: the part a takeover reads, its entries for one open item left out.
   const read = files.rulings === '' || files.rulings === 'none' ? 0 : readAtTakeover(readText(files.rulings) ?? '').length
   const takeover = (side: 'before' | 'after') => written.length + (side === 'before' ? rulings.before : read) + state[side]
-  io.out(`generation=${generation} chars=${written.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
+  io.out(`generation=${generation} chars=${written.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
   return 0
 }
 

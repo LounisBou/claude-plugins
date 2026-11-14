@@ -11025,8 +11025,8 @@ check "round-close still closes with no wait file, saying nothing, and with one 
   "exit 0|exit 0|closed|closed|0|1|{\"relayed\": \"half" \
   "$(tail -1 "$WORK/fp-fp-nowait.out")|$(tail -1 "$WORK/fp-fp-broken.out")|$(jq -r .status "$CROUND/fp-nowait.json")|$(jq -r .status "$CROUND/fp-broken.json")|$(wc -l < "$WORK/fp-fp-nowait.err" | tr -d ' ')|$(wc -l < "$WORK/fp-fp-broken.err" | tr -d ' ')|$(cat "$CWAITS/s-fp-broken")"
 
-# round-archive moves the closed entries into round/archive/ and nothing else; the archive is
-# read by no one, so an entry planted there with the status open is neither printed nor counted.
+# round-archive moves the entries settled over a day ago into round/archive/, the withdrawn into
+# its withdrawn/; round reads no archive, so an entry planted there open is neither printed nor counted.
 AROUND="$WORK/coord-archive"
 mkdir -p "$AROUND/round"
 arch_entry() {  # <id> <status>
@@ -11038,11 +11038,11 @@ arch_entry z-closed-1 closed; arch_entry z-closed-2 closed; arch_entry z-open op
 arch_entry z-answered answered; arch_entry z-withdrawn withdrawn
 printf '{"id": "half' > "$AROUND/round/z-broken.json"
 acoord() { ORCHESTRATOR_STATE_DIR="$AROUND" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$COORD" "$@"; }
-check "round-archive prints the count of the entries it moved" "archived 2|exit 0" \
+check "round-archive prints the count of the entries it moved" "archived 4|exit 0" \
   "$(acoord round-archive 2>&1)|exit $?"
-check "round-archive moves the closed entries only, and leaves the others and the broken file" \
-  "z-closed-1.json z-closed-2.json|z-answered.json z-broken.json z-open.json z-withdrawn.json" \
-  "$(ls "$AROUND/round/archive" | tr '\n' ' ' | sed 's/ $//')|$(find "$AROUND/round" -maxdepth 1 -type f -name '*.json' -exec basename {} \; | sort | tr '\n' ' ' | sed 's/ $//')"
+check "round-archive moves the settled entries, the withdrawn apart, and leaves the open one and the broken file" \
+  "withdrawn z-answered.json z-closed-1.json z-closed-2.json|z-withdrawn.json|z-broken.json z-open.json" \
+  "$(ls "$AROUND/round/archive" | tr '\n' ' ' | sed 's/ $//')|$(ls "$AROUND/round/archive/withdrawn")|$(find "$AROUND/round" -maxdepth 1 -type f -name '*.json' -exec basename {} \; | sort | tr '\n' ' ' | sed 's/ $//')"
 check "a second round-archive finds nothing to move" "archived 0" "$(acoord round-archive 2>&1)"
 check "round-archive on a missing round directory moves nothing" "archived 0|exit 0" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round-archive 2>&1)|exit $?"
@@ -11053,7 +11053,7 @@ touch -t 202001010000 "$TMPDIR_ROUND/round/old.json.tmp-1-abc"
 check "round-archive removes a temporary file a day old and keeps a fresh one" "archived 0|fresh.json.tmp-2-def" \
   "$(ORCHESTRATOR_STATE_DIR="$TMPDIR_ROUND" bash "$COORD" round-archive 2>&1)|$(ls "$TMPDIR_ROUND/round")"
 check "round-archive refuses an argument and moves nothing" "exit 1|0" \
-  "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-archive now >/dev/null 2>&1; echo "exit $?")|$(find "$AROUND/round/archive" -type f | wc -l | tr -d ' ' | awk '{ print $1 - 2 }')"
+  "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-archive now >/dev/null 2>&1; echo "exit $?")|$(find "$AROUND/round/archive" -type f | wc -l | tr -d ' ' | awk '{ print $1 - 4 }')"
 arch_entry z-hidden open; mv "$AROUND/round/z-hidden.json" "$AROUND/round/archive/z-hidden.json"
 check "round prints nothing from the archive, even an entry there with the status open" "0|1" \
   "$(acoord round | grep -c 'z-hidden\|z-closed')|$(acoord round | grep -c '^round z-open ')"

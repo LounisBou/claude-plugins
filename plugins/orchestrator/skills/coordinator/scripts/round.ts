@@ -211,9 +211,33 @@ export function roundClose(ctx: Context, args: readonly string[]): number {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-export function roundArchive(ctx: Context, args: readonly string[]): number {
-  if (args.length > 0) die(`round-archive: unexpected argument ${args[0]}`)
-  const round = join(stateOf(ctx.env), 'round')
+const SETTLED: readonly unknown[] = ['closed', 'answered', 'withdrawn']
+
+/**
+ * When a settled entry was settled, as epoch milliseconds, or null for an entry still to keep: one
+ * open, of a shape neither the relay's nor `ask`'s (hooks/question.ts, `v` 2), or whose answer is
+ * still to reach its asker (a delivery pending, sent or failed: the pane shows a failure).
+ */
+export function settledAt(text: string): number | null {
+  const entry = object(text)
+  if (entry === undefined || !SETTLED.includes(entry['status'])) return null
+  const asked = entry['v'] === 2 && typeof entry['id'] === 'string'
+  if (!asked && parseEntry(text) === undefined) return null
+  const delivery = entry['delivery'] as Fields | undefined | null
+  if (isSet(delivery) && (delivery as Fields)['state'] !== 'delivered') return null
+  const answered = entry['answer'] as Fields | undefined | null
+  const at = isSet(answered) && typeof (answered as Fields)['at'] === 'string' ? (answered as Fields)['at'] : asked ? entry['at'] : entry['since']
+  const ms = typeof at === 'string' ? Date.parse(at) : NaN
+  return Number.isFinite(ms) ? ms : null
+}
+
+/**
+ * Moves into round/archive/ each entry settled over a day ago (settledAt), the withdrawn ones into
+ * round/archive/withdrawn/: the module reads the newest of archive/ itself for the answers it
+ * recorded, and a withdrawal answers nothing. Each under its lock, read again before the move.
+ * Answers how many moved; a directory or a move that fails is thrown as a Refusal.
+ */
+export function archiveSettled(round: string, now: Date): number {
   let names: string[]
   try {
     names = readdirSync(round).sort()
@@ -229,14 +253,16 @@ export function roundArchive(ctx: Context, args: readonly string[]): number {
     try {
       archived = withLock(path, () => {
         const text = read(path)
-        if (text === undefined || parseEntry(text)?.['status'] !== 'closed') return false
+        const at = text === undefined ? null : settledAt(text)
+        if (at === null || now.getTime() - at <= DAY_MS) return false
+        const into = object(text as string)?.['status'] === 'withdrawn' ? join(round, 'archive', 'withdrawn') : join(round, 'archive')
         try {
-          mkdirSync(join(round, 'archive'), { recursive: true })
+          mkdirSync(into, { recursive: true })
         } catch {
-          die(`round-archive: cannot create ${join(round, 'archive')}`)
+          die(`round-archive: cannot create ${into}`)
         }
         try {
-          renameSync(path, join(round, 'archive', name))
+          renameSync(path, join(into, name))
         } catch {
           die(`round-archive: cannot move ${path}`)
         }
@@ -247,6 +273,19 @@ export function roundArchive(ctx: Context, args: readonly string[]): number {
       die(`round-archive: cannot move ${path}`)
     }
     if (archived) moved++
+  }
+  return moved
+}
+
+export function roundArchive(ctx: Context, args: readonly string[]): number {
+  if (args.length > 0) die(`round-archive: unexpected argument ${args[0]}`)
+  const round = join(stateOf(ctx.env), 'round')
+  const moved = archiveSettled(round, ctx.now())
+  let names: string[]
+  try {
+    names = readdirSync(round).sort()
+  } catch {
+    names = []
   }
   // A write that died between its temporary file and the rename leaves the temporary behind;
   // one a day old is no write in flight.

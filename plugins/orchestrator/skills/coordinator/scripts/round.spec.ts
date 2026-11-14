@@ -31,6 +31,7 @@ function waitFile(f: Fixture, session: string, value: unknown): string {
 }
 
 const AT = '2026-10-18T10:06:07Z'
+const OLD = '2026-10-16T10:00:00Z'
 
 describe('round-close', () => {
   it('closes an open entry with the answer, by the coordinator, its delivery pending as the answer', () => {
@@ -171,17 +172,39 @@ describe('the fingerprint a close forgets', () => {
 describe('round-archive', () => {
   it('moves the closed entries alone, and says how many', () => {
     const f = fixture()
-    put(f, 'z-closed', entry('z-closed', { status: 'closed' }))
-    put(f, 'y-closed', entry('y-closed', { status: 'closed' }))
+    put(f, 'z-closed', entry('z-closed', { status: 'closed', answer: { text: 'A', by: 'coordinator', at: OLD } }))
+    put(f, 'y-closed', entry('y-closed', { status: 'closed', answer: { text: 'A', by: 'coordinator', at: OLD } }))
     put(f, 'z-open', entry('z-open'))
     put(f, 'z-broken', '{"id": "half')
-    put(f, 'z-shape', { id: 'z-shape', status: 'closed' })
+    put(f, 'z-shape', { id: 'z-shape', status: 'closed', answer: { at: OLD } })
     mkdirSync(join(f.state, 'round', 'dir.json'))
     assert.equal(main(f.ctx, ['round-archive']), 0)
     assert.equal(main(f.ctx, ['round-archive']), 0)
     assert.deepEqual(f.out, ['archived 2', 'archived 0'])
     assert.deepEqual(readdirSync(join(f.state, 'round', 'archive')).sort(), ['y-closed.json', 'z-closed.json'])
     assert.deepEqual(readdirSync(join(f.state, 'round')).sort(), ['archive', 'dir.json', 'z-broken.json', 'z-open.json', 'z-shape.json'])
+  })
+
+  it('moves every settled entry settled over a day ago, delivered or never sent, the withdrawn apart', () => {
+    const f = fixture()
+    const settled = (status: string, at: string, more: Record<string, unknown> = {}) => ({ status, answer: { text: 'A', by: 'pane', at }, ...more })
+    put(f, 'a-answered', entry('a-answered', settled('answered', OLD)))
+    put(f, 'a-delivered', entry('a-delivered', settled('closed', OLD, { delivery: { state: 'delivered', at: OLD, attempts: 1 } })))
+    put(f, 'a-withdrawn', entry('a-withdrawn', settled('withdrawn', OLD)))
+    put(f, 'a-since', entry('a-since', { status: 'withdrawn', since: OLD, answer: null }))
+    put(f, 'k-fresh', entry('k-fresh', settled('withdrawn', '2026-10-18T08:06:07Z')))
+    put(f, 'k-failed', entry('k-failed', settled('answered', OLD, { delivery: { state: 'failed', at: OLD, attempts: 1, reason: 'gone' } })))
+    put(f, 'k-pending', entry('k-pending', settled('closed', OLD, { delivery: { state: 'pending', at: OLD, attempts: 0 } })))
+    put(f, 'k-sent', entry('k-sent', settled('closed', OLD, { delivery: { state: 'sent', at: OLD, attempts: 1 } })))
+    put(f, 'k-open', entry('k-open', { since: OLD }))
+    put(f, 'v-answered', { v: 2, id: 'v-answered', status: 'answered', at: OLD, answer: { text: 'B', by: 'tab', at: OLD } })
+    put(f, 'v-withdrawn', { v: 2, id: 'v-withdrawn', status: 'withdrawn', at: OLD, answer: { text: 'moot', by: 'sender', at: OLD } })
+    put(f, 'v-open', { v: 2, id: 'v-open', status: 'open', at: OLD, answer: null })
+    assert.equal(main(f.ctx, ['round-archive']), 0)
+    assert.deepEqual(f.out, ['archived 6'])
+    assert.deepEqual(readdirSync(join(f.state, 'round', 'archive')).sort(), ['a-answered.json', 'a-delivered.json', 'v-answered.json', 'withdrawn'])
+    assert.deepEqual(readdirSync(join(f.state, 'round', 'archive', 'withdrawn')).sort(), ['a-since.json', 'a-withdrawn.json', 'v-withdrawn.json'])
+    assert.deepEqual(readdirSync(join(f.state, 'round')).sort(), ['archive', 'k-failed.json', 'k-fresh.json', 'k-open.json', 'k-pending.json', 'k-sent.json', 'v-open.json'])
   })
 
   it('removes a temporary file a day old and keeps a fresh one', () => {
@@ -205,7 +228,7 @@ describe('round-archive', () => {
 
   it('refuses when the archive cannot be made', () => {
     const f = fixture()
-    put(f, 'c', entry('c', { status: 'closed' }))
+    put(f, 'c', entry('c', { status: 'closed', answer: { text: 'A', by: 'coordinator', at: OLD } }))
     writeFileSync(join(f.state, 'round', 'archive'), '')
     assert.equal(main(f.ctx, ['round-archive']), 1)
     assert.deepEqual(f.err, [`coordinator: round-archive: cannot create ${join(f.state, 'round', 'archive')}`])
