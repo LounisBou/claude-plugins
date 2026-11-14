@@ -4,7 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
-#   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
+#   dispatch-record.sh fixed   <record> <id> --head <sha>   (the correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
 #   dispatch-record.sh ready   <record> <id> --head <sha>
@@ -36,7 +36,7 @@
 # lands rounds later where nobody attributes it. `summary` names the classes where the
 # drop did not pay, so the reversion is a reading rather than an impression.
 #
-# `review` records the head a review session read, and `fixed` the one correction round the
+# `review` records the head a review session read, and `fixed` the correction round the
 # orchestrator verified on the artifact (with no review, or a second time, it records what it was
 # given and warns). Whether a pull request is ready at its head is the github ready gate's, never
 # this script's: `ready` checks the surface and the screenshots' audit only, and prints no label

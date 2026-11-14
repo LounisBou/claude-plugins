@@ -180,6 +180,11 @@ LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "Repor
 MOVE_TOOLS = ("mcp__orchestrator__move_send", "mcp__orchestrator__move_probe",
               "mcp__orchestrator__end_session")
 MOVE_ROLES = (ORCH, COORD)
+# The tools only an orchestrator calls, registered in every session too: an implementer agent
+# is never given them, a title of no role being read as an agent's.
+ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
+              "mcp__orchestrator__answered-by-message", "mcp__orchestrator__declare_wait")
+ORCH_TOOLS_KEPT = (ORCH, COORD, AUDIT)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
 ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
@@ -4184,9 +4189,11 @@ def title_role(title):
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
-    orchestrator and the coordinator keep the three that move an orchestrator, and an
-    orchestrator also loses the servers it never calls."""
-    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS) + (ORCH_UNUSED if role == ORCH else ())
+    orchestrator and the coordinator keep the three that move an orchestrator, only an agent
+    loses the four an orchestrator alone calls, and an orchestrator also loses the servers it
+    never calls."""
+    return (LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS)
+            + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS) + (ORCH_UNUSED if role == ORCH else ()))
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -6740,7 +6747,7 @@ def tool_rows(offered, catalogue):
     """The listing, one `kind | name | characters | tokens | roles` row per item. A `?` is a
     figure this transcript cannot give: a name the default removes from at least one role
     (the five unused tools from every role, the three that move an orchestrator from every
-    role but `Orch` and `Coord`) is listed even when the reader's own session lacks it (a
+    role but `Orch` and `Coord`, the four only an orchestrator calls from `Agent`) is listed even when the reader's own session lacks it (a
     lean caller never received it), and a catalogue server has no size unless this session
     loaded it. The last field names the roles whose default removes the item, `-` when none
     does."""
@@ -6762,7 +6769,7 @@ def tool_rows(offered, catalogue):
     for kind in ("loaded", "deferred", "skills", "agent-types"):
         items = dict(offered[kind])
         if kind == "loaded":
-            every = set().union(*removed.values()) | set(MOVE_TOOLS)
+            every = set().union(*removed.values()) | set(MOVE_TOOLS) | set(ORCH_TOOLS)
             missing = sorted(every - set(offered["loaded"]) - set(offered["deferred"]))
         else:
             missing = []
