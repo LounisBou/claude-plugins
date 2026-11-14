@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords,
   recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -335,6 +335,32 @@ test('a command naming the records or their writer is caught', () => {
   expect(touchesRecords('ls ~/.claude/pr-records')).toBe(true)
   expect(touchesRecords('cat /cfg/records/x', '/cfg/records')).toBe(true)
   expect(touchesRecords('git status')).toBe(false)
+})
+
+test('a line of read-only commands without a redirection only reads', () => {
+  for (const line of ['ls /d', 'cat /d/x | jq . | wc -l', 'grep -rn a /d 2>/dev/null', 'find /d -name "*.json"', 'cd /d && ls', 'echo x', 'ls /d | xargs cat']) {
+    expect(onlyReads(line), line).toBe(true)
+  }
+  for (const line of [
+    'rm /d/x', 'cat /d/x > /tmp/y', 'cat /d/x >> /tmp/y', 'tee /d/x', 'sed -i s/a/b/ /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x',
+    'find /d -delete', 'find /d -exec rm {} +', 'find /d -fprint /d/x', 'ls /d | xargs rm', 'cd /d && rm x', 'bash -c "ls /d"',
+    'python3 w.py', 'ls /d; rm x', 'echo $(rm /d/x)',
+  ]) {
+    expect(onlyReads(line), line).toBe(false)
+  }
+})
+
+test('a line the shell reader cannot read is no read', () => {
+  expect(onlyReads('ls {1..9}{1..9}{1..9}{1..9}')).toBe(false)
+})
+
+test('the records guard refuses a write into the records or their writer, never a read', () => {
+  expect(writesRecords('ls ~/.claude/pr-records/o/r/' + HEAD + '/')).toBe(false)
+  expect(writesRecords('cat /cfg/records/x | jq .', '/cfg/records')).toBe(false)
+  expect(writesRecords('rm ~/.claude/pr-records/x')).toBe(true)
+  expect(writesRecords('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(true)
+  expect(writesRecords('python3 /p/engine/record.py --repo o/r')).toBe(true)
+  expect(writesRecords('git status')).toBe(false)
 })
 
 test('each producer plugin writes only its own kind, every other caller E2E', () => {
