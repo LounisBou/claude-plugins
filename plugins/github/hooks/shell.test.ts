@@ -71,6 +71,9 @@ const refused = [
   'git push -nf',
   '(cd x && git push -f)',
   'git push -f)',
+  '{git,push,--force} origin main',
+  'git push {--force,x} origin main',
+  'git push origin x{1,2} {-f,-v}',
   'git push "-f"',
   'git push origin "+main"',
   "git push origin 'a:b' '+x'",
@@ -107,6 +110,7 @@ const accepted = [
   'git commit -m "$(cat <<\'EOF\'\nsay \\"why; git push -f is refused\nEOF\n)"',
   'git push origin main # --force',
   'git push --force-with-lease=main:deadbeef origin main',
+  'git push origin \'{--force,x}\' repos/{owner}/x',
 ]
 
 test('every forced form the orchestrator refuses is read as one', () => {
