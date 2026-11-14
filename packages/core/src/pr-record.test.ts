@@ -27,6 +27,8 @@ describe('pull request records', () => {
     const read = (change: Record<string, unknown>) => parsePrRecord({ ...RECORD, ...change })
     const e2eWaived = read({ kind: 'e2e', result: 'waived', detail: 'operator, 2026-11-08' })
     assert.ok(e2eWaived && accepts(e2eWaived))
+    const normsWaived = read({ kind: 'norms', result: 'waived', detail: 'operator, 2026-11-08' })
+    assert.ok(normsWaived && accepts(normsWaived))
     const reviewWaived = read({ result: 'waived' })
     assert.ok(reviewWaived && !accepts(reviewWaived))
     const failed = read({ result: 'fail' })

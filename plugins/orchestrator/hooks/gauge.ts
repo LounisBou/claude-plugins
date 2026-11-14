@@ -1,7 +1,7 @@
 // hooks/gauge.ts
 import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { messageOf, type Host, type On } from './host.ts'
+import { configDir, logLine } from './module-io.ts'
 
 // The nouns the gauge holds.
 type Gauge = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui'>
@@ -39,12 +39,6 @@ export function driftAnnouncement(model: string, previous: string): string {
   // Verbatim from hooks/context-gate.sh:94 — the host can switch the answering
   // model under a session (a refusal, an outage) and no other surface shows it.
   return `MODEL DRIFT: this session now answers as ${model}; it answered as ${previous} until now. The host switched on its own (a refusal, an outage): say it to the operator in your next message; a succession does not repair it.`
-}
-
-// Exported for the guards: whatever reads the measure file from a handler resolves
-// the config dir through this same seam (the sandbox exposes no process global).
-export async function configDir($: Host<'env'>): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 export async function writeMeasure(
@@ -95,14 +89,14 @@ export function register(on: On<Gauge>): void {
       $.ui.invalidate('ui.render')
     } catch (err) {
       // A measure that fails never blocks: the next turn measures again.
-      await logLine($, messageOf(err))
+      await logLine($, 'gauge', messageOf(err))
     }
     return next(e)
   }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the measure is let through, the state dir says why, and next is
     // replay-safe in a catch, called or not.
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'gauge', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
   // A compaction of the main conversation starts: the figures measured before it go
@@ -113,11 +107,11 @@ export function register(on: On<Gauge>): void {
     try {
       if (!e.agentId) await forget($, await $.session.id(), true)
     } catch (err) {
-      await logLine($, messageOf(err))
+      await logLine($, 'gauge', messageOf(err))
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'gauge', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
   on('session.end', async ($, e, next) => {
@@ -133,14 +127,14 @@ export function register(on: On<Gauge>): void {
     } catch (err) {
       // Never blocks the end; the failure is said — one line, the
       // every-handler-logs rule.
-      await logLine($, messageOf(err))
+      await logLine($, 'gauge', messageOf(err))
     }
     return next(e)
   }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the end is let through, the state dir says why, and next is replay-safe
     // in a catch, called or not.
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'gauge', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -173,13 +167,4 @@ async function forget($: Host<'env' | 'fs' | 'ui'>, sessionId: string, mine = cu
   currentIn = null
   $.ui.invalidate('ui.render')
   if (mine) await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), '')
-}
-
-// One line appended to the module's log (module-log.ts): the stamp names the
-// half that failed. Never throws, never blocks the handler it serves.
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'gauge', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

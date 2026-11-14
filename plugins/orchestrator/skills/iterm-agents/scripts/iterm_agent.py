@@ -107,42 +107,58 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # transcript. An effort the map binds wins over both.
 SHIPPED_TIER_EFFORTS = {"standard": "high", "light": "medium"}
 EFFORT_LIST = "low, medium, high, xhigh or max"
-# A title reads `Orch: <subject>` or `Agent: <subject>`: two roles, and a subject of at
-# most twenty-five characters. It is the session's NAME (§24), so it is the operator's
-# format or it is nothing an orchestrator can recognise in a listing — a successor once
-# came up as `steward-successor` because the launcher took whatever was typed (§39). The
-# roles are SHORT and the subject is capped because the operator read his window and could
-# not tell one agent from another at a glance (§42); a derived name is held to the same
-# shape, which is also what stops a successor coming up under a whole launch line — a
-# session the older launcher named carries the prompt in its own process line, measured
-# live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
-# before a trailing newline as well: a name is one line, and the title travels through a
-# launch file and back out of the process table, where a second line is not part of a name.
-# The subject's first and last characters are not spaces either: a name that reads as
-# empty, or as its trimmed twin, never reaches a listing (§45).
-TITLE_SHAPE = re.compile(r"^(Orch|Agent): \S(.{0,23}\S)?\Z")
+# The session-name shape is core's (names.ts), read here as the data `npm run core` writes beside
+# the plugin's copy of core: the role words, in the order a listing shows them, and the subject's
+# pattern (1 to 25 characters, no blank at either end). A missing or broken file stops the
+# launcher: a title it cannot check is never launched.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "names.json"),
+          encoding="utf-8") as _fh:
+    NAMES = json.load(_fh)
+ROLE_WORDS = tuple(NAMES["roles"])
+_WORD = {role: word for word, role in NAMES["roles"].items()}
+ORCH, COORD, AUDIT, AGENT = (_WORD[role] for role in ("orchestrator", "coordinator", "auditor", "agent"))
+
+
+def name_shape(*words):
+    """A name of one of `words`, written the current way: the word, its colon, a blank, then the
+    subject. It ends on `\\Z` and not on `$`, which in this language matches before a trailing
+    newline as well: a name is one line."""
+    return re.compile(r"^(%s): %s\Z" % ("|".join(words), NAMES["subject"]))
+
+
+# A title reads `Orch: <subject>` or `Agent: <subject>`: two roles, and a subject held to the
+# shape. It is the session's NAME (§24), so it is the operator's format or it is nothing an
+# orchestrator can recognise in a listing — a successor once came up as `steward-successor`
+# because the launcher took whatever was typed (§39). The roles are SHORT and the subject is
+# capped because the operator read his window and could not tell one agent from another at a
+# glance (§42); a derived name is held to the same shape, which is also what stops a successor
+# coming up under a whole launch line — a session the older launcher named carries the prompt
+# in its own process line, measured live at 366 characters. The title travels through a launch
+# file and back out of the process table, where a second line is not part of a name; a name
+# that reads as empty, or as its trimmed twin, never reaches a listing (§45).
+TITLE_SHAPE = name_shape(ORCH, AGENT)
 # An auditor's title, and ONLY an auditor's (§52). An auditor reads an orchestrator's method
 # and results; it is neither that orchestrator's successor nor one of its agents, and the
 # operator tells the three apart in his window by the role word. So `Audit:` is accepted
 # under --auditor alone and refused everywhere else, the way `Orch:` is refused on a plain
 # anchor: a title is a claim about what a session is, and the launcher holds it to that.
-AUDIT_TITLE_SHAPE = re.compile(r"^Audit: \S(.{0,23}\S)?\Z")
-AUDIT_ROLE = "Audit:"
+AUDIT_TITLE_SHAPE = name_shape(AUDIT)
+AUDIT_ROLE = AUDIT + ":"
 # An auditor's NAME, as a succession derives it from the caller: the strict title above, or
 # one whose role word carries a qualifier, « Audit neutre : <subject> », the name an auditor
 # the operator launches by hand may take. Accepted only where the name is read, never typed:
 # a typed audit title is still the strict one, under --auditor alone.
-AUDIT_NAME_SHAPE = re.compile(r"^Audit(?: [^\s:]+)* ?: \S(.{0,23}\S)?\Z")
+AUDIT_NAME_SHAPE = re.compile(r"^%s(?: [^\s:]+)* ?: %s\Z" % (AUDIT, NAMES["subject"]))
 # The coordinator's own successor's title, and ONLY that spawn's. The coordinator sits above
 # every orchestrator on the machine, so the operator tells its tab apart from an auditor's or
 # an agent's the same way: by the role word. `Coord:` is accepted under
 # --coordinator-successor alone and refused everywhere else, the way `Audit:` is refused
 # outside --auditor.
-COORD_TITLE_SHAPE = re.compile(r"^Coord: \S(.{0,23}\S)?\Z")
-COORD_ROLE = "Coord:"
-# The four roles a title names, in the order a listing shows them. A title that reads none
-# of them (a probe's, a hand-named tab) has no role and gets the narrowest tool set.
-ROLE_WORDS = ("Orch", "Coord", "Audit", "Agent")
+COORD_TITLE_SHAPE = name_shape(COORD)
+COORD_ROLE = COORD + ":"
+ORCH_ROLE = ORCH + ":"
+# A title that reads none of the role words (a probe's, a hand-named tab) has no role and gets
+# the narrowest tool set.
 ROLE_PREFIX = re.compile(r"^(%s) ?:" % "|".join(ROLE_WORDS))
 # A name of the former shape, `Orch : x`, a blank before the colon: sessions started, and
 # briefs and records written, before the change carry it until they are replaced. Every name
@@ -163,7 +179,7 @@ LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "Repor
 # between machines calls them: an orchestrator, or the coordinator that orders the move.
 MOVE_TOOLS = ("mcp__orchestrator__move_send", "mcp__orchestrator__move_probe",
               "mcp__orchestrator__end_session")
-MOVE_ROLES = ("Orch", "Coord")
+MOVE_ROLES = (ORCH, COORD)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
 ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
@@ -1812,7 +1828,7 @@ def orchestrator_host_on(tty, live):
     if tty not in live:
         return False
     role = ROLE_PREFIX.match(session_name_on(tty) or "")
-    return role is None or role.group(1) == "Orch"
+    return role is None or role.group(1) == ORCH
 
 
 def chain_owner_lives(tty, live):
@@ -2037,7 +2053,7 @@ def audit_name_on(tty):
     chain, so « not in the chain » cannot tell it from a stranger's tab, and a stale entry
     on a recycled tty could make it look like an agent (§52)."""
     name = session_name_on(tty)
-    if name and name != UNREADABLE_NAME and title_role(name) == "Audit":
+    if name and name != UNREADABLE_NAME and title_role(name) == AUDIT:
         return name
     return None
 
@@ -3157,12 +3173,12 @@ def orchestrator_outside_home(own, named):
     if caller == UNREADABLE_NAME:
         caller = ""
     role = title_role(caller)
-    if role == "Orch":
+    if role == ORCH:
         return caller
     if role or registered_coord_on(own):
         return ""
     named = re.sub(r" \[[0-9A-Za-z]+\]\Z", "", current_name(named.strip()))
-    return named if title_role(named) == "Orch" else ""
+    return named if title_role(named) == ORCH else ""
 
 
 def refuse_window_zero(what, tty, name):
@@ -3872,7 +3888,7 @@ def cmd_home(argv):
     if not args.session:
         die("home: --session is required")
     args.name = current_name(args.name)
-    if not args.name.startswith("Orch: ") or not TITLE_SHAPE.match(args.name):
+    if not args.name.startswith(ORCH_ROLE + " ") or not TITLE_SHAPE.match(args.name):
         print("stay: only an orchestrator moves into a home session, and this session is "
               "named '%s'" % args.name[:40])
         return
@@ -4163,14 +4179,14 @@ def title_role(title):
     found = ROLE_PREFIX.match(title)
     if found:
         return found.group(1)
-    return "Audit" if AUDIT_NAME_SHAPE.match(title) else ""
+    return AUDIT if AUDIT_NAME_SHAPE.match(title) else ""
 
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
     orchestrator and the coordinator keep the three that move an orchestrator, and an
     orchestrator also loses the servers it never calls."""
-    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS) + (ORCH_UNUSED if role == "Orch" else ())
+    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS) + (ORCH_UNUSED if role == ORCH else ())
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -4253,7 +4269,7 @@ def host_cuts(role):
     token countdown goes (its figure is not the gate the module measures)."""
     env = {TOTAL_TOKENS_ENV: "off"}
     cuts = {}
-    if role == "Agent":
+    if role == AGENT:
         cuts["awaySummaryEnabled"] = False
         env[SILENT_TURN_ENV] = "0"
     cuts["env"] = env
@@ -4282,7 +4298,7 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
-    if title_role(title) == "Audit":
+    if title_role(title) == AUDIT:
         # A marker the session carries in its own environment. The auditor's name is read
         # from the process table, which cannot give it back for a session launched without
         # one, and that session must still be known for an auditor.
@@ -4296,7 +4312,7 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # The brief the session starts on, measured by the module's gauge at its first measure
         # beside the starting context (the measure file's `start`).
         parts.insert(2, "export ORCHESTRATOR_BRIEF=%s" % shq(brief))
-    if not gate_tokens and title_role(title) == "Agent":
+    if not gate_tokens and title_role(title) == AGENT:
         gate_tokens = AGENT_GATE_TOKENS
     if gate_tokens:
         # The session's own context gate, read from the environment by the module's context
@@ -4695,7 +4711,7 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                 die("spawn: refused: %s is not a wake's: a woken orchestrator runs under its "
                     "recorded name, model and effort, lands immediately right of you, joins "
                     "no chain and comes up under remote control" % flag)
-        if (not args.title.startswith("Orch: ") or not TITLE_SHAPE.match(args.title)
+        if (not args.title.startswith(ORCH_ROLE + " ") or not TITLE_SHAPE.match(args.title)
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
             die('spawn: refused: --wake needs the recorded name, --title "Orch: <subject>" '
                 "without its reference, got '%s'" % args.title)
@@ -4744,12 +4760,12 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
             # default for the session applies: half a pair is a guess at the other half.
             die("spawn: refused: an opening types the model and the effort the order names, "
                 "--model <id> --effort <level>, or neither (the host's default applies)")
-        if (not args.title.startswith("Orch: ") or not TITLE_SHAPE.match(args.title)
+        if (not args.title.startswith(ORCH_ROLE + " ") or not TITLE_SHAPE.match(args.title)
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
             die('spawn: refused: --open needs the new orchestrator\'s name, --title '
                 '"Orch: <subject>" without a reference, got \'%s\'' % args.title)
         caller = opener_name()
-        if not (caller.startswith("Orch: ") or caller.startswith(COORD_ROLE)):
+        if not (caller.startswith(ORCH_ROLE + " ") or caller.startswith(COORD_ROLE)):
             die("spawn: refused: --open is a coordinator's or an orchestrator's, and this "
                 "session reads '%s': an agent never opens an orchestrator"
                 % (caller[:40] or "no name"))
@@ -4786,28 +4802,28 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     if args.successor and args.title_free:
         die("spawn: refused: a successor is named after its caller, --title-free does not "
             "apply")
-    if args.title.startswith("Orch:") and (args.left_of or args.right_of):
+    if args.title.startswith(ORCH_ROLE) and (args.left_of or args.right_of):
         # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
         # far-right tab the operator found, inheriting nothing. --successor places it and
         # hands the chain over; the title says which of the two this is.
         die("spawn: refused: an orchestrator's title is a successor's; spawn it with "
             "--successor, which places it and hands it the chain")
-    if args.title.startswith("Orch:") and not (args.successor or args.open_ or args.wake):
+    if args.title.startswith(ORCH_ROLE) and not (args.successor or args.open_ or args.wake):
         # A plain spawn under an orchestrator's name landed at the window's end and was
         # written into its caller's chain as an agent: an auditor's relaunch of an
         # orchestrator became the auditor's agent. An orchestrator tab has three ways in.
         die("spawn: refused: an orchestrator's tab is opened only as a successor "
             "(--successor), an opened orchestrator (--open) or a woken one (--wake)")
-    if args.title.startswith("Orch:") and not args.open_:
+    if args.title.startswith(ORCH_ROLE) and not args.open_:
         # --open already refuses every caller but a coordinator or an orchestrator. An
         # auditor's one successor is its own audit session, `--successor` without a title.
         # Read on the session's role, not on the `Audit:` prefix: an auditor named
         # otherwise ("Audit neutre : ...") carries no such prefix and still is no orchestrator.
         # An orchestrator, the coordinator and a plain agent are not read as auditors here.
         caller = session_name_on(self_tty() or "")
-        if caller == UNREADABLE_NAME or (caller and (caller.startswith("Orch: ")
+        if caller == UNREADABLE_NAME or (caller and (caller.startswith(ORCH_ROLE + " ")
                                                      or caller.startswith(COORD_ROLE)
-                                                     or title_role(caller) == "Agent"
+                                                     or title_role(caller) == AGENT
                                                      or registered_coord_on(self_tty() or ""))):
             caller = None
         if not caller and os.environ.get("ORCHESTRATOR_AUDITOR") == "1":
@@ -4820,7 +4836,7 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     if args.wake:
         # --open's caller rule, after the auditor's own refusal above has had its say.
         caller = opener_name()
-        if not (caller.startswith("Orch: ") or caller.startswith(COORD_ROLE)):
+        if not (caller.startswith(ORCH_ROLE + " ") or caller.startswith(COORD_ROLE)):
             die("spawn: refused: --wake is a coordinator's or an orchestrator's, and this "
                 "session reads '%s': an agent never wakes an orchestrator"
                 % (caller[:40] or "no name"))
@@ -5330,7 +5346,7 @@ def cmd_bench_open(argv):
         die("bench-open: refused: --dir '%s' must be inside the bench %s, an existing "
             "directory below it" % (args.dir, bench))
     title = args.title
-    if (title_role(title) != "Orch" or not TITLE_SHAPE.match(title)
+    if (title_role(title) != ORCH or not TITLE_SHAPE.match(title)
             or re.search(r" \[[0-9A-Za-z]+\]\Z", title)):
         die("bench-open: refused: --title needs the orchestrator's name, in the shape of an "
             "orchestrator's title with a subject of at most 25 characters and no reference, "
