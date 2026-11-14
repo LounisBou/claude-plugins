@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Write one pull request record: a review, a norms check or an end-to-end run
-at one head commit, as REFERENCE.md « Records » describes it.
+"""Write one pull request record: a review, a norms check, an end-to-end run or
+the light CI's tests run at one head commit, as REFERENCE.md « Records » describes it.
 
 The one writer of ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/pr-records/. Each record
 is one JSON file under <owner>/<name>/<head>/, written under a temporary name
@@ -26,6 +26,7 @@ RESULTS = tuple(_CONTRACT["results"])
 WAIVABLE = _CONTRACT["waivable"]
 NOT_APPLICABLE = _CONTRACT["not_applicable"]
 ACCEPTANCE = _CONTRACT["acceptance"]
+SCRIPTED = _CONTRACT["scripted"]
 DETAIL_MAX = _CONTRACT["detail_max"]
 USAGE_EXIT = 2
 
@@ -85,6 +86,11 @@ def validate(args):
             raise UsageError("a not applicable record needs a --detail giving its reason")
     if args.result == ACCEPTANCE["result"] and args.kind != ACCEPTANCE["kind"]:
         raise UsageError("only a %s record can be %s" % (ACCEPTANCE["kind"], ACCEPTANCE["result"]))
+    if args.kind == SCRIPTED["kind"]:
+        if args.producer != SCRIPTED["producer"]:
+            raise UsageError("a %s record is written by %s alone" % (SCRIPTED["kind"], SCRIPTED["tool"]))
+        if args.result not in SCRIPTED["results"]:
+            raise UsageError("a %s record is %s" % (SCRIPTED["kind"], " or ".join(SCRIPTED["results"])))
     session = args.session if args.session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     return {
