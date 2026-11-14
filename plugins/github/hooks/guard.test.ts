@@ -12,6 +12,7 @@ const RECORDS = '/cfg/pr-records'
 const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 const WARN_LOG = '/data/guard-warn.log'
 const AUTO_MERGE = '/data/auto-merge.json'
+const AUTO_DEPLOY = '/data/auto-deploy.json'
 const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
 const PLAN = '/data/check-plans/acme/thing/12.json'
 const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
@@ -31,6 +32,8 @@ type World = {
   // pr-get's pull requests, by branch ('' for the current one).
   pulls?: Record<string, any[]>
   autoMerge?: string[]
+  // The deploy list file, as written (an object) or as raw text.
+  deployList?: unknown
   // The CI undrafts the plugin already made, one mark file each.
   ciUndrafts?: Array<{ repo: string; pr: number; head: string }>
   // git's answers, by its argv after git.
@@ -82,7 +85,7 @@ type World = {
 
 type Seen = {
   pull?: Pull
-  runs: any[]; asked: string[]; logs: string[]; writes: Array<{ path: string; text: string }>; bash: string[]
+  runs: any[]; asked: string[]; logs: string[]; writes: Array<{ path: string; text: string }>; bash: string[]; skills: string[]
   // guard-warn.log's text as the disk holds it, when the world starts with one.
   warnLog?: string
   // The files of the plugin's data directory, guard-warn.log apart, by path.
@@ -118,8 +121,9 @@ function gateOf(w: World, pull?: Pull) {
 }
 
 async function world($: any, on: any, w: World = {}): Promise<Seen> {
-  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
+  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], skills: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [], checks: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
+  if (w.deployList !== undefined) seen.files[AUTO_DEPLOY] = typeof w.deployList === 'string' ? w.deployList : JSON.stringify(w.deployList)
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
   if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
@@ -148,6 +152,10 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
   on('tool.call', { tool: 'Bash' }, (_$: any, e: any) => {
     seen.bash.push(e.command)
     return w.bashResult ?? { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  on('tool.call', { tool: 'Skill' }, (_$: any, e: any) => {
+    seen.skills.push(e.skill)
+    return { result: { success: true, commandName: e.skill } }
   })
   for (const tool of ['Write', 'Edit', 'MultiEdit']) on('tool.call', { tool }, () => ({ result: 'written' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === ENFORCE_ENV ? (enforcing ? '1' : undefined) : env[e.name] }))
@@ -2984,3 +2992,209 @@ for (const plugin of ['pr-review', 'norms', 'implement']) {
     expect(seen.files[PLAN]).toBeUndefined()
   })
 }
+
+// ---- the deploy list ----
+
+const INFRA = 'acme/infra'
+const DEPLOYS = [
+  { repo: INFRA, kind: 'command', argv: ['composer', 'deploy:api:prod'], env: 'prod' },
+  { repo: INFRA, kind: 'command', argv: ['composer', 'deploy:api:staging'], env: 'staging' },
+  { repo: INFRA, kind: 'skill', name: 'infra-deploy-prod', env: 'prod' },
+  { repo: 'acme/site', kind: 'workflow', workflow: 'deploy.yml', input: 'environment' },
+]
+const deployList = (...grants: Array<[string, string]>) =>
+  ({ repositories: grants.map(([repo, env]) => ({ repo, env })), commands: DEPLOYS })
+const STAGING_ONLY = { deployList: deployList([INFRA, 'staging']) }
+const PROD_DEPLOY = 'cd ~/infra && composer deploy:api:prod -- 1.2.3 > /tmp/log 2>&1'
+const AUTO_DEPLOY_WORDS = 'ok pour infra : staging passe en auto-deploy'
+const setDeploy = (on: boolean, words: string, env = 'prod', extra: Record<string, unknown> = {}, repo = INFRA) =>
+  gh('auto-deploy-set', { repo, env, on, words, ...extra }, undefined as any)
+const deployGrants = (seen: Seen) => JSON.parse(seen.files[AUTO_DEPLOY]).repositories
+
+test('a deploy of a repository the list does not grant for that environment is refused, and never runs', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash(PROD_DEPLOY))
+  expect(out.deny).toContain('acme/infra is not in the deploy list for prod')
+  expect(out.deny).toContain('auto-deploy-set')
+  expect(out.deny).not.toContain('\n')
+  expect(seen.bash).toEqual([])
+})
+
+test('a deploy the list grants is not refused, whatever else the line does', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash('composer deploy:api:staging'))
+  expect(out.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['composer deploy:api:staging'])
+})
+
+test('a workflow, a skill and a script are refused the same way, and a deploy of no declared path is not read', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const flow: any = await $.tool.call(bash('gh workflow run deploy.yml -f environment=prod'))
+  expect(flow.deny).toContain('acme/site is not in the deploy list for prod')
+  const skill: any = await $.tool.call({ tool: 'Skill', skill: 'infra-deploy-prod' } as any)
+  expect(skill.deny).toContain('acme/infra is not in the deploy list for prod')
+  expect(seen.skills).toEqual([])
+  const undeclared: any = await $.tool.call(bash('./scripts/other-deploy.sh prod'))
+  expect(undeclared.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['./scripts/other-deploy.sh prod'])
+})
+
+test('a listed skill runs', async ($, on) => {
+  const seen = await world($, on, { deployList: deployList([INFRA, 'prod']) })
+  const out: any = await $.tool.call({ tool: 'Skill', skill: 'infra-deploy-prod' } as any)
+  expect(out.deny).toBeUndefined()
+  expect(seen.skills).toEqual(['infra-deploy-prod'])
+})
+
+test('the list only denies: a granted deploy and an undeclared prod path both stay with the host\'s own decision', async ($, on) => {
+  await world($, on, { deployList: deployList([INFRA, 'prod']), verdict: { decision: 'ask' } })
+  for (const line of [PROD_DEPLOY, 'ssh deploy@api.prod.example.net ./release.sh']) {
+    expect(((await $.tool.check({ tool: 'Bash', input: { command: line } })) as any).decision, line).toBe('ask')
+  }
+})
+
+test('a deploy whose environment the call does not name is refused', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(bash('gh workflow run deploy.yml'))
+  expect(out.deny).toContain('its environment is none of dev, staging, prod')
+  expect(seen.bash).toEqual([])
+})
+
+test('with no grant in the file every declared deploy is refused', async ($, on) => {
+  const none = await world($, on, { deployList: { commands: DEPLOYS } })
+  expect(((await $.tool.call(bash('composer deploy:api:staging'))) as any).deny).toContain('not in the deploy list for staging')
+  expect(none.bash).toEqual([])
+})
+
+test('a list that cannot be read lists nothing and says so in one line, and a deploy meets the host\'s decision', async ($, on) => {
+  const seen = await world($, on, { deployList: '{not json' })
+  const out: any = await $.tool.call(bash('composer deploy:api:prod'))
+  expect(out.deny).toBeUndefined()
+  expect(seen.logs.some((l) => l.includes('auto-deploy.json') && l.includes('unread'))).toBe(true)
+})
+
+test('auto-deploy-set grants one environment of a repository on words naming auto-deploy that the operator typed', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS)
+  const set: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
+  expect(set.deny).toBeUndefined()
+  expect(set.isError).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual(DEPLOYS)
+  expect(((await $.tool.call(bash(PROD_DEPLOY))) as any).deny).toBeUndefined()
+})
+
+test('a list change with words the operator never typed is refused, naming both proofs, and writes nothing', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, 'something else entirely')
+  const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(out.deny).toContain('typed in this session')
+  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(seen.writes).toEqual([])
+})
+
+test('a peer\'s message, words of a few characters and words that do not name auto-deploy carry nothing', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS, 'peer')
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))) as any).deny).toContain('typed in this session')
+  await typed($, 'oui')
+  expect(((await $.tool.call(setDeploy(true, 'oui'))) as any).deny).toContain('at least 8 characters')
+  await typed($, 'infra passe en auto-merge, vas-y')
+  expect(((await $.tool.call(setDeploy(true, 'infra passe en auto-merge, vas-y'))) as any).deny).toContain('auto-deploy')
+  expect(seen.writes).toEqual([])
+})
+
+const DEPLOY_ANSWER = 'oui, infra passe en auto-deploy sur staging'
+const deployConsent = () => consentWorld({
+  a: consent({ subject: { kind: 'auto-deploy', repo: INFRA, env: 'staging' }, question: 'Auto-deploy infra on staging?', answer: DEPLOY_ANSWER, by: 'coordinator' }),
+}, '/cfg/consents/acme/infra')
+
+test('auto-deploy-set may quote the operator\'s answer in a consent record of that repository and environment', async ($, on) => {
+  const seen = await world($, on, deployConsent())
+  const out: any = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'staging'))
+  expect(out.deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+})
+
+test('a consent record of auto-deploy on one environment does not carry another', async ($, on) => {
+  const seen = await world($, on, deployConsent())
+  const out: any = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'prod'))
+  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set off takes the environment out, and the deploy is refused again', async ($, on) => {
+  const seen = await world($, on, { deployList: deployList([INFRA, 'staging'], [INFRA, 'prod']) })
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(false, AUTO_DEPLOY_WORDS, 'prod'))) as any).deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(((await $.tool.call(bash(PROD_DEPLOY))) as any).deny).toContain('not in the deploy list for prod')
+})
+
+test('auto-deploy-set names a repository and an environment, and says in or out', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', {}, 'infra'))) as any).deny).toContain('owner/name')
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'production'))) as any).deny).toContain('"env"')
+  expect(((await $.tool.call(gh('auto-deploy-set', { repo: INFRA, env: 'prod', words: AUTO_DEPLOY_WORDS }, undefined as any))) as any).deny).toContain('{"on": true}')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set adds the commands a repository declares as its deploys, and refuses a malformed one', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, AUTO_DEPLOY_WORDS)
+  const declared = { kind: 'script', path: 'scripts/deploy.sh' }
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', { commands: [declared] }))) as any).deny).toBeUndefined()
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual([{ repo: INFRA, ...declared }])
+  const bad: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', { commands: [{ kind: 'cron' }] }))
+  expect(bad.deny).toContain('"script", a "workflow" or a "skill"')
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual([{ repo: INFRA, ...declared }])
+})
+
+test('auto-deploy-set holds the file\'s lock, and releases it', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  await typed($, AUTO_DEPLOY_WORDS)
+  await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(seen.runs.filter((r) => r.argv?.includes(AUTO_DEPLOY + '.lock')).map((r) => r.argv[0])).toEqual(['sh', 'rm'])
+})
+
+test('a malformed deploy list is never overwritten', async ($, on) => {
+  const seen = await world($, on, { deployList: '{"repositories": [1]}' })
+  await typed($, AUTO_DEPLOY_WORDS)
+  const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
+  expect(out.isError).toBe(true)
+  expect(seen.files[AUTO_DEPLOY]).toBe('{"repositories": [1]}')
+})
+
+test('auto-deploy-set denied by a permission rule is refused', async ($, on) => {
+  const seen = await world($, on, { verdict: { decision: 'deny', reason: 'no' } })
+  await typed($, AUTO_DEPLOY_WORDS)
+  expect(((await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))) as any).deny).toBe('no')
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-list prints each environment granted', async ($, on) => {
+  await world($, on, { deployList: deployList([INFRA, 'staging'], ['acme/site', 'dev']) })
+  expect(((await $.tool.call(gh('auto-deploy-list', {}, undefined as any))) as any).result).toBe('acme/infra staging\nacme/site dev')
+})
+
+test('auto-deploy-list says when no repository is in auto-deploy', async ($, on) => {
+  await world($, on)
+  expect(((await $.tool.call(gh('auto-deploy-list', {}, undefined as any))) as any).result).toBe('no repository in auto-deploy')
+})
+
+test('the deploy list is refused to Write, Edit and Bash, and a read of it is not', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  for (const tool of ['Write', 'Edit']) {
+    const out: any = await $.tool.call({ tool, file_path: AUTO_DEPLOY, content: '{}' } as any)
+    expect(out.deny, tool).toContain('the deploy list changes only through mcp__github__gh auto-deploy-set')
+  }
+  const home: any = await $.tool.call({ tool: 'Write', file_path: '/home/x/.claude/plugins/data/github-lounisbou/auto-deploy.json', content: '{}' } as any)
+  expect(home.deny).toContain('auto-deploy-set')
+  for (const line of ['echo \'{}\' > /data/auto-deploy.json', 'cd ~/.claude/plugins/data/github-lounisbou && jq . auto-deploy.json > x && mv x auto-deploy.json']) {
+    expect(((await $.tool.call(bash(line))) as any).deny, line).toContain('auto-deploy-set')
+  }
+  expect(seen.bash).toEqual([])
+  expect(((await $.tool.call(bash('grep -n auto-deploy.json README.md'))) as any).deny).toBeUndefined()
+})
