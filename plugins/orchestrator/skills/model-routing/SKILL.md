@@ -130,7 +130,7 @@ dispatch-record.sh open <record> --class <c> --model <alias> --effort <level> [-
 dispatch-record.sh open <record> --class <c> --tier <t> --label <what>   # a tier row, when no pair is chosen
 dispatch-record.sh round <record> <id>                                  # a review round happened
 dispatch-record.sh review <record> <id> --head <sha> [--norms tool|none]  # and what it read
-dispatch-record.sh fixed <record> <id> --head <sha>                     # the one correction round, verified
+dispatch-record.sh fixed <record> <id> --head <sha>                     # the correction round, verified
 dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>|--minor <reason>|--none  # whether the pull request changes what a user sees
 dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...  # the screenshots agent's audit of the images on a --ui pull request, read by ready
 dispatch-record.sh ready <record> <id> --head <sha>  # refuses a row with no surface, or a --ui pull request with no image or audit
@@ -139,7 +139,7 @@ dispatch-record.sh cost <record> <id> --session <session id>         # after eac
 dispatch-record.sh summary <record>
 ```
 
-`review` records instead of `round` the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the ONE correction round at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
+`review` records instead of `round` the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the correction round (the rounds: `orchestrator:orchestrator`, `references/review.md`, « Thresholds a verdict never crosses ») at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
 
 The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed rows whose cost is complete, and prints `frozen=<class>` and `promote=<class> <pair>` for the explorations above.
 

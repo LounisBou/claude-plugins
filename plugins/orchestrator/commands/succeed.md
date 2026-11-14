@@ -10,9 +10,8 @@ Preconditions, verify each before acting:
 
 - the moment is quiet: no verdict pending, no agent mid-delivery;
 - the project state file is current and the rulings marked (lifecycle item 0);
-- the standing succession brief exists, a missing `Mode: ` line added with yours; otherwise instantiate
-  `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
-  project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
+- the standing succession brief exists (`references/lifecycle.md`, « Succession — the predecessor », step 1),
+  a missing `Mode: ` line added with yours;
 - its « Live state » is generated now, never written by hand:
   `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
   judgment; each note of the last generation is promoted into an artifact
@@ -27,10 +26,8 @@ Then:
    any finding is repaired before the spawn, a known false positive is named.
 3. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto
    --successor --prompt "Read and execute <brief path>"` — the operator's
-   decision mode, or the successor stops at its first prompt in a tab nobody watches.
-   The successor runs on this session's live model and effort, read on its transcript;
-   `--tier`, `--model` and `--effort` are refused beside `--successor`, and a pair that
-   cannot be read refuses the spawn.
+   decision mode, or the successor stops at its first prompt in a tab nobody watches
+   (its pair: `references/lifecycle.md`, « Succession — the predecessor », step 2).
    No title: `--successor` takes THIS session's own name, so the successor is the same
    `Orch: <subject>` with a reference of its own, which is what every brief cites. Where the
    launcher reads no such name, it says to type one: pass `--title "<this session's current

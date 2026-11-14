@@ -1231,7 +1231,7 @@ check_status "two heads sharing no prefix are not refused: the gate compares hea
 check_status "a head is read only to compare an audit: a six-character head on a row with no image is not refused" 0 bash "$REC" ready "$G" "$g2" --head 012345
 check "and says nothing of its length" "0" "$(bash "$REC" ready "$G" "$g2" 2>&1 --head 012345 | grep -c 'too short')"
 
-# The operator's process: ONE review round, the orchestrator's triage, ONE correction round
+# The operator's process: a review round, the orchestrator's triage, a correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
 # review that read the previous one must still let the pull request through at the head the
 # orchestrator verified. `fixed` no longer refuses a row with no review, or a second
