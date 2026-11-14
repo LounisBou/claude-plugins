@@ -34,7 +34,7 @@ Outside auto-merge, leaving draft, after their review, and the merge need it; `R
 
 ## Reports
 
-A unit of work ends with a report as in `references/report.md`, its last line `status: done|blocked|question — <one line>`.
+A unit of work ends with a report as in `references/report.md`.
 
 ## Questions to the operator
 
