@@ -76,6 +76,7 @@ describe('marketplace render', () => {
 describe('version-bump run', () => {
   function committed(): string {
     const root = repo({ alpha: '1.0.0', beta: '2.0.0' })
+    writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 100, beta: 100 }, duplicates: 0 }))
     git(root, 'init', '-q', '-b', 'main')
     git(root, 'add', '.')
     git(root, 'commit', '-q', '-m', 'base')
@@ -129,6 +130,7 @@ describe('release run', () => {
 
   function released(): string {
     const root = repo({ alpha: '1.0.0', beta: '2.0.0' })
+    writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 100, beta: 100 }, duplicates: 0 }))
     git(root, 'init', '-q', '-b', 'main')
     git(root, 'add', '.')
     git(root, 'commit', '-q', '-m', 'release 1')
@@ -155,6 +157,26 @@ describe('release run', () => {
     const again = recorder()
     assert.equal(release(root, [], again), 0)
     assert.deepEqual(again.lines.out, ['no plugin changed since its last release'])
+  })
+
+  it('lowers the prompt budgets to the measure in the release commit', () => {
+    const root = released()
+    assert.equal(release(root, [], recorder()), 0)
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'ci', 'prompts.json'), 'utf8')).budgets, { alpha: 3, beta: 4 })
+    assert.match(execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: root, encoding: 'utf8' }), /^ci\/prompts\.json$/m)
+  })
+
+  it('refuses to release over an exceeded budget, and writes nothing', () => {
+    const root = released()
+    writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 1, beta: 100 }, duplicates: 0 }))
+    assert.throws(() => release(root, [], recorder()), /budget is exceeded/)
+    assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0')
+  })
+
+  it('writes no budget on a dry run', () => {
+    const root = released()
+    assert.equal(release(root, ['--dry-run'], recorder()), 0)
+    assert.equal(JSON.parse(readFileSync(join(root, 'ci', 'prompts.json'), 'utf8')).budgets.alpha, 100)
   })
 
   it('refuses a level for a plugin that does not exist, or without a list', () => {
