@@ -9,8 +9,9 @@
 // plugin's copy, which a writer in Python loads. Version 1 is the first field list, not the last:
 // a kind or a field added later (an audit trail's timestamps, decisions or waits, say) is a new
 // version of the contract, read beside this one, and never a field slipped into version 1. The
-// window, the retention and the count of a journal are held here once, on the recommendation of
-// the design's question 9 (30 days, 180 days, 2,000 events) while the operator has not answered it.
+// window, the retention and the count of a journal are held here once, as the operator answered the
+// design's question 9: 30 days, 90 days, 6,000 events; what a journal drops is folded into one count
+// per signature and week (`foldWeekly`).
 
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
@@ -23,8 +24,10 @@ export const LEARNING_CONTRACT = {
   // What a journal keeps: the days a retrospective looks back over, the days an event stays, the
   // events a plugin's journal holds. A writer prunes its own directory past the last two.
   window_days: 30,
-  max_age_days: 180,
-  max_events: 2000,
+  max_age_days: 90,
+  max_events: 6000,
+  // The one file of a journal's directory that holds what the writer dropped, as counts.
+  fold_file: 'folded.json',
   // The directory under a plugin's state directory.
   journal_dir: 'journal',
   paths_max: 20,
@@ -101,6 +104,7 @@ export const LEARNING_VERSION = contract.version
 export const LEARNING_WINDOW_DAYS = contract.window_days
 export const JOURNAL_MAX_AGE_DAYS = contract.max_age_days
 export const JOURNAL_MAX_EVENTS = contract.max_events
+export const JOURNAL_FOLD_FILE = contract.fold_file
 
 const PATTERNS = {
   id: new RegExp(contract.patterns.id),
@@ -271,6 +275,128 @@ export function prunable(events: ReadonlyArray<{ readonly id: string; readonly a
   const kept = dated.filter(e => !isAged(e)).sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : 1))
   const over = kept.slice(0, Math.max(0, kept.length - contract.max_events))
   return [...aged, ...over].map(e => e.id)
+}
+
+/** What a signature and a fold read of an event, of either version. */
+export interface Foldable {
+  readonly at: string
+  readonly kind: string
+  readonly source: { readonly code: string }
+  readonly evidence: readonly Evidence[]
+  readonly context: { readonly languages: readonly string[] }
+}
+
+/**
+ * What groups events of one kind of fact: the kind, the code that raised it, then, when the event
+ * has them, the severity of its first finding and its languages. The same events give the same
+ * signature, whoever reads them.
+ */
+export function signatureOf(event: Foldable): string {
+  const severity = event.evidence.flatMap(e => (e.type === 'finding' ? [e.severity] : []))[0]
+  const parts = [event.kind, event.source.code, ...(severity ? [severity] : []), ...event.context.languages]
+  return parts.join(':')
+}
+
+export interface FoldedCount {
+  readonly signature: string
+  /** The Monday, in UTC, of the week the events fall in: `YYYY-MM-DD`. */
+  readonly week: string
+  readonly count: number
+}
+
+/** The Monday of the UTC week of `ms`, as `YYYY-MM-DD`. */
+function weekOf(ms: number): string {
+  const day = new Date(ms)
+  const sinceMonday = (day.getUTCDay() + 6) % 7
+  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() - sinceMonday)).toISOString().slice(0, 10)
+}
+
+/**
+ * One count per signature and week of `events`, the ones a journal drops, in the order of week then
+ * signature: what stays of them once their files are gone. An event whose time cannot be read is not
+ * counted.
+ */
+export function foldWeekly(events: readonly Foldable[]): FoldedCount[] {
+  const counts = new Map<string, FoldedCount>()
+  for (const event of events) {
+    const ms = Date.parse(event.at)
+    if (Number.isNaN(ms)) continue
+    const signature = signatureOf(event)
+    const week = weekOf(ms)
+    const key = `${week} ${signature}`
+    counts.set(key, { signature, week, count: (counts.get(key)?.count ?? 0) + 1 })
+  }
+  return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, folded]) => folded)
+}
+
+const FOLD_VERSION = 1
+const FOLD_WEEK = /^\d{4}-\d{2}-\d{2}$/
+const FOLD_SIGNATURE_MAX = 400
+
+function foldKey(counted: FoldedCount): string {
+  return `${counted.week} ${counted.signature}`
+}
+
+/** `before` and `added` in one list: counts of one signature and week summed, in the order of week then signature. */
+export function mergeFolded(before: readonly FoldedCount[], added: readonly FoldedCount[]): FoldedCount[] {
+  const counts = new Map<string, FoldedCount>()
+  for (const counted of [...before, ...added]) {
+    const key = foldKey(counted)
+    counts.set(key, { ...counted, count: (counts.get(key)?.count ?? 0) + counted.count })
+  }
+  return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, counted]) => counted)
+}
+
+/** The text of a journal's fold file: the counts, whole, on one line. */
+export function foldedText(counts: readonly FoldedCount[]): string {
+  return `${JSON.stringify({ v: FOLD_VERSION, counts })}\n`
+}
+
+/** The counts a fold file holds: none when it is absent (undefined text), undefined when it is not a fold of this contract. */
+export function parseFolded(text: string | undefined): FoldedCount[] | undefined {
+  if (text === undefined) return []
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  const top = fieldsOf(raw, ['v', 'counts'])
+  if (!top || top['v'] !== FOLD_VERSION || !Array.isArray(top['counts'])) return undefined
+  const counts: FoldedCount[] = []
+  for (const entry of top['counts'] as unknown[]) {
+    const { signature, week, count } = fieldsOf(entry, ['signature', 'week', 'count']) ?? {}
+    const sound = typeof signature === 'string' && signature.length > 0 && signature.length <= FOLD_SIGNATURE_MAX
+      && typeof week === 'string' && FOLD_WEEK.test(week) && typeof count === 'number' && Number.isInteger(count) && count >= 1
+    if (!sound) return undefined
+    counts.push({ signature, week, count })
+  }
+  return counts
+}
+
+/**
+ * The text of the fold file once the dropped events, as the texts of their files (undefined for one
+ * already gone), are counted into `current`; undefined when none of them is an event, so nothing is
+ * written. Throws when `current` is no fold of this contract: a writer never overwrites counts it
+ * cannot read, so it drops nothing either.
+ */
+export function foldDropped(dropped: ReadonlyArray<string | undefined>, current: string | undefined): string | undefined {
+  const events: Foldable[] = []
+  for (const text of dropped) {
+    if (text === undefined) continue
+    let raw: unknown
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      continue
+    }
+    const event = parseJournalEvent(raw)
+    if (event) events.push(event)
+  }
+  if (events.length === 0) return undefined
+  const before = parseFolded(current)
+  if (before === undefined) throw new Error(`the fold file ${JOURNAL_FOLD_FILE} is not readable, so nothing is dropped`)
+  return foldedText(mergeFolded(before, foldWeekly(events)))
 }
 
 // ----- version 2: the audit trail -----

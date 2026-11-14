@@ -4,8 +4,8 @@
 // (learning.ts). No module of node is imported here, so a hooks module imports this one; a
 // script writes through journal-sync.ts. Writing is an observation: the caller catches what this
 // throws, logs it, and lets its own decision stand.
-import { journalEntryOf, journalFileOf, prunable } from './learning.ts'
-import { removeArgv, writeAtomicOver, type StoreIo } from './store-io.ts'
+import { foldDropped, journalEntryOf, journalFileOf, JOURNAL_FOLD_FILE, prunable } from './learning.ts'
+import { removeArgv, withLockOver, writeAtomicOver, type StoreIo } from './store-io.ts'
 
 export interface JournalIo extends StoreIo {
   /** The names of the entries of `dir`, none when it does not exist. */
@@ -19,11 +19,21 @@ export function randomPart(): string {
   return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-/** Writes `event` into `dir`; with `prune`, then removes what the journal no longer keeps at `now`. */
+/**
+ * Writes `event` into `dir`; with `prune`, then removes what the journal no longer keeps at `now`,
+ * once the removed events are counted into the fold file (learning.ts, `foldDropped`) under its lock.
+ * A fold file that cannot be read stops the pruning, which throws.
+ */
 export async function appendEventOver(io: JournalIo, dir: string, event: { readonly id: string }, now: string, prune: boolean): Promise<void> {
   await writeAtomicOver(io, `${dir}/${journalFileOf(event.id)}`, `${JSON.stringify(event)}\n`)
   if (!prune) return
   const entries = (await io.list(dir)).flatMap(name => journalEntryOf(name) ?? [])
   const gone = prunable(entries, now).map(id => `${dir}/${journalFileOf(id)}`)
-  if (gone.length > 0) await io.run(removeArgv(...gone))
+  if (gone.length === 0) return
+  const fold = `${dir}/${JOURNAL_FOLD_FILE}`
+  await withLockOver(io, fold, async () => {
+    const next = foldDropped(await Promise.all(gone.map(path => io.read(path))), await io.read(fold))
+    if (next !== undefined) await writeAtomicOver(io, fold, next)
+    await io.run(removeArgv(...gone))
+  })
 }

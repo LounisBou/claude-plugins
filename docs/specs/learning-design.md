@@ -3,9 +3,10 @@
 **Status: proposal for the next version, awaiting the operator's confirmation.** Nothing in it
 is decided or scheduled until the operator answers the « Open questions »; the current program
 does not build it. One part is built ahead of the answers, small and undoable: the learning
-event contract of phase L2 (`packages/core/src/learning.ts`), on the recommendation of question 9
-(a window of 30 days, journals kept 180 days and at most 2,000 events a plugin) while the operator
-has not answered it.
+event contract of phase L2 (`packages/core/src/learning.ts`), whose window, retention and count are
+the operator's answer to question 9 (a window of 30 days, journals kept 90 days and at most 6,000
+events a plugin). Questions 4 and 9 carry the operator's answer of 2026-11-14; questions 5 to 8, 10
+and 11 resume under the condition stated after question 11.
 The event's kinds and fields are version 1's list, open to additions as new versions (an audit
 trail's events, for one), not a final list.
 
@@ -253,9 +254,11 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   shows an outcome change, and replaces a rule (conventions, « Prompts »); the plugin's budget
   in `ci/prompts.json` does not rise. A plugin with no behaviour suite (every one but the
   orchestrator) cannot take a learned prompt rule until it has one.
-- **Release measure.** The outcome evals are re-measured as the operator decides (question 4);
-  the grades code computes (suite, reference tests) decide a regression, the judge's grades are
-  reported.
+- **Measure cadence (question 4, answered).** The free measure, from the telemetry's events,
+  runs weekly, per guard source and per role, never as one total. The paid outcome measure runs
+  monthly and before any learned method change merges, about 120 USD a month, not at each minor
+  version. The grades code computes (suite, reference tests) decide a regression, the judge's
+  grades are reported.
 
 > **Review note 5 — three runs decide on chance.** With a pass-or-fail grade, three runs per
 > variant cannot show a change: even three passes against three failures has a one-sided
@@ -344,7 +347,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 | 2. Distil in a separate session, periodically; generalise `/norms:learn` | kept, sharpened | clustering is code, the session only judges; started at a lifecycle boundary rather than by a clock |
 | 3. One place per scope; project → `norms.md` / `CLAUDE.md` | corrected | the project file norms reads is `CONTRIBUTING.md`; language packs do not exist yet and follow routing's profile precedent; personal lessons go to the configuration repository by a pull request the operator merges |
 | 4. Code first, prose last | kept | already a convention; adds warn before enforce and the after-landing check |
-| 5. Evals decide; outcome evals at each release, a regression blocks or rolls back | corrected | a release is a merge (`architecture.md`), and a measure is capped at 120 USD (`evals/outcome/caps.json`): a cadence is the operator's to set; only code-computed grades decide; one behaviour suite exists |
+| 5. Evals decide; outcome evals at each release, a regression blocks or rolls back | corrected | a release is a merge (`architecture.md`), and a measure is capped at 120 USD (`evals/outcome/caps.json`): the operator set the cadence (question 4: free weekly, paid monthly and before a learned method change); only code-computed grades decide; one behaviour suite exists |
 | 6. Forget rules never triggered nor named by an eval | corrected | a prose rule's triggering cannot be observed; counters serve guards, ablation serves prose; `npm run rules` names no eval today |
 | 7. Resilience: canary, automatic rollback, dashboard | corrected | rollback is a forward revert; the dashboard is a command answered by code; the canary after the cutover is an open question |
 | 8. Provenance, promotion by proven pull request, no chore, operator confirms method changes | kept | trust classes; the confirmation of method changes is a new approval step, against program non-goal 2, so it is question 1 |
@@ -407,7 +410,7 @@ under 1,200 tokens.
 | A retrospective | its skill (under 1,200 tokens) and a digest under a fixed ceiling (about 4,000 tokens), then the files its remedies touch; an estimate of 40,000 to 80,000 tokens a run, to be measured | `npm run context` for the start; `deck.json` for the run |
 | A learned prompt rule | one case, two variants, three runs each: about 6 × 0.31–0.42 USD, so 2 to 3 USD (the behaviour suite's per-run cost, `program-design.md`, « Eval spend caps ») | the run's report |
 | A retrospective's eval spend | proposed cap 10 USD, the program's cap for one run per case after a rewrite: at most three prompt-rule candidates a retrospective | the cap in `evals/` |
-| A release measure | the outcome measure's cap, 120 USD (`evals/outcome/caps.json`), at the cadence of question 4 | the harness's ledger |
+| A release measure | the outcome measure's cap, 120 USD (`evals/outcome/caps.json`), monthly and before a learned method change merges (question 4), about 120 USD a month | the harness's ledger |
 
 ## Risks and their mitigations
 
@@ -463,10 +466,16 @@ under 1,200 tokens.
    close, the orchestrator's last goal met), when the candidates reach a threshold: no chore, no
    clock. A schedule: regular, but a session started with nothing to judge. Your command: a
    chore.
-4. **Cadence of the outcome measure.** Program goal 15 says every release, and a release is a
-   merge: at 120 USD a measure that cannot hold. Recommended: **at each minor version of
-   `method` or the orchestrator, and before a learned method change merges**. Every N merges:
-   regular, spends on changes that touch no prompt. Monthly: cheap, a regression found late.
+4. **Cadence of the outcome measure.** *Answered 2026-11-14, « A »:* **the free measure from
+   telemetry weekly, per guard source and per role, never as one total; the paid outcome
+   measure monthly and before any learned method change merges (about 120 USD a month); not
+   at each minor version.** The figures behind it: `method` and the orchestrator raised a
+   minor version 8 times in 15 days, so a measure at each minor was a 120 USD run about every
+   two days; the free measure has 85 sessions at 3 days and 580 at 7 days, over the 300-session
+   floor, and its per-session rates settle at 3 to 7 days, not at one. A refusal total is not
+   stable (0.47 refusals per session the first week, 1.42 the second, the github guard family
+   having arrived between): hence one rate per guard source and role. Program goal 15 (« every
+   release ») is read as this cadence.
 5. **What a regression does.** Recommended: **a regression in a code-computed grade blocks the
    promotion it measures; a judge's grade only reports**. Block on every grade: decides on
    noise. Report only: a regression ships.
@@ -482,15 +491,41 @@ under 1,200 tokens.
    proof before merge cover a learned change; re-decide after L0's incident rate. Keep the
    `next` profile on `main` and pin the main profile to a released ref: a true canary, and a ref
    to advance.
-9. **Window and retention.** Recommended: **a window of 30 days, journals kept 180 days and at
-   most 2,000 events a plugin**. Shorter: faster reactions, thinner clusters. Longer: more data,
-   older causes.
+9. **Window and retention.** *Answered 2026-11-14, « A »:* **a window of 30 days; the learning
+   journal kept 90 days and at most 6,000 events a plugin, the older ones folded by code into
+   one count per signature and week (`foldWeekly`, kept in the journal's `folded.json`); telemetry events kept for ever; raw
+   transcripts kept 90 days in the logs repository, then dropped by a yearly rewrite of it**
+   (the operator's act, `plugins/telemetry/README.md`, « Yearly rewrite »). The figures behind it:
+   transcripts are 200 MB a day raw and 17 MiB a day packed in the logs repository (6.2 GB a
+   year, past the 5 GB hosting guidance in about 10 months if kept); the github guards alone
+   refuse about 50 times a day, so the design's 2,000 events held 40 days, not 180: the count,
+   not the age, would have bound. Git never forgets: dropping transcripts is a rewrite of the
+   repository, not a delete. The host keeps its own copy 365 days (`cleanupPeriodDays`).
 10. **`/norms:learn`.** Recommended: **keep the command as an entry that hands threads to the
     distiller as external evidence**; the rule's text is the retrospective's, checked and
     reviewed. Keep it as it is: the injection path stays. Remove it: the one learning command
     projects use today disappears.
 11. **Eval cap per retrospective.** Recommended: **10 USD**, at most three prompt-rule
     candidates. 30 USD: more candidates proved per run. 0: code remedies only.
+
+### Resume condition for questions 5 to 8, 10 and 11
+
+The operator's answer of 2026-11-14 (« A ») is to put them again, with their evidence, once the
+live events (the hooks' events, which carry each call's outcome and who refused it, since
+2026-11-14 17:22 Paris) hold all four of:
+
+| Measure | Threshold |
+|---|---|
+| days spanned by the live events | at least 14 |
+| sessions | at least 300 |
+| repositories with a session that ran the hooks | at least 3 |
+| refusals and tool errors | at least 50 |
+
+On the 15 days of backfilled summaries all four hold; the backfill carries neither pull request
+nor guard code, so it cannot stand in for them. At the time of the answer the live events held
+58 sessions, all in one repository, and 99 refusals and errors: the sessions floor is expected
+around 2026-11-17 and the days floor on 2026-11-28; the repositories floor waits for a second
+project to run a session with the hooks. The count is computed from the event files, not judged.
 
 ## What to measure before building
 

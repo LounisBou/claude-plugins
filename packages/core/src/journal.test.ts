@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { appendEventOver, randomPart, type JournalIo } from './journal.ts'
 import { appendEvent } from './journal-sync.ts'
-import { JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseJournalEvent } from './learning.ts'
+import { JOURNAL_FOLD_FILE, JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseFolded, parseJournalEvent } from './learning.ts'
 
 const NOW = '2026-11-14T10:15:00Z'
 const scratch = () => mkdtempSync(join(tmpdir(), 'journal-'))
@@ -60,12 +60,45 @@ for (const [label, append] of [
     it('is pruned of what is past the retention, and of no file it did not write', async () => {
       const dir = join(scratch(), 'journal')
       mkdirSync(dir, { recursive: true })
-      const old = eventAt(aged(181))
+      const old = eventAt(aged(91))
       writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
       writeFileSync(join(dir, 'notes.txt'), 'kept')
       const event = eventAt(NOW)
       await append(dir, event, true)
-      assert.deepEqual(readdirSync(dir).sort(), [journalFileOf(event.id), 'notes.txt'].sort())
+      assert.deepEqual(readdirSync(dir).sort(), [JOURNAL_FOLD_FILE, journalFileOf(event.id), 'notes.txt'].sort())
+    })
+
+    it('counts what it drops into its fold file, by signature and week, and adds to the counts already there', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const first = eventAt(aged(100))
+      const second = eventAt(aged(99), '0000000b')
+      for (const old of [first, second]) writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+      await append(dir, eventAt(NOW), true)
+      const folded = parseFolded(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))
+      assert.equal(folded?.reduce((sum, line) => sum + line.count, 0), 2)
+      assert.ok(folded?.every(line => line.signature === 'refusal:orchestrator.kill.refused'))
+      const third = eventAt(aged(98), '0000000c')
+      writeFileSync(join(dir, journalFileOf(third.id)), JSON.stringify(third))
+      await append(dir, eventAt(NOW, '0000000d'), true)
+      assert.equal(parseFolded(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'))?.reduce((sum, line) => sum + line.count, 0), 3)
+    })
+
+    it('drops nothing, and says why, when the fold file it holds cannot be read', async () => {
+      const dir = join(scratch(), 'journal')
+      mkdirSync(dir, { recursive: true })
+      const old = eventAt(aged(100))
+      writeFileSync(join(dir, journalFileOf(old.id)), JSON.stringify(old))
+      writeFileSync(join(dir, JOURNAL_FOLD_FILE), 'garbled')
+      await assert.rejects(append(dir, eventAt(NOW), true), /fold/)
+      assert.ok(readdirSync(dir).includes(journalFileOf(old.id)))
+      assert.equal(readFileSync(join(dir, JOURNAL_FOLD_FILE), 'utf8'), 'garbled')
+    })
+
+    it('writes no fold file when nothing is dropped', async () => {
+      const dir = join(scratch(), 'journal')
+      await append(dir, eventAt(NOW), true)
+      assert.ok(!existsSync(join(dir, JOURNAL_FOLD_FILE)))
     })
   })
 }

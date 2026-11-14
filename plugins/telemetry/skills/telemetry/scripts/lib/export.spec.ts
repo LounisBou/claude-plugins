@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { withLock } from '../../../../core/store.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
-import { addressForms, exportExclusive, exportStore, logsRepo, machineName, MAX_RUN_BYTES, MAX_TRANSCRIPT_BYTES, safeOutput, type Git } from './export.ts'
+import { addressForms, exportExclusive, exportStore, logsRepo, machineName, MAX_RUN_BYTES, MAX_TRANSCRIPT_AGE_DAYS, MAX_TRANSCRIPT_BYTES, safeOutput, type Git } from './export.ts'
 import { append, eventsDir } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -494,6 +494,35 @@ test('a transcript over the size cap is left out and named, whether its source o
     assert.equal(result.lines.length, 3)
     assert.deepEqual(transcriptsOf(remote), [`machines/box/transcripts/${THIRD}.jsonl`])
     assert.ok(MAX_TRANSCRIPT_BYTES * 2 < 100_000_000, 'well under the 100 MB GitHub refuses')
+  })
+})
+
+test('a transcript last written over 90 days ago is left out and counted, the one a repository holds already stays, the others go', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const files = plantFiles(root, { [THIRD]: prompt(THIRD), [S]: prompt(S), [OTHER]: prompt(OTHER) })
+    const written = (session: string, daysAgo: number): void => {
+      const at = new Date(Date.now() - daysAgo * 86_400_000)
+      utimesSync(files[session] ?? '', at, at)
+    }
+    const manifest = () => (JSON.parse(git(['show', 'main:index/box/2026-11-13.json'], remote).stdout) as { sessions: { session: string; transcript: string | null }[] }).sessions
+    let now = Date.now()
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: session => files[session], now: () => now })
+    append(eventsDir(state), daily([S, OTHER, THIRD]), new Map())
+    written(S, 89)
+    written(OTHER, 91)
+    written(THIRD, 400)
+    assert.deepEqual(run(), {
+      lines: ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository', `export: 2 transcript(s) last written over ${MAX_TRANSCRIPT_AGE_DAYS} days ago left out`],
+      code: 0,
+    })
+    assert.deepEqual(transcriptsOf(remote), [`machines/box/transcripts/${S}.jsonl`])
+    assert.deepEqual(manifest().map(entry => [entry.session, entry.transcript !== null]).sort(), [[OTHER, false], [S, true], [THIRD, false]].sort())
+    // The pushed one grows old with its file unchanged: the repository holds it still, and the manifest keeps pointing at it.
+    now += 10 * 86_400_000
+    assert.deepEqual(run().lines, ['export: the logs repository already holds every event, nothing pushed', `export: 2 transcript(s) last written over ${MAX_TRANSCRIPT_AGE_DAYS} days ago left out`])
+    assert.deepEqual(transcriptsOf(remote), [`machines/box/transcripts/${S}.jsonl`])
+    assert.equal(manifest().find(entry => entry.session === S)?.transcript, `machines/box/transcripts/${S}.jsonl`)
   })
 })
 
