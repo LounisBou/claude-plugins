@@ -7,7 +7,7 @@
 export const MODE_DIALOG_DENY = 'An orchestrator never asks its mode by dialog: a successor reads it from the '
   + '`Mode:` line of its brief, and a session with no mode anywhere asks it in the method\'s question format '
   + '(method:lifecycle, references/questions.md), as orchestrator:decide runs it, so the question reaches the '
-  + 'coordinator\'s pane and the turn ends on its `waiting: operator — blocks: …` line.'
+  + 'coordinator\'s pane and the turn declares its operator wait.'
 
 // A dialog whose questions offer both modes: `build` and `investigate` in the options, the
 // question or the header naming a mode.
