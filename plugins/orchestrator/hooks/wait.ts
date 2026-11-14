@@ -159,6 +159,7 @@ export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { err
 export class Declarations {
   private turn = 0
   private declared: { wait: DeclaredWait; turn: number } | null = null
+  private handed: string | null = null
 
   turnStarted(): void {
     this.turn += 1
@@ -166,6 +167,16 @@ export class Declarations {
 
   declare(wait: DeclaredWait): void {
     this.declared = { wait, turn: this.turn }
+  }
+
+  // The session that handed over (it spawned its successor, or sent its « handed over »): not a turn's
+  // fact, it holds for the session's later turns.
+  handOver(sessionId: string): void {
+    this.handed = sessionId
+  }
+
+  handedOver(sessionId: string): boolean {
+    return sessionId !== '' && this.handed === sessionId
   }
 
   // The current turn's declaration, or null: none made, or made in an earlier turn.
@@ -255,7 +266,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const parsed = parseDeclaration(e)
     if ('error' in parsed) return { result: parsed.error, isError: true }
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
-    const held = await holdsDone($, parsed.wait)
+    // The pull requests are the successor's once the session handed over: it is not held on them.
+    const held = declarations.handedOver(await $.session.id()) ? null : await holdsDone($, parsed.wait)
     if (held !== null) return { result: held, isError: true }
     // So is one while a to-do of the session's own list is open (todo.ts).
     const owed = await holdsTodos($, parsed.wait)
