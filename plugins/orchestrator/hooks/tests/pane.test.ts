@@ -2785,6 +2785,27 @@ test('a remote entry is drawn with its machine and answered; an unacked answer i
   expect(texts(await drawn()).some(t => t.startsWith('being delivered') || t.startsWith('not delivered'))).toBe(false)
 })
 
+test('a replica of a question asked with ask on another machine is drawn only while a live remote row of its asker was measured on that machine', async () => {
+  const replica = askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', { origin: { machine: 'far', address: FAR } })
+  const { fx, render } = await askedPane([replica])
+  const drawnNow = async () => texts(await render())
+  // No remote row: not drawn, not counted.
+  expect((await drawnNow()).some(t => t === 'Orch: belt · orchestrator · box-1' || t.startsWith('Questions for you —'))).toBe(false)
+  // A row of its asker's name measured on another machine: still not drawn.
+  remoteRow(fx, 'Orch: belt', 'near')
+  expect((await drawnNow()).some(t => t === 'Orch: belt · orchestrator · box-1' || t.startsWith('Questions for you —'))).toBe(false)
+  remoteRow(fx, 'Orch: belt', 'far')
+  const drawn = await drawnNow()
+  expect(drawn).toContain('Questions for you — 1 pending')
+  expect(drawn).toContain('Orch: belt · orchestrator · box-1')
+  // Answered here, on its way to its owner: said being delivered, then not delivered once the owner says it settled it first.
+  const answered = { ...replica, status: 'answered', answer: { text: 'A : acme/app#1 first', by: 'pane', at: '2026-10-30T10:05:00.000Z', settler: 'Coord: main' } }
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'sent', at: '2026-10-30T10:05:00.000Z', attempts: 1 } }) + '\n')
+  expect(await drawnNow()).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent 1 of 3, not acknowledged yet')
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
+  expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')
+})
+
 // --- a remote orchestrator's open questions, reconciled with its latest row --------------------
 
 const BLOCKS_SINCE = '2026-10-30T10:03:00.000Z'

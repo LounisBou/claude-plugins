@@ -27,6 +27,7 @@ import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessio
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
+import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'ui'>
 
@@ -68,7 +69,15 @@ export type Asked = AskFields & {
   status: 'open' | 'answered' | 'withdrawn'
   at: string
   answer: AskedAnswer | null
-  delivery?: { state: 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
+  /**
+   * The answer's trip to its asker: on the owner's machine, delivered or failed; on a replica, its
+   * answer given here on its way to the owner (pending, then sent), delivered once acknowledged.
+   */
+  delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
+  /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from. */
+  origin?: { machine: string; address: string }
+  /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went. */
+  replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string }
   /** The session it was asked by, before a succession moved it to its successor. */
   movedFrom?: string
   /** What the operator typed in its asker's tab while it was open: off the pane until that turn's end answers it. */
@@ -167,6 +176,7 @@ export function parseAsked(text: string): Asked | null {
     && isText(o['status']) && ASKED_STATUSES.includes(o['status'])
     && typeof o['seq'] === 'number'
     && (o['consent'] === undefined || parseConsentSubject(o['consent']) !== undefined)
+    && (o['origin'] === undefined || (typeof o['origin'] === 'object' && o['origin'] !== null && ['machine', 'address'].every(key => isText((o['origin'] as Record<string, unknown>)[key]))))
   return fine ? o as unknown as Asked : null
 }
 
@@ -202,6 +212,8 @@ export function askedAsEntry(entry: Asked): RoundEntry {
     question: questionBlock(entry, { i: 1, n: 1 }).split('\n').slice(1).join('\n'), choices: entry.choices, recommendation: entry.recommended,
     status: entry.status, at: entry.at, answer: null, ...(entry.urgent ? { urgent: true as const } : {}),
     ...(entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
+    ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
+    ...(entry.delivery !== undefined ? { delivery: entry.delivery } : {}),
   }
 }
 
@@ -225,16 +237,17 @@ async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, sess
   return changeAsked($, entry => entry.sender.session === session, change)
 }
 
-// The open questions `takes` selects, each read again and rewritten under its lock by `change`.
+// The open questions `takes` selects, each read again and rewritten under its lock by `change`,
+// then pushed to the coordinator on another machine. A replica is its owner's to change: never here.
 async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (entry: Asked) => boolean, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
   const dir = `${await stateDir($)}/round`
   const changed: Asked[] = []
   for (const entry of await readAsked($)) {
-    if (entry.status !== 'open' || !takes(entry)) continue
+    if (entry.status !== 'open' || entry.origin !== undefined || !takes(entry)) continue
     try {
       await updateOver(storeIo($), `${dir}/${entry.id}.json`, current => {
         const fresh = current === undefined ? null : parseAsked(current)
-        if (fresh === null || fresh.status !== 'open' || !takes(fresh)) return undefined
+        if (fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh)) return undefined
         const next = change(fresh)
         if (next === null) return undefined
         changed.push(next)
@@ -245,6 +258,7 @@ async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (
       await logLine($, 'question', `${entry.id} not changed: ${messageOf(err)}`)
     }
   }
+  for (const entry of changed) await replicate($, entry)
   return changed
 }
 
@@ -300,7 +314,7 @@ export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 's
   const said = text.trim()
   const typed = said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
   if (typed === '') return []
-  const claimed = await changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() } }))
+  const claimed = await changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() }, seq: entry.seq + 1 }))
   return claimed.map(entry => entry.id)
 }
 
@@ -315,7 +329,7 @@ export async function settleClaimed($: Held, kept: readonly string[], now: Date 
   await changeOpenAsked($, await $.session.id(), entry => {
     if (!entry.claimed) return null
     const { claimed, ...rest } = entry
-    if (kept.includes(entry.id)) return rest
+    if (kept.includes(entry.id)) return { ...rest, seq: entry.seq + 1 }
     const done: Asked = { ...rest, status: 'answered', answer: { text: claimed.typed, by: 'tab', at, settler: entry.sender.name }, seq: entry.seq + 1 }
     answered.push(done)
     return done
@@ -473,6 +487,7 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
     return refuse(`the question could not be stored (${messageOf(err)}); nothing was shown to the operator, ask again.`)
   }
   if (taken) return refuse(`a question with the id ${entry.id} is already in the round; ask again.`)
+  await replicate($, entry)
   if (record?.answer) {
     return { result: `Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — ${record.answer.text} (question ${record.id}). Stored as ${entry.id}, answered.` }
   }
@@ -531,6 +546,11 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
     said.push(`The answer goes to ${done.asker.name} now.`)
   }
   if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
+  if (done.deliver === 'remote') {
+    const refused = await sendReply($, request.id)
+    said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
+  }
+  if (done.deliver !== 'remote' && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
   if (request.work !== null) {
     const own = done.asker.session === me.session
     const made = await callTodo($, { action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)
@@ -558,7 +578,10 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
     await updateOver(storeIo($), path, current => {
       const entry = current === undefined ? null : parseAsked(current)
       if (entry === null || entry.status !== 'open' || entry.claimed) return undefined
-      answered = { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, seq: entry.seq + 1 }
+      // A replica's answer goes to its owner, which applies it: its seq stays the owner's.
+      answered = entry.origin !== undefined
+        ? { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, delivery: { state: 'pending', at, attempts: 0 } }
+        : { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, seq: entry.seq + 1 }
       return `${JSON.stringify(answered)}\n`
     })
   } catch (err) {
@@ -568,6 +591,10 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
   const done = answered as Asked | null
   if (done === null) return null
   await logLine($, 'question', `${id} answered in the pane`)
+  if (done.origin !== undefined) {
+    await sendReply($, id)
+    return done
+  }
   if (done.consent) await writeConsent($, { ...done, question: done.ask } as never, said, 'pane', at)
   const asker = { session: done.sender.session, name: done.sender.name, remote: false }
   await deliverSettled($, path, { entry: done, asker, deliver: 'now', consentBy: 'pane', relayed: false, told: false }, me, at)
@@ -684,6 +711,11 @@ export function register(on: On<Held>): void {
       await settleClaimed($, kept)
     } catch (err) {
       await logLine($, 'question', `claimed: ${messageOf(err)}`)
+    }
+    try {
+      await resendReplicas($)
+    } catch (err) {
+      await logLine($, 'question', `pushes: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
