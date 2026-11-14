@@ -92,8 +92,8 @@ export function waitLine(wait: DeclaredWait): string {
   }
 }
 
-// The sentence every refusal about the ending carries: the call that declares the wait.
-const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.'
+// The sentence every refusal about the ending carries: the call that declares the wait, the only way to state one.
+const DECLARE = 'Declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads only the declaration, a line written alone decides nothing.'
 
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
@@ -119,7 +119,6 @@ const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: waiting: tool
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
   'Your wait on the operator blocks nothing: that line is for a question he must answer. '
   + `${fits(busy, running)} The line goes as the message's last line, no markup. ${DECLARE}`
-const QUESTION = 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.'
 const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks it.'
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
 // The deferral path beside the others: work the operator put off is recorded with his ruling
@@ -432,8 +431,11 @@ export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
-// are read. `null` — something will wake the orchestrator — releases the stop; a
-// `{ blocks }` answer is the release the machine line grants, kept for the log the
+// are read. The wait it decides on is the one the turn declared (`declared`, declare_wait):
+// a turn that declared none ended on no wait, whatever its last line says. The one line still
+// read off the message is the predecessor's `handed over`, which is no wait. `null` — something
+// will wake the orchestrator — releases the stop; a
+// `{ blocks }` answer is the release the declared wait grants, kept for the log the
 // shell gate writes (its cost figures are read there); 'read-what-is-left' hands the
 // decision to the done branch, which needs the checkouts and the records.
 //
@@ -473,6 +475,7 @@ export function checkWake(facts: {
   resident: boolean
   delivered: readonly string[]
   message: string
+  declared?: DeclaredWait | null
   handedOver?: boolean
   watching?: boolean
   background?: readonly string[]
@@ -481,11 +484,12 @@ export function checkWake(facts: {
   tasks?: readonly string[] | null
   questionOpen?: boolean
 }): Held | { blocks: string } | { tool: string; notRunning?: true } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
-  const last = machineLine(facts.message)
+  // The wait is the one the turn declared, spelled as its line: the model's own last line decides nothing.
+  const last = facts.declared ? waitLine(facts.declared) : ''
   const matched = MACHINE_LINE.exec(last)
   const busy = facts.agents.some(a => a.state === 'busy')
   const running = facts.background ?? []
-  if (HANDED_OVER.test(last)) return null
+  if (endsOnHandOver(facts.message)) return null
   if (facts.handedOver && matched && matched[2]) return null
   // A wait on the operator that blocks nothing asks him nothing: the line that fits is named.
   if (blocksNothing(last)) return { case: 'blocks-nothing', reason: blocksNothingReason(busy, running) }
@@ -514,9 +518,6 @@ export function checkWake(facts: {
   if (matched || deferredIds(last) !== null) return 'read-what-is-left'
   if (facts.agents.length > 0) {
     return { warn: 'idle-agents', detail: facts.agents.map(a => a.label).join(', ') }
-  }
-  if (last.toLowerCase().startsWith('waiting:') || last.endsWith('?')) {
-    return { case: 'question-without-blocks', reason: QUESTION }
   }
   // A question still open in the round: its answer wakes the session.
   if (facts.questionOpen) return null

@@ -10,9 +10,9 @@ import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
   machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
-  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
+  checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, TOOL_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
@@ -382,6 +382,22 @@ test('the heads path is per session and sanitised', () => {
 
 // --- check 1 -----------------------------------------------------------------------------
 
+// The declare_wait call a test stands for: the machine line its message ends on, declared as the
+// turn would have declared it. The gate itself reads only the declaration (stop-gate.ts, checkWake).
+function declaredBy(message: string): DeclaredWait | null {
+  const line = machineLine(message)
+  const matched = MACHINE_LINE.exec(line)
+  if (matched?.[1]) return { kind: 'operator', blocks: matched[1].trim(), ...(URGENT_LINE.test(line) ? { urgent: true as const } : {}) }
+  if (matched?.[2]) return { kind: 'done', blocks: '' }
+  const tool = TOOL_LINE.exec(line)
+  if (tool) return { kind: 'tool', blocks: tool[1].trim() }
+  if (/^waiting:\s*operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:$/i.test(line)) return { kind: 'operator', blocks: '' }
+  const ids = deferredIds(line)
+  return ids === null ? null : { kind: 'deferred', blocks: ids }
+}
+const checkWake = (facts: Parameters<typeof gateWake>[0]) => gateWake({ declared: declaredBy(facts.message), ...facts })
+
+
 const AGENT_BUSY = { label: 'Agent: belt-p3', state: 'busy' as const, tty: '/dev/ttys002' }
 const AGENT_IDLE = { label: 'Agent: idle-p3', state: 'idle' as const, tty: '/dev/ttys003' }
 
@@ -428,15 +444,30 @@ test('the remaining cases: idle agents and nothing to wake are flagged for the l
   expect(checkWake({ agents: [AGENT_IDLE], resident: false, delivered: [], message: 'I stopped.' })).toEqual({
     warn: 'idle-agents', detail: 'Agent: idle-p3',
   })
-  // A malformed machine line has no refusal of its own: a « waiting: » one is read as a question that blocks nothing declared.
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x' }) as any).case).toBe('question-without-blocks')
+  // A malformed machine line, and a question, declare no wait: the host's list of work in flight alone decides.
+  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x', tasks: [] }) as any).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting operator blocks the order', tasks: ['sleep 90'] })).toBeNull()
-  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
-    case: 'question-without-blocks',
-    reason: 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.',
-  })
+  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?', tasks: [] }) as any).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: true, delivered: [], message: 'stopped.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
+})
+
+test('the wake check decides on the declared wait alone: the same line written by the model releases nothing', () => {
+  const none = { agents: [], resident: false, delivered: [], tasks: [] as string[] }
+  const refused = { case: 'nothing-will-wake' as const }
+  // Each kind is released by its declaration.
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'done', blocks: '' } })).toBe('read-what-is-left')
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'deferred', blocks: '2 items' } })).toBe('read-what-is-left')
+  expect(gateWake({ ...none, message: 'x', declared: { kind: 'tool', blocks: 'the deploy run' }, watching: true })).toEqual({ tool: 'the deploy run' })
+  // The model's own last line, with no declaration, is no wait: nothing wakes it.
+  for (const line of ['waiting: operator — blocks: the report', 'waiting: done', 'waiting: deferred — 2 items', 'waiting: tool — the deploy run', 'waiting: your call?', 'Your call?']) {
+    expect(gateWake({ ...none, message: `x\n${line}` })).toMatchObject(refused)
+  }
+  // A declaration is read as it is, whatever the message says.
+  expect(gateWake({ ...none, message: 'waiting: done', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
+  // The predecessor's last word is no wait: it stays read on the line.
+  expect(gateWake({ ...none, message: 'Takeover confirmed.\nhanded over' })).toBeNull()
 })
 
 // --- check 2 -----------------------------------------------------------------------------
@@ -708,9 +739,12 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
   return { dollar, written, ran, wrote, stamp, inits }
 }
 
-function mounted(): { handlers: Record<string, Function>; matchers: Record<string, object | undefined> } {
+// `declarations`: given, the gate reads it as the host does and the caller declares; omitted, each stop
+// declares the machine line its message ends on, as a turn that called declare_wait with it would.
+function mounted(declarations?: Declarations): { handlers: Record<string, Function>; matchers: Record<string, object | undefined> } {
   const handlers: Record<string, Function> = {}
   const matchers: Record<string, object | undefined> = {}
+  const own = declarations ?? new Declarations()
   registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
     // The two tool calls the guards watch are told apart by their tool: Bash keeps the
     // event's own key, SendMessage gets its own.
@@ -720,7 +754,16 @@ function mounted(): { handlers: Record<string, Function>; matchers: Record<strin
     // The engine's on returns a registration taking one .catch; the fake accepts it and
     // drops it — the body's own catch is what the wiring tests.
     return { catch: () => undefined }
-  })
+  }, own)
+  const gate = handlers['classic.Stop']
+  if (declarations === undefined) {
+    handlers['classic.Stop'] = (dollar: any, e: any, next: Function) => {
+      own.turnStarted()
+      const wait = declaredBy(String(e.last_assistant_message ?? ''))
+      if (wait !== null) own.declare(wait)
+      return gate(dollar, e, next)
+    }
+  }
   return { handlers, matchers }
 }
 
@@ -998,9 +1041,9 @@ test('the interval is read from the environment, a longer one holding the sweep 
 test('a refused stop runs no sweep', async () => {
   const { handlers } = mounted()
   const { dollar, ran, wrote } = fakeDollar({ stampMtimeMs: OLD_STAMP })
-  // Nothing-will-wake no longer refuses: a question that blocks nothing declared is the refusal left to hold the sweep.
-  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x' }))
-  expect((refused.answer as any).block).toContain('Your question blocks nothing declared')
+  // A turn with no wait declared, and nothing the host lists in flight, is the refusal left to hold the sweep.
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x', background_tasks: [], session_crons: [] }))
+  expect((refused.answer as any).block).toContain('Nothing will wake you')
   expect(sweepLine(ran)).toBeUndefined()
   expect(wrote[STAMP]).toBeUndefined()
 })
@@ -1420,8 +1463,8 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
   expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
-  // A bare question still blocks nothing declared.
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' }) as any).case).toBe('question-without-blocks')
+  // A bare question declares no wait: it wakes nothing.
+  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
 })
 
 // --- the spec's goals (goals.md beside a registered record) --------------------------------
@@ -2011,13 +2054,13 @@ test('the items line with a wrong count is refused at the stop, naming the total
   expect((held.answer as any).block).toContain('the right line is waiting: deferred — 3 items.')
 })
 
-// A deferred line with no ids is no machine line and no longer has a refusal naming the form: it is
-// read as a question that blocks nothing declared.
+// A deferred line with no ids is no machine line and no longer has a refusal naming the form: it
+// declares no wait.
 test('waiting: deferred with no ids is no malformed machine line, at the gate and at the stop', async () => {
   const base = { agents: [], resident: false, delivered: [] }
   for (const message of ['waiting: deferred', 'Nothing left.\nwaiting: deferred —', '**waiting: deferred**']) {
     const held = checkWake({ ...base, message }) as any
-    expect([message, held.case]).toEqual([message, 'question-without-blocks'])
+    expect([message, held]).toEqual([message, { warn: 'nothing-will-wake', detail: '' }])
   }
   const { handlers } = mounted()
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
@@ -2184,18 +2227,22 @@ test('the register\'s own record is held to its owner file too', async () => {
 
 // --- the declared wait (hooks/wait.ts) ---------------------------------------------------------
 
+// The declarations each wait mounting holds: the gate chained after it reads the same ones.
+const WAITS = new WeakMap<Record<string, Function>, Declarations>()
 function waitMounted(): Record<string, Function> {
   const handlers: Record<string, Function> = {}
+  const declarations = new Declarations()
   registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
     handlers[args[0]] = args[args.length - 1] as Function
     return { catch: () => undefined }
-  }, new Declarations())
+  }, declarations)
+  WAITS.set(handlers, declarations)
   return handlers
 }
 
 // The stop as the engine chains it: the declared wait's handler first, then the gate.
 async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
-  const gate = mounted().handlers['classic.Stop']
+  const gate = mounted(WAITS.get(wait)).handlers['classic.Stop']
   let passed: unknown = null
   const answer = await wait['classic.Stop'](dollar, e, (x: unknown) => gate(dollar, x, (y: unknown) => { passed = y; return y }))
   return { answer, passed }
@@ -2248,13 +2295,15 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   expect(String((held.answer as any).block)).toContain('Nothing will wake you')
 })
 
-test('with no wait declared, the gate reads the last line, and its refusal teaches the call', async () => {
+test('with no wait declared, the last line the model wrote decides nothing, and the refusal teaches the call', async () => {
   const wait = waitMounted()
   const { dollar } = fakeDollar({})
   const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
   expect(String((held.answer as any).block)).toContain('declare_wait(')
   const done = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'All of it shipped.\nwaiting: done', ...NOTHING_RUNS }))
-  expect(done.answer).toBe(done.passed)
+  expect(String((done.answer as any).block)).toContain('Nothing will wake you')
+  const asked = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the report`, ...NOTHING_RUNS }))
+  expect(String((asked.answer as any).block)).toContain('Nothing will wake you')
 })
 
 test('a declared operator wait releases the stop whatever the last line says', async () => {
