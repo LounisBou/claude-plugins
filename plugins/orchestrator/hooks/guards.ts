@@ -25,7 +25,7 @@ import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
-import { operatorWaitRefusal, asksTheOperator, turnQuestionReader, QUESTION_BY_MESSAGE } from './one-question.ts'
+import { operatorWaitRefusal, turnQuestionReader } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -364,23 +364,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // before the Bash guard below.
   on('tool.call', { tool: 'SendMessage' }, async ($: any, e: any, next: (e: any) => any) => {
     const to = typeof e.to === 'string' ? e.to.trim() : ''
-    // A question sent to the coordinator by message reaches no round: refused, the turn's end carries it.
-    // The coordinator is read only for a message that asks one; a read that fails lets the send through.
-    if (to && typeof e.message === 'string' && asksTheOperator(e.message)) {
-      try {
-        const coordinator = await coordinatorAddress($)
-        // Compared without the ` [ref]` suffix on both sides: « Coord: ops » is « Coord: ops [abc] ».
-        const bare = (name: string) => name.replace(REFERENCED, '').trim()
-        const addressed = coordinator !== null
-          && [coordinator.name, typeof coordinator.to === 'string' ? coordinator.to : coordinator.to.sessionId].some(a => bare(a) === bare(to))
-        if (addressed) {
-          await logLine($, 'guards', `a question sent to the coordinator by message refused (${to})`)
-          return { deny: QUESTION_BY_MESSAGE }
-        }
-      } catch (err) {
-        await logLine($, 'guards', `the coordinator could not be read for a message to ${to}: ${(err as Error).message}`)
-      }
-    }
     // An agent's message to an orchestrator over the verdict limit: cut to it with the pointer to the
     // report it names, refused when it names none. The sender is read only for such a message; one
     // that cannot be read lets the message through.
