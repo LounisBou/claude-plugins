@@ -216,6 +216,23 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   expect(unattendedRefusal('PR délaissées : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
 })
 
+test('declare_wait takes a done from a session that handed over: the unattended pull requests are its successor\'s', async () => {
+  const handlers: Record<string, Function> = {}
+  const declarations = new Declarations()
+  registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  }, declarations)
+  const declare = (dollar: any, input: object) => handlers['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input })
+  const { dollar } = world()
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
+  declarations.handOver('another-session')
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
+  declarations.handOver('s-orch')
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(undefined)
+  expect(declarations.current()?.kind).toBe('done')
+})
+
 test('the helpers every reader of a registered record shares: a session id made a file name, a read that gives "" for a file that is not there', async () => {
   expect(safe('a b/c:d.e-f_g')).toBe('a_b_c_d.e-f_g')
   const $ = { fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } }
