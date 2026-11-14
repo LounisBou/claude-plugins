@@ -2,7 +2,7 @@
 // The events, built from what the host hands the module's hooks. Pure: no `$`, no node module,
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
-import { parseSessionName } from '../core/names.ts'
+import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -73,6 +73,41 @@ export function roleOf(title: string | undefined, spawned = false): string {
   if (/^review/i.test(title)) return 'reviewer'
   return 'other'
 }
+
+/** The title the host gives a session at its start, when it gives one. */
+export function sessionTitleOf(input: unknown): string | undefined {
+  return titleText(record(input)['session_title'])
+}
+
+function titleText(value: unknown): string | undefined {
+  const title = text(value)?.trim()
+  return title === undefined || title === '' ? undefined : title
+}
+
+/** The title a successful `rename_session` call gives the session. */
+export function renamedTo(input: unknown, result: unknown, check: Check | undefined): string | undefined {
+  const e = record(input)
+  const mcp = mcpOf(text(e['tool']) ?? '')
+  if (mcp?.server !== 'orchestrator' || mcp.name !== 'rename_session' || outcomeOf(result, check).outcome !== 'ok') return undefined
+  const name = titleText(e['name'])
+  return name === undefined ? undefined : currentSessionName(name)
+}
+
+/** The title of the last `custom-title` entry among the complete lines of the head of a transcript. */
+export function titleFromTranscriptHead(head: string): string | undefined {
+  let title: string | undefined
+  for (const line of head.split('\n')) {
+    if (!line.includes('"custom-title"')) continue
+    try {
+      const entry = record(JSON.parse(line))
+      if (entry['type'] === 'custom-title') title = titleText(entry['customTitle']) ?? title
+    } catch { /* a line the read cut, or no JSON: no title from it */ }
+  }
+  return title
+}
+
+/** The head of a transcript read for the title: its first bytes hold the entry. */
+export const TRANSCRIPT_HEAD_BYTES = 8192
 
 /** The last path segment, the project a directory names. */
 export function projectOf(cwd: string | undefined): string | undefined {
@@ -214,6 +249,81 @@ export function mcpOf(tool: string): { server: string; name: string } | undefine
   return match === null ? undefined : { server: match[1] ?? '', name: match[2] ?? '' }
 }
 
+/** What a GitHub act names, each field present only when the call names it. */
+export interface Target {
+  readonly repo?: string
+  readonly pr?: number
+  readonly head?: string
+}
+
+/** A head is kept to this many characters: a full sha reads as a random run to the redaction. */
+export const HEAD_MAX = 12
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const SHA = /^[0-9a-f]{7,40}$/i
+const PULL_URL = /github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d+)/
+const REMOTE_URL = /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?:\/|$)/
+
+function targetFrom(repo: unknown, pr: unknown, head: unknown): Target {
+  const number = typeof pr === 'number' ? pr : typeof pr === 'string' && /^\d{1,9}$/.test(pr) ? Number(pr) : undefined
+  return compact({
+    repo: typeof repo === 'string' && REPO.test(repo) ? repo : undefined,
+    pr: number !== undefined && Number.isInteger(number) && number > 0 ? number : undefined,
+    head: typeof head === 'string' && SHA.test(head) ? head.slice(0, HEAD_MAX) : undefined,
+  }) as Target
+}
+
+const merged = (first: Target, second: Target): Target => ({ ...second, ...first })
+
+/** A `mcp__github__gh` call's target: its arguments first, then what its result names. */
+function githubTarget(input: Fields, result: unknown): Target {
+  const args = record(input['args'])
+  const named = targetFrom(input['repo'] ?? args['repo'], input['pr'] ?? args['pr'] ?? args['number'], args['sha'] ?? args['head'] ?? input['sha'] ?? input['head'])
+  if (named.repo !== undefined && named.pr !== undefined && named.head !== undefined) return named
+  const r = record(result)
+  const body = r['result'] ?? r['text']
+  let parsed: Fields = typeof body === 'object' ? record(body) : {}
+  let raw = typeof body === 'string' ? body : ''
+  if (raw.startsWith('{')) {
+    try {
+      parsed = record(JSON.parse(raw))
+    } catch { /* not JSON: read as text */ }
+  }
+  if (typeof body !== 'string') raw = text(r['text']) ?? ''
+  const url = PULL_URL.exec(raw)
+  return merged(named, merged(targetFrom(parsed['repo'], parsed['pr'], parsed['head']), url === null ? {} : targetFrom(url[1], url[2], undefined)))
+}
+
+/** A Bash `gh` or `git push` command's target: what its arguments name plainly. */
+export function bashTarget(command: string): Target | undefined {
+  let commands: string[][]
+  try {
+    commands = simpleCommands(command)
+  } catch {
+    return undefined
+  }
+  for (const argv of commands) {
+    const program = BASENAME(argv[0] ?? '')
+    const words = argv.slice(1)
+    let found: Target = {}
+    if (program === 'gh') {
+      const at = words.findIndex(w => w === '-R' || w === '--repo')
+      const inline = words.find(w => w.startsWith('--repo='))
+      const sub = words[0] === 'pr' ? words[2] : undefined
+      const url = words.map(w => PULL_URL.exec(w)).find(m => m !== null)
+      found = merged(
+        targetFrom(at >= 0 ? words[at + 1] : inline?.slice('--repo='.length), sub, flag(words, '--match-head-commit') ?? flag(words, '--sha')),
+        url === undefined || url === null ? {} : targetFrom(url[1], url[2], undefined),
+      )
+    } else if (program === 'git') {
+      const push = words.indexOf('push')
+      const remote = push < 0 ? undefined : words.slice(push + 1).map(w => REMOTE_URL.exec(w)).find(m => m !== null)
+      if (remote !== undefined && remote !== null) found = targetFrom(remote[1], undefined, undefined)
+    }
+    if (Object.keys(found).length > 0) return found
+  }
+  return undefined
+}
+
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 /** The question an AskUserQuestion call put, and the letters chosen, from its input and result. */
@@ -295,6 +405,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   const { outcome, decided_by } = outcomeOf(result, check)
   const bash = tool === 'Bash' && typeof e['command'] === 'string' ? bashOf(e['command']) : undefined
   const mcpCommand = text(e['command'])
+  const target = mcp?.server === 'github' && mcp.name === 'gh' ? githubTarget(e, result) : bash !== undefined ? bashTarget(String(e['command'])) : undefined
   const events: Event[] = [makeEvent('tool_call', at, session, {
     agent,
     tool,
@@ -309,6 +420,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     skill: tool === 'Skill' ? text(e['skill']) : undefined,
     subagent_type: tool === 'Agent' ? text(e['subagent_type']) : undefined,
     command: mcp !== undefined && mcpCommand !== undefined && /^[a-z][a-z0-9-]{0,40}$/.test(mcpCommand) ? mcpCommand : undefined,
+    target: target !== undefined && Object.keys(target).length > 0 ? target : undefined,
   })]
   if (tool === 'AskUserQuestion') events.push(makeEvent('question', at, session, { agent, ...questionOf(e, result), wait_ms: durationMs }))
   if (mcp?.server === 'orchestrator' && mcp.name === 'declare_wait' && text(e['kind']) === 'operator') {
@@ -356,9 +468,34 @@ export class Collector {
   launchedAt: number | undefined
   firstTurnSeen = false
   turns = 0
+  private actor: { title: string; role: string } | undefined
+  private headRead = false
+
+  /** The session's title, once known. */
+  get title(): string | undefined {
+    return this.actor?.title
+  }
+
+  /** Names the session: each event buffered from now on carries its title and role. */
+  setTitle(title: string | undefined): void {
+    if (title !== undefined) this.actor = { title, role: roleOf(title) }
+  }
+
+  /** True once, while the title is unknown: the transcript's head is read at most once per session. */
+  wantsHeadRead(): boolean {
+    if (this.actor !== undefined || this.headRead) return false
+    this.headRead = true
+    return true
+  }
+
+  /** `event` with the session's title and role, but for those its kind carries of its own. */
+  private stamped(event: Event): Event {
+    if (this.actor === undefined) return event
+    return { ...event, title: event['title'] ?? this.actor.title, role: event['role'] ?? this.actor.role }
+  }
 
   push(...events: Event[]): boolean {
-    this.buffer.push(...events)
+    this.buffer.push(...events.map(event => this.stamped(event)))
     return this.buffer.length >= FLUSH_AT
   }
 

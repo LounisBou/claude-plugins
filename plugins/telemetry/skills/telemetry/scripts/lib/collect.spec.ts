@@ -5,9 +5,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, roleOf,
-  sessionEnd, sessionStart, toolEvents, turnEnd, usageFacts,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, roleOf,
+  sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
+import { redactValue } from './redact.ts'
 
 const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('../../../../tests/fixtures/hook-inputs.json', import.meta.url)), 'utf8')) as Record<string, unknown>
 const F = (name: string): unknown => fixture[name]
@@ -73,7 +74,7 @@ test('tool_call: an MCP call names its server, tool and command; refused by a pl
   const [event] = toolEvents(AT, S, F('tool.call.mcp'), F('result.plugin-deny'), undefined, 30)
   assert.deepEqual(event, {
     ...HEAD, event: 'tool_call', tool: 'mcp__github__gh', mcp_server: 'github', mcp_tool: 'gh', tool_use_id: 'toolu_01Mcp',
-    outcome: 'refused', decided_by: 'plugin:github', duration_ms: 30, command: 'pr-merge',
+    outcome: 'refused', decided_by: 'plugin:github', duration_ms: 30, command: 'pr-merge', target: { pr: 12 },
   })
 })
 
@@ -179,4 +180,87 @@ test('Collector: buffers until drained, flags the flush threshold, pairs checks 
   assert.equal(c.closing('a'), 5)
   assert.equal(c.closing('a'), undefined)
   assert.equal(c.closing(undefined), undefined)
+})
+
+const SHA = '0123456789abcdef0123456789abcdef01234567'
+const gh = (command: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ tool: 'mcp__github__gh', tool_use_id: 'toolu_01Gh', command, args, ...extra })
+const targetOf = (input: unknown, result: unknown = F('result.ok')): unknown => toolEvents(AT, S, input, result, undefined, 1)[0]?.['target']
+
+test('target: a github tool call names its repository, pull request and head from its arguments', () => {
+  assert.deepEqual(targetOf(gh('pr-merge', { pr: 12, sha: SHA }, { repo: 'acme/thing' })), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(gh('pr-status', { pr: '7', repo: 'acme/thing' })), { repo: 'acme/thing', pr: 7 })
+  assert.deepEqual(targetOf(gh('pr-list', {})), undefined)
+  assert.deepEqual(targetOf(gh('pr-merge', { pr: 'not-a-number', repo: 'no spaces/allowed here', sha: 'zz' })), undefined)
+})
+
+test('target: a github tool call that names nothing in its arguments is read from its result', () => {
+  const gate = { result: JSON.stringify({ repo: 'acme/thing', pr: 12, head: SHA, state: 'open' }) }
+  assert.deepEqual(targetOf(gh('pr-gate', {}), gate), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(gh('pr-create', {}), { text: 'https://github.com/acme/thing/pull/30' }), { repo: 'acme/thing', pr: 30 })
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), gate), { repo: 'acme/thing', pr: 5, head: SHA.slice(0, 12) })
+  assert.equal(targetOf(gh('pr-list', {}), { text: 'no pull request' }), undefined)
+})
+
+test('target: only a github call carries one', () => {
+  assert.equal(targetOf({ tool: 'mcp__cloudflare__cf', command: 'zones', args: { pr: 3, repo: 'a/b' } }), undefined)
+  assert.equal(targetOf(F('tool.call.skill')), undefined)
+  assert.equal(targetOf(F('tool.call.bash')), undefined)
+})
+
+test('target: a Bash gh or git push line names what its arguments name plainly', () => {
+  const bash = (command: string) => targetOf({ tool: 'Bash', tool_use_id: 'toolu_01B', command })
+  assert.deepEqual(bash(`gh pr merge 12 -R acme/thing --match-head-commit ${SHA}`), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
+  assert.deepEqual(bash('cd /w && gh pr view 40 --repo acme/thing'), { repo: 'acme/thing', pr: 40 })
+  assert.deepEqual(bash('gh pr checks https://github.com/acme/thing/pull/9'), { repo: 'acme/thing', pr: 9 })
+  assert.deepEqual(bash('git push https://github.com/acme/thing.git HEAD:feat/x'), { repo: 'acme/thing' })
+  assert.deepEqual(bash('git -c a=b push git@github.com:acme/thing.git HEAD:feat/x'), { repo: 'acme/thing' })
+  assert.equal(bash('git push -u origin feat/x'), undefined)
+  assert.equal(bash('gh pr list'), undefined)
+  assert.equal(bash('npm test -- 12 -R acme/thing'), undefined)
+})
+
+test('target: its values are redacted as any other', () => {
+  const [event] = toolEvents(AT, S, gh('pr-merge', { pr: 1 }, { repo: 'zq9-env-value-1/thing' }), F('result.ok'), undefined, 1)
+  assert.deepEqual(event?.['target'], { repo: 'zq9-env-value-1/thing', pr: 1 })
+  const redacted = redactValue(event, new Map([['TOKEN', 'zq9-env-value-1']])).value as Record<string, unknown>
+  assert.deepEqual(redacted['target'], { repo: '[REDACTED:env]/thing', pr: 1 })
+})
+
+test('title: the Collector stamps its events with the session\'s title and role once it knows them, never over a kind\'s own', () => {
+  const c = new Collector()
+  const before = firstTurn(AT, S, undefined, undefined)
+  c.push(before)
+  c.setTitle('Agent: actor')
+  c.push(before, toolEvents(AT, S, F('tool.call.spawn'), F('result.ok'), undefined, 1)[1] as never)
+  const lines = c.drain().trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  assert.deepEqual([lines[0]?.['title'], lines[0]?.['role']], [undefined, undefined])
+  assert.deepEqual([lines[1]?.['title'], lines[1]?.['role']], ['Agent: actor', 'agent'])
+  assert.deepEqual([lines[2]?.['title'], lines[2]?.['role']], ['Agent: telemetry', 'agent'])
+  c.setTitle('Orch: billing')
+  c.push(before)
+  assert.deepEqual([JSON.parse(c.drain())['title'], c.title], ['Orch: billing', 'Orch: billing'])
+})
+
+test('title: read once from the transcript head, only while unknown', () => {
+  const c = new Collector()
+  assert.equal(c.wantsHeadRead(), true)
+  assert.equal(c.wantsHeadRead(), false)
+  const known = new Collector()
+  known.setTitle('Coord: x')
+  assert.equal(known.wantsHeadRead(), false)
+})
+
+test('title: the three sources', () => {
+  assert.equal(sessionTitleOf({ cwd: '/w', session_title: 'Agent: x' }), 'Agent: x')
+  assert.equal(sessionTitleOf({ cwd: '/w' }), undefined)
+  assert.equal(sessionTitleOf({ session_title: '  ' }), undefined)
+  const rename = { tool: 'mcp__orchestrator__rename_session', name: 'Orch : billing' }
+  assert.equal(renamedTo(rename, F('result.ok'), undefined), 'Orch: billing')
+  assert.equal(renamedTo(rename, F('result.failed'), undefined), undefined)
+  assert.equal(renamedTo({ tool: 'mcp__orchestrator__other', name: 'x' }, F('result.ok'), undefined), undefined)
+  assert.equal(renamedTo({ tool: 'Bash', name: 'x' }, F('result.ok'), undefined), undefined)
+  const head = ['{"type":"last-prompt","sessionId":"s"}', '{"type":"custom-title","customTitle":"Agent: actor","sessionId":"s"}', '{"type":"custom-title","customTitle":"Agent: act'].join('\n')
+  assert.equal(titleFromTranscriptHead(head), 'Agent: actor')
+  assert.equal(titleFromTranscriptHead('{"type":"mode"}\nnot json'), undefined)
+  assert.equal(titleFromTranscriptHead(''), undefined)
 })
