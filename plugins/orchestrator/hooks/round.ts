@@ -21,7 +21,7 @@ export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (typedWords in supervision.ts); `text` keeps the reason. An entry answered from
+// with the cut said (tabText in supervision.ts); `text` keeps the reason. An entry answered from
 // the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
 // that holds it.
 export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
@@ -355,7 +355,7 @@ export function questionKey(entry: RoundEntry): string | null {
   const shape = questionShape(entry.question, entry.choices)
   const blocks = (entry.blocks ?? '').split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
   if (!shape || blocks.length === 0) return null
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : null] : null
+  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
   return JSON.stringify([
     parseSessionName(entry.from)?.subject ?? entry.from, blocks, consent,
     shape.fields.map(field => [flatText(field.label), flatText(field.text)]),

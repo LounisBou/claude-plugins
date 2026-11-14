@@ -151,14 +151,12 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "<their words, verbatim>"}` | Put the repository in auto-merge (`on: true`) or take it out (`on: false`), on the operator's quoted word |
+| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "<their recorded answer>"}` | Put the repository in auto-merge (`on: true`) or take it out (`on: false`), on the operator's quoted word |
 | `auto-merge-list` | | The repositories in auto-merge, one per line, or `no repository in auto-merge` |
 
-`auto-merge-set` needs `words` of at least 8 characters, naming auto-merge (« auto-merge »,
-« auto merge » or « automerge »), found verbatim, whitespace
-normalised, in a prompt the operator typed (or a quote of it), or quoting their answer in a
-consent record of auto-merge on that repository (core's `consent-record.ts`,
-`<config dir>/consents/<owner>/<name>/`). Otherwise it is refused, naming both proofs.
+`auto-merge-set` needs `words` naming auto-merge (« auto-merge », « auto merge » or
+« automerge ») that quote the operator's answer in a consent record of auto-merge on that
+repository (core's `consent-record.ts`, `<config dir>/consents/<owner>/<name>/`); `on: true` needs that answer to be « Accorder », the choice every consent question offers beside « Refuser ».
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
 without regard to case, and it is changed under a lock (`<file>.lock`, core's convention),
@@ -281,7 +279,7 @@ Both routes are `hooks/e2e-scope.ts`'s.
   `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator's words typed in the session, or a consent record
+  `exempt: false` revokes it. `detail` quotes the operator's answer in a consent record
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing.
 
@@ -380,18 +378,13 @@ needs the operator's waiver (above), his recorded answer its detail.
 directory, `plugins/data/`, `CLAUDE_PLUGIN_DATA` or `github-lounisbou` on the same line), are refused
 with a line naming `auto-merge-set` or `auto-deploy-set`.
 
-A prompt the operator typed (at the terminal or through the bridge, never a peer's message)
-that speaks of auto-merge (« auto-merge », « auto merge », « automerge ») enters with one line of
-context: call `auto-merge-set` with their words verbatim in the same turn, and the repositories
-in auto-merge today.
-
 ### Auto-deploy
 
 Answered by the mod (README « Repositories in auto-deploy »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their words, verbatim>", "commands": [...]?}` | Grant or withdraw the environment on the operator's quoted word; `commands`: its deploys |
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (« Accorder » recorded) or withdraw the environment on the operator's quoted word; `commands`: its deploys |
 | `auto-deploy-list` | | The environments granted |
 
 ## Exit codes

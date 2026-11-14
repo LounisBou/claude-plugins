@@ -4,6 +4,7 @@
 // means are core's readiness contract (readiness.ts). Pure functions only: register.ts reads and
 // writes the file, and posts the plan on the pull request.
 
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
 import { PLAN_NEEDS, PLAN_OMITTED, reviewNeed, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
 import { isRepoName } from './e2e-scope.ts'
@@ -95,8 +96,6 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
  * from any channel, is the consent record of the pull request (core's consent-record.ts) whose subject names the check;
  * the newest one decides.
  */
-export const WAIVER_GRANT = 'Accorder'
-export const WAIVER_REFUSE = 'Refuser'
 export type { Waivable }
 export const WAIVED = WAIVABLE
 // The question's words for each check it waives, and the consent subject its answer is recorded under.
@@ -109,15 +108,10 @@ export function waiverQuestion(question: unknown): { check: Waivable; repo: stri
   const q = (typeof question === 'object' && question !== null ? question : {}) as Record<string, unknown>
   const match = WAIVER_QUESTION.exec(String(q['question'] ?? ''))
   const labels = Array.isArray(q['options']) ? q['options'].map((o) => String(o?.label ?? '').trim()) : []
-  if (!match || labels.length !== 2 || !labels.includes(WAIVER_GRANT) || !labels.includes(WAIVER_REFUSE) || q['multiSelect'] === true) return undefined
+  if (!match || labels.length !== 2 || !labels.includes(CONSENT_GRANT) || !labels.includes(CONSENT_REFUSE) || q['multiSelect'] === true) return undefined
   const pr = Number(match[3])
   const check: Waivable = /normes/i.test(match[1]!) ? 'norms' : 'e2e'
   return isRepoName(match[2]!) && pr > 0 ? { check, repo: match[2]!, pr } : undefined
-}
-
-/** Whether an answer to the waiver question grants it. */
-export function grants(answer: string): boolean {
-  return answer.trim().toLowerCase() === WAIVER_GRANT.toLowerCase()
 }
 
 /** A check's need as a plan writes it: a required review with its rounds. */
