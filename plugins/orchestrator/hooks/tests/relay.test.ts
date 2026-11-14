@@ -267,6 +267,22 @@ test('an operator wait lands in the row and is entered once in the round of the 
   expect(row.relayed).toBe(fingerprint(wait))
 })
 
+// A coordinator's and an auditor's declared operator wait enter the round of the coordinator on
+// this machine as an orchestrator's do: one entry, its consent, and nothing sent (row 161).
+for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a ${role}'s declared operator wait is entered once in the round, with its consent, and sent to no one`, async () => {
+    const chains = mounted()
+    const fx = fake({ name, role, coordinator: 'Coord: ops' })
+    const consent = { kind: 'auto-merge' as const, repo: 'acme/thing' }
+    DECLARATIONS.turnStarted()
+    DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+    expect(fx.row()!.waiting).toBe('operator')
+    expect(entries(fx).map(e => [e.kind, e.consent])).toEqual([['operator', consent]])
+    expect(fx.sent.length).toBe(0)
+  })
+}
+
 test('the subject a declared question asks consent on rides with its round entry, in that turn only', async () => {
   const chains = mounted()
   const fx = fake()
@@ -355,8 +371,8 @@ test('no coordinator registered: the row is written, nothing is sent', async () 
   expect(fx.row()!.waiting).toBe('operator')
 })
 
-for (const [name, role] of [['Coord: ops', 'coordinator'], ['Agent: belt-p3', 'agent'], ['Audit: method', 'auditor']] as const) {
-  test(`a session that is no orchestrator (${role}) writes nothing and sends nothing`, async () => {
+for (const [name, role] of [['Agent: belt-p3', 'agent']] as const) {
+  test(`a session that is no orchestrator, coordinator or auditor (${role}) writes nothing and sends nothing`, async () => {
     const chains = mounted()
     const fx = fake({ name, role })
     const before = fx.files.get(ROW)
