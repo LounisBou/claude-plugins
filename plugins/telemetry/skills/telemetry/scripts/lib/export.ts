@@ -111,9 +111,11 @@ export function redactTranscript(text: string, secrets: EnvSecrets): string {
   }).join('')
 }
 
-/** The index of the repository: the schema pages, the manifest of each day file of the store, and the sessions those name. */
-function indexFiles(options: ExportOptions, events: string, days: readonly string[]): { files: IndexFile[]; sessions: Set<string> } {
-  const transcript = options.transcript
+/**
+ * The index of the repository: the schema pages, the manifest of each day file of the store, and the
+ * sessions those name. A manifest points at a session's transcript when `has` says the repository holds it.
+ */
+function indexFiles(options: ExportOptions, events: string, days: readonly string[], has: (session: string) => boolean): { files: IndexFile[]; sessions: Set<string> } {
   const sessions = new Set<string>()
   const files = [
     ...schemaFiles(options.kinds ?? EVENT_SCHEMA),
@@ -123,10 +125,9 @@ function indexFiles(options: ExportOptions, events: string, days: readonly strin
         day,
         machine: options.machine,
         text: readFileSync(join(events, name), 'utf8'),
-        // The manifest points at the copy the export makes, for a session whose transcript is here.
         transcript: session => {
           sessions.add(session)
-          return transcript?.(session) === undefined ? undefined : transcriptPath(options.machine, session)
+          return has(session) ? transcriptPath(options.machine, session) : undefined
         },
       })
       return { path: `${INDEX_DIR}/${options.machine}/${day}.json`, text: `${JSON.stringify(manifest, null, 2)}\n` }
@@ -134,6 +135,12 @@ function indexFiles(options: ExportOptions, events: string, days: readonly strin
   ]
   return { files, sessions }
 }
+
+/** The secrets an index would carry, one line each; none when it is clean. */
+const leaksOf = (index: readonly IndexFile[], secrets: EnvSecrets): string[] =>
+  index.flatMap(file => [...new Set(redactText(file.text, secrets).hits)].map(pattern => `  ${file.path}: ${pattern}`))
+
+const refusal = (leaks: readonly string[]): ExportResult => ({ lines: [`export refused: the index would carry ${leaks.length} secret(s), nothing pushed`, ...leaks], code: 1 })
 
 /** Replaces the generated index of `machine` in the clone: schema pages and the machine's manifests, nothing stale left. */
 function writeIndex(clone: string, machine: string, files: readonly IndexFile[]): void {
@@ -146,24 +153,60 @@ function writeIndex(clone: string, machine: string, files: readonly IndexFile[])
   }
 }
 
-/** Copies the redacted transcript of each session whose file is here into the clone; answers how many, or the line of the failure. */
-function copyTranscripts(options: ExportOptions, clone: string, sessions: ReadonlySet<string>): number | string {
-  let copied = 0
+/** Why a read or a write failed, as the error's code. */
+const codeOf = (error: unknown): string => (error as NodeJS.ErrnoException).code ?? 'unreadable'
+
+interface Copied {
+  /** The sessions whose transcript is in the repository after this export. */
+  readonly exported: ReadonlySet<string>
+  /** The sessions whose transcript file is here. */
+  readonly offered: ReadonlySet<string>
+  /** Transcripts written to the clone. */
+  readonly written: number
+  /** One line per transcript skipped, for the result. */
+  readonly notes: readonly string[]
+}
+
+/**
+ * Copies the redacted transcript of each session whose file is here into the clone. A transcript that
+ * cannot be read or redacted is skipped and named: it never holds the day files back. Answers what was
+ * copied, or the line of a failure of the clone itself.
+ */
+function copyTranscripts(options: ExportOptions, clone: string, sessions: ReadonlySet<string>): Copied | string {
+  const exported = new Set<string>()
+  const offered = new Set<string>()
+  const notes: string[] = []
+  let written = 0
   for (const session of [...sessions].sort()) {
     const source = options.transcript?.(session)
     if (source === undefined) continue
+    offered.add(session)
+    const skip = (reason: string): void => void notes.push(`export: transcript ${session} skipped (${reason})`)
     let text: string
     try {
       text = readFileSync(source, 'utf8')
     } catch (error) {
-      return `export failed at transcript ${session} (${(error as NodeJS.ErrnoException).code ?? 'unreadable'})`
+      skip(codeOf(error))
+      continue
     }
-    const path = join(clone, transcriptPath(options.machine, session))
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, redactTranscript(text, options.secrets))
-    copied++
+    let redacted: string
+    try {
+      redacted = redactTranscript(text, options.secrets)
+    } catch (error) {
+      skip(`redaction failed: ${error instanceof Error ? error.name : 'error'}`)
+      continue
+    }
+    try {
+      const path = join(clone, transcriptPath(options.machine, session))
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, redacted)
+    } catch (error) {
+      return `export failed at transcript ${session} (${codeOf(error)})`
+    }
+    exported.add(session)
+    written++
   }
-  return copied
+  return { exported, offered, written, notes }
 }
 
 /** Exports the store; answers the lines to print and the exit code. */
@@ -180,10 +223,11 @@ export function exportStore(options: ExportOptions): ExportResult {
   }
   const days = dayFiles(events)
   if (days.length === 0) return { lines: ['export: no event recorded yet, nothing pushed'], code: 0 }
-  // The index is generated from the same events, and held to the same scan before anything is cloned.
-  const { files: index, sessions } = indexFiles(options, events, days)
-  const leaks = index.flatMap(file => [...new Set(redactText(file.text, secrets).hits)].map(pattern => `  ${file.path}: ${pattern}`))
-  if (leaks.length > 0) return { lines: [`export refused: the index would carry ${leaks.length} secret(s), nothing pushed`, ...leaks], code: 1 }
+  // The index is generated from the same events, and held to the same scan before anything is cloned:
+  // as planned, every transcript here in the repository; it is made again once the copy says which are.
+  const planned = indexFiles(options, events, days, session => options.transcript?.(session) !== undefined)
+  const leaks = leaksOf(planned.files, secrets)
+  if (leaks.length > 0) return refusal(leaks)
   const clone = join(stateDir, 'export')
   const fail = (step: string, result: GitResult): ExportResult => ({
     lines: [`export failed at ${step} (git exit ${result.status}): ${safeOutput(`${result.stderr}\n${result.stdout}`, repo, secrets)}`],
@@ -208,9 +252,16 @@ export function exportStore(options: ExportOptions): ExportResult {
   const target = join(clone, 'machines', machine)
   mkdirSync(target, { recursive: true })
   for (const day of days) copyFileSync(join(events, day), join(target, day))
-  const copied = copyTranscripts(options, clone, sessions)
+  const copied = copyTranscripts(options, clone, planned.sessions)
   if (typeof copied === 'string') return { lines: [copied], code: 1 }
-  const counted = `${days.length} day file(s)${copied > 0 ? ` and ${copied} transcript(s)` : ''}`
+  const counted = `${days.length} day file(s)${copied.written > 0 ? ` and ${copied.written} transcript(s)` : ''}`
+  let index = planned.files
+  if (copied.exported.size < copied.offered.size) {
+    // A manifest points at the transcript the repository holds, never at one that was skipped.
+    index = indexFiles(options, events, days, session => copied.exported.has(session)).files
+    const again = leaksOf(index, secrets)
+    if (again.length > 0) return refusal(again)
+  }
   writeIndex(clone, machine, index)
   // Forced: an ignore rule of the clone or the machine matching a day file would leave it out unsaid.
   const added = git(['add', '--force', '--', join('machines', machine), INDEX_DIR], clone)
@@ -219,12 +270,12 @@ export function exportStore(options: ExportOptions): ExportResult {
     const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${counted} up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
     if (committed.status !== 0) return fail('commit', committed)
   } else if (!unpushed(git, clone)) {
-    return { lines: ['export: the logs repository already holds every event, nothing pushed'], code: 0 }
+    return { lines: ['export: the logs repository already holds every event, nothing pushed', ...copied.notes], code: 0 }
   }
   // HEAD now holds a commit main lacks: the new files, or a former export's commit whose push was refused.
   const pushed = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
   if (pushed.status !== 0) return fail('push', pushed)
-  return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`], code: 0 }
+  return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`, ...copied.notes], code: 0 }
 }
 
 /**

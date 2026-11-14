@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { withLock } from '../../../../core/store.ts'
@@ -319,15 +319,36 @@ test('a transcript that grew is pushed again; one unchanged is not', () => {
   })
 })
 
-test('a transcript that cannot be read fails the export at that step, nothing pushed', () => {
+const THIRD = '50ed5626-9879-4041-892a-5db0ff0bad69'
+const FOURTH = '80ed5626-9879-4041-892a-5db0ff0bad69'
+
+test('a transcript that cannot be read or redacted is skipped and named; the export goes on, the day files go', () => {
   scratch((root, remote) => {
     const state = join(root, 'state')
-    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
-    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: () => join(root, 'gone.jsonl') })
-    assert.equal(result.code, 1)
-    assert.equal(result.lines.length, 1)
-    assert.match(result.lines[0] ?? '', new RegExp(`^export failed at transcript ${S} \\(ENOENT\\)$`))
-    assert.notEqual(git(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], remote).status, 0)
+    const directory = join(root, 'a-directory')
+    mkdirSync(directory)
+    // A line nested deep enough to overflow the stack of the redaction.
+    const deep = join(root, `${FOURTH}.jsonl`)
+    writeFileSync(deep, `${'{"a":'.repeat(100_000)}1${'}'.repeat(100_000)}\n`)
+    const files: Record<string, string> = { [S]: plantTranscript(root, S), [OTHER]: directory, [THIRD]: join(root, 'gone.jsonl'), [FOURTH]: deep }
+    append(eventsDir(state), [S, OTHER, THIRD, FOURTH].map((session, i) => event(`2026-11-13T10:00:0${i}Z`, { session })).join('\n'), new Map())
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: session => files[session] })
+    assert.deepEqual(result, {
+      lines: [
+        'export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository',
+        `export: transcript ${THIRD} skipped (ENOENT)`,
+        `export: transcript ${OTHER} skipped (EISDIR)`,
+        `export: transcript ${FOURTH} skipped (redaction failed: RangeError)`,
+      ],
+      code: 0,
+    })
+    assert.equal(git(['show', 'main:machines/box/2026-11-13.jsonl'], remote).stdout.trim().split('\n').length, 4)
+    const manifest = JSON.parse(git(['show', 'main:index/box/2026-11-13.json'], remote).stdout) as { sessions: { session: string; transcript: string | null }[] }
+    assert.deepEqual(Object.fromEntries(manifest.sessions.map(({ session, transcript }) => [session, transcript])), {
+      [S]: `machines/box/transcripts/${S}.jsonl`, [OTHER]: null, [THIRD]: null, [FOURTH]: null,
+    })
+    const pushed = git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.trim().split('\n')
+    assert.deepEqual(pushed.filter(file => file.includes('/transcripts/')), [`machines/box/transcripts/${S}.jsonl`])
   })
 })
 
