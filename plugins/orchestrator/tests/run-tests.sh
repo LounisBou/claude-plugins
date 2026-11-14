@@ -9274,7 +9274,7 @@ echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator i
 # home session of its own, shown by a tab right of the caller's; a pause ends the whole server,
 # its agents with it, then the tab. The same recorder and a terminal of the probe's own.
 cat > "$WORK/life_probe.py" <<'PYEOF'
-import contextlib, io, json, os, sys
+import contextlib, io, json, os, sys, time
 sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 scenario, rec, workdir = sys.argv[2], sys.argv[3], sys.argv[4]
@@ -9300,6 +9300,13 @@ class FakeIterm(ia.Terminal):
                 os.remove(path)
             with open(path, "w") as fh:
                 fh.write('{"permissionMode":"auto"}\n{"cwd":"%s"}\n' % os.path.realpath(workdir))
+            # Written within a tenth of a millisecond of the launch's clock reading, which no
+            # session is: where the launcher reads a file's modification time (no creation time
+            # on Linux), the kernel's stamp, a tick or a second coarse, can put it BEFORE that
+            # reading and the transcript is no longer « created since the launch ». Stamped a
+            # little ahead instead, whatever the granularity.
+            ahead = time.time() + 2
+            os.utime(path, (ahead, ahead))
         return "/dev/ttys970", "NEW-TAB"
     def close(self, tty, expect):
         calls.append("close %s" % tty)
@@ -9316,6 +9323,11 @@ class FakeIterm(ia.Terminal):
     def chain_state(self, own): return None, None
     def owner(self, own): return ""
 ia.ITERM = FakeIterm()
+# A platform that reads a file's modification time for its creation, its stamps behind the clock
+# by this many milliseconds (a kernel's tick is 1 to 10, a coarse filesystem's is a second).
+if os.environ.get("LIFE_STAMP_LAG_MS"):
+    lag = float(os.environ["LIFE_STAMP_LAG_MS"]) / 1000
+    ia.created_at = lambda path: os.stat(path).st_mtime - lag
 ia.time.sleep = lambda s: None
 ia.SPAWN_TIMEOUT = 1
 ia.CLOSE_TIMEOUT = 0
@@ -9492,6 +9504,13 @@ printf '/dev/ttys998 /opt/x/host --name Agent\n/dev/ttys997 /opt/x/host --name A
 reset_homerec
 res=$(LIFE_PS="$WORK/life-ps-old" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys998 'Orch: w')")
 check "rotate of a tab whose title holds the expected words spawns, then closes the old tab" "0|create beside /dev/ttys900 right Agent: r,close /dev/ttys998|/dev/ttys970|closed 1 session on /dev/ttys998" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+# The replacement's transcript is written at once, and a platform's stamp of it may lag the
+# launch's clock reading: a tick, or a second where the filesystem is coarse. It is never taken
+# for older than the launch, so the replacement is verified, kept, and the old tab closed.
+reset_homerec
+res=$(LIFE_STAMP_LAG_MS=1500 LIFE_PS="$WORK/life-ps-old" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys998 'Orch: w')")
+check "a rotation's replacement is verified on a platform whose stamps lag the clock by a tick or a second" "0|create beside /dev/ttys900 right Agent: r,close /dev/ttys998|/dev/ttys970|closed 1 session on /dev/ttys998" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
 printf '#!/bin/bash\ncat >/dev/null\necho "✳ Orch: w"\n' > "$WORK/osa-title"; chmod +x "$WORK/osa-title"
 reset_homerec
