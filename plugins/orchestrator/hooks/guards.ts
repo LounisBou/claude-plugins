@@ -33,7 +33,7 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen,
 } from './stop-gate.ts'
 import { machineLine } from '../core/method.ts'
 import { moduleDirOf } from './module-log.ts'
@@ -46,6 +46,8 @@ import { unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
+import { openFor } from './todo.ts'
+import { todoName } from './todo-format.ts'
 
 export function roleLine(role: string, root = ''): string {
   // Verbatim from hooks/context-gate.sh:57-63 — the four role answers. The
@@ -536,6 +538,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
         return next(e)
       }
+      if (role === 'auditor') {
+        // An auditor ends on no gate of its own, except its list: an item still open and no wait declared is refused once.
+        const owed = await quietly($, () => openFor($, name), until, { pending: [], deferred: [] })
+        const open = [...owed.pending, ...owed.deferred]
+        if (declarations.current() !== null || open.length === 0) return next(e)
+        await logLine($, 'guards', `stop gate: an auditor with ${open.length} open to-do`)
+        return refuse(todoOpen(open.map(todoName)))
+      }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {
         if (role !== 'orchestrator') return next(e)
@@ -649,6 +659,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const texts = await readRecords($, records, until)
         const deferred = openRows(texts)
         const goals = await readGoals($, records, root, until)
+        const owed = await quietly($, () => openFor($, name), until, { pending: [], deferred: [] })
         // Measured, not refused: the working copies are not filtered by session, so another
         // orchestrator's checkout of the same project would hold this one's done line.
         if (checkouts.length > 0) await logLine($, 'guards', `stop gate: warn working-copies ${checkouts.join(', ')}`)
@@ -658,6 +669,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           goalsOpen: goals.flatMap(g => g.open),
           goalsDeferred: goals.flatMap(g => g.deferred),
           goalsFaults: goals.flatMap(g => g.faults),
+          todos: owed.pending.map(todoName),
+          todosDeferred: owed.deferred.map(todoName),
           rowRecords: recordsWithOpenRows(records, texts),
           goalsRecords: goals.filter(g => g.open.length > 0).map(g => g.path),
           ending,

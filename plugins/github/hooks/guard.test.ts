@@ -956,7 +956,6 @@ test('the records are refused to Write, Edit and Bash, a Read of one passes', as
     { tool: 'MultiEdit', file_path: RECORDS + '/o/r/x.json', edits: [] },
     bash('echo x > ~/.claude/pr-records/o/r/x.json'),
     bash('python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1'),
-    bash('ls ~/.claude/pr-records'),
   ]) {
     const out: any = await $.tool.call(call as any)
     expect(out.deny, JSON.stringify(call)).toBe(refusal)
@@ -976,6 +975,97 @@ test('a command that only mentions the records in its text passes, a path to the
   expect(rm.deny).toContain('github: records are written by their producers')
   expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"'])
 })
+
+const RECORDS_READS = [
+  'ls ~/.claude/pr-records',
+  'ls /Users/lounis/.claude/pr-records/lounisbou/claude-plugins/' + HEAD + '/',
+  'cat ~/.claude/pr-records/o/r/' + HEAD + '/e2e.x.json',
+  'head -n 5 ~/.claude/pr-records/o/r/x.json',
+  'tail -f ~/.claude/pr-records/o/r/x.json',
+  'grep -rn pass ~/.claude/pr-records/o/r',
+  'find ~/.claude/pr-records -name "e2e.*" -newer /tmp/x',
+  'stat ~/.claude/pr-records/o/r/x.json',
+  'wc -l ~/.claude/pr-records/o/r/x.json',
+  'jq .result ~/.claude/pr-records/o/r/x.json',
+  'cat ~/.claude/pr-records/o/r/x.json | jq . | wc -l',
+  'cat ' + RECORDS + '/o/r/x.json',
+]
+
+for (const command of RECORDS_READS) {
+  test('a Bash command that only reads the records passes: ' + command.slice(0, 40), async ($, on) => {
+    const seen = await world($, on)
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny).toBeUndefined()
+    expect(seen.bash).toEqual([command])
+  })
+}
+
+const RECORDS_WRITES = [
+  'rm ~/.claude/pr-records/o/r/x.json',
+  'rm -rf ' + RECORDS + '/o',
+  'echo x > ~/.claude/pr-records/o/r/x.json',
+  'echo x >> ~/.claude/pr-records/o/r/x.json',
+  'cat ~/.claude/pr-records/o/r/x.json > /tmp/copy',
+  'cat /tmp/x | tee ~/.claude/pr-records/o/r/x.json',
+  'sed -i s/fail/pass/ ~/.claude/pr-records/o/r/x.json',
+  'cp /tmp/x.json ~/.claude/pr-records/o/r/x.json',
+  'mv /tmp/x.json ~/.claude/pr-records/o/r/x.json',
+  'touch ~/.claude/pr-records/o/r/x.json',
+  'find ~/.claude/pr-records -name "*.json" -delete',
+  'find ~/.claude/pr-records -name "*.json" -exec rm {} +',
+  'ls ~/.claude/pr-records/o/r | xargs rm',
+  'cd ~/.claude/pr-records/o/r && rm x.json',
+  'ls ~/.claude/pr-records; python3 -c "open(1)"',
+  'bash -c "rm ~/.claude/pr-records/o/r/x.json"',
+  'ls ~/.claude/pr-records/o/r >&~/.claude/pr-records/o/r/x.json',
+  'ls ~/.claude/pr-records/o/r 1>&~/.claude/pr-records/o/r/x.json',
+  'echo "$(echo x > ~/.claude/pr-records/o/r/x.json)"',
+  'echo "`echo x > ~/.claude/pr-records/o/r/x.json`"',
+  "echo $'a\\'' > ~/.claude/pr-records/o/r/x.json",
+  'cd ~/.claude/pr-records',
+  '/tmp/x/cat ~/.claude/pr-records/o/r/x.json',
+  './ls ~/.claude/pr-records/o/r',
+  'python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
+  'cat ~/.claude/pr-records/o/r/x.json && python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
+]
+
+for (const command of RECORDS_WRITES) {
+  test('a Bash command that writes into the records stays refused: ' + command.slice(0, 40), async ($, on) => {
+    const seen = await world($, on)
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny).toBe(RECORDS_REFUSAL)
+    expect(seen.bash).toEqual([])
+  })
+}
+
+const LIST = '~/.claude/plugins/data/github-lounisbou/auto-merge.json'
+
+test('a Bash command that only reads the auto-merge list passes', async ($, on) => {
+  const seen = await world($, on)
+  const read: any = await $.tool.call(bash('cat ' + LIST))
+  expect(read.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['cat ' + LIST])
+})
+
+for (const command of [
+  'sed -i s/a/b/ ' + LIST,
+  'cat ' + LIST + ' > /tmp/copy',
+  'ls ' + LIST + ' >&' + LIST,
+  'ls ' + LIST + ' 1>&' + LIST,
+  'echo "$(echo x > ' + LIST + ')"',
+  'echo "`echo x > ' + LIST + '`"',
+  "echo $'a\\'' > " + LIST,
+  'cd ~/.claude/plugins/data/github-lounisbou && cat auto-merge.json',
+  '/tmp/x/cat ' + LIST,
+  './ls ' + LIST,
+]) {
+  test('a Bash command that writes the auto-merge list stays refused: ' + command.slice(0, 40), async ($, on) => {
+    const seen = await world($, on)
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny).toContain('auto-merge-set')
+    expect(seen.bash).toEqual([])
+  })
+}
 
 // ---- the record tool ----
 

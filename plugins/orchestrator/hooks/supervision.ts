@@ -3093,7 +3093,7 @@ export function withdrawnText(entry: RoundEntry, evidence: string): string {
 }
 
 // The role of the session: the name its row holds, else the name its walk reads.
-async function sessionRole($: any, sessionId: string): Promise<string | null> {
+export async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null)
 }

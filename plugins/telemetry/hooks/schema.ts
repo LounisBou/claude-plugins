@@ -92,7 +92,7 @@ export const EVENT_SCHEMA = {
       field('skill', 'string', 'The skill a `Skill` call loaded.'),
       field('subagent_type', 'string', 'The type an `Agent` call started.'),
       field('command', 'string', 'The `command` argument of an MCP call (`pr-merge`, `pr-gate`, …).'),
-      field('target', 'object', 'What a GitHub act names: `repo`, `pr`, `head` (its first 12 characters), each present when the arguments or the result of the `mcp__github__gh` call, or the `gh` or `git push` line, name it.'),
+      field('target', 'object', 'What a GitHub act names: `repo`, `pr`, `head` (its first 12 characters), each present when the arguments or the result of the `mcp__github__gh` call, of a review or a record call, or the `gh` or `git push` line, name it.'),
     ],
   },
   agent_spawned: {
