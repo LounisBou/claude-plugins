@@ -1542,6 +1542,19 @@ for (const [label, end, why] of [
   })
 }
 
+test('a question asked with ask withdrawn at its session end is told settled to the coordinator that was shown it, the other not', async () => {
+  const chains = mounted()
+  const fx = fake()
+  withAsked(fx)
+  const other = askedObject('q-unseen', 's-one', { subject: 'tag order' })
+  fx.files.set(`${ROUND}/${other.id}.json`, JSON.stringify(other) + '\n')
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/round-listed.json`, JSON.stringify(['q-mine']) + '\n')
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const told = fx.sent.filter(s => s.text.startsWith('[module] Settled'))
+  expect(told.map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  expect(told[0].text).toBe("[module] Settled: Orch: belt's question since 2026-10-30T16:00:00.000Z (entry q-mine) — session ended. Already closed: drop it, never ask or relay it again, present the next.")
+})
+
 test('a question asked with ask moves to the successor the takeover named, still open, at the session end', async () => {
   const chains = mounted()
   const fx = fake()

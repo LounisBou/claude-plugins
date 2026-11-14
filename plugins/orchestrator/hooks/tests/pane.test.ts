@@ -3508,6 +3508,40 @@ test('an entry moved to a successor not measured yet is due in the tab with the 
   expect(fx.submitted[0]).toContain('Orch: belt-2')
 })
 
+// A question asked with `ask` moved to a successor by its name alone follows the same rule: drawn and
+// due while a live session of that name runs, its session written once known, withdrawn once none runs.
+test('a question asked with ask moved to a successor by its name alone is drawn while a live session of that name runs, and takes its session', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  const tree = await coordinatorRender(fx)
+  expect(JSON.stringify(tree)).toContain('Questions for you — 1 pending')
+  expect(texts(tree)).toContain('Orch: belt-2 · orchestrator · box-1')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.sender.session, read.status, read.seq]).toEqual(['s-two', 'open', 3])
+})
+
+test('a question asked with ask moved to a successor by its name alone is withdrawn once no session of that name runs', async () => {
+  const moved = askedObject('', 'Orch: belt-2', '2026-11-04T17:10:00.000Z', { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/999.json`, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }))
+  expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
+  const read = JSON.parse(String(fx.files.get(`${ROUND}/${moved.id}.json`)))
+  expect([read.status, read.answer?.by, read.answer?.text]).toEqual(['withdrawn', 'sender', "the sender's session ended"])
+})
+
+test('a question asked with ask moved to a successor by its name alone is due in the tab with the pane closed', async () => {
+  const { fx, tick } = await wakingCoordinator([], { paneClosed: true })
+  const moved = askedObject('', 'Orch: belt-2', minutesAgo(1), { id: 'q-moved-1', movedFrom: 's-old', seq: 2 })
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch: belt-2')
+})
+
 // --- the render's own reads, bounded ---------------------------------------------------------
 
 test('a git that hangs holds no render: the origin read is bounded, and a render past its bound is logged with its duration', async () => {

@@ -201,6 +201,7 @@ export function askedAsEntry(entry: Asked): RoundEntry {
     id: entry.id, from: entry.sender.name, session: entry.sender.session, kind: 'operator', since: entry.at, blocks: entry.blocks,
     question: questionBlock(entry, { i: 1, n: 1 }).split('\n').slice(1).join('\n'), choices: entry.choices, recommendation: entry.recommended,
     status: entry.status, at: entry.at, answer: null, ...(entry.urgent ? { urgent: true as const } : {}),
+    ...(entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
   }
 }
 
@@ -218,20 +219,25 @@ export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
 
 /**
  * The open questions a session asked with `ask`, each rewritten under its lock by `change` (null
- * leaves it): what its session's end and its hand-over do to them. Answers the ids written.
+ * leaves it): what its session's end and its hand-over do to them. Answers the objects written.
  */
-async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked | null): Promise<string[]> {
+async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
+  return changeAsked($, entry => entry.sender.session === session, change)
+}
+
+// The open questions `takes` selects, each read again and rewritten under its lock by `change`.
+async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (entry: Asked) => boolean, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
   const dir = `${await stateDir($)}/round`
-  const changed: string[] = []
+  const changed: Asked[] = []
   for (const entry of await readAsked($)) {
-    if (entry.status !== 'open' || entry.sender.session !== session) continue
+    if (entry.status !== 'open' || !takes(entry)) continue
     try {
       await updateOver(storeIo($), `${dir}/${entry.id}.json`, current => {
         const fresh = current === undefined ? null : parseAsked(current)
-        if (fresh === null || fresh.status !== 'open' || fresh.sender.session !== session) return undefined
+        if (fresh === null || fresh.status !== 'open' || !takes(fresh)) return undefined
         const next = change(fresh)
         if (next === null) return undefined
-        changed.push(fresh.id)
+        changed.push(next)
         return `${JSON.stringify(next)}\n`
       })
     } catch (err) {
@@ -242,23 +248,44 @@ async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, sess
   return changed
 }
 
-/** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. */
-export async function withdrawAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, why: string, now: Date = new Date()): Promise<string[]> {
-  const at = now.toISOString()
-  const ids = await changeOpenAsked($, session, entry => ({
-    ...entry, status: 'withdrawn', answer: { text: why, by: 'sender', at, settler: entry.sender.name }, seq: entry.seq + 1,
-  }))
-  for (const id of ids) await logLine($, 'question', `${id} withdrawn by its asker: ${why}`)
-  return ids
+/** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. Answers the objects withdrawn. */
+export async function withdrawAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, why: string, now: Date = new Date()): Promise<Asked[]> {
+  return withdrawWhere($, entry => entry.sender.session === session, why, now)
 }
 
-/** Its session handed over to a successor it learnt: its open questions are the successor's, still open. */
-export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, successor: { session: string; name: string }): Promise<string[]> {
-  const ids = await changeOpenAsked($, session, entry => ({
+/** Questions moved to a successor by its name alone that no session of that name runs: withdrawn by their asker, as its end would. */
+export async function withdrawAskedIds($: Host<'env' | 'fs' | 'process' | 'clock'>, ids: readonly string[], why: string, now: Date = new Date()): Promise<Asked[]> {
+  return ids.length === 0 ? [] : withdrawWhere($, entry => entry.sender.session === '' && ids.includes(entry.id), why, now)
+}
+
+async function withdrawWhere($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (entry: Asked) => boolean, why: string, now: Date): Promise<Asked[]> {
+  const at = now.toISOString()
+  const withdrawn = await changeAsked($, takes, entry => ({
+    ...entry, status: 'withdrawn', answer: { text: why, by: 'sender', at, settler: entry.sender.name }, seq: entry.seq + 1,
+  }))
+  for (const entry of withdrawn) await logLine($, 'question', `${entry.id} withdrawn by its asker: ${why}`)
+  return withdrawn
+}
+
+/** Its session handed over to a successor it learnt: its open questions are the successor's, still open. Answers the objects moved. */
+export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, successor: { session: string; name: string }): Promise<Asked[]> {
+  const moved = await changeOpenAsked($, session, entry => ({
     ...entry, sender: { ...entry.sender, session: successor.session, name: successor.name }, movedFrom: session, seq: entry.seq + 1,
   }))
-  for (const id of ids) await logLine($, 'question', `${id} moved to the successor ${successor.name}`)
-  return ids
+  for (const entry of moved) await logLine($, 'question', `${entry.id} moved to the successor ${successor.name}`)
+  return moved
+}
+
+/**
+ * Questions moved to a successor by its name alone, whose session a live record of that name now
+ * names (`named`, by id): their session written, so its end and its hand-over find them.
+ */
+export async function nameMovedAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, named: ReadonlyMap<string, string>): Promise<void> {
+  if (named.size === 0) return
+  const written = await changeAsked($, entry => entry.sender.session === '' && named.has(entry.id), entry => ({
+    ...entry, sender: { ...entry.sender, session: named.get(entry.id) as string }, seq: entry.seq + 1,
+  }))
+  for (const entry of written) await logLine($, 'question', `${entry.id} now names its successor's session ${entry.sender.session}`)
 }
 
 // What the operator typed, as an answer keeps it: past this many characters it is cut, the cut said.
@@ -273,7 +300,8 @@ export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 's
   const said = text.trim()
   const typed = said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
   if (typed === '') return []
-  return changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() } }))
+  const claimed = await changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() } }))
+  return claimed.map(entry => entry.id)
 }
 
 /**

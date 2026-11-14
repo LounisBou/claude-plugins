@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { answerAskedFromPane, askedAsEntry, moveAsked, withdrawAsked, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1199,10 +1199,13 @@ async function traceRender($: any, read: readonly RoundEntry[], taken: ReadonlyS
 // successor's name, other than its predecessor's, stands for it. A process table that could not be
 // read judges no record dead, as the store's read keeps its rows. One moved by name alone that no
 // live record takes is closed (closeUnhosted). The answer is the entries' ids.
-async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive']): Promise<Set<string>> {
+async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive'], asked: ReadonlySet<string> = new Set()): Promise<Set<string>> {
   const wanted = entries.filter(entry => entry.status === 'open' && entry.movedFrom && !entry.origin && !(entry.session !== '' && sessionKey(entry.session) in rows))
   const hosted = new Set<string>()
   if (wanted.length === 0) return hosted
+  // A question asked with `ask` moved by name alone takes the session of the record that hosts it.
+  const named = new Map<string, string>()
+  const sessionOf = new Map<string, string>()
   const takes = (entry: RoundEntry, record: { sessionId: string; name?: unknown }) => entry.session !== ''
     ? record.sessionId === entry.session
     : record.name === entry.from && record.sessionId !== entry.movedFrom
@@ -1215,6 +1218,7 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
       const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
       if (typeof record?.sessionId !== 'string' || record.sessionId === '' || !/^\d+$/.test(String(record.pid ?? ''))) continue
       const ids = wanted.filter(entry => takes(entry, record)).map(entry => entry.id)
+      for (const id of ids) if (asked.has(id)) sessionOf.set(id, record.sessionId)
       if (ids.length > 0) pids.set(String(record.pid), [...(pids.get(String(record.pid)) ?? []), ...ids])
     } catch { /* a record being written, or gone: not this one */ }
   }
@@ -1223,7 +1227,13 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
     : pids.size === 0 ? new Map()
     : livePids(await $.process.run(livePidsArgv([...pids.keys()])!, { timeoutMs: 5000 }).catch(() => null))
   for (const [pid, ids] of pids) if (table === null || runsLive(table, pid)) for (const id of ids) hosted.add(id)
-  if (listed !== null) await closeUnhosted($, wanted.filter(entry => entry.session === '' && !hosted.has(entry.id)))
+  for (const entry of wanted) if (entry.session === '' && hosted.has(entry.id) && sessionOf.has(entry.id)) named.set(entry.id, sessionOf.get(entry.id) as string)
+  try {
+    await nameMovedAsked($, named)
+  } catch (err) {
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+  }
+  if (listed !== null) await closeUnhosted($, wanted.filter(entry => entry.session === '' && !hosted.has(entry.id)), asked)
   return hosted
 }
 
@@ -1232,15 +1242,27 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
 // withdrawn here, by the sender, as a gone sender's are. Judged only on a registry listed: a
 // listing that failed closes nothing, and a process table that could not be read takes every
 // record of that name as live.
-async function closeUnhosted($: any, orphans: readonly RoundEntry[]): Promise<void> {
+async function closeUnhosted($: any, orphans: readonly RoundEntry[], asked: ReadonlySet<string> = new Set()): Promise<void> {
   if (orphans.length === 0) return
   try {
     const ids = new Set(orphans.map(entry => entry.id))
-    const settled = await withdrawStale($, '', null, "the sender's session ended", entry => !ids.has(entry.id))
-    await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
+    const why = "the sender's session ended"
+    const settled = await withdrawStale($, '', null, why, entry => !ids.has(entry.id))
+    const gone = await withdrawAskedIds($, orphans.filter(entry => asked.has(entry.id)).map(entry => entry.id), why)
+    await tellSettled($, [...settled, ...await shownAsked($, gone, why)], Date.now() + RELAY_BOUND_MS)
   } catch (err) {
     await logLine($, 'supervision', `round: ${(err as Error).message}`)
   }
+}
+
+// The questions asked with `ask` withdrawn by their asker that the coordinator here was shown,
+// as the settled notices tell them: each closed by its asker, why.
+async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Promise<Settled[]> {
+  const told: Settled[] = []
+  for (const entry of withdrawn) {
+    if (await closesItself($, entry.id)) told.push({ entry: askedAsEntry(entry), answer: { text: `withdrawn: ${why}`, by: 'sender', at: entry.answer?.at ?? new Date().toISOString() } })
+  }
+  return told
 }
 
 // The questions just due, read in the coordinator's own session: one wake submitted to it for
@@ -1264,7 +1286,7 @@ async function wakeForDue($: any): Promise<void> {
   const now = Date.now()
   if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
-  const hosted = await hostedSuccessors($, relayed, local, store.alive)
+  const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
     (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
   if (!read.some(dueBeside(await readWoken($)))) return
@@ -1566,9 +1588,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const done = await withDeadline(successor
         ? moveToSuccessor($, sessionId, successor)
         : withdrawStale($, sessionId, null, "the sender's session ended").then(async settled => {
-          await withdrawAsked($, sessionId, "the sender's session ended")
+          const asked = await withdrawAsked($, sessionId, "the sender's session ended")
           if (remote) await withdrawRemote($, remote.name, remote.held)
-          return settled
+          return [...settled, ...await shownAsked($, asked, "the sender's session ended")]
         }), bound)
       if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
@@ -1883,7 +1905,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // already answered.
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
-        const localAsked = (await readAsked($)).filter(entry => sessionKey(entry.sender.session) in local)
+        // One moved to a successor by its name alone is drawn while a live record of that name hosts it.
+        const allAsked = await readAsked($)
+        const hostedAsked = await hostedSuccessors($, allAsked.map(askedAsEntry), local, store.alive, new Set(allAsked.map(entry => entry.id)))
+        const localAsked = allAsked.filter(entry => sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
         asked = askedGroups(localAsked).flat()
         pending += asked.length
         // The orchestrator whose question is drawn, by its session: two may share a name.
