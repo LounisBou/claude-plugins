@@ -1,6 +1,6 @@
 // Generated from packages/core/src by `npm run core`: edit the source, never this copy.
 // The consent record contract, owned by the orchestrator: the operator's answer to a round
-// question that asked their consent on a subject (an E2E waiver of one pull request, a repository
+// question that asked their consent on a subject (an E2E or norms waiver of one pull request, a repository
 // exempted from E2E or no longer, a repository in or out of auto-merge, a repository auto-deployed in one environment or no longer), written by the orchestrator's hooks when they answer it, one file per
 // question under <config>/consents/<owner>/<name>/<entry>.json, and read by github in place of
 // the orchestrator's private round. The subject is the one the asking session declared with its
@@ -8,7 +8,7 @@
 
 export const CONSENT_RECORD_CONTRACT = {
   version: 1,
-  kinds: ['e2e-waiver', 'e2e-exemption', 'auto-merge', 'auto-deploy'],
+  kinds: ['e2e-waiver', 'norms-waiver', 'e2e-exemption', 'auto-merge', 'auto-deploy'],
   // The environments an auto-deploy names: a deploy is granted per repository and environment.
   envs: ['dev', 'staging', 'prod'],
   producer: 'orchestrator',
@@ -27,13 +27,14 @@ export const CONSENT_RECORD_CONTRACT = {
 
 const contract = CONSENT_RECORD_CONTRACT
 
-export type ConsentKind = 'e2e-waiver' | 'e2e-exemption' | 'auto-merge' | 'auto-deploy'
+export type ConsentKind = 'e2e-waiver' | 'norms-waiver' | 'e2e-exemption' | 'auto-merge' | 'auto-deploy'
+export type WaiverKind = 'e2e-waiver' | 'norms-waiver'
 export type DeployEnv = 'dev' | 'staging' | 'prod'
 export type Answerer = 'pane' | 'coordinator' | 'tab'
 
 /** What the operator is asked to consent to: a waiver names its pull request, an auto-deploy its environment, a repository's exemption and auto-merge neither. */
 export type ConsentSubject =
-  | { readonly kind: 'e2e-waiver'; readonly repo: string; readonly pr: number }
+  | { readonly kind: WaiverKind; readonly repo: string; readonly pr: number }
   | { readonly kind: 'e2e-exemption' | 'auto-merge'; readonly repo: string }
   | { readonly kind: 'auto-deploy'; readonly repo: string; readonly env: DeployEnv }
 
@@ -78,7 +79,7 @@ export function parseConsentSubject(raw: unknown): ConsentSubject | undefined {
   if (kind === 'auto-deploy') return pr === undefined && isDeployEnv(env) ? { kind, repo, env } : undefined
   if (env !== undefined) return undefined
   if (kind === 'auto-merge' || kind === 'e2e-exemption') return pr === undefined ? { kind, repo } : undefined
-  if (kind !== 'e2e-waiver' || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1) return undefined
+  if ((kind !== 'e2e-waiver' && kind !== 'norms-waiver') || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1) return undefined
   return { kind, repo, pr }
 }
 
@@ -108,18 +109,28 @@ function spaced(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+// A lone letter opening an answer, alone or set apart by a separator: the choice it names.
+const LETTERED = /^([A-Za-z])\s*(?:[:—)\-.]|$)/
+
+/**
+ * An answer as the operator gave it: the choice its opening letter names (« A : yes », « A — … »,
+ * « A »), its letter and its text; anything else, a letter among no choice included, his own words.
+ */
+export function givenAnswer(answer: string, choices: readonly { letter: string; text: string }[]): { letter: string | null; text: string } {
+  const trimmed = answer.trim()
+  const named = LETTERED.exec(trimmed)?.[1]?.toUpperCase()
+  const chosen = named === undefined ? undefined : choices.find(choice => choice.letter.toUpperCase() === named)
+  return chosen ? { letter: chosen.letter, text: chosen.text.trim() } : { letter: null, text: trimmed }
+}
+
 /**
  * What a quote must hold of an answer given in the pane: a choice is pressed as its letter then
  * its text (« A : yes »), and the text of that choice is the operator's word; a letter that is not
  * among the question's choices is nothing to quote (''). Any other answer is quoted whole.
  */
 export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[]): string {
-  const trimmed = answer.trim()
-  const letter = /^([A-Za-z])\s*(?:[:—)\-.]|$)/.exec(trimmed)
-  const named = letter?.[1]?.toUpperCase()
-  if (named === undefined) return trimmed
-  const chosen = choices.find(choice => choice.letter.toUpperCase() === named)
-  return chosen ? chosen.text.trim() : ''
+  const given = givenAnswer(answer, choices)
+  return given.letter === null && LETTERED.test(given.text) ? '' : given.text
 }
 
 /**
@@ -160,8 +171,8 @@ export function consentRecordOf(fields: {
 /** Whether two subjects are the same: the same kind, repository (as GitHub compares it), pull request and environment. */
 export function sameSubject(a: ConsentSubject, b: ConsentSubject): boolean {
   if (a.kind !== b.kind || a.repo.toLowerCase() !== b.repo.toLowerCase()) return false
-  if (a.kind === 'e2e-waiver') return b.kind === 'e2e-waiver' && a.pr === b.pr
-  return a.kind !== 'auto-deploy' || (b.kind === 'auto-deploy' && a.env === b.env)
+  if ('pr' in a) return 'pr' in b && a.pr === b.pr
+  return !('env' in a) || ('env' in b && a.env === b.env)
 }
 
 /**

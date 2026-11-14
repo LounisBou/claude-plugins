@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, consentAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
@@ -13,11 +13,12 @@ describe('consent records', () => {
     assert.deepEqual(parseConsentRecord(RECORD), RECORD)
     for (const by of ['pane', 'coordinator', 'tab']) assert.equal(parseConsentRecord({ ...RECORD, by })?.by, by)
     assert.deepEqual(parseConsentSubject({ kind: 'auto-merge', repo: 'o/n' }), { kind: 'auto-merge', repo: 'o/n' })
+    assert.deepEqual(parseConsentSubject({ kind: 'norms-waiver', repo: 'o/n', pr: 3 }), { kind: 'norms-waiver', repo: 'o/n', pr: 3 })
   })
 
   it('refuses a record or a subject that breaks any field of it', () => {
     const broken: Record<string, unknown>[] = [
-      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } },
+      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } }, { subject: { kind: 'norms-waiver', repo: 'o/n' } },
       { subject: { kind: 'auto-merge', repo: 'o/n', pr: 3 } }, { subject: { kind: 'merge', repo: 'o/n' } }, { subject: { kind: 'auto-merge', repo: 'o/..' } },
       { entry: '../x' }, { entry: 3 }, { question: 3 }, { answer: 'x'.repeat(20_001) }, { by: 'elsewhere' }, { at: 0 },
     ]
@@ -37,6 +38,15 @@ describe('consent records', () => {
     assert.equal(consentAnswer('a : waive it on name#7', choices), 'waive it on name#7')
     assert.equal(consentAnswer('C', choices), '')
     assert.equal(consentAnswer('  go without it  ', choices), 'go without it')
+  })
+
+  it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.deepEqual(givenAnswer('A : Accorder', choices), { letter: 'A', text: 'Accorder' })
+    assert.deepEqual(givenAnswer('b — refuse it', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('B', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('  I would wait a day  ', choices), { letter: null, text: 'I would wait a day' })
+    assert.deepEqual(givenAnswer('C', choices), { letter: null, text: 'C' })
   })
 
   it('lets a quote rest on the record of its own subject only, its answer held whole', () => {

@@ -11,7 +11,8 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
                                   reader, shared environment names, the plugin locator, the pinned
                                   Playwright's install, and the typed contracts (the method's
-                                  formats, PR records, consent records)
+                                  formats, PR records, consent records, the orchestration's
+                                  measure file, gate, launcher line and ListAgents reading)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
@@ -35,7 +36,8 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── drift, github, implement, learning, norms, orchestrator, pr-review, telemetry (a copy in core/)
+        └───── bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review,
+               statusbar, telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
@@ -110,6 +112,7 @@ language; when another language needs it, it reads it as data, never as a re-imp
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
 from it. A pull request raises no version. The release pull request (`npm run release`) raises
 the version of every plugin changed since its last release, because the host caches by version.
+A release runs at the end of each merge wave, and at least daily.
 A release is its merge: the host installs the version the catalogue names, and no tag is made.
 The release pull request also asks the operator whether to re-run the outcome measure (cap
 `measure` of `evals/outcome/caps.json`); nothing runs without their yes.
@@ -125,12 +128,11 @@ The release pull request also asks the operator whether to re-run the outcome me
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
-| prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
+| prompt budgets and duplicates only fall, lowered only by the release | `npm run prompts -- --base <ref>`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
-A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
-runs every plugin, a change of documentation alone (`docs/`, a Markdown file at the root) none.
-A push to `main` runs every plugin on Linux and macOS.
+What runs when (a pull request, the release, a push to `main`, the night) is the table at the head of
+`scripts/plugin-matrix.ts`.

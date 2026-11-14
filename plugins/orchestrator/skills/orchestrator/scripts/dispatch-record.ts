@@ -12,6 +12,8 @@ import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
 import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
+import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
+import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
 
 export const USAGE =
   'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)'
@@ -40,6 +42,8 @@ export interface Deps {
   readonly now: () => Date
   readonly goalsPy: string
   readonly routingPy: string
+  /** Takes each fact a write leaves for the audit trail (lib/audit.ts); none, nothing is written. */
+  readonly journal?: Journal
 }
 
 export type Row = Record<string, unknown>
@@ -337,6 +341,23 @@ const warn = (ctx: Context, message: string): void => ctx.deps.io.err(`WARNING: 
 const say = (ctx: Context, line: string): void => ctx.deps.io.out(`${line}\n`)
 const stamp = (ctx: Context): string => ctx.deps.now().toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
 
+/** The record and the row, as the journal names them. */
+function rowFact(ctx: Context, id: string | null): { record: string | null; row: number | null } {
+  return { record: pointerOf(resolve(ctx.record), ctx.deps.env), row: id === null ? null : parseId(id) ?? null }
+}
+
+/** A step of the row, written to the audit trail once the write it marks is done. */
+function noteStep(ctx: Context, sub: string, id: string, step: Step, edge: Edge, head?: string): void {
+  writeAudit(ctx.deps.journal, auditRun(ctx.deps.env, ctx.deps.now()), 'step', `orchestrator.dispatch.${sub}`,
+    { step, edge, ...rowFact(ctx, id), result: null }, { subject: { head: fullHead(head) } })
+}
+
+/** A link of the row (or of the record's goals) to a session, a pull request or a goal. */
+function noteLink(ctx: Context, code: string, id: string | null, link: Partial<Facts['link']>, subject: { repo?: string; pr?: number } = {}): void {
+  writeAudit(ctx.deps.journal, auditRun(ctx.deps.env, ctx.deps.now()), 'link', code,
+    { ...rowFact(ctx, id), session: null, goal: null, prs: [], ...link }, { subject })
+}
+
 function readRows(ctx: Context): Row[] {
   try {
     return parseRecord(readText(ctx.record) ?? '')
@@ -522,6 +543,7 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
     die(ctx, `could not update ${ctx.record}`)
   }
   say(ctx, String(id))
+  noteStep(ctx, 'open', String(id), 'implement', 'start')
 }
 
 function review(ctx: Context, id: string, args: readonly string[]): void {
@@ -538,6 +560,7 @@ function review(ctx: Context, id: string, args: readonly string[]): void {
     row['rounds'] = asNumber(row['rounds']) + 1
     row['review'] = { head, norms, at }
   })
+  noteStep(ctx, 'review', id, 'review', 'end', head)
 }
 
 function fixed(ctx: Context, id: string, args: readonly string[]): void {
@@ -555,6 +578,7 @@ function fixed(ctx: Context, id: string, args: readonly string[]): void {
     object['fixed'] = { head, at }
     r['review'] = object
   })
+  noteStep(ctx, 'fixed', id, 'correction', 'end', head)
 }
 
 function surface(ctx: Context, id: string, args: readonly string[]): void {
@@ -574,6 +598,7 @@ function surface(ctx: Context, id: string, args: readonly string[]): void {
   if (kind === 'minor' && reason === '') die(ctx, 'surface: --minor needs the reason the operator will read')
   const at = stamp(ctx)
   rewrite(ctx, id, row => { row['surface'] = { kind, pr, reason, at } })
+  if (kind === 'ui') noteLink(ctx, 'orchestrator.dispatch.surface', id, {}, { repo: pr.slice(0, pr.indexOf('#')), pr: Number(pr.slice(pr.indexOf('#') + 1)) })
 }
 
 function audit(ctx: Context, id: string, args: readonly string[]): void {
@@ -712,6 +737,7 @@ async function cost(ctx: Context, id: string, args: readonly string[]): Promise<
     }
   })
   say(ctx, `cost: row ${id} +${text(usd)} (session ${session})`)
+  noteLink(ctx, 'orchestrator.dispatch.cost', id, { session })
 }
 
 /** A row still open, as a successor reads it: deferred with the ruling it waits on, or open. */
@@ -829,7 +855,12 @@ async function goals(ctx: Context, args: readonly string[]): Promise<void> {
   if (!GOAL_SUBS.includes(sub)) die(ctx, `goals: unknown subcommand: ${sub} (expected init, status, plan, met, rule-out, defer, reopen or check)`)
   ctx.registerAbsent = true
   if (sub === 'init') mkdirSync(dirname(ctx.record), { recursive: true })
-  throw new Exit(await ctx.deps.passThrough(['python3', ctx.deps.goalsPy, sub, ctx.goalsFile, ...args.slice(1)]))
+  const code = await ctx.deps.passThrough(['python3', ctx.deps.goalsPy, sub, ctx.goalsFile, ...args.slice(1)])
+  if (code === 0 && sub === 'met') {
+    const evidence = args.filter((_, k) => args[k - 1] === '--evidence')
+    noteLink(ctx, 'orchestrator.goals.met', null, { goal: args[1] ?? null, prs: prRefsOf(evidence.join(' ')) })
+  }
+  throw new Exit(code)
 }
 
 /** Rows that change by one fixed step. */
@@ -852,7 +883,13 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   requireRow(ctx, cmd, id)
   const args = argv.slice(3)
   const step = STEPS[cmd]
-  if (step !== undefined) return rewrite(ctx, id, step)
+  if (step !== undefined) {
+    rewrite(ctx, id, step)
+    if (cmd === 'round') noteStep(ctx, 'round', id, 'correction', 'start')
+    const record = rowFact(ctx, id).record
+    if (cmd === 'escaped') writeEscape(ctx.deps.journal, auditRun(ctx.deps.env, ctx.deps.now()), 'orchestrator.dispatch.escaped', record === null ? [] : [{ type: 'record', path: record }])
+    return
+  }
   if (cmd === 'review') return review(ctx, id, args)
   if (cmd === 'fixed') return fixed(ctx, id, args)
   if (cmd === 'surface') return surface(ctx, id, args)
@@ -863,7 +900,8 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     const verdict = last(options(ctx, 'close', args, ['--verdict']), '--verdict')
     if (verdict === '') die(ctx, 'close: --verdict is required')
     const closed = stamp(ctx)
-    return rewrite(ctx, id, row => Object.assign(row, { state: 'closed', verdict, closed }))
+    rewrite(ctx, id, row => Object.assign(row, { state: 'closed', verdict, closed }))
+    return noteLink(ctx, 'orchestrator.dispatch.close', id, { prs: prRefsOf(verdict) })
   }
   // defer: the operator ruled « later » on an open row: it stays open, with his words.
   if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `defer: row ${id} is not open`)
@@ -901,7 +939,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
   return code
 }
 
-/* node:coverage ignore next 15 */
+/* node:coverage ignore next 16 */
 if (isEntry(import.meta.url)) {
   const here = dirname(fileURLToPath(import.meta.url))
   const { spawn } = await import('node:child_process')
@@ -915,5 +953,6 @@ if (isEntry(import.meta.url)) {
     now: () => new Date(),
     goalsPy: join(here, 'goals.py'),
     routingPy: resolve(here, '../../model-routing/scripts/routing.py'),
+    journal: scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)),
   })
 }

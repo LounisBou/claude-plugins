@@ -18,37 +18,21 @@
 // skipped and its net passes the run on, so the person keeps a working command
 // that spends a turn, the behaviour this file replaces rather than removes.
 //
-// The engine fences $ to the file that received it — never passed across an
-// import — so this file spells its own env resolution, its own store read and
-// its own record read, while the row parser, the staleness rule and the pane's
-// row shaper cross as plain imports from the supervision domain.
+// The config dir, the state root and the log line are module-io.ts's; this file
+// spells its own store read and its own record read, while the row parser, the
+// staleness rule and the pane's row shaper cross as plain imports from the
+// supervision domain.
 import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow, type ProcessTable } from './supervision.ts'
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
-import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { moduleDirOf } from './module-log.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
+import { configDir, logLine, stateDir } from './module-io.ts'
 
 // The nouns the commands hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>
-
-// The config dir, this file's own resolution: $ never crosses an import, so
-// each domain that needs it spells the same two env reads itself.
-async function configDir($: Host<'env'>): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-}
-
-// The records registry's root, the shell pipeline's own contract (dispatch-record.sh:59,
-// the writer that survives it): the state override first, else the config dir's
-// claude-orchestrator. The writer resolves the same rule, so the reader resolves what it
-// wrote or the override silences /orchestrator-progress forever. Spelled at the call site
-// beside the config read it extends — $ never crosses an import — while this file's own
-// artifacts, the store and the log, stay under the module's own directory (module-log.ts,
-// moduleDirOf): no surviving script shares them.
-async function stateDir($: Held): Promise<string> {
-  return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
-}
 
 // The bound on this file's reads — the same convention the supervision domain
 // inherited from the guards: well inside the time a command's answer owns, so
@@ -257,7 +241,7 @@ async function progressText($: Held): Promise<string> {
   const bound = await readBoundMs($)
   const listed = await withDeadline(() => $.fs.read(registry).catch(() => ''), bound)
   if (isDegradedPass(listed)) {
-    await logLine($, 'the dispatch record registry did not answer in time')
+    await logLine($, 'commands', 'the dispatch record registry did not answer in time')
     return 'the dispatch record did not answer in time'
   }
   const groups: DispatchRow[][] = []
@@ -337,7 +321,7 @@ async function goalsLine($: Held, goalsFile: string, bound: number): Promise<str
     bound,
   ).catch(() => null)
   if (!done || isDegradedPass(done) || done.exitCode !== 0) {
-    await logLine($, `the goals of ${goalsFile} could not be read`)
+    await logLine($, 'commands', `the goals of ${goalsFile} could not be read`)
     return null
   }
   const line = String(done.stdout ?? '').trim()
@@ -387,7 +371,7 @@ export function register(on: On<Held>): void {
 // A command whose reader failed is skipped; the net lets the markdown command run as it
 // always did, and the failure is said.
 const fallBack: CatchHook<Held, Events['command.run']> = async ($, e, next) => {
-  await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+  await logLine($, 'commands', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
   return next(e)
 }
 
@@ -398,13 +382,4 @@ async function ownRun($: Held, e: Events['command.run']): Promise<boolean> {
   if (!isBare(command)) return true
   const dir = commandsDirOf(await $.env.get('ORCHESTRATOR_COMMANDS_DIR'), await configDir($))
   return isOwnCopy(String(await $.fs.read(`${dir}/${command}.md`).catch(() => '')))
-}
-
-// One line appended to the module's log (module-log.ts): the stamp names the
-// half that failed. Never throws, never blocks the command it serves.
-async function logLine($: Held, message: string): Promise<void> {
-  try {
-    const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'commands', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the command that failed */ }
 }

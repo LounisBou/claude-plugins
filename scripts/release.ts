@@ -1,6 +1,6 @@
 // The release: one commit raises the version of every plugin that changed since its last release,
 // lowers the prompt budgets to what is measured, then regenerates the catalogue. A feature pull
-// request raises no version and lowers no budget (CI still refuses one exceeded).
+// request raises no version and lowers no budget (`npm run prompts -- --base` refuses one lowered).
 //
 //   npm run release                       patch for each plugin changed since its last release; commits
 //   npm run release -- --minor a,b        those plugins get a MINOR; `--major c` a MAJOR

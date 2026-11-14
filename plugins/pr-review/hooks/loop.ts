@@ -8,7 +8,7 @@
 // Never a trap: the gate refuses at most once per stop (the host re-fires it
 // with stop_hook_active set, and the gate steps aside), and any prompt the user
 // types, an interrupted turn or a /clear ends the loop's hold.
-import { loop, resetLoop, MAX_PASSES } from './state.ts'
+import { loop, resetLoop, MAX_PASSES, ORCHESTRATED_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
@@ -29,7 +29,7 @@ export const LOOP_DESCRIPTION =
 function summary(): Record<string, unknown> {
   return {
     passes: loop.pass,
-    max_passes: MAX_PASSES,
+    max_passes: loop.maxPasses,
     exit: loop.exit ?? null,
     test_command: loop.testCommand || 'UNDETERMINED',
     fixes: loop.fixes.filter((f) => !f.reverted).map((f) => ({ sha: f.sha, description: f.description, key: f.key })),
@@ -42,12 +42,12 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: any, dir?: { dir: string } | { why: string }): Record<string, unknown> {
+export function act(e: any, dir?: { dir: string } | { why: string }, maxPasses = MAX_PASSES): Record<string, unknown> {
   const action = String(e?.action ?? '')
   if (action === 'start') {
-    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined)
+    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined, maxPasses)
     if (loop.isReviewOnly) return { pass: 0, max_passes: 1, next: 'call begin_pass, run the review, report its findings: no fix is made, the loop ends there' }
-    return { pass: 0, max_passes: MAX_PASSES, next: 'call begin_pass, then run the review' }
+    return { pass: 0, max_passes: loop.maxPasses, next: 'call begin_pass, then run the review' }
   }
   if (action === 'status') return summary()
   if (!loop.isActive && loop.exit === undefined) {
@@ -55,7 +55,7 @@ export function act(e: any, dir?: { dir: string } | { why: string }): Record<str
   }
   if (action === 'begin_pass') {
     if (!loop.isActive) return { exit: loop.exit, ...summary() }
-    if (loop.pass >= MAX_PASSES) {
+    if (loop.pass >= loop.maxPasses) {
       loop.isActive = false
       loop.exit = 'max_passes'
       return { exit: 'max_passes', ...summary() }
@@ -72,7 +72,7 @@ export function act(e: any, dir?: { dir: string } | { why: string }): Record<str
     loop.waitedAt = -1
     loop.lastFindings = 0
     loop.lastBlocking = undefined
-    return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
+    return { pass: loop.pass, max_passes: loop.maxPasses, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
   }
   if (action === 'findings') {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
@@ -180,12 +180,12 @@ function unknownSeverity(): string {
 export function stopReason(stopHookActive: boolean): string | null {
   if (stopHookActive || !loop.isActive) return null
   if (loop.isReviewing && loop.blockless.size > 0) {
-    return `pr-review auto-fix-loop: pass ${loop.pass}/${MAX_PASSES}, and ${loop.blockless.size} review agent(s) handed back no findings block: `
+    return `pr-review auto-fix-loop: pass ${loop.pass}/${loop.maxPasses}, and ${loop.blockless.size} review agent(s) handed back no findings block: `
       + 'call mcp__pr-review__loop findings, which says how to ask them again.'
   }
   if (loop.isReviewing && loop.awaiting.size > 0) return null
-  return `pr-review auto-fix-loop: pass ${loop.pass}/${MAX_PASSES}, and the last review reported ${loop.lastFindings} finding(s). `
-    + 'The loop ends only on a review with zero findings or after pass 5: call mcp__pr-review__loop begin_pass and run the review again.'
+  return `pr-review auto-fix-loop: pass ${loop.pass}/${loop.maxPasses}, and the last review reported ${loop.lastFindings} finding(s). `
+    + `The loop ends only on a review with zero findings or after pass ${loop.maxPasses}: call mcp__pr-review__loop begin_pass and run the review again.`
 }
 
 export function releaseLoop(): void {
@@ -423,12 +423,17 @@ async function recordReview($: any, exit: string, isRetry: boolean, found: { rep
   }
 }
 
+// Whether this session was spawned by the orchestrator, from the environment its launcher sets.
+async function isOrchestrated($: any): Promise<boolean> {
+  const spawned: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
+  return isSpawned(typeof spawned === 'string' ? spawned : undefined)
+}
+
 // The verdict line an orchestrator's agent sends up (core's verdict.ts), last in the answer that ends
 // the loop, in a session the orchestrator spawned only: the review record is its report, and the
 // blocking findings' files of the last pass what blocks. Null outside such a session, or with no head.
 async function verdictFor($: any, exit: string, repo: string, pr: number, line: string): Promise<string | null> {
-  const spawned: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
-  if (!isSpawned(typeof spawned === 'string' ? spawned : undefined)) return null
+  if (!await isOrchestrated($)) return null
   const outcome = verdict(exit)
   const headRun = await git($, ['rev-parse', 'HEAD'])
   const head = String(headRun.stdout ?? '').trim()
@@ -526,7 +531,7 @@ export function register(on: any): void {
     // A record still owed after a transient github failure is written again at the next
     // `findings` or `status`: the verdict the loop kept stands, nothing is computed again.
     const isOwed = loop.isRecordPending && (e?.action === 'findings' || e?.action === 'status')
-    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e, e?.action === 'start' ? await checkoutDir($) : undefined)
+    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e, e?.action === 'start' ? await checkoutDir($) : undefined, e?.action === 'start' && await isOrchestrated($) ? ORCHESTRATED_PASSES : MAX_PASSES)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
     // The record is first written at the call that ends the loop, at the head the loop ended on.

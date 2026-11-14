@@ -86,6 +86,37 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
   return excused
 }
 
+/*
+ * The operator's waiver of a required E2E or norms check: one question, « Dispense d'E2E pour <owner/name>#<n> : <why> »
+ * or « Dispense de normes pour … », its choices « Accorder » and « Refuser », asked by dialog or in the round. His answer,
+ * from any channel, is the consent record of the pull request (core's consent-record.ts) whose subject names the check;
+ * the newest one decides.
+ */
+export const WAIVER_GRANT = 'Accorder'
+export const WAIVER_REFUSE = 'Refuser'
+export type Waivable = (typeof GUARDED)[number]
+export const WAIVED = GUARDED
+// The question's words for each check it waives, and the consent subject its answer is recorded under.
+export const WAIVER_WORDS: Record<Waivable, string> = { e2e: "d'E2E", norms: 'de normes' }
+export const waiverSubject = (check: Waivable) => (check + '-waiver') as 'e2e-waiver' | 'norms-waiver'
+const WAIVER_QUESTION = /^\s*Dispense (d['’]E2E|de normes) pour ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\s*:/i
+
+/** The check and pull request a dialog question asks the waiver of, or undefined when it is no waiver question. */
+export function waiverQuestion(question: unknown): { check: Waivable; repo: string; pr: number } | undefined {
+  const q = (typeof question === 'object' && question !== null ? question : {}) as Record<string, unknown>
+  const match = WAIVER_QUESTION.exec(String(q['question'] ?? ''))
+  const labels = Array.isArray(q['options']) ? q['options'].map((o) => String(o?.label ?? '').trim()) : []
+  if (!match || labels.length !== 2 || !labels.includes(WAIVER_GRANT) || !labels.includes(WAIVER_REFUSE) || q['multiSelect'] === true) return undefined
+  const pr = Number(match[3])
+  const check: Waivable = /normes/i.test(match[1]!) ? 'norms' : 'e2e'
+  return isRepoName(match[2]!) && pr > 0 ? { check, repo: match[2]!, pr } : undefined
+}
+
+/** Whether an answer to the waiver question grants it. */
+export function grants(answer: string): boolean {
+  return answer.trim().toLowerCase() === WAIVER_GRANT.toLowerCase()
+}
+
 /** The plan as the pull request shows it, in one comment. */
 export function planText(plan: Checks): string {
   const line = (kind: Planned) => '- ' + kind + ': ' + plan[kind].need + (plan[kind].reason ? ' — ' + plan[kind].reason : '')

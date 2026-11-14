@@ -9,6 +9,7 @@
 // acknowledges it, and asks again for what is missing. Code never travels this way: it goes
 // by git. Pure on purpose: the handlers hold the $ and pass their reads in here, and the
 // files' hashes are computed by a process, outside this file.
+import { parseSessionName } from '../core/names.ts'
 
 // The line's fixed head: what the receiver keys on, and nothing a person or a model writes by
 // chance.
@@ -97,10 +98,9 @@ const MOVE_ID_HASH = /-[0-9a-f]{12}$/
 const SLUG_CAP = 40
 const SLUG_FALLBACK = 'move'
 
-// The name the launcher's opening takes and the sleeping record keeps: `Orch: `, a subject of
-// at most 25 characters with no space at either end, and no reference after it. core's shape,
-// mirrored: a machine still on the former `Orch : ` sends a name of that shape, read all the same.
-const NAME_SHAPE = /^Orch ?: \S(?:.{0,23}\S)?$/
+// The name the launcher's opening takes and the sleeping record keeps: an orchestrator's, in
+// core's shape, and no reference after it. A machine still on the former `Orch : ` sends a name of
+// that shape, read all the same.
 const REF_SUFFIX = / \[[0-9A-Za-z]+\]$/
 
 // What the opening command cannot carry between double quotes, nor any line: a quote, a
@@ -196,7 +196,7 @@ function originShaped(v: unknown): boolean {
 
 function recordShaped(v: unknown): boolean {
   if (!isObject(v) || !exactly(v, RECORD_FIELDS)) return false
-  if (typeof v['name'] !== 'string' || !NAME_SHAPE.test(v['name']) || REF_SUFFIX.test(v['name']) || UNQUOTABLE.test(v['name'])) return false
+  if (typeof v['name'] !== 'string' || parseSessionName(v['name'])?.role !== 'orchestrator' || REF_SUFFIX.test(v['name']) || UNQUOTABLE.test(v['name'])) return false
   if (!absolute(v['brief']) || !absolute(v['dir'])) return false
   if (typeof v['model'] !== 'string' || !MODEL_SHAPE.test(v['model']) || !EFFORTS.includes(v['effort'])) return false
   if (!Array.isArray(v['prs']) || v['prs'].length > PRS_CAP || !v['prs'].every(prShaped)) return false
