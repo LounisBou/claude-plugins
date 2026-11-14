@@ -111,10 +111,10 @@ export function launcherOf(root: string): string {
 /** A spawn: the new session's directory, title and prompt, given as text or as a file. */
 export type Spawn = { dir: string; title: string; rightOf?: string; resident?: boolean } & ({ prompt: string } | { promptFile: string })
 
-/** The launcher's `spawn` command line, its arguments in the order the launcher documents. */
-export function spawnArgv(root: string, spawn: Spawn): string[] {
+/** The `spawn` command line of the launcher at `launcher` (`launcherOf`), its arguments in the order the launcher documents. */
+export function spawnArgv(launcher: string, spawn: Spawn): string[] {
   return [
-    launcherOf(root), 'spawn', '--dir', spawn.dir, '--title', spawn.title,
+    launcher, 'spawn', '--dir', spawn.dir, '--title', spawn.title,
     ...('prompt' in spawn ? ['--prompt', spawn.prompt] : ['--prompt-file', spawn.promptFile]),
     ...(spawn.rightOf === undefined ? [] : ['--right-of', spawn.rightOf]),
     ...(spawn.resident === true ? ['--resident'] : []),

@@ -72,9 +72,9 @@ describe('the launcher', () => {
   })
 
   it('spawns with its arguments in one order', () => {
-    assert.deepEqual(spawnArgv('/o', { dir: '/repo', title: 'Agent: x', prompt: 'go' }),
+    assert.deepEqual(spawnArgv(launcherOf('/o'), { dir: '/repo', title: 'Agent: x', prompt: 'go' }),
       [`/o/${LAUNCHER}`, 'spawn', '--dir', '/repo', '--title', 'Agent: x', '--prompt', 'go'])
-    assert.deepEqual(spawnArgv('/o', { dir: '/repo', title: 'Bugs: x', promptFile: '/p.md', rightOf: 'self', resident: true }),
+    assert.deepEqual(spawnArgv(launcherOf('/o'), { dir: '/repo', title: 'Bugs: x', promptFile: '/p.md', rightOf: 'self', resident: true }),
       [`/o/${LAUNCHER}`, 'spawn', '--dir', '/repo', '--title', 'Bugs: x', '--prompt-file', '/p.md', '--right-of', 'self', '--resident'])
   })
 })

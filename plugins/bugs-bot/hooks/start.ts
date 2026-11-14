@@ -119,7 +119,7 @@ export async function start($: any): Promise<{ text: string }> {
 
   // 5. The spawn. From here on nothing falls back to the markdown.
   try {
-    const spawned = await run($, spawnArgv(orchestrator, { dir: repo, title: facts.agentTitle, promptFile, rightOf: 'self', resident: true }), repo, SPAWN_TIMEOUT_MS)
+    const spawned = await run($, spawnArgv(script, { dir: repo, title: facts.agentTitle, promptFile, rightOf: 'self', resident: true }), repo, SPAWN_TIMEOUT_MS)
     const tty = lastLine(spawned.stdout)
     if (spawned.exitCode !== 0 || !isTty(tty)) {
       return { text: `The launcher refused the spawn (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Tell the operator; never spawn it another way.` }
