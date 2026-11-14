@@ -57,7 +57,10 @@ describe('the pull request ledger', () => {
     const first = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: seven' }, new Date(AT))
     assert.deepEqual(first, line({ since: '2026-11-14T10:00:00Z', updated: '2026-11-14T10:00:00Z' }))
     const later = new Date('2026-11-14T10:20:00Z')
-    assert.equal(ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: seven' }, later, first).since, first.since)
+    const again = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: seven' }, later, first)
+    assert.equal(again.since, first.since)
+    // Setting the same status again is a fresh setting: the wait's age is read from `updated`.
+    assert.equal(again.updated, '2026-11-14T10:20:00Z')
     const moved = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'waiting', on: 'the CI' }, later, first)
     assert.equal(moved.since, '2026-11-14T10:20:00Z')
     assert.equal(moved.agent, undefined)
