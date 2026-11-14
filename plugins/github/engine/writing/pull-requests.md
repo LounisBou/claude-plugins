@@ -134,8 +134,9 @@ What Ready needs and what voids it are core's readiness contract (`core/readines
 A required E2E or norms check goes laxer only by the operator's waiver:
 « Accorder » to « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> » / « Refuser ».
 
-The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. When CI does not run on
-a draft, the plugin takes it out of draft, still `Not Ready`, and back once it is ready.
+The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. Leaving draft and a
+merge need `Ready`, which the gate puts just before them once every condition holds. When CI
+does not run on a draft, the plugin takes it out of draft, still `Not Ready`, and back once ready.
 
 ## Security update pull requests
 

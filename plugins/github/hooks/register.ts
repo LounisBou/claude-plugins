@@ -676,8 +676,9 @@ export async function diagnose($: any, check = false): Promise<string> {
 
 /*
  * A pull request is ready as core's readiness contract defines it (readiness.ts). Taking it out of
- * draft and merging it need the conditions the gate holds, through the tool and through Bash alike,
- * and an act that is not ready is refused; CI is GitHub's own required check. In a repository not in
+ * draft and merging it need the Ready label, which the gate puts itself when the whole contract holds
+ * at the head, CI included, through the tool and through Bash alike, and an act that is not ready
+ * is refused. In a repository not in
  * auto-merge, leaving draft is refused on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
@@ -1099,7 +1100,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
  * names what is missing too. It never fails the call it follows.
  */
-type Followed = { line?: string; labels?: string[]; draft?: boolean }
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[] }
 
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
@@ -1121,8 +1122,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried) }
-    return {}
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing }
+    return { missing }
   }
   let now: Gate
   try {
@@ -1144,8 +1145,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried), labels, draft }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried), labels, draft, missing }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing }
 }
 
 // The reads after which the gate puts the label.
@@ -1199,6 +1200,21 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
   return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
 }
 
+/*
+ * A merge or a leaving of draft runs on a pull request the gate labelled Ready: past the records it
+ * holds, the gate puts Ready itself when the whole contract holds at the head, CI included, and
+ * refuses the act with what is missing otherwise, or when the label could not be put.
+ */
+async function readyLabelRefusal($: any, act: Act, repo: string, pr: number, r: Readiness): Promise<string | undefined> {
+  const followed = await followGate($, repo, pr, r.gate)
+  if (followed.missing === undefined) {
+    return unverifiedRefusal(repo, pr, followed.line ?? 'the Ready label could not be put')
+  }
+  if (followed.missing.length > 0) return refuseNotReady($, act, repo, pr, { ...r, missing: followed.missing })
+  if (followed.line) note($, followed.line)
+  return undefined
+}
+
 // The Bash ready guard failed on its own: the command is refused as a readiness that could not be read.
 // An undraft outside auto-merge is refused on the list first: only a CI undraft passes there, and the
 // failed read cannot tell whether this is one.
@@ -1250,7 +1266,11 @@ function toolReady($: any, e: any, act: Act) {
       if (act.kind === 'create') return draftRefusal(act.name)
       if (!gated) return undefined
       const found = await evaluate()
-      if (!found) return undefined
+      if (!found) {
+        if (forCi || !read?.gate) return undefined
+        const { repo, pr } = await repoPr()
+        return repo && pr !== undefined ? readyLabelRefusal($, act, repo, pr, read) : undefined
+      }
       if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
       try {
         return await refuseNotReady($, act, found.repo, Number(found.pr), found.r)
@@ -1340,7 +1360,7 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   const shown = pr ?? '?'
   if (r.error) return unverifiedRefusal(repo, shown, r.error)
   if (r.missing.length > 0) return refuseNotReady($, act, repo, Number(pr), r)
-  return undefined
+  return readyLabelRefusal($, act, repo, Number(pr), r)
 }
 
 function stdoutOf(result: any): string {

@@ -11,7 +11,8 @@ export const READINESS_CONTRACT = {
   version: 1,
   // A pull request is ready at its head when every condition holds there. Each is held by the one
   // that refuses a merge without it: the github ready gate reads the records at the head, GitHub
-  // itself requires the workflow's aggregator job, the status check named here.
+  // itself requires the workflow's aggregator job, the status check named here. The Ready label,
+  // which the gate puts and a merge needs, takes every condition, whoever holds it.
   conditions: {
     review: { holder: 'gate', means: 'a review record that passes: no blocking finding, or the orchestrator\'s acceptance of its set-asides' },
     e2e: { holder: 'gate', means: 'passed, waived by the operator or not applicable, unless the check plan or an exemption excuses it' },

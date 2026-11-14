@@ -330,7 +330,7 @@ test('the records refusals name only the producers the record contract declares'
 test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
-    + ' What Ready needs is core\'s readiness contract (core/readiness.ts); CI is GitHub\'s required check.')
+    + ' What Ready needs is core\'s readiness contract (core/readiness.ts).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'

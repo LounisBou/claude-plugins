@@ -52,10 +52,10 @@ let sessions = 0
 const freshSession = () => 'session-' + ++sessions
 
 // The head the stubbed pr-gate answers, ready: CI green and, under the records root stubAutoMerge
-// serves, a passed review, norms check and E2E.
+// serves, a passed review, norms check and E2E, so it carries the Ready label the gate puts.
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const readyGate = (repo: string, pr: number) => JSON.stringify({
-  repo, pr, state: 'open', draft: true, head: HEAD, labels: ['Not Ready'], ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 },
+  repo, pr, state: 'open', draft: true, head: HEAD, labels: ['Ready'], ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 },
 })
 const RECORDS_ROOT = '/cfg/' + 'pr-records'
 function recordFiles(repo: string, pr: number): Record<string, string> {

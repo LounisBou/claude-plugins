@@ -274,12 +274,12 @@ const gates = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-gate').l
 // No record at all: review, norms and E2E missing, CI green.
 const NO_RECORDS = { records: {} }
 
-const REFUSAL_END = ' What Ready needs is core\'s readiness contract (core/readiness.ts); CI is GitHub\'s required check.'
+const REFUSAL_END = ' What Ready needs is core\'s readiness contract (core/readiness.ts).'
 
 // ---- the tool ----
 
 test('refused by the person, the gate is read once and nothing runs', async ($, on) => {
-  const seen = await world($, on, { answer: 'Deny', autoMerge: ['acme/thing'], verdict: { decision: 'ask', rule: 'mcp__github__gh' } })
+  const seen = await world($, on, { labels: ['Ready'], answer: 'Deny', autoMerge: ['acme/thing'], verdict: { decision: 'ask', rule: 'mcp__github__gh' } })
   await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(gates(seen)).toBe(1)
   expect(commands(seen)).toEqual(['pr-gate'])
@@ -295,7 +295,7 @@ test('a not-ready pr-ready outside auto-merge is refused before anyone is asked'
 })
 
 test('a ready pr-ready outside auto-merge is refused, never asked', async ($, on) => {
-  const seen = await world($, on)
+  const seen = await world($, on, { labels: ['Ready'] })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out.deny).toContain('outside auto-merge, leaving draft is the operator\'s')
   expect(seen.asked.length).toBe(0)
@@ -324,22 +324,59 @@ test('in auto-merge a not-ready merge is refused before anyone is asked, nothing
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
-for (const [state, ci] of [['failed', { result: 'FAILURE', failed: ['lint'] }], ['still runs', { result: 'PENDING', running: 1 }]] as const) {
-  test('in auto-merge a merge whose CI ' + state + ' is the gate\'s to let through: CI is GitHub\'s required check', async ($, on) => {
+/*
+ * These merges ran when CI was left to GitHub alone. A merge now needs the Ready label, which the
+ * gate puts only with CI green: a merge whose CI failed or still runs is refused, CI named.
+ */
+for (const [state, ci, item] of [['failed', { result: 'FAILURE', failed: ['lint'] }, 'CI failed: lint'], ['still runs', { result: 'PENDING', running: 1 }, 'CI still running']] as const) {
+  test('in auto-merge a merge whose CI ' + state + ' is refused: Ready needs CI green', async ($, on) => {
     const seen = await world($, on, { autoMerge: ['acme/thing'], ci, verdict: { decision: 'ask' } })
     const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
-    expect(out).toEqual({ result: 'ok' })
+    expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: ' + item + '.' + REFUSAL_END)
     expect(seen.asked.length).toBe(0)
+    expect(commands(seen)).toEqual(['pr-gate'])
   })
 }
 
-test('in auto-merge a ready merge runs with no question', async ($, on) => {
+test('in auto-merge a ready merge runs with no question, the gate putting Ready on it first', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.asked.length).toBe(0)
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-merge'])
+  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness', 'pr-merge'])
+  expect(seen.runs.find((r) => r.command === 'pr-readiness')?.args).toEqual({ pr: 12, state: 'ready' })
 })
+
+// No route merges a pull request the gate has not labelled Ready: the label lands before the merge
+// runs, or the merge is refused and the pull request keeps Not Ready.
+const MERGE_ACTS = [
+  ['tool', gh('pr-merge', { pr: 12 })],
+  ['Bash', bash('gh pr merge 12 -R acme/thing --squash')],
+] as const
+
+for (const [route, call] of MERGE_ACTS) {
+  for (const [label, w] of [
+    ['no review', NO_RECORDS],
+    ['CI failed', { ci: { result: 'FAILURE', failed: ['lint'] } }],
+    ['CI still running', { ci: { result: 'PENDING', running: 1 } }],
+  ] as const) {
+    test('a ' + route + ' merge in auto-merge never runs without Ready: ' + label + ' refuses it and Not Ready stays', async ($, on) => {
+      const seen = await world($, on, { ...w, autoMerge: ['acme/thing'] })
+      const out: any = await $.tool.call(call)
+      expect(out.deny).toContain('not ready')
+      expect(actRan(seen, route, 'pr-merge')).toBe(0)
+      expect(seen.pull?.labels).toEqual(['Not Ready'])
+    })
+  }
+
+  test('a ' + route + ' merge in auto-merge of a ready pull request runs once the gate put Ready', async ($, on) => {
+    const seen = await world($, on, { autoMerge: ['acme/thing'] })
+    const out: any = await $.tool.call(call)
+    expect(out.deny).toBeUndefined()
+    expect(actRan(seen, route, 'pr-merge')).toBe(1)
+    expect(seen.pull?.labels).toEqual(['Ready'])
+  })
+}
 
 test('a merge pinned to a head that moved is refused', async ($, on) => {
   await world($, on, { autoMerge: ['acme/thing'] })
@@ -440,7 +477,7 @@ test('a CI undraft through the tool passes outside auto-merge too, with no quest
 })
 
 test('an undraft outside auto-merge that is no CI undraft is refused, never asked', async ($, on) => {
-  const seen = await world($, on, { answer: 'Allow' })
+  const seen = await world($, on, { labels: ['Ready'], answer: 'Allow' })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out.deny).toContain('outside auto-merge, leaving draft is the operator\'s')
   expect(seen.asked).toHaveLength(0)
@@ -492,13 +529,15 @@ const actRan = (seen: Seen, route: string, command: string) =>
   route === 'Bash' ? seen.bash.length : commands(seen).filter((c) => c === command).length
 
 for (const [route, call] of UNDRAFT_ACTS) {
-  test('a ' + route + ' undraft of a ready pull request carrying Ready with CI not green is no CI undraft, and runs', async ($, on) => {
+  // This undraft ran when CI was left to GitHub alone: a Ready label with CI not green is now taken
+  // off by the gate, which refuses the act, still no CI undraft.
+  test('a ' + route + ' undraft of a pull request carrying Ready with CI not green is no CI undraft, refused and Ready taken off', async ($, on) => {
     const seen = await world($, on, { labels: ['Ready'], autoMerge: ['acme/thing'], ci: { result: 'PENDING', running: 1 } })
     const out: any = await $.tool.call(call)
     expect(seen.logs.some((l) => l.includes('out of draft to run CI'))).toBe(false)
-    expect(out.deny).toBeUndefined()
-    expect(actRan(seen, route, 'pr-ready')).toBe(1)
-    expect(seen.runs.find((r) => r.command === 'pr-ready')?.args?.['for-ci']).toBeUndefined()
+    expect(out.deny).toContain('not ready. Missing: CI still running')
+    expect(actRan(seen, route, 'pr-ready')).toBe(0)
+    expect(seen.pull?.labels).toEqual(['Not Ready'])
   })
 
   test('a ' + route + ' undraft of a pull request carrying Ready with no review is refused, never a CI undraft', async ($, on) => {
@@ -536,18 +575,19 @@ test('a Bash merge without a repository is refused, so is a GraphQL merge', asyn
 })
 
 test('a ready Bash merge in auto-merge passes', async ($, on) => {
-  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const seen = await world($, on, { autoMerge: ['acme/thing'], labels: ['Ready'] })
   const out: any = await $.tool.call(bash('gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD))
   expect(out.deny).toBeUndefined()
   expect(seen.bash.length).toBe(1)
   expect(seen.logs).toEqual([])
 })
 
-test('a Bash merge in auto-merge whose CI failed passes the gate: CI is GitHub\'s required check', async ($, on) => {
+// This merge ran when CI was left to GitHub alone: Ready now needs CI green, so it is refused.
+test('a Bash merge in auto-merge whose CI failed is refused: Ready needs CI green', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'], ci: { result: 'FAILURE', failed: ['lint'] } })
   const out: any = await $.tool.call(bash('gh pr merge 12 -R acme/thing --squash'))
-  expect(out.deny).toBeUndefined()
-  expect(seen.bash.length).toBe(1)
+  expect(out.deny).toBe('github: gh pr merge refused on acme/thing#12 at 0123456: not ready. Missing: CI failed: lint.' + REFUSAL_END)
+  expect(seen.bash.length).toBe(0)
 })
 
 test('a not-ready Bash merge in auto-merge is refused, --auto too', async ($, on) => {
@@ -575,7 +615,7 @@ test('a Bash merge whose readiness cannot be read is refused', async ($, on) => 
 })
 
 test('a Bash merge of the current branch\'s pull request reads it with pr-get', async ($, on) => {
-  const seen = await world($, on, { autoMerge: ['acme/thing'], pulls: { '': [{ number: 12 }] } })
+  const seen = await world($, on, { autoMerge: ['acme/thing'], labels: ['Ready'], pulls: { '': [{ number: 12 }] } })
   await $.tool.call(bash('gh pr merge -R acme/thing'))
   expect(commands(seen)).toEqual(['pr-get', 'pr-gate'])
   expect(seen.runs[0].repo).toBe('acme/thing')
@@ -1479,7 +1519,7 @@ test('gh pr ready, the engine and GraphQL leaving draft outside auto-merge are r
 })
 
 test('in auto-merge a ready pr-ready still runs, with no question', async ($, on) => {
-  const seen = await world($, on, { autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
+  const seen = await world($, on, { autoMerge: ['acme/thing'], labels: ['Ready'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.asked).toEqual([])
@@ -1579,7 +1619,7 @@ test('a read of the checks through the tool shows the line of its Actions call',
 })
 
 test('the guard reads the gate with that line on stderr, shows it nowhere, and still parses', async ($, on) => {
-  const seen = await world($, on, { readStderr: ACTIONS_LINE + '\n', autoMerge: ['acme/thing'] })
+  const seen = await world($, on, { readStderr: ACTIONS_LINE + '\n', autoMerge: ['acme/thing'], labels: ['Ready'] })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(commands(seen)).toEqual(['pr-gate', 'pr-ready'])
@@ -1736,7 +1776,8 @@ for (const [route, call] of UNDRAFT_ACTS) {
   test('a ' + route + ' undraft of a Not Ready pull request one of whose checks passed is no CI undraft, refused outside auto-merge', async ($, on) => {
     const seen = await world($, on, { ci: { result: 'FAILURE', failed: ['test'], total: 2 } })
     const out: any = await $.tool.call(call)
-    expect(String(out.deny)).toContain(LEAVE_DRAFT)
+    // Bash refuses on the auto-merge list first, the tool on the Ready label CI keeps from it.
+    expect(String(out.deny)).toContain(route === 'Bash' ? LEAVE_DRAFT : 'not ready. Missing: CI failed: test')
     expect(actRan(seen, route, 'pr-ready')).toBe(0)
     expect(seen.logs.some((l) => l.includes('out of draft to run CI'))).toBe(false)
   })

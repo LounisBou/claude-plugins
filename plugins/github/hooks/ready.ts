@@ -684,7 +684,7 @@ const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on Gi
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
-    + '. What Ready needs is core\'s readiness contract (core/readiness.ts); CI is GitHub\'s required check.'
+    + '. What Ready needs is core\'s readiness contract (core/readiness.ts).'
 }
 
 // repo undefined: the call names no repository the guard could read.

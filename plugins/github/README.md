@@ -221,15 +221,15 @@ github: <owner/name>#<n> out of draft to run CI, still Not Ready
 ## Guards
 
 **Ready.** Taking a pull request out of draft and merging it
-(`gh pr merge --auto` included) need the conditions the gate holds (CI is GitHub's
-required check), through the tool (`pr-ready`, `pr-merge`) and through the
+(`gh pr merge --auto` included) need the `Ready` label, which the gate puts itself
+just before the act when the whole contract holds at the head, CI green included, through the tool (`pr-ready`, `pr-merge`) and through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
 The act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
 ```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts); CI is GitHub's required check.
+github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts).
 ```
 
 A pull request opened out of draft is refused with `github: <act> refused: open it

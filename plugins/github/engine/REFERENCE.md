@@ -335,8 +335,8 @@ none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `
 on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head for the conditions core's readiness contract gives the gate (« Records »
-above); CI is GitHub's required check. A `--match-head-commit` or a
+ready at its head as core's readiness contract defines it (« Records » above), CI green
+included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
 `pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
 act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
