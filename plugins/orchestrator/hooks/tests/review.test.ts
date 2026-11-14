@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
 import { NOT_ORCHESTRATOR, findingsOf, register as registerReview } from '../review.ts'
-import { PLAN_NEEDS } from '../../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
@@ -150,6 +150,24 @@ test('the plan\'s schema names the needs core\'s readiness contract gives each c
   await started!(dollar, {}, async () => undefined)
   const plan = registered.find((t) => t.name === 'review').inputSchema.properties.plan.properties
   for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
+})
+
+test('the plan\'s schema says a required review takes its rounds, up to core\'s cap, and the tool passes them to github', async () => {
+  let started: Function | null = null
+  registerReview((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    if (args[0] === 'session.start') started = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const registered: any[] = []
+  const fx = fake('Orch: belt')
+  const dollar = { ...fx.dollar, tool: { ...fx.dollar.tool, register: async (tool: unknown) => { registered.push(tool) } } }
+  await started!(dollar, {}, async () => undefined)
+  const description = registered.find((t) => t.name === 'review').inputSchema.properties.plan.description
+  expect(description).toContain('"required: max <n>"')
+  expect(description).toContain('1 to ' + REVIEW_ROUNDS.cap)
+  const planned = fake('Orch: belt [a1b2c3]', { result: 'github: check plan of acme/thing#164' })
+  await handler()(planned.dollar, { pr: 164, repo: 'acme/thing', plan: { review: 'required: max 2' } })
+  expect(planned.calls).toEqual([{ tool: 'mcp__github__record', pr: 164, repo: 'acme/thing', plan: { review: 'required: max 2' } }])
 })
 
 // ---- each finding's decision: kept for the correction round, or set aside with its reason ----

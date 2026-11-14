@@ -95,6 +95,8 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 ## The correction round runs one notch above its phase
 
+How many rounds a pull request runs is its check plan's `review` max (github `check-plan.ts`).
+
 `pick` ends with `corrective=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it; the phase itself is never retried at its own pair. `--class corrective` serves a correction round whose phase's pair is unknown: it runs at that call's `pair=` line; its `corrective=` line is not read.
 
 ## Explore one notch, never more
