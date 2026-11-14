@@ -7,7 +7,8 @@
 // failure never throws out of the handler: the answer is one `record:` line,
 // the path written or `none` with the reason.
 import type { NormsScopeMark } from '../types/index.d.ts'
-import { endSkillCheck } from './guards.ts'
+import { endSkillCheck, spawned } from './guards.ts'
+import { reportPathOf, verdictLine } from '../core/verdict.ts'
 
 export const CHECK_DONE_TOOL = 'mcp__norms__check_done'
 const GH_TOOL = 'mcp__github__gh'
@@ -255,7 +256,15 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
       return { result: none(NO_GITHUB) }
     }
     if ('why' in recorded) return { result: none(recorded.why) }
-    return { result: `record: ${recorded.text}` }
+    // In a session the orchestrator spawned, the answer ends on the verdict line its agent sends up.
+    if (!(await spawned($))) return { result: `record: ${recorded.text}` }
+    const line = verdictLine({
+      repo, pr, head,
+      verdict: `norms ${open === 0 ? 'pass' : 'fail'}: ${fixed} fixed, ${passed} passed, ${open} open`,
+      blocking: open === 0 ? [] : [`${open} open finding(s), in the check's report`],
+      report: reportPathOf(`report: ${recorded.text}`),
+    })
+    return { result: `record: ${recorded.text}\n${line}` }
   } catch (err: any) {
     return { result: none(String(err?.message ?? err).trim()) }
   }

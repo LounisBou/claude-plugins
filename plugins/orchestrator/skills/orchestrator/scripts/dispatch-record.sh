@@ -3,7 +3,7 @@
 #
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
-#   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
+#   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
@@ -43,8 +43,8 @@
 #
 # `review` and `ready` carry the second rule the record is asked to hold: a pull request is
 # ready only when a review session read ITS head (either side may abbreviate the other, from
-# 7 characters) and the project's own norms check ran there - or when the head is the one
-# correction round that review produced, which the orchestrator verified on the artifact.
+# 7 characters) - or when the head is the one correction round that review produced, which the
+# orchestrator verified on the artifact.
 # A row with no review is refused, as the github ready gate refuses a pull request with no
 # review at its head. `fixed` with no review, or a second time, records what it was given
 # and warns.

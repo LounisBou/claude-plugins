@@ -16,6 +16,7 @@
 // passes its reads in here.
 import { MACHINE_LINE, URGENT_LINE, machineLine, blocksNothing, chainEntries } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
+import { cutAt, shorten, VERDICT_LIMIT } from '../core/verdict.ts'
 
 // The question a report carries is cut past this many characters, and the cut is said:
 // a coordinator's round needs the question, not a whole turn's narrative.
@@ -77,6 +78,26 @@ export function parseStatus(answer: string): Wait | null {
   const lines = answer.replace(/\s+$/, '').split('\n')
   const kind = STATUS_KIND[(matched[1] ?? '').toLowerCase() as keyof typeof STATUS_KIND]
   return { kind, blocks: (matched[2] ?? '').trim(), question: lines.slice(0, -1).join('\n').trim() }
+}
+
+// An agent's turn text held to the verdict limit before it is relayed: whole under it, else its
+// status line kept whole and the text above it cut, the cut naming the report the text names, or
+// saying it names none (the stop gate refused that turn once already: its text still goes up).
+export function heldReport(answer: string): string {
+  const text = answer.trim()
+  const short = shorten(text)
+  if (short.kind === 'whole') return answer
+  const lines = text.split('\n')
+  const status = lines.length > 1 && parseStatus(text) ? lines[lines.length - 1] : ''
+  const body = status ? lines.slice(0, -1).join('\n') : text
+  const cut = cutAt(body, status ? Math.max(0, VERDICT_LIMIT - status.length - 1) : VERDICT_LIMIT, short.kind === 'cut' ? short.path : null)
+  return status ? `${cut}\n${status}` : cut
+}
+
+// The refusal of an agent's message over the limit that names no report file: the one line
+// that says what to do instead.
+export function unnamedReport(length: number): string {
+  return `Your message to the orchestrator is ${length} characters, over its ${VERDICT_LIMIT}: write the full report to a file first, then send its verdict line naming it (report: <absolute path>).`
 }
 
 // The wait as its file last held it: the current wait, or the one a turn's start

@@ -288,10 +288,10 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "no|yes|yes|yes" \
   "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)|$(spells "$ORCH_REFS/briefs.md" "**Scratch lives in the session's own host scratchpad directory**")"
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
-# agent's report is capped, the « wrong or doubtful » line excepted, and no brief still
+# agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs cap the report" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" 'is never cut to fit the cap'; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes|yes" \
+  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
 check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
@@ -300,13 +300,10 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
-# The cap leaves the machine line where the orchestrator's gate reads it: last.
-check "the review report still ends with the norms-check line" "yes" \
-  "$(sed -n '/^## 4\. Report shape/,/^## 5\./p' "$ROOT/templates/agent-review-brief.md" | grep -v '^## 5\.' | grep -v '^$' | tail -1 | grep -qF 'End the report with one machine line and nothing after it: `norms-check:' && echo yes || echo no)"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
-# would cut the reviewer's words out of them.
-check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
-  "$(spells "$ROOT/templates/agent-comments-brief.md" "except the per-thread assessments: each is sent in full, the reviewer's words included")"
+# and the verdict limit would cut the reviewer's words out of them, so each goes whole to a file.
+check "the comments brief sends each per-thread assessment whole, in a file" "yes" \
+  "$(spells "$ROOT/templates/agent-comments-brief.md" "each per-thread assessment, the reviewer's words included, goes in full to a file its message names")"
 # The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
 # briefs ask for the status line it reads and no longer for a context read by hand, which
 # cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
@@ -1066,10 +1063,8 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review and its norms check before
-# its verdict » was written in the rulebook and in the review template, and was still broken
-# twice in one day: two rounds replaced the project's norms tool by a hand reading of its
-# norms file. A rule only prose carries is applied from memory. `review` records what a round
+# The gate. « Every agent-produced pull request gets its review before its verdict » was written
+# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
 # actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
@@ -1161,7 +1156,6 @@ check_status "a norms value that is neither tool nor none is refused" 1 bash "$R
 check "a refused review leaves the row as it was" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
-check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
 check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
 check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
@@ -2156,21 +2150,14 @@ check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1
 check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
-# and holding it to one would make the check noise nobody reads. What it IS held to is the
-# line its report must end on: a round that never reports its norms check leaves the
-# orchestrator nothing to record, and the readiness gate then refuses a head whose round did
-# read it. The rule lived in prose on both sides of the round and was skipped twice in one
-# day, so the brief is read for it before the dispatch rather than after.
+# and holding it to one would make the check noise nobody reads.
 review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"
-printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
 check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
 
 review_brief "$B/review-nogate.md"
-check_status "a review brief with no norms-check line is a finding" 1 bash "$LINT" "$B/review-nogate.md"
-check "the missing report line is named" "1" "$(bash "$LINT" "$B/review-nogate.md" 2>&1 | grep -c 'norms-check:')"
-check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 2>&1 | grep -c 'norms-check')"
+check_status "a review brief with no norms-check line passes: norms is on demand" 0 bash "$LINT" "$B/review-nogate.md"
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
@@ -4351,8 +4338,8 @@ check "a tier bound without an effort types the shipped tier effort" "1" "$(pcmd
 check "an unknown effort on spawn is a refusal" \
   "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p --effort huge 2>&1 | tail -1)"
-check "an auditor refuses an effort: it runs as its caller runs" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+check "an auditor given an effort alone is refused: it takes the pair, or neither" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'an auditor takes --model and --effort together')"
 check "rotate forwards the effort to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"

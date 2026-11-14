@@ -129,16 +129,6 @@ if ! head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'
     [ "$nrefs" -le 1 ] || say 1 "more than one session reference ($refs): one address, no example beside it"
 fi
 
-# 6. A review brief that never asks for the norms check to be REPORTED leaves the
-#    orchestrator with nothing to record, and its readiness gate then refuses a head whose
-#    round did read it. The rule lived in prose on both sides of the round and was skipped
-#    twice in one day; the line the report must end on is mechanical, so it is read
-#    here rather than discovered when the pull request cannot be declared ready.
-if is_class 'REVIEW agent'; then
-    grep -q 'norms-check:' "$brief" 2>/dev/null \
-        || say 1 "no norms-check: report line: the round's report must end on 'norms-check: tool <head>' or 'norms-check: none <head>', which is what the orchestrator records"
-fi
-
 # The awk helpers shared by the checks that must not read a forbidding clause as an order.
 # Both passes run under LC_ALL=C: under a UTF-8 locale a multibyte character (an em dash, a
 # guillemet) before a phrase made the byte-offset arithmetic below blind to it.

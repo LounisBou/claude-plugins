@@ -1784,3 +1784,31 @@ test('a severity unknown with no silent reader to name says so, never an empty l
 test('the block request overrides a reviewer prompt that allows prose « no findings »', () => {
   expect(REPORT_REQUEST).toContain('The block is due even then, in place of any prose such as "no findings" an earlier line allows.')
 })
+
+// The verdict line an orchestrator's agent sends up, last in the answer that ends the loop.
+const spawnedEnv = (on: any, value: string) => on('env.get', (_$: any, e: any) => ({ value: e.name === 'ORCHESTRATOR_SPAWNED' ? value : undefined }))
+
+test('in a session the orchestrator spawned, the loop ends on the verdict line naming the record', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  spawnedEnv(on, '1')
+  const out = await cleanLoop($)
+  const last = String(out.result).split('\n').at(-1)
+  expect(last).toBe(`claude-review#12 ${REVIEWED_HEAD.slice(0, 7)} — review pass (clean) — blocking: none — report: ${WRITTEN}`)
+})
+
+test('the verdict line names the files of the blocking findings left', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  spawnedEnv(on, '1')
+  const out = await runToMaxPasses($, 2)
+  expect(String(out.result).split('\n').at(-1)).toBe(`claude-review#12 ${REVIEWED_HEAD.slice(0, 7)} — review fail (max_passes) — blocking: f0, f1 — report: ${WRITTEN}`)
+})
+
+test('outside a session the orchestrator spawned, the loop ends on its record line', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  spawnedEnv(on, '')
+  const out = await cleanLoop($)
+  expect(String(out.result).split('\n').at(-1)).toBe('record: ' + WRITTEN)
+})

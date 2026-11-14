@@ -529,10 +529,9 @@ function review(ctx: Context, id: string, args: readonly string[]): void {
   const head = last(found, '--head')
   const norms = last(found, '--norms')
   if (head === '') die(ctx, 'review: --head is required')
-  // `tool` or `none`, and nothing else: `none` is a fact about the PROJECT - it ships no norms
-  // check - never a round's verdict that reading the file by hand was enough.
-  if (norms === '') die(ctx, 'review: --norms is required (tool when the project\'s norms check ran, none when it ships none)')
-  if (norms !== 'tool' && norms !== 'none') die(ctx, `review: unknown norms value: ${norms} (expected tool, or none when the project ships no norms check)`)
+  // Norms is on demand: --norms is given only when a norms check ran, `tool`, or the project ships
+  // none, `none`, and nothing else: `none` is a fact about the PROJECT.
+  if (norms !== '' && norms !== 'tool' && norms !== 'none') die(ctx, `review: unknown norms value: ${norms} (expected tool, or none when the project ships no norms check)`)
   // Only the LAST review is kept: the question `ready` asks is about the head in front of it now.
   const at = stamp(ctx)
   rewrite(ctx, id, row => {
@@ -644,11 +643,12 @@ async function ready(ctx: Context, id: string, args: readonly string[]): Promise
   const hash = pr.lastIndexOf('#')
   const labelCmd = kind === 'ui' ? `pr-readiness ${pr.slice(hash + 1)} ready on ${hash === -1 ? pr : pr.slice(0, hash)}` : 'pr-readiness <n> ready on <owner/repo>'
   const norms = text(or(field(row['review'], 'norms'), ''))
+  const normsNote = norms === '' ? '' : `, norms check ${norms}`
   if (sameCommit(ctx, reviewed, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${head}, norms check ${norms}; ${surfaceLine}`)
+    say(ctx, `ready: row ${id} reviewed at ${head}${normsNote}; ${surfaceLine}`)
     say(ctx, labelCmd)
   } else if (fixedHead !== '' && sameCommit(ctx, fixedHead, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${reviewed}, corrected and verified at ${head}, norms check ${norms}; ${surfaceLine}`)
+    say(ctx, `ready: row ${id} reviewed at ${reviewed}, corrected and verified at ${head}${normsNote}; ${surfaceLine}`)
     say(ctx, labelCmd)
   } else if (fixedHead !== '') {
     die(ctx, `ready: last review read ${reviewed}, its correction ${fixedHead}, head is ${head}: the head in front of you has been neither read nor verified`)

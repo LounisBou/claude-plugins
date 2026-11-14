@@ -40,6 +40,8 @@ import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from '
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
 import { MODE_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
+import { unnamedReport } from './relay.ts'
+import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 
 // The config dir, gauge.ts's own resolution: $ never crosses an import, so
@@ -391,7 +393,30 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, `the coordinator could not be read for a message to ${to}: ${(err as Error).message}`)
       }
     }
-    const out = await next(e)
+    // An agent's message to an orchestrator over the verdict limit: cut to it with the pointer to the
+    // report it names, refused when it names none. The sender is read only for such a message; one
+    // that cannot be read lets the message through.
+    let sending = e
+    if (to && typeof e.message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
+      const short = shorten(e.message)
+      if (short.kind !== 'whole') {
+        try {
+          const sessionId = await $.session.id()
+          const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
+          if (roleOf(name) === 'agent') {
+            if (short.kind === 'unnamed') {
+              await logLine($, `a message of ${short.length} characters to ${to} names no report file: refused`)
+              return { deny: unnamedReport(short.length) }
+            }
+            await logLine($, `a message of ${e.message.length} characters to ${to} cut, its report at ${short.path}`)
+            sending = { ...e, message: short.text }
+          }
+        } catch (err) {
+          await logLine($, `the sender of a message to ${to} could not be read: ${(err as Error).message}`)
+        }
+      }
+    }
+    const out = await next(sending)
     if (!e.agentId && e.notify_when_idle === true && to && out && !out.isError && !out.deny) {
       try {
         const sessionId = await $.session.id()
@@ -528,6 +553,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       const role = roleOf(name)
       if (role === 'agent') {
+        // An agent's report over the verdict limit that names no report file: refused once, the way said.
+        const short = shorten(String(e.last_assistant_message ?? '').trim())
+        if (short.kind === 'unnamed') {
+          await logLine($, `stop gate: an agent's report of ${short.length} characters names no report file`)
+          return refuse(unnamedReport(short.length))
+        }
         const nudge = agentStopNudge(String(e.last_assistant_message ?? ''), hostTasks(e.background_tasks, e.session_crons))
         if (nudge === null) return next(e)
         await logLine($, 'stop gate: agent told what to end on')

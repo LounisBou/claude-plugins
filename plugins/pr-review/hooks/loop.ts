@@ -10,6 +10,8 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
+import { isSpawned } from '../core/env.ts'
+import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { READER_DENY, REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
@@ -372,7 +374,8 @@ const short = (head: string | undefined): string => head ? head.slice(0, 12) : '
 // was owed) writes only at the head the loop ended on. The line the loop's answer carries, and
 // whether the record is owed: a github call failed transiently and the write did not happen.
 // Never throws.
-async function recordReview($: any, exit: string, isRetry: boolean): Promise<{ line: string | null; isOwed: boolean }> {
+// `found` takes the repository and the pull request once they are known, for the verdict line.
+async function recordReview($: any, exit: string, isRetry: boolean, found: { repo?: string; pr?: number } = {}): Promise<{ line: string | null; isOwed: boolean }> {
   const outcome = verdict(exit)
   if (!outcome) return { line: null, isOwed: false }
   // A pass whose findings were never accepted read nothing: its count is no verdict.
@@ -410,12 +413,28 @@ async function recordReview($: any, exit: string, isRetry: boolean): Promise<{ l
     if (!repo) return none('the origin remote is not a GitHub repository')
     const pr = await pullOf($, repo, ask, dir)
     if (typeof pr === 'string') return { line: pr, isOwed }
+    found.repo = repo
+    found.pr = pr
     const written = await ask({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail, dir })
     if (written?.deny || written?.isError) return none(textOf(written) || 'refused')
     return { line: 'record: ' + textOf(written), isOwed: false }
   } catch (err: any) {
     return none(String(err?.message ?? err))
   }
+}
+
+// The verdict line an orchestrator's agent sends up (core's verdict.ts), last in the answer that ends
+// the loop, in a session the orchestrator spawned only: the review record is its report, and the
+// blocking findings' files of the last pass what blocks. Null outside such a session, or with no head.
+async function verdictFor($: any, exit: string, repo: string, pr: number, line: string): Promise<string | null> {
+  const spawned: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
+  if (!isSpawned(typeof spawned === 'string' ? spawned : undefined)) return null
+  const outcome = verdict(exit)
+  const headRun = await git($, ['rev-parse', 'HEAD'])
+  const head = String(headRun.stdout ?? '').trim()
+  if (!outcome || headRun.exitCode !== 0 || head === '') return null
+  const blocking = [...new Set((passFindings(loop.reports) ?? []).filter(isBlocking).map((f) => f.file))]
+  return verdictLine({ repo, pr, head, verdict: `review ${outcome.result} (${exit})`, blocking, report: reportPathOf(line.replace(/^record:/, 'report:')) })
 }
 
 // Every agent a pass launches is a reader of it, whatever its type, but a norms agent: the norms
@@ -517,9 +536,11 @@ export function register(on: any): void {
       loop.isRecorded = true
       loop.isRecordPending = true
       if (isFirst) loop.reviewedHead = await headOf($, loop.dir).catch(() => undefined)
-      const written = await recordReview($, String(loop.exit), isOwed)
+      const found: { repo?: string; pr?: number } = {}
+      const written = await recordReview($, String(loop.exit), isOwed, found)
       loop.isRecordPending = written.isOwed
-      if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) }
+      const verdict = written.line && found.repo && found.pr ? await verdictFor($, loop.exit, found.repo, found.pr, written.line) : null
+      if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) + (verdict ? '\n' + verdict : '') }
     }
     return { result: text, ...(answer.error ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
