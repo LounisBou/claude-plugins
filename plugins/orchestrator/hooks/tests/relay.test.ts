@@ -1530,6 +1530,61 @@ for (const [label, end] of [
   })
 }
 
+// A question asked with `ask` (question.ts, `v` 2) follows its asker as the relay's entries do:
+// withdrawn when its session ends or hands over with no successor, moved to a successor it learnt.
+const askedObject = (id: string, session: string, over: Record<string, unknown> = {}) => ({
+  v: 2, id, sender: { session, name: session === 's-one' ? 'Orch: belt' : 'Orch: other', role: 'orchestrator', machine: 'box-1' },
+  subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which merges first?',
+  choices: [], recommended: null, why: null, blocks: 'phase 3', status: 'open', at: '2026-10-30T16:00:00.000Z', answer: null, seq: 1, ...over,
+})
+function withAsked(fx: ReturnType<typeof fake>) {
+  const mine = askedObject('q-mine', 's-one')
+  const theirs = askedObject('q-theirs', 's-two')
+  const done = askedObject('q-done', 's-one', { status: 'answered', answer: { text: 'A', by: 'tab', at: 'T', settler: 'Orch: belt' } })
+  for (const asked of [mine, theirs, done]) fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  const read = (id: string) => JSON.parse(fx.files.get(`${ROUND}/${id}.json`)!)
+  return { mine, theirs, done, read }
+}
+
+for (const [label, end, why] of [
+  ['its session end', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' }), "the sender's session ended"],
+  ['its hand-over with no successor', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
+] as const) {
+  test(`a question asked with ask is withdrawn by ${label}, and no other session's, and none settled`, async () => {
+    const chains = mounted()
+    const fx = fake()
+    const { theirs, done, read } = withAsked(fx)
+    await end(chains, fx)
+    expect([read('q-mine').status, read('q-mine').answer?.text, read('q-mine').answer?.by]).toEqual(['withdrawn', why, 'sender'])
+    expect(read('q-theirs')).toEqual(theirs)
+    expect(read('q-done')).toEqual(done)
+  })
+}
+
+test('a question asked with ask withdrawn at its session end is told settled to the coordinator that was shown it, the other not', async () => {
+  const chains = mounted()
+  const fx = fake()
+  withAsked(fx)
+  const other = askedObject('q-unseen', 's-one', { subject: 'tag order' })
+  fx.files.set(`${ROUND}/${other.id}.json`, JSON.stringify(other) + '\n')
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/round-listed.json`, JSON.stringify(['q-mine']) + '\n')
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const told = fx.sent.filter(s => s.text.startsWith('[module] Settled'))
+  expect(told.map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  expect(told[0].text).toBe("[module] Settled: Orch: belt's question since 2026-10-30T16:00:00.000Z (entry q-mine) — session ended. Already closed: drop it, never ask or relay it again, present the next.")
+})
+
+test('a question asked with ask moves to the successor the takeover named, still open, at the session end', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const { mine, theirs, read } = withAsked(fx)
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expect(read('q-mine')).toEqual({ ...mine, sender: { ...mine.sender, session: 's-two', name: 'Orch: belt-2' }, movedFrom: 's-one', seq: 2 })
+  expect(read('q-theirs')).toEqual(theirs)
+})
+
 test('a successor not found on this machine is recorded by its name: the entries move to that name', async () => {
   const { chains, fx, asked } = await senderWithEntries()
   await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2', 'Takeover confirmed.\nAgents re-addressed.'))
