@@ -3,7 +3,7 @@
 `routing.py pick` reads a pair from the most specific table that has one: the project's, its
 profile's, the global one, a shipped default, then the tier table of the skill, passing over an
 entry measured on smaller work than the phase it is given (section 5). This reference
-is how those tables are made, in the order the operator runs the steps. Every command is
+is how those tables are made, step by step. Every command is
 `routing.py <subcommand>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`),
 and everything it writes lives under `<state dir>/routing/`: measured tables name model
 identifiers, so they never enter the plugin.

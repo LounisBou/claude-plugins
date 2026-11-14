@@ -6,9 +6,8 @@ The same convention as the commits: `<type>[(<scope>)]: <description>`.
 One line, stating what the change does, with no semicolon. No workflow vocabulary —
 the same words forbidden in commit messages.
 
-Short and concise: about sixty characters at most, the subject of the change in a
-few words after the conventional prefix, with no clause explaining how or why — that
-belongs in the description.
+Short: about sixty characters at most, the subject of the change in a few words
+after the conventional prefix, no clause on how or why — that belongs in the description.
 
 Too long: `test(device-server): stop the listen tests on their awaited event instead of a fixed timer`
 Right: `test(device-server): fix flaky listen tests`
@@ -55,7 +54,7 @@ With nothing to do at deployment and no linked PR, a description ends with:
 **Related PRs:** none
 ```
 
-No heading of any kind: the description starts directly with the summary text, never
+No heading: the description starts directly with the summary text, never
 with `## Summary` or any other title. State what the PR does, never what it does not
 do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
 a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
@@ -68,7 +67,7 @@ other than the four sections, anywhere in the description.
 The four sections come after the summary text, in that order, each in that exact shape
 whatever the number of items: the bold label alone on its line, then one item per line,
 nothing else on the line. A TODO Staging or TODO Prod item is a task-list checkbox,
-`- [ ] <step>`, never a bare `- ` bullet: the operator ticks it as the step is done. A TODO
+`- [ ] <step>`, never a bare `- ` bullet. A TODO
 item stands alone:
 it never points to another item ("do the same edit", "same as above", "likewise") and writes
 the action in full, the file, the value before and after, and the host or environment. One
@@ -78,8 +77,8 @@ item is a `- ` bullet — the line break and the dash are what keep
 GitHub's preview rendering every link as a pull request card. Never a heading, never a
 link inline after the label: `none` is the one thing ever written beside a label, and
 never beside items. A label with nothing after it and no item below is an empty section
-left unsaid: write `none`. Staging and prod TODOs are always kept apart, even when
-they are the same items: then both sections list them. `**PRs Dependency:**` lists the PRs
+left unsaid: write `none`. Staging and prod TODOs are always kept apart, both
+listing the items they share. `**PRs Dependency:**` lists the PRs
 that ship before this one or at the same time: that is the delivery prerequisite, their
 deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
 migrations, restarts or config): with no deploy action of its own, a PR has both TODOs at
@@ -90,12 +89,11 @@ batch, the origin of the bug, or a link of that strength. A follow-up PR, one th
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always, with no
 semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
---draft`, the house default), and leaves draft only once it is ready (see « Ready
-pull requests »). Outside
+--draft`, the house default), and leaves draft only once it is ready. Outside
 auto-merge, leaving draft (a CI undraft aside) is the operator's, on GitHub after their
-review, and a merge needs their explicit word, given through this tool. In a
-repository in auto-merge, the merge, leaving draft and the deployment its method
-foresees need no approval of the operator once the pull request is ready. A repository
+review, and a merge needs their explicit word, given through this tool. In an
+auto-merge repository, the merge, leaving draft and the deployment its method
+foresees need no operator approval once the pull request is ready. A repository
 enters or leaves auto-merge only through `auto-merge-set`, on the operator's recorded answer.
 Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.
