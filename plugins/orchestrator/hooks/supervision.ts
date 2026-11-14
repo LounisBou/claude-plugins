@@ -2440,6 +2440,12 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
       await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
       return
     }
+    const record = entry.kind === 'operator' ? recordedAnswer(await readRecords($), entry) : null
+    if (record) {
+      await answerFromRecord($, entry, record)
+      await writeWait($, sessionId, { ...patch, relayed: null, name, pid })
+      return
+    }
     await changeEntry($, roundPath(await stateDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
     // A coordinator told this entry closed at the prompt is told it is open again.
@@ -2482,6 +2488,41 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
   } else {
     await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
+}
+
+// A question its project's record already answers (recordedAnswer) never reaches him: its entry is
+// written answered with that answer, its channel and its date, naming the entry that holds it, and
+// the asking session, this one, is told at once.
+async function answerFromRecord($: any, entry: RoundEntry, record: NonNullable<ReturnType<typeof recordedAnswer>>): Promise<void> {
+  const answer: RoundAnswer = { text: recordedChoice(record.answer), by: record.answer.by, at: record.answer.at, record: record.entry.id }
+  await changeEntry($, roundPath(await stateDir($), entry.id), () => ({ ...entry, status: 'answered', answer }))
+  await logLine($, `round: ${entry.id} answered from the record ${record.entry.id}`)
+  const taken = await $.prompt.submit({ text: recordedText(entry, record) })
+  if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, `round: the host dropped the record's answer to ${entry.id}: ${String(taken.drop)}`)
+}
+
+// The most archived entries the record is read from, the newest: the read runs within the turn's
+// relay bound.
+const ARCHIVE_READ = 300
+
+// The entries the record is read from: the round's, and the newest its archive keeps
+// (`coordinator.sh round-archive`). An archive never written, or unreadable, holds none.
+async function readRecords($: any): Promise<RoundEntry[]> {
+  const dir = `${await stateDir($)}/round/archive`
+  const archived: RoundEntry[] = []
+  try {
+    const files = (await $.fs.list(dir) as { name: string; kind: string; mtimeMs?: number }[])
+      .filter(file => file && file.kind === 'file' && file.name.endsWith('.json') && !isTemporary(file.name))
+      .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+      .slice(0, ARCHIVE_READ)
+    for (const file of files) {
+      const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
+      if (entry) archived.push(entry)
+    }
+  } catch {
+    // No archive: the round alone.
+  }
+  return [...(await readRound($)).map(({ entry }) => entry), ...archived]
 }
 
 // The operator typed a prompt (composer or bridge) in an orchestrator whose relayed question
