@@ -274,7 +274,7 @@ Both routes are `hooks/e2e-scope.ts`'s.
 - **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
   head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
-  `required[: max <n>]|none` (core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
+  `required[: max <n>]|one-pass` (core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
   in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;
   `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
