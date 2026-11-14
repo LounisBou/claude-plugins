@@ -125,7 +125,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the four hold (« Guards ») |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
@@ -152,8 +152,8 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `protect-check` | | Whether the default branch refuses force-push and deletion |
-| `protect-apply` | | Put the ruleset refusing both in place, when missing |
+| `protect-check` | `[--require-ci]` | Whether the default branch refuses force-push and deletion; with the flag, whether it requires the CI check core's readiness contract names |
+| `protect-apply` | `[--require-ci]` | Put the ruleset refusing both in place, when missing; with the flag, it requires that check too (once the workflow's job reports it), and a check it already requires stays |
 
 ### Auto-merge
 
@@ -277,7 +277,7 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass` or `waived`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
+- What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
 - The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in the `Ready` line; a `fail` holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
@@ -335,28 +335,22 @@ none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `
 on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head: a clean review and passed or waived E2E recorded at
-the head `pr-gate` reads (« Records » above), and green CI. A `--match-head-commit` or a
+ready at its head for the conditions core's readiness contract gives the gate (« Records »
+above); CI is GitHub's required check. A `--match-head-commit` or a
 `pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
-act: the gate alone decides readiness. Under enforce every act is refused, before any question, with `github: <act>
+act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
-still carrying `Ready` goes back to `Not Ready`.
-
-Under warn, the phase this release ships (`CLAUDE_GITHUB_READY_ENFORCE=1` brings enforce
-forward), the other acts go ahead with `github: <act> on <owner/name>#<n> is not ready, let
-through while the guard only warns. Missing: <item>`, and one JSON line `{at, session, repo,
-pr, head, act, route, missing}` in `guard-warn.log`, in the plugin's data directory. Under
-enforce, opening out of draft is refused, and a readiness `pr-gate` could not read with
-`github: readiness of <owner/name>#<n> unverified: <error>`, a `Ready` label in both phases. A
-shell merge, undraft or `Ready` label naming no repository (`-R`, `--repo` or a URL) is refused
-in both phases; a GraphQL merge or undraft names no pull request and is always refused, with
+still carrying `Ready` goes back to `Not Ready`. Opening out of draft is refused, and a
+readiness `pr-gate` could not read with `github: readiness of <owner/name>#<n> unverified:
+<error>`. A shell merge, undraft or `Ready` label naming no repository (`-R`, `--repo` or a
+URL) is refused; a GraphQL merge or undraft names no pull request and is always refused, with
 the tool call to run. A GraphQL query the command does not show (`-F query=@file`, `--input`, a
 shell variable or substitution) is refused outside auto-merge, an unverified readiness inside
 it. `gh.py --stdin-json` run from Bash is refused: its request cannot be read.
 
 **The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
-`pr-checks` read through the tool, the module reads the three at the open pull request's head
-and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`: the gate's
+`pr-checks` read through the tool, the module reads readiness, CI included, at the open pull request's head
+and puts `Ready` when nothing is missing, or `Not Ready` back on one carrying `Ready`: the gate's
 act. It reads the head again just before writing, and writes nothing on a moved head or on
 records it cannot list. Outside auto-merge one the plugin undrafted for CI
 goes back to draft first. Its line follows a record's output; after a read it is a line of
@@ -382,7 +376,7 @@ The engine's texts run from Bash (`pr-create`, `pr-comment`, `pr-update`, `revie
 `thread-reply`, `comment-edit`, `review-pending-*`) wait for the writing rules to be read
 and are linted, `--title` and the `--body-file` file, as the tool's call would be. An engine
 act whose pull request number cannot be read (`pr-merge {}` from an `xargs`, `pr-merge "$PR"`)
-is refused in both phases, never read against the current branch's: write the number.
+is refused, never read against the current branch's: write the number.
 
 What the guards do not read on that route:
 

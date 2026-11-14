@@ -1834,6 +1834,25 @@ deletion: allowed" "$(gh7 protect-check)"
 gh7 protect-apply >/dev/null
 check "protect-apply updates its own ruleset rather than making a second" "PUT /repos/acme/thing/rulesets/9" "$(sent7 | cut -d' ' -f1-2)"
 
+CI_CHECK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["conditions"]["ci"]["check"])' "$ROOT/core/readiness.json")
+protect_fix ci-bare '[{"type":"non_fast_forward","ruleset_id":3},{"type":"deletion","ruleset_id":3}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+check "protect-check --require-ci names the CI check readiness requires when nothing requires it" "protected main; the $CI_CHECK check not required
+force-push: refused by the ruleset
+deletion: refused by the ruleset
+the $CI_CHECK check: not required" "$(gh7 protect-check --require-ci)"
+gh7 protect-apply --require-ci >/dev/null
+check "protect-apply --require-ci rewrites its ruleset with the CI check readiness names, nothing bypassing it" \
+  'PUT /repos/acme/thing/rulesets/3 {"bypass_actors": [], "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH"]}}, "enforcement": "active", "name": "protect the default branch", "rules": [{"type": "non_fast_forward"}, {"type": "deletion"}, {"parameters": {"required_status_checks": [{"context": "'"$CI_CHECK"'"}], "strict_required_status_checks_policy": false}, "type": "required_status_checks"}], "target": "branch"}' "$(sent7)"
+
+protect_fix ci-held '[{"type":"non_fast_forward","ruleset_id":3},{"type":"deletion","ruleset_id":3},{"type":"required_status_checks","ruleset_id":3,"parameters":{"required_status_checks":[{"context":"'"$CI_CHECK"'"}]}}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+check "protect-apply --require-ci writes nothing when the ruleset requires the check already" "already protected main" "$(gh7 protect-apply --require-ci | head -1)"
+check "protect-apply --require-ci's no-op sends nothing" "" "$(sent7)"
+
+protect_fix ci-other '[{"type":"non_fast_forward","ruleset_id":3},{"type":"required_status_checks","ruleset_id":3,"parameters":{"required_status_checks":[{"context":"'"$CI_CHECK"'"}]}}]' "$NONE" '[{"id":3,"name":"protect the default branch"}]'
+gh7 protect-apply >/dev/null
+check "protect-apply without --require-ci keeps the CI check its ruleset already requires" "required_status_checks" \
+  "$(sent7 | sed -n 's/.*"type": "\(required_status_checks\)".*/\1/p')"
+
 new7 ensure-empty
 check "labels-ensure creates both labels on a bare repository" "created Ready
 created Not Ready" "$(gh7 labels-ensure)"

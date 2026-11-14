@@ -4,14 +4,11 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { ACCEPTANCE, accepts, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { carriesAcross, heldBy, missingEvidence, type Holder } from '../core/readiness.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import type { Excused } from './check-plan.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
-
-// warn: an act that is not ready goes ahead with one warn line. enforce: it is
-// refused with what it misses.
-export type Phase = 'warn' | 'enforce'
 
 // merge: a merge or an auto-merge armed. undraft: out of draft. create: a pull
 // request opened out of draft. create-draft: one opened as a draft. redraft: one
@@ -584,10 +581,8 @@ export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<K
 }
 
 // A record an earlier head carries to a head of the same diff, when it is the latest of its kind
-// across the earlier heads of that diff: any record that lets its kind pass.
-export function carries(record: PrRecord): boolean {
-  return accepts(record)
-}
+// across the earlier heads of that diff (core's readiness contract).
+export const carries = carriesAcross
 
 // The operator's waiver of a kind of the pull request at an earlier head, whatever its diff: it stands for every
 // later head while it is the newest record of that kind across them. A record file there that may be a later
@@ -614,34 +609,34 @@ export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
   return { kind, from: '', waived: by + ', ' + at }
 }
 
-// What a pull request misses to be ready at its head: the three conditions,
-// and before them an act that cannot be ready at all (closed, moved head).
+// What a pull request misses to be ready at its head, as core's readiness contract defines it
+// (readiness.ts), and before that an act that cannot be ready at all (closed, moved head).
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = []): string[] {
+// holder: only the conditions that holder refuses a merge on; every condition, omitted.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = [],
+  holder?: Holder): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
   const { read, skipped } = headRecordsRead(gate, files)
-  const latest = latestByKind(read)
-  let kindMissing = false
-  for (const kind of KINDS) {
-    const record = latest.get(kind)
-    if (record && accepts(record)) continue
-    if (excused[kind] && record?.result !== 'fail') continue
-    if (kind === 'norms' && !record && !excused.required?.includes('norms')) continue // on demand unless the plan requires it
-    if (!record && carried.some((c) => c.kind === kind)) continue
-    kindMissing = true
-    if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
-    else {
-      missing.push(kind + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer
-        + (record.detail ? ', ' + record.detail : ''))
-    }
+  const ci = gate.ci
+  const lacking = missingEvidence({
+    latest: latestByKind(read),
+    excused: new Set(KINDS.filter((kind) => excused[kind])),
+    required: new Set(excused.required ?? []),
+    carried: new Set(carried.map((c) => c.kind)),
+    ciGreen: ci.result === 'SUCCESS',
+  })
+  const kinds = (holder ? heldBy(lacking, holder) : lacking).flatMap((item) => item.condition === 'ci' ? [] : [item])
+  for (const { condition, record } of kinds) {
+    if (!record) missing.push(condition + ': no record at ' + head7(gate.head))
+    else missing.push(condition + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer + (record.detail ? ', ' + record.detail : ''))
   }
   // A file skipped is named only beside a kind it may have been meant for: with
-  // the three accepted it blocks nothing, as nobody may delete it.
-  if (kindMissing) for (const name of skipped) missing.push('unreadable record ' + name)
-  const ci = gate.ci
+  // the kinds accepted it blocks nothing, as nobody may delete it.
+  if (kinds.length > 0) for (const name of skipped) missing.push('unreadable record ' + name)
+  if (holder && holder !== 'github') return missing
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS') {
     const skippedChecks = ci.skipped ?? []
@@ -663,8 +658,8 @@ export function carriesReady(gate: Gate): boolean {
   return gate.labels.some((label) => label.toLowerCase() === READY)
 }
 
-// The label the gate puts on an open pull request, or undefined to leave it: Ready when the three
-// hold and it does not carry Ready alone, Not Ready when it carries Ready and they no longer hold.
+// The label the gate puts on an open pull request, or undefined to leave it: Ready when nothing is
+// missing and it does not carry Ready alone, Not Ready when it carries Ready and something is.
 // A closed or merged one keeps its labels.
 export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
   if (gate.state !== 'open') return undefined
@@ -685,12 +680,11 @@ const tail = (missing: string[], carried: Carried[] = []) =>
 
 // Why leaving draft is refused outside auto-merge, whatever the route.
 const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
-  + ' by the gate once the three conditions hold'
+  + ' by the gate once the pull request is ready'
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
-    + '. A pull request is ready when a clean review, passed E2E and'
-    + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
+    + '. What Ready needs is core\'s readiness contract (core/readiness.ts); CI is GitHub\'s required check.'
 }
 
 // repo undefined: the call names no repository the guard could read.
@@ -794,10 +788,6 @@ export function gateMovedLine(repo: string, pr: number, read: string, now: strin
 
 export function gateUnwrittenLine(repo: string, pr: number, error: string): string {
   return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
-}
-
-export function warnLine(act: string, repo: string, pr: number | string, missing: string[]): string {
-  return 'github: ' + act + ' on ' + repo + '#' + pr + ' is not ready, let through while the guard only warns. ' + tail(missing)
 }
 
 export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'

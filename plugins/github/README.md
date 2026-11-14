@@ -77,7 +77,7 @@ it. `/github:doctor` then confirms everything is ready.
   takes the other off, and `labels-ensure` creates both on a repository that
   lacks them. `pr-create` labels the new pull request (`Not Ready` for a draft,
   `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
-  `Ready` is the gate's: put by the module once the three hold (« Ready pull
+  `Ready` is the gate's: put by the module once the pull request is ready (« Ready pull
   requests »), and refused by hand on a pull request that is not ready.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's words quoted verbatim, and `auto-merge-list`
@@ -95,9 +95,13 @@ it. `/github:doctor` then confirms everything is ready.
   button. While it is open it reads the PRs again every minute and after each
   write through the tool, and a toast says when a PR's CI ends in success or
   failure.
-- **`/github:protect [apply]`** — whether the default branch refuses a force-push and a
+- **`/github:protect [apply] [ci]`** — whether the default branch refuses a force-push and a
   deletion on GitHub itself (a ruleset, or the classic branch protection); `apply` puts
-  the ruleset « protect the default branch » in place, administrators included.
+  the ruleset « protect the default branch » in place, administrators included. `ci` also
+  reads, or with `apply` requires, the status check core's readiness contract names
+  (`conditions.ci.check`), so GitHub refuses a merge until it is green; a check the ruleset
+  already requires stays when it is rewritten. Apply `ci` only once the workflow's job of that
+  name runs on the default branch: a required check no job reports blocks every pull request.
 - **`/github:install`, `/github:doctor`** — set up `gh` and its sign-in
   (install only), run the dependency diagnostic and name its exit code with no
   model turn; where mods do not load, the markdown commands run the same
@@ -185,28 +189,17 @@ each granted environment. A Write, an Edit or a shell command on the file is ref
 
 ## Ready pull requests
 
-A pull request is ready when three things hold at its current head commit: a
-clean review, passed end-to-end tests (or the operator's waiver) and green
-CI, but for what the pull request's check plan does not
-require. A norms check is on demand: it blocks only when it ran at the head and
-failed. The `Ready` label, leaving
-draft and a merge need the three; a draft opens with `Not Ready`, and a push to
-the branch puts `Not Ready` back. A rebase that leaves the pull request's own
-commits unchanged carries its review and norms check to the new head; an E2E waiver stands for every later head. CI is read from GitHub: no check at all is
-green, a check that failed, still runs, was skipped, or is neutral on a draft
-is not. The others are records, one small JSON file per run under
-`${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by
-their producers, which the record contract (core's `pr-record.ts`) declares:
-pr-review's auto-fix-loop for the review, `/norms:check` for the norms, and
-`mcp__github__record` for the end-to-end run. A review record written by the
-session that pushed the head is refused. A record counts only at the head it names, so a new commit voids them
-all without anything deleted. `engine/REFERENCE.md` « Records » holds the
-contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
+What Ready needs at a head, who holds each condition and what a new head voids are core's
+readiness contract (`core/readiness.ts`); the gate computes it there (`missingEvidence`). The
+records are small JSON files under
+`${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by the producers
+core's `pr-record.ts` declares; a review record written by the session that pushed the head is
+refused. `engine/REFERENCE.md` « Records » holds the record contract.
 
 The module puts `Ready` itself: after a record is written, and after a
-`pr-gate` or `pr-checks` read through the tool, it reads the three at the head
-and puts `Ready` when they hold, or `Not Ready` back on a pull request that
-carries `Ready` and no longer holds them, with one line of its own. That label
+`pr-gate` or `pr-checks` read through the tool, it reads readiness at the head, CI included,
+and puts `Ready` when nothing is missing, or `Not Ready` back on a pull request that
+carries `Ready` and no longer is ready, with one line of its own. That label
 is the gate's act, not the session's, though a read brought it about. The head
 is read again just before the label is written: a head that moved gets none.
 `pr-gate`'s answer stays JSON, with the labels the gate left. A CI that turns
@@ -216,7 +209,7 @@ green line.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
 still `Not Ready`, as long as no check of its head has passed. Outside
-auto-merge, once the three hold the gate puts back to draft only a pull request
+auto-merge, once it is ready the gate puts back to draft only a pull request
 the plugin itself took out of draft for its CI (a mark kept in the data directory),
 then puts `Ready`; one the operator took out of draft keeps its place. That undraft
 runs in every repository, with one transcript line:
@@ -225,42 +218,32 @@ runs in every repository, with one transcript line:
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
 ```
 
-This release ships the ready guard in its warn phase: an act that is not ready,
-the `Ready` label aside, goes ahead with one transcript line and one JSON line in `guard-warn.log`, in
-the plugin's data directory. `CLAUDE_GITHUB_READY_ENFORCE=1` in the
-environment brings the enforce phase forward, where it is refused.
-
 ## Guards
 
 **Ready.** Taking a pull request out of draft and merging it
-(`gh pr merge --auto` included) need the three conditions above, through the tool
-(`pr-ready`, `pr-merge`) and through the
+(`gh pr merge --auto` included) need the conditions the gate holds (CI is GitHub's
+required check), through the tool (`pr-ready`, `pr-merge`) and through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
-Under enforce
-the act is refused before anyone is asked, and a pull request still carrying
+The act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
 ```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
+github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts); CI is GitHub's required check.
 ```
 
-Under warn the act goes ahead with `github: <act> on <owner/name>#<n> is not
-ready, let through while the guard only warns. Missing: <item>`. A pull request
-opened out of draft in the shell outside auto-merge is refused in both phases, as
-`gh pr ready` is, and anywhere under enforce with `github: <act> refused: open it
+A pull request opened out of draft is refused with `github: <act> refused: open it
 as a draft, then leave draft once ready.`, and a readiness GitHub did not answer
 with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
 draft always passes, and `gh pr create --draft` and `gh pr ready --undo` put
 `Not Ready` on, as the tool does. A merge, an undraft or a `Ready` label in the
-shell names its repository, else under both phases (the label under enforce
-only) it is refused with `github: <command> refused: name the repository with -R
-owner/name.`; a GraphQL merge or undraft names none and is always refused, with
-the tool call to run instead.
+shell names its repository, else it is refused with `github: <command> refused: name
+the repository with -R owner/name.`; a GraphQL merge or undraft names none and is
+always refused, with the tool call to run instead.
 
 **Auto-merge split.** In the shell, a merge or leaving draft runs only in a
 repository listed in `auto-merge.json`, and the ready guard applies on top.
-Elsewhere it is refused in both phases, so the operator is asked in the
+Elsewhere it is refused, so the operator is asked in the
 conversation through the tool:
 
 ```

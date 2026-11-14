@@ -21,8 +21,8 @@ import {
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
-  kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
-  type Act, type Carried, type Gate, type Labelling, type Phase, type RecordFile,
+  kindRefusal, recordKindFor, toolAct, toolLabelling, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
+  type Act, type Carried, type Gate, type Labelling, type RecordFile,
 } from './ready.ts'
 
 export const PANE_ID = 'github-prs'
@@ -675,35 +675,15 @@ export async function diagnose($: any, check = false): Promise<string> {
 // ---- the ready guard and the auto-merge split ----
 
 /*
- * A pull request is ready when a clean review, passed
- * E2E and green CI all stand at its current head (engine/writing/pull-requests.md « Ready
- * pull requests »). Marking it Ready, taking it out of draft and merging it
- * need the three, through the tool and through Bash alike. Under the warn
- * phase an act that is not ready goes ahead with one warn line, under the
- * enforce phase it is refused. In a repository not in auto-merge, leaving
- * draft is refused on every route, and a merge is refused through Bash: the
- * tool asks the person for it. A pull request that carries Not Ready and none
- * of whose checks has passed yet may leave draft for its CI to run, still Not
- * Ready, in every repository.
+ * A pull request is ready as core's readiness contract defines it (readiness.ts). Taking it out of
+ * draft and merging it need the conditions the gate holds, through the tool and through Bash alike,
+ * and an act that is not ready is refused; CI is GitHub's own required check. In a repository not in
+ * auto-merge, leaving draft is refused on every route, and a merge is refused through Bash: the
+ * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
+ * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
  */
 
-// The phase this release ships with.
-export const READY_PHASE: Phase = 'warn'
-// Set to 1 in the environment, it brings the enforce phase forward. It only
-// ever tightens: no variable turns a release's enforce phase back to warn.
-export const ENFORCE_ENV = 'CLAUDE_GITHUB_READY_ENFORCE'
-
-async function phaseOf($: any): Promise<Phase> {
-  if (READY_PHASE === 'enforce') return 'enforce'
-  try {
-    return (await $.env.get('CLAUDE_GITHUB_READY_ENFORCE')) === '1' ? 'enforce' : 'warn'
-  } catch {
-    return READY_PHASE
-  }
-}
-
 export const RECORD_TOOL = 'mcp__github__record'
-export const WARN_LOG = 'guard-warn.log'
 
 // A line in the transcript that never fails what it reports on.
 function note($: any, text: string): void {
@@ -1107,7 +1087,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     throw err
   }
   const carried = await carriedRecords($, gate, files)
-  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried), carried }
+  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried, 'gate'), carried }
 }
 
 /*
@@ -1193,46 +1173,6 @@ async function afterRead($: any, e: any, output: string): Promise<string> {
   return JSON.stringify({ ...known, labels: followed.labels, draft: followed.draft }, null, 2)
 }
 
-// A line added at the end of a file, the file created when absent. $.fs only
-// rewrites a file whole: a file already there is appended to by the shell, so
-// a read that fails or another session's line in between loses nothing.
-async function appendLine($: any, path: string, text: string): Promise<void> {
-  let present = true
-  try {
-    await $.fs.stat(path)
-  } catch {
-    present = false
-  }
-  if (!present) {
-    await $.fs.write(path, text)
-    return
-  }
-  const r = await $.process.run(['sh', '-c', 'cat >> "$1"', 'sh', path], { stdin: text, timeoutMs: 10_000 })
-  if (r.exitCode !== 0) throw new Error(r.stderr || 'the append exited ' + r.exitCode)
-}
-
-// One transcript line and one JSON line in the plugin's guard-warn.log.
-async function warnAct(
-  $: any, act: Act, route: 'tool' | 'bash', repo: string, pr: number | string, head: string, missing: string[],
-): Promise<void> {
-  note($, warnLine(act.name, repo, pr, missing))
-  try {
-    const dir = await dataDir($)
-    if (!dir) return
-    const path = dir + '/' + WARN_LOG
-    let session = ''
-    try {
-      session = String(await $.session.id() ?? '')
-    } catch {
-      // Logged without it.
-    }
-    const line = { at: new Date().toISOString(), session, repo, pr, head, act: act.name, route, missing }
-    await appendLine($, path, JSON.stringify(line) + '\n')
-  } catch {
-    // The transcript line stands for it.
-  }
-}
-
 async function labelNotReady($: any, repo: string, pr: number): Promise<void> {
   await runGh($, 'pr-readiness', { pr, state: 'not-ready' }, repo)
 }
@@ -1245,7 +1185,7 @@ async function prOfBranch($: any, repo: string, branch?: string): Promise<number
   return pull ? Number(pull.number) : undefined
 }
 
-// The enforce phase's refusal, which also takes Ready off a pull request
+// The refusal of an act that is not ready, which also takes Ready off a pull request
 // that still carries it, so the label never claims what the guard refused.
 async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Readiness): Promise<string> {
   const gate = r.gate as Gate
@@ -1259,24 +1199,19 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
   return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
 }
 
-// The Bash ready guard failed on its own: under warn the command goes on with
-// a warn line, under enforce it is refused as a readiness that could not be read.
-// An undraft outside auto-merge is refused on the list first, in both phases: only a CI
-// undraft passes there, and the failed read cannot tell whether this is one.
+// The Bash ready guard failed on its own: the command is refused as a readiness that could not be read.
+// An undraft outside auto-merge is refused on the list first: only a CI undraft passes there, and the
+// failed read cannot tell whether this is one.
 async function guardThrew($: any, act: Act | undefined, err: any): Promise<string | undefined> {
   const error = String(err?.message ?? err).trim()
   if (act?.opaque) return opaqueGraphqlRefusal()
   if (act?.kind === 'undraft' && act.repo && !(await autoMergeRepos($)).has(act.repo.toLowerCase())) {
     return autoMergeRefusal('undraft', act.repo, act.pr, engineName(act))
   }
-  if (await phaseOf($) === 'enforce') return unverifiedRefusal(act?.repo, act?.pr, error)
-  const named: Act = act ?? { kind: 'merge', name: 'the command' }
-  await warnAct($, named, 'bash', act?.repo ?? '?', act?.pr ?? '?', '', ['readiness unverified: ' + error])
-  return undefined
+  return unverifiedRefusal(act?.repo, act?.pr, error)
 }
 
-// The tool's act: checked before any question under enforce, and once it goes
-// ahead under warn. A CI undraft runs as pr-ready --for-ci, which keeps Not Ready.
+// The tool's act: checked before any question. A CI undraft runs as pr-ready --for-ci, which keeps Not Ready.
 function toolReady($: any, e: any, act: Act) {
   let read: Readiness | undefined
   let forCi = false
@@ -1312,9 +1247,8 @@ function toolReady($: any, e: any, act: Act) {
   const gated = act.kind === 'merge' || act.kind === 'undraft'
   return {
     async beforeAsk(): Promise<string | undefined> {
-      const enforce = await phaseOf($) === 'enforce'
-      if (act.kind === 'create') return enforce ? draftRefusal(act.name) : undefined
-      if (!gated || !enforce) return undefined
+      if (act.kind === 'create') return draftRefusal(act.name)
+      if (!gated) return undefined
       const found = await evaluate()
       if (!found) return undefined
       if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
@@ -1324,24 +1258,11 @@ function toolReady($: any, e: any, act: Act) {
         return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
       }
     },
-    // Whether this is an undraft for CI, read in both phases.
+    // Whether this is an undraft for CI.
     async ciUndraft(): Promise<boolean> {
       if (act.kind !== 'undraft') return false
       await evaluate()
       return forCi
-    },
-    async goingAhead(): Promise<void> {
-      if (await phaseOf($) !== 'warn') return
-      if (act.kind === 'create') {
-        const { repo } = await repoPr()
-        await warnAct($, act, 'tool', repo ?? 'the origin repository', '?', '', ['opened out of draft'])
-        return
-      }
-      if (!gated) return
-      const found = await evaluate()
-      if (!found) return
-      const missing = found.r.error ? ['readiness unverified: ' + found.r.error] : found.r.missing
-      await warnAct($, act, 'tool', found.repo, found.pr, found.r.gate?.head ?? '', missing)
     },
     async ran(): Promise<void> {
       if (!forCi) return
@@ -1360,17 +1281,8 @@ function engineName(act: Act): string | undefined {
 
 // The Bash act's refusal, or undefined; what must follow its success goes in after.
 async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>): Promise<string | undefined> {
-  const readyPhase: Phase = await phaseOf($)
   if (act.stdin) return STDIN_REFUSAL
-  if (act.kind === 'create') {
-    if (readyPhase === 'enforce') return draftRefusal(act.name)
-    // Opening out of draft is leaving draft: outside auto-merge it is refused, as
-    // gh pr ready is, on every route.
-    if (!act.repo) return unnamedRepoRefusal(act.name)
-    if (!(await autoMergeRepos($)).has(act.repo.toLowerCase())) return autoMergeRefusal('create', act.repo, undefined, engineName(act))
-    await warnAct($, act, 'bash', act.repo, '?', '', ['opened out of draft'])
-    return undefined
-  }
+  if (act.kind === 'create') return draftRefusal(act.name)
   if (act.kind === 'create-draft') {
     after.push(async (result) => {
       const made = createdPr(stdoutOf(result))
@@ -1392,15 +1304,12 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     // unverified readiness inside it. gh api names the origin's repository, or GH_REPO's.
     const origin = await targetRepo($, { repo: undefined, args: {} })
     if (!origin || !(await autoMergeRepos($)).has(origin.toLowerCase())) return opaqueGraphqlRefusal()
-    const why = 'the GraphQL query cannot be read from the command'
-    if (readyPhase === 'enforce') return unverifiedRefusal(origin, undefined, why)
-    await warnAct($, act, 'bash', origin, '?', '', ['readiness unverified: ' + why])
-    return undefined
+    return unverifiedRefusal(origin, undefined, 'the GraphQL query cannot be read from the command')
   }
   if (act.unnamed) return graphqlRefusal(act.kind)
   if (act.unreadable) return unreadablePrRefusal(act.name)
   if (!act.repo) {
-    // A merge and leaving draft are refused in both phases:
+    // A merge and leaving draft are refused:
     // the auto-merge split and the gate need the repository.
     return unnamedRepoRefusal(act.name)
   }
@@ -1429,15 +1338,8 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     if (!listed) return autoMergeRefusal('undraft', repo, pr, engineName(act))
   }
   const shown = pr ?? '?'
-  if (r.error) {
-    if (readyPhase === 'enforce') return unverifiedRefusal(repo, shown, r.error)
-    await warnAct($, act, 'bash', repo, shown, '', ['readiness unverified: ' + r.error])
-    return undefined
-  }
-  if (r.missing.length > 0) {
-    if (readyPhase === 'enforce') return refuseNotReady($, act, repo, Number(pr), r)
-    await warnAct($, act, 'bash', repo, shown, r.gate?.head ?? '', r.missing)
-  }
+  if (r.error) return unverifiedRefusal(repo, shown, r.error)
+  if (r.missing.length > 0) return refuseNotReady($, act, repo, Number(pr), r)
   return undefined
 }
 
@@ -2098,7 +2000,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
-  // The record may complete the three: the gate reads them at the head it just checked.
+  // The record may complete readiness: the gate reads it at the head it just checked.
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
@@ -2370,7 +2272,6 @@ export function register(on: any): void {
     const ready = act ? toolReady($, e, act) : undefined
     const refused = await permit($, e, ready?.beforeAsk, ready?.ciUndraft)
     if (refused) return { deny: refused }
-    if (ready) await ready.goingAhead()
     try {
       // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
       // which parses the output: no added text may reach parseGate.
@@ -2420,12 +2321,14 @@ export function register(on: any): void {
 
   // The markdown commands answered here without a model turn. A failure falls
   // back to the markdown, which runs the same script through the model.
-  // /github:protect [apply]: the default branch's force-push and deletion protection, read on
-  // the forge, and put in place on the operator's « apply ».
+  // /github:protect [apply] [ci]: the default branch's force-push and deletion protection, read on
+  // the forge, and put in place on the operator's « apply »; « ci » adds the CI check readiness requires.
   on('command.run', { command: 'github:protect' }, async ($: any, e: any) => {
-    const command = /\bapply\b/.test(String(e.args ?? '')) ? 'protect-apply' : 'protect-check'
+    const words = String(e.args ?? '')
+    const command = /\bapply\b/.test(words) ? 'protect-apply' : 'protect-check'
+    const args = /\bci\b/.test(words) ? { 'require-ci': true } : {}
     try {
-      return { text: (await runGh($, command, {}, await targetRepo($, { repo: undefined, args: {} }))).trim() }
+      return { text: (await runGh($, command, args, await targetRepo($, { repo: undefined, args: {} }))).trim() }
     } catch (err: any) {
       return { text: 'github: ' + command + ' failed: ' + String(err?.message ?? err).trim() }
     }

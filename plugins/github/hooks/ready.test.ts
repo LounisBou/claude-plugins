@@ -120,6 +120,16 @@ test('a skipped check is not green, and says so', () => {
   expect(missingItems(gate({}, { result: 'PENDING', skipped: ['test'], running: 0 }), ALL)).toEqual(['CI did not run: test skipped'])
 })
 
+test('the gate\'s share leaves CI to GitHub, which holds it as a required check', () => {
+  const red = gate({}, { result: 'FAILURE', failed: ['lint'] })
+  expect(missingItems(red, ALL, undefined, {}, [], 'gate')).toEqual([])
+  expect(missingItems(red, ALL, undefined, {}, [], 'github')).toEqual(['CI failed: lint'])
+  const noReview = ALL.filter((r) => !r.name.startsWith('review'))
+  expect(missingItems(red, noReview, undefined, {}, [], 'gate')).toEqual(['review: no record at 0123456'])
+  expect(missingItems(red, noReview, undefined, {}, [], 'github')).toEqual(['CI failed: lint'])
+  expect(missingItems(gate({ state: 'closed' }, { result: 'PENDING', running: 1 }), ALL, undefined, {}, [], 'gate')).toEqual(['the pull request is closed'])
+})
+
 test('a closed pull request and a moved head are named first', () => {
   expect(missingItems(gate({ state: 'closed' }), ALL)).toEqual(['the pull request is closed'])
   expect(missingItems(gate(), ALL, OTHER)).toEqual(['the head moved: ' + OTHER + ' given, ' + HEAD + ' on GitHub'])
@@ -320,8 +330,7 @@ test('the records refusals name only the producers the record contract declares'
 test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
-    + ' A pull request is ready when a clean review, passed E2E and green CI are all at its'
-    + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
+    + ' What Ready needs is core\'s readiness contract (core/readiness.ts); CI is GitHub\'s required check.')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
@@ -331,7 +340,7 @@ test('the refusals read as the guard documents them', () => {
 test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
   expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
     'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
-    + ' and Ready is put by the gate once the three conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
+    + ' and Ready is put by the gate once the pull request is ready (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
   expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
   expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
   expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
