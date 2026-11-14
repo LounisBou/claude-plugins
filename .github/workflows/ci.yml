@@ -35,8 +35,8 @@ jobs:
         run: npm run typecheck
       - name: tooling tests, with the coverage floor
         run: npm test
-      - name: prompt budgets and duplicates only fall
-        run: npm run -s prompts > /dev/null
+      - name: prompt budgets and duplicates only fall, lowered only by the release
+        run: npm run -s prompts -- --base "origin/${{ github.base_ref || 'main' }}" > /dev/null
       - name: context by scenario, and this pull request's difference
         run: |
           base="origin/${{ github.base_ref || 'main' }}"
