@@ -8,9 +8,10 @@
 // Never a trap: the gate refuses at most once per stop (the host re-fires it
 // with stop_hook_active set, and the gate steps aside), and any prompt the user
 // types, an interrupted turn or a /clear ends the loop's hold.
-import { loop, resetLoop, MAX_PASSES, ORCHESTRATED_PASSES } from './state.ts'
+import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
+import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { READER_DENY, REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
@@ -429,6 +430,25 @@ async function isOrchestrated($: any): Promise<boolean> {
   return isSpawned(typeof spawned === 'string' ? spawned : undefined)
 }
 
+// The rounds the pull request's check plan gives its review (core's reviewRounds), read through the
+// github tool's pr-plan from the checkout's pull request; one when no plan is readable.
+async function plannedPasses($: any, top: { dir: string } | { why: string }): Promise<number> {
+  try {
+    if (!('dir' in top)) return REVIEW_ROUNDS.omitted
+    const remote = await git($, ['remote', 'get-url', 'origin'], top.dir)
+    const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
+    if (!repo) return REVIEW_ROUNDS.omitted
+    const ask = (call: Record<string, unknown>) => github($, call)
+    const pr = await pullOf($, repo, ask, top.dir)
+    if (typeof pr === 'string') return REVIEW_ROUNDS.omitted
+    const answer = await ask({ tool: GH_TOOL, command: 'pr-plan', args: { pr }, repo })
+    if (answer?.deny || answer?.isError) return REVIEW_ROUNDS.omitted
+    return reviewRounds(JSON.parse(textOf(answer))?.review)
+  } catch {
+    return REVIEW_ROUNDS.omitted
+  }
+}
+
 // The verdict line an orchestrator's agent sends up (core's verdict.ts), last in the answer that ends
 // the loop, in a session the orchestrator spawned only: the review record is its report, and the
 // blocking findings' files of the last pass what blocks. Null outside such a session, or with no head.
@@ -531,7 +551,9 @@ export function register(on: any): void {
     // A record still owed after a transient github failure is written again at the next
     // `findings` or `status`: the verdict the loop kept stands, nothing is computed again.
     const isOwed = loop.isRecordPending && (e?.action === 'findings' || e?.action === 'status')
-    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e, e?.action === 'start' ? await checkoutDir($) : undefined, e?.action === 'start' && await isOrchestrated($) ? ORCHESTRATED_PASSES : MAX_PASSES)
+    const top = e?.action === 'start' ? await checkoutDir($) : undefined
+    const passes = top && await isOrchestrated($) ? await plannedPasses($, top) : MAX_PASSES
+    const answer = isOwed && e.action === 'findings' ? { exit: loop.exit, ...summary() } : act(e, top, passes)
     redraw($)
     const text = JSON.stringify(answer, null, 2)
     // The record is first written at the call that ends the loop, at the head the loop ended on.

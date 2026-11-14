@@ -12,7 +12,7 @@ Run `/pr-review-toolkit:review-pr` in a loop. Fix issues. Re-run the review.
 Keep looping. **ONLY TWO EXIT CONDITIONS EXIST:**
 
 1. **The review found ZERO issues** (no Critical, no Important, no Suggestions — completely clean)
-2. **`MAX_PASSES` reached** (safety limit): 5, or one in a session the orchestrator spawned (`ORCHESTRATOR_SPAWNED` set), where the review and the one correction are the orchestrator's
+2. **`MAX_PASSES` reached** (safety limit): the `max_passes` the loop tool's `start` answers
 
 **NOTHING ELSE stops the loop.** Not "all remaining are SKIP". Not "only suggestions left".
 Not "fixes were applied": after every pass, fixed or skipped, re-run the review.
@@ -121,7 +121,7 @@ LOOP:
 ```
 - Identify changed files via `git diff --name-only` (or full codebase if user requests)
 - Set pass_count = 0
-- Set MAX_PASSES = 5, or 1 when `ORCHESTRATOR_SPAWNED` is set
+- Set MAX_PASSES = the `max_passes` the loop tool's `start` answers
 - Initialize seen_issues = set()
 - Initialize fix_log = []
 - Determine TEST_COMMAND (see Step 1.5) — once, before entering the loop
