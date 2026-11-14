@@ -5,7 +5,7 @@
 // twice, none without a coordinator, none from a session that is no orchestrator, and a
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
+import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, answerFromPaneText, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
@@ -125,6 +125,13 @@ test('a held question is the operator wait whose own fingerprint was relayed', (
   expect(heldQuestion({ ...held, waiting: 'done' })).toBeNull()
   expect(heldQuestion({ ...held, blocks: '' })).toBeNull()
   expect(heldQuestion(null)).toBeNull()
+})
+
+test('a live operator wait whose blocks is empty vouches for nothing: unknown, never none held', () => {
+  const key = fingerprint({ kind: 'operator', blocks: '', question: '' })
+  const wait = { waiting: 'operator' as const, blocks: '', waiting_since: 'T', relayed: key }
+  expect(openQuestions(wait)).toBeNull()
+  expect(openQuestions({ ...wait, blocks: 'phase 3', relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) })).toEqual([{ since: 'T', blocks: 'phase 3' }])
 })
 
 test('the withdrawal names the sender, the question and where it was answered', () => {
@@ -1163,8 +1170,11 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   expect(fx.sent.length).toBe(1)
+  // The ask again is of a new start: a clock that has not moved would give it the first one's.
+  await new Promise(resolve => setTimeout(resolve, 5))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
-  expect(fx.sent.length).toBe(2)
+  // The same wait asked again: its ask, and the row that says it is held open again.
+  expect(fx.sent.length).toBe(3)
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
   // The withdrawal first, then the same wait asked again (nothing is held yet: its ack is not
@@ -1174,6 +1184,7 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
     ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')],
     ['Coord: ops [abc]', 'ask: phase 3'],
+    ['Coord: ops [abc]', 'row: phase 3'],
     ['Coord: ops [abc]', 'ask: phase 4'],
     ['Coord: ops [abc]', 'row: phase 4'],
   ])
