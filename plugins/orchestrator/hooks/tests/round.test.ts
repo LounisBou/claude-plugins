@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
+import { operatorAnswer, recordedAnswer, recordedText, parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED, SHAPED_SUBJECT, SHAPED_CONTEXT, SHAPED_RECOMMENDATION, FIRST_B, SECOND_RECOMMENDATION_START } from './fixtures.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
@@ -511,4 +511,52 @@ test('the sender\'s numbering drawn as its two numbers', () => {
   expect(numberLabel('Question 3 sur 4')).toBe('Question 3 / 4')
   expect(numberLabel('Question 5 of 6')).toBe('Question 5 / 6')
   expect(numberLabel('3/4')).toBe('3 / 4')
+})
+
+// --- the record: his answer, read before he is asked again ------------------------------------
+
+const asked = (session: string, from: string, question = SHAPED, blocks = 'pane numbering') =>
+  roundEntry(session, from, { kind: 'operator', blocks, question }, '2026-11-14T08:00:00.000Z', '2026-11-14T08:00:00.000Z')
+const answered = (entry: RoundEntry, answer: RoundEntry['answer'], status: RoundEntry['status'] = 'answered'): RoundEntry => ({ ...entry, id: `${entry.id}-done`, status, answer })
+
+test('his own answer an entry holds: the pane\'s, the dialog\'s, round-close\'s, a choice typed in the tab; nothing else', () => {
+  const entry = asked('s-pred', 'Orch: belt')
+  const at = '2026-11-14T08:05:00.000Z'
+  expect(operatorAnswer(answered(entry, { text: 'B : celle du pane — elle compte la file', by: 'pane', at }))).toEqual({ letter: 'B', text: 'celle du pane — elle compte la file', by: 'pane', at })
+  expect(operatorAnswer(answered(entry, { text: 'answered from the pane: A : x', by: 'pane', at }, 'closed'))!.letter).toBe('A')
+  expect(operatorAnswer(answered(entry, { text: 'A', by: 'dialog', at }, 'closed'))).toEqual({ letter: 'A', text: 'celle de l\'orchestrateur — elle suit sa vague', by: 'dialog', at })
+  expect(operatorAnswer(answered(entry, { text: 'keep both for a week', by: 'coordinator', at }, 'closed'))).toEqual({ letter: null, text: 'keep both for a week', by: 'coordinator', at })
+  expect(operatorAnswer(answered(entry, { text: 'withdrawn: tab', by: 'tab', at, typed: 'b' }, 'withdrawn'))!.letter).toBe('B')
+  for (const answer of [
+    { text: 'withdrawn: settled meanwhile — merged', by: 'coordinator' as const, at, evidence: 'merged' },
+    { text: 'withdrawn: tab', by: 'tab' as const, at, typed: 'go on with the next phase' },
+    { text: 'superseded by x', by: 'sender' as const, at },
+    { text: 'answered by a message from Coord: c', by: 'message' as const, at, author: 'Coord: c' },
+  ]) expect(operatorAnswer(answered(entry, answer, 'withdrawn'))).toBeNull()
+})
+
+test('a successor asking the same question block of the same project, for the same blocks, finds his answer, the newest', () => {
+  const pred = asked('s-pred', 'Orch: belt')
+  const older = answered(pred, { text: 'A : celle de l\'orchestrateur — elle suit sa vague', by: 'pane', at: '2026-11-14T08:05:00.000Z' })
+  const newer = { ...answered(pred, { text: 'B', by: 'dialog', at: '2026-11-14T09:00:00.000Z' }, 'closed'), id: 'newer' }
+  // Another preamble and another numbering: the same question block.
+  const again = asked('s-succ', 'Orch : belt', SHAPED.replace('Décision notée : B, la vague continue.', 'Relève faite.').replace('Question 5 sur 6', 'Question 1 sur 2'))
+  expect(recordedAnswer([older, newer, again], again)).toEqual({ entry: newer, answer: { letter: 'B', text: 'celle du pane — elle compte la file', by: 'dialog', at: '2026-11-14T09:00:00.000Z' } })
+  expect(recordedText(again, recordedAnswer([older], again)!)).toBe(
+    `[module] Answered from the record, not asked again: the operator answered this question on 2026-11-14T08:05:00.000Z by pane — A : celle de l'orchestrateur — elle suit sa vague (entry ${older.id}; question since ${again.since}, blocks: pane numbering)`)
+})
+
+test('another project, other blocks, another context, another consent, no shape or no answer of his: no record', () => {
+  const record = answered(asked('s-pred', 'Orch: belt'), { text: 'A', by: 'pane', at: 'T' })
+  const misses = [
+    asked('s-succ', 'Orch: other'),
+    asked('s-succ', 'Orch: belt', SHAPED, 'pane numbering, row 7'),
+    asked('s-succ', 'Orch: belt', SHAPED.replace('Deux numéros', 'Trois numéros')),
+    { ...asked('s-succ', 'Orch: belt'), consent: { kind: 'auto-merge' as const, repo: 'acme/thing' } },
+    asked('s-succ', 'Orch: belt', 'Merge it?\n- **A** : yes\n- **B** : no'),
+  ]
+  for (const entry of misses) expect(recordedAnswer([record, entry], entry)).toBeNull()
+  const none = answered(asked('s-pred', 'Orch: belt'), { text: 'superseded', by: 'sender', at: 'T' }, 'withdrawn')
+  const again = asked('s-succ', 'Orch: belt')
+  expect(recordedAnswer([none, again], again)).toBeNull()
 })
