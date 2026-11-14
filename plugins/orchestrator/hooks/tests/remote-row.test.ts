@@ -324,6 +324,35 @@ test('a row written again between its stale read and the sweep is kept, never re
   expect(rows.map(r => r.context_percent)).toEqual([40])
 })
 
+// The writer holds the row's lock while the sweep meets the row stale: the sweep waits for that
+// lock, and once the writer's newer row is in and the lock released, reads it live and keeps it. A
+// sweep that took no lock would read the stale row again at once and remove it.
+test('a row its writer holds locked during the sweep is kept: the sweep waits for the lock and reads the newer row', async () => {
+  const fx = fake()
+  const path = `${STORE}/remote/Orch__far`
+  const lock = `${path}.lock`
+  fx.files.set(path, JSON.stringify(remote({ updated_at: '2020-01-01T00:00:00.000Z' })))
+  fx.files.set(lock, '1\n')
+  fx.mtimes.set(lock, Date.now())
+  const fresh = JSON.stringify(remote({ context_percent: 40 }))
+  const run = fx.dollar.process.run
+  let refused = 0
+  fx.dollar.process.run = async (argv: readonly string[]) => {
+    const out = await run(argv)
+    // The sweep found the lock held: the writer lands its newer row, then releases the lock.
+    if (out.exitCode !== 0 && argv.some(a => String(a).includes(lock)) && ++refused === 1) {
+      fx.files.set(path, fresh)
+      fx.files.delete(lock)
+    }
+    return out
+  }
+  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  const rows = await readRemoteRows(fx.dollar)
+  expect(fx.files.get(path)).toBe(fresh)
+  expect(rows.map(r => r.context_percent)).toEqual([40])
+  expect(refused).toBe(1)
+})
+
 test('a live row whose read fails once is not swept', async () => {
   const fx = fake()
   const path = `${STORE}/remote/Orch__far`
