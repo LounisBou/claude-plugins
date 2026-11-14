@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 from collections.abc import Callable, Mapping
@@ -36,6 +37,8 @@ _TTY_SHAPE = re.compile(r"/dev/ttys\d{1,4}")
 _COMMIT_SHAPE = re.compile(r"[0-9a-fA-F]{7,40}")
 # A deploy check that takes longer than this is reported, not waited on.
 DEPLOY_CHECK_TIMEOUT = 300
+# Where a deploy check names the commit as an argument; the hash is validated, so nothing else is expanded.
+_COMMIT_VARIABLES = ("${BUGS_BOT_COMMIT}", "$BUGS_BOT_COMMIT")
 
 
 def cmd_triage(store: Store, report_id: str, kind: str) -> None:
@@ -197,7 +200,7 @@ def cmd_agent_prompt(
 
 
 def _refuse_foreign_check(repo: Path) -> None:
-    """Refuse a deploy check the operator may not have written: it runs as a shell command under
+    """Refuse a deploy check the operator may not have written: it runs as a command under
     the one allow rule, so its project file must be the operator's alone.
 
     Raises:
@@ -225,12 +228,32 @@ def _refuse_foreign_check(repo: Path) -> None:
         )
 
 
+def _check_argv(check: str, commit: str) -> list[str]:
+    """Split a deploy check into the words it runs, the commit put where a word names ``BUGS_BOT_COMMIT``.
+
+    Raises:
+        BugsError: If the check is not a command line (an open quote, no word). The message never
+            holds the check: it may hold a secret.
+    """
+    try:
+        words = shlex.split(check)
+    except ValueError:
+        words = []
+    if not words:
+        raise BugsError("the deploy check could not run: it is not a command line")
+    for variable in _COMMIT_VARIABLES:
+        words = [word.replace(variable, commit) for word in words]
+    return words
+
+
 def cmd_deployed(project: Project, commit: str, env: Mapping[str, str]) -> int:
     """Say whether ``commit`` is served, through the project's ``deploy_check``: a fix is announced only once deployed.
 
-    The check is the project's own shell command, run in its repository with the commit in
-    ``BUGS_BOT_COMMIT``: the commit never enters the command text, and is a hash or refused. It
-    runs only from a project file that is the operator's alone (``_refuse_foreign_check``).
+    The check is the project's own command, split into words and run without a shell in its
+    repository, with the commit in ``BUGS_BOT_COMMIT`` (a word naming that variable gets the
+    commit): the commit is a hash or refused. A check that needs a shell names it
+    (``sh -c '...'``). It runs only from a project file that is the operator's alone
+    (``_refuse_foreign_check``).
 
     Returns:
         0 when the check passes (``deployed=yes``), 1 when it fails (``deployed=no``), 2 when the
@@ -245,13 +268,13 @@ def cmd_deployed(project: Project, commit: str, env: Mapping[str, str]) -> int:
         print("deployed=unknown: the launcher's word decides")
         return 2
     _refuse_foreign_check(project.repo)
+    argv = _check_argv(project.deploy_check, commit)
     try:
-        # Its own session, so a timeout can take down everything the shell started; no stdin, so a
+        # Its own session, so a timeout can take down everything the check started; no stdin, so a
         # check that asks a question fails instead of hanging. The messages never echo the command:
         # it may hold a secret.
         proc = subprocess.Popen(
-            project.deploy_check,
-            shell=True,
+            argv,
             cwd=project.repo,
             env={**env, "BUGS_BOT_COMMIT": commit},
             stdin=subprocess.DEVNULL,

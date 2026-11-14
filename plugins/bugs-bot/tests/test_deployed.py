@@ -50,7 +50,7 @@ def test_without_a_check_the_launchers_word_decides(run, bound, capsys):
 
 def test_the_check_runs_in_the_repository_whatever_the_current_directory(run, bound, tmp_path, monkeypatch, capsys):
     out = tmp_path / "where"
-    set_check(f'pwd -P > "{out}"')
+    set_check(f"sh -c 'pwd -P > \"{out}\"'")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
@@ -97,7 +97,7 @@ def test_a_check_that_times_out_is_reported_without_its_command_and_leaves_no_pr
 ):
     monkeypatch.setattr("bugs_bot.agent.DEPLOY_CHECK_TIMEOUT", 1)
     pidfile = tmp_path / "grandchild.pid"
-    set_check(f"sleep 30 & echo $! > '{pidfile}'; wait # fake-secret-token-123")
+    set_check(f"sh -c 'sleep 30 & echo $! > \"{pidfile}\"; wait # fake-secret-token-123'")
 
     try:
         assert run("deployed", COMMIT) == 1
@@ -168,3 +168,70 @@ def test_a_check_from_a_project_file_others_can_write_is_refused(run, bound, tmp
 
     assert "writable by you alone" in capsys.readouterr().err
     assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "template",
+    ['true; touch "{marker}"', 'true && touch "{marker}"', 'true | touch "{marker}"', 'true $(touch "{marker}")', "true `touch '{marker}'`", 'true > "{marker}"'],
+)
+def test_a_check_is_run_as_an_argv_never_through_a_shell(run, bound, template, tmp_path):
+    marker = tmp_path / "shell-ran"
+    set_check(template.format(marker=marker))
+
+    run("deployed", COMMIT)
+
+    assert not marker.exists()
+
+
+def test_the_check_is_started_without_a_shell(run, bound, monkeypatch):
+    set_check('probe --flag "two words"')
+    seen = {}
+
+    real = subprocess.Popen
+
+    def spy(args, **kwargs):
+        if args[0] == "git":
+            return real(args, **kwargs)
+        seen.update(kwargs, args=args)
+        raise OSError(2, "No such file or directory")
+
+    monkeypatch.setattr(subprocess, "Popen", spy)
+
+    run("deployed", COMMIT)
+
+    assert seen["args"] == ["probe", "--flag", "two words"]
+    assert not seen.get("shell")
+
+
+def test_the_commit_reaches_the_check_in_its_environment_and_as_an_argument(run, bound, tmp_path):
+    out = tmp_path / "seen"
+    script = tmp_path / "probe.sh"
+    script.write_text(f'#!/bin/sh\nprintf "%s %s" "$BUGS_BOT_COMMIT" "$1" > "{out}"\n')
+    script.chmod(0o700)
+    set_check(f"{script} $BUGS_BOT_COMMIT")
+
+    assert run("deployed", COMMIT) == 0
+
+    assert out.read_text() == f"{COMMIT} {COMMIT}"
+
+
+@pytest.mark.parametrize("command", ['probe "unbalanced', "   "])
+def test_a_check_that_is_not_a_command_line_is_reported_without_its_text(run, bound, command, capsys):
+    set_check(command)
+
+    assert run("deployed", COMMIT) == 1
+    out = capsys.readouterr()
+
+    assert "the deploy check could not run" in out.err
+    assert "unbalanced" not in out.out + out.err
+    assert "deployed=" not in out.out
+
+
+def test_a_check_whose_program_is_missing_is_reported_without_its_command(run, bound, capsys):
+    set_check("no-such-program-fake-secret-token-123")
+
+    assert run("deployed", COMMIT) == 1
+    out = capsys.readouterr()
+
+    assert "the deploy check could not run: No such file or directory" in out.err
+    assert "fake-secret-token-123" not in out.out + out.err

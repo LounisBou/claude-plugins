@@ -63,9 +63,10 @@ its bot token is missing from `~/.bugs-bot/.env`: `init` asks you, once, to run
 hidden prompt and writes it at mode 0600; the token never goes through the session, a command line or
 any output. Then `init` binds the group.
 
-A project may name a deploy check (`--deploy-check`), the shell command `bugs-bot deployed <commit>`
-runs to tell whether a fix is served, with the commit in `BUGS_BOT_COMMIT`, never in the command
-text. It runs only from a project file that is yours alone: not versioned, owned by you and
+A project may name a deploy check (`--deploy-check`), the command `bugs-bot deployed <commit>`
+runs to tell whether a fix is served, with the commit in `BUGS_BOT_COMMIT` (a word of the command
+naming that variable gets it). The command is split into words and run without a shell: one that
+needs a pipe or a redirection names the shell itself, `sh -c '…'`. It runs only from a project file that is yours alone: not versioned, owned by you and
 writable by nobody else (`init` writes it so); any other is refused before anything runs.
 
 ## Python
