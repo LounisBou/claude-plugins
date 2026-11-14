@@ -8,7 +8,7 @@ const VERSION_ONLY = '@@ -2,3 +2,3 @@\n   "name": "github",\n-  "version": "0.19
 
 test('documentation, tests, CI configuration and prompt text hold no runtime', () => {
   const files = [
-    'README.md', 'docs/architecture.md', 'docs/diagram.svg', 'plugins/orchestrator/skills/orchestrator/references/review.md',
+    'README.md', 'docs/architecture.md', 'docs/diagram.svg', 'plugins/orchestrator/skills/orchestrator/references/review-verdict.md',
     'plugins/github/tests/run-tests.sh', 'src/__tests__/a.ts', 'hooks/guard.test.ts', 'app/models/user_spec.rb', 'pkg/server_test.go',
     'tests/test_api.py', 'conftest.py', 'scripts/contracts.test.ts', '.github/workflows/ci.yml', 'ci/prompts.json', '.gitlab-ci.yml',
     'LICENSE', 'CHANGELOG', 'Jenkinsfile',
