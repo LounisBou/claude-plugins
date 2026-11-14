@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, consentAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
@@ -37,6 +37,15 @@ describe('consent records', () => {
     assert.equal(consentAnswer('a : waive it on name#7', choices), 'waive it on name#7')
     assert.equal(consentAnswer('C', choices), '')
     assert.equal(consentAnswer('  go without it  ', choices), 'go without it')
+  })
+
+  it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.deepEqual(givenAnswer('A : Accorder', choices), { letter: 'A', text: 'Accorder' })
+    assert.deepEqual(givenAnswer('b — refuse it', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('B', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('  I would wait a day  ', choices), { letter: null, text: 'I would wait a day' })
+    assert.deepEqual(givenAnswer('C', choices), { letter: null, text: 'C' })
   })
 
   it('lets a quote rest on the record of its own subject only, its answer held whole', () => {

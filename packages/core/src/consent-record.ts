@@ -96,18 +96,28 @@ function spaced(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+// A lone letter opening an answer, alone or set apart by a separator: the choice it names.
+const LETTERED = /^([A-Za-z])\s*(?:[:—)\-.]|$)/
+
+/**
+ * An answer as the operator gave it: the choice its opening letter names (« A : yes », « A — … »,
+ * « A »), its letter and its text; anything else, a letter among no choice included, his own words.
+ */
+export function givenAnswer(answer: string, choices: readonly { letter: string; text: string }[]): { letter: string | null; text: string } {
+  const trimmed = answer.trim()
+  const named = LETTERED.exec(trimmed)?.[1]?.toUpperCase()
+  const chosen = named === undefined ? undefined : choices.find(choice => choice.letter.toUpperCase() === named)
+  return chosen ? { letter: chosen.letter, text: chosen.text.trim() } : { letter: null, text: trimmed }
+}
+
 /**
  * What a quote must hold of an answer given in the pane: a choice is pressed as its letter then
  * its text (« A : yes »), and the text of that choice is the operator's word; a letter that is not
  * among the question's choices is nothing to quote (''). Any other answer is quoted whole.
  */
 export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[]): string {
-  const trimmed = answer.trim()
-  const letter = /^([A-Za-z])\s*(?:[:—)\-.]|$)/.exec(trimmed)
-  const named = letter?.[1]?.toUpperCase()
-  if (named === undefined) return trimmed
-  const chosen = choices.find(choice => choice.letter.toUpperCase() === named)
-  return chosen ? chosen.text.trim() : ''
+  const given = givenAnswer(answer, choices)
+  return given.letter === null && LETTERED.test(given.text) ? '' : given.text
 }
 
 /**
