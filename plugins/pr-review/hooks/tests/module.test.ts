@@ -316,6 +316,20 @@ test('a plan of three rounds runs three passes', async ($, on) => {
   expect(String((await loopCall($, { action: 'start' })).result)).toContain('"max_passes": 3')
 })
 
+for (const rounds of [2, 1]) {
+  test(`a plan of ${rounds} round(s) ends the loop at the pass after ${rounds}, below the cap, and the record says so`, async ($, on) => {
+    const stubs: Stubs = { records: [], prCalls: 0, plan: planAnswer({ need: 'required', reason: '', max: rounds }) }
+    wireRecord(on, stubs)
+    spawnedEnv(on, '1')
+    const out = await runToMaxPasses($, 0, rounds)
+    expect(String(out.result)).toContain('"exit": "max_passes"')
+    expect(String(out.result)).toContain(`"passes": ${rounds}`)
+    expect(stubs.records.length).toBe(1)
+    expect(stubs.records[0].result).toBe('pass')
+    expect(stubs.records[0].detail).toBe(`3 findings left after ${rounds} passes, none Critical or Important`)
+  })
+}
+
 test('outside a session the orchestrator spawned, the loop reads no check plan', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0, ghCalls: [], plan: planAnswer({ need: 'required', reason: '', max: 2 }) }
   wireRecord(on, stubs)
