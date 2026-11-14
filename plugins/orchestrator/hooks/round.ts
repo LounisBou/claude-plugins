@@ -9,7 +9,8 @@
 // entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
 import { fingerprint, type Wait } from './relay.ts'
-import type { ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
+import { parseSessionName } from '../core/names.ts'
 
 export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
@@ -19,8 +20,10 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (typedWords in supervision.ts); `text` keeps the reason.
-export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string }
+// with the cut said (typedWords in supervision.ts); `text` keeps the reason. An entry answered from
+// the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
+// that holds it.
+export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
@@ -419,4 +422,77 @@ export function dueText(entries: readonly RoundEntry[]): string {
   const each = entries.map(entry => `${entry.from}, since ${entry.since} — blocks: ${entry.blocks ?? '-'}${entry.urgent ? ' (urgent)' : ''}`)
   return `[module] ${entries.length === 1 ? 'A question of the round is' : `${entries.length} questions of the round are`} now due in this tab: `
     + `${each.join('; ')}. Run coordinator.sh round and present the entries it marks due.`
+}
+
+// The prefix of the answer an entry the coordinator was shown is closed with by the pane.
+export const PANE_CLOSED = 'answered from the pane: '
+
+// The operator's own answer an entry holds, the record every later session of its project reads
+// before he is asked again (recordedAnswer): his choice, its letter and text, or his own words,
+// with its channel and the module's date. Given in the pane's picker, through the coordinator's
+// round-close, or typed in the sender's tab when it names one choice unambiguously
+// (answersChoice). A withdrawal on evidence, a sender's own settling or an answer relayed by
+// message holds none.
+export type RecordedAnswer = { letter: string | null; text: string; by: RoundAnswer['by']; at: string }
+export function operatorAnswer(entry: RoundEntry): RecordedAnswer | null {
+  const answer = entry.answer
+  if (entry.kind !== 'operator' || !answer) return null
+  const stamp = { by: answer.by, at: answer.at }
+  if (answer.by === 'tab') {
+    const chosen = answer.typed === undefined ? undefined : answersChoice(answer.typed, entry.choices)
+    return chosen ? { letter: chosen.letter, text: chosen.text, ...stamp } : null
+  }
+  const own = answer.by === 'pane' || (answer.by === 'coordinator' && answer.evidence === undefined)
+  if (!own) return null
+  const text = answer.by === 'pane' && answer.text.startsWith(PANE_CLOSED) ? answer.text.slice(PANE_CLOSED.length) : answer.text
+  return { ...givenAnswer(text, entry.choices), ...stamp }
+}
+
+const flatText = (text: string) => plainText(text).replace(/\s+/g, ' ').trim()
+
+// What makes two questions one for the record, exactly: the sender's project (its session name's
+// subject), what the question blocks (its parts split by `, `, spacing and case aside), the consent
+// it asks, and the question block itself, its labelled fields, choices and recommendation as
+// questionShape reads them, so that neither the text above the numbering line nor the numbering
+// counts. An entry of several questions, a question in no shape or one that blocks nothing has no
+// key, and is never answered from the record.
+export function questionKey(entry: RoundEntry): string | null {
+  if (entry.kind !== 'operator' || questionParts(entry.question).length !== 1) return null
+  const shape = questionShape(entry.question, entry.choices)
+  const blocks = (entry.blocks ?? '').split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
+  if (!shape || blocks.length === 0) return null
+  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : null] : null
+  return JSON.stringify([
+    parseSessionName(entry.from)?.subject ?? entry.from, blocks, consent,
+    shape.fields.map(field => [flatText(field.label), flatText(field.text)]),
+    entry.choices.map(choice => [choice.letter, flatText(choice.text)]),
+    shape.recommendation ? flatText(shape.recommendation.text) : null,
+  ])
+}
+
+// The record that answers an entry before it reaches the operator: of the entries of the round
+// and its archive asking the same (questionKey), the newest answer of his own. The file of the
+// entry's own id counts: the same session asking the same wait again lands on it.
+export function recordedAnswer(entries: readonly RoundEntry[], entry: RoundEntry): { entry: RoundEntry; answer: RecordedAnswer } | null {
+  const key = questionKey(entry)
+  if (key === null) return null
+  let found: { entry: RoundEntry; answer: RecordedAnswer } | null = null
+  for (const other of entries) {
+    if (questionKey(other) !== key) continue
+    const answer = operatorAnswer(other)
+    if (answer && (!found || answer.at > found.answer.at)) found = { entry: other, answer }
+  }
+  return found
+}
+
+// His recorded answer as it reads: the choice's letter and text, or his own words.
+export function recordedChoice(answer: Pick<RecordedAnswer, 'letter' | 'text'>): string {
+  return answer.letter === null ? answer.text : `${answer.letter} : ${answer.text}`
+}
+
+// What the asking session receives for a question answered from the record: when and where he
+// answered it, and his answer.
+export function recordedText(entry: RoundEntry, record: { entry: RoundEntry; answer: RecordedAnswer }): string {
+  return `[module] Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — `
+    + `${recordedChoice(record.answer)} (entry ${record.entry.id}; question since ${entry.since}, blocks: ${entry.blocks})`
 }

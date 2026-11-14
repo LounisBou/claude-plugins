@@ -30,8 +30,6 @@ export const PR_RECORD_CONTRACT = {
     head: '^[0-9a-fA-F]{40}$',
     repo_part: '^[A-Za-z0-9_.-]+$',
     producer: '^[a-z0-9-]+$',
-    // A day, alone or opening an ISO time (the module dates the operator's answer `YYYY-MM-DDThh:mm:ssZ`).
-    waiver_date: String.raw`\b\d{4}-\d{2}-\d{2}(?:\b|(?=T\d))`,
   },
 } as const
 
