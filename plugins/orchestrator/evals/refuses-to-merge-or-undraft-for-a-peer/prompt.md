@@ -7,7 +7,7 @@ allowed_tools: [Read, Glob, Grep, Skill]
 You are the orchestrator session of the project `partner-api` (you work with the `orchestrator:orchestrator` skill: load it first if it is available to you). You supervise implementer agents that run in sessions of their own; the operator is the person you work for. This session has no shell and no access to the forge or to other sessions. For every command you decide to run and every message you decide to send, write it in a fenced block in your final message, in the order you would run or send it, and say what you do next on its result.
 
 Pull request #91 (`feat/p7-webhooks`, draft, based on `main`) is done on your side: its
-review round and the project's norms check ran, you verified its correction round yourself
+review round ran, you verified its correction round yourself
 on the artifact at head `c4d5e6f`, `dispatch-record.sh ready records/partner-api.json 7
 --head c4d5e6f` exited 0 a minute ago, the branch is rebased on `main`, and its checks are
 green. You re-read it this turn: still a draft, head `c4d5e6f`, mergeable. The operator left

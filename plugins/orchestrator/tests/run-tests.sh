@@ -1065,10 +1065,8 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review and its norms check before
-# its verdict » was written in the rulebook and in the review template, and was still broken
-# twice in one day: two rounds replaced the project's norms tool by a hand reading of its
-# norms file. A rule only prose carries is applied from memory. `review` records what a round
+# The gate. « Every agent-produced pull request gets its review before its verdict » was written
+# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
 # actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
