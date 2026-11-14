@@ -5549,12 +5549,36 @@ check "the design names both figures and why: their gap is the takeover's verifi
   "$(spells "$ROOT/docs/design.md" 'its first turn and the turn that sends « takeover confirmed »')|$(spells "$ROOT/docs/design.md" "the gap between them is what the takeover's verification costs")"
 check "the design says why the takeover is measured in the « takeover confirmed » turn" "yes" \
   "$(spells "$ROOT/docs/design.md" 'so that its figures compare from one succession to the next')"
-# The predecessor fills the section before the spawn, and keeps the whole brief short.
-check "succeed.md and the lifecycle reference have the predecessor fill Live state and hold the brief to 9,000 characters" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')|$(spells "$ORCH_REFS/lifecycle.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters')"
+# The predecessor fills the section before the spawn, and keeps the whole brief short. One owner
+# per succession rule: the lifecycle reference states the cap and the overwrite, the command points.
+check "succeed.md has the predecessor fill Live state, the lifecycle reference holds the brief to 9,000 characters, and the command does not say it again" "yes|yes|yes|no" \
+  "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')"
 # The brief is standing: after its first use the section holds the last handover, not placeholders.
-check "succeed.md and the lifecycle reference have the predecessor overwrite the previous Live state, never append" "yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" "overwrites the previous handover's Live state")|$(spells "$ORCH_REFS/lifecycle.md" "overwrites the previous handover's Live state")"
+check "the lifecycle reference has the predecessor overwrite the previous Live state, never append, and the command does not say it again" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" "overwrites the previous handover's Live state")|$(spells "$ROOT/commands/succeed.md" "overwrites the previous handover's Live state")"
+# The rest of the succession rules, said once, in the lifecycle reference: no asking, the tab left
+# to the successor, the successor named to the agents. The command carries the steps and points.
+check "the lifecycle reference owns not asking, not closing one's own tab and naming the successor; the command says none of them again" "yes|yes|yes|no|no|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'do not wait for the operator, and do not ASK')|$(spells "$ORCH_REFS/lifecycle.md" 'Never close your own tab')|$(spells "$ORCH_REFS/lifecycle.md" "gives its successor's exact name and reference to each of its agents")|$(spells "$ROOT/commands/succeed.md" 'Do not ask the user whether to succeed')|$(spells "$ROOT/commands/succeed.md" 'Never close your own tab')|$(spells "$ROOT/commands/succeed.md" 'takes no word from a session it was never told of')"
+check "the succession texts carry no history: no ruling's date or origin, no spec section" "0|0|0" \
+  "$(grep -c "the operator's ruling\|the owner's ruling" "$ORCH_REFS/lifecycle.md")|$(grep -c '(spec §' "$ROOT/commands/succeed.md")|$(grep -c 'the map binds agents' "$ROOT/commands/succeed.md")"
+# A moment reads the section it names, never the whole reference: the kernel's table names each
+# section of the lifecycle by its heading, and no row of it has the pause, the opening or the move
+# read with a spawn.
+SKILL_FLAT=$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ')
+lifecycle_named_missing() {  # $1 the rulebook, $2 the lifecycle reference: the headings it names that the reference lacks
+  grep '`references/lifecycle.md` ›' "$1" | sed 's/^.*`references\/lifecycle.md` › //' | grep -o '« [^»]*»' | sed 's/^« //; s/ »$//' | while read -r h; do
+    grep -qE "^###? ($h|$h — .*)$" "$2" || echo "$h"; done
+}
+check "the kernel reads a section of the references, not the whole, and names the lifecycle's by headings it carries" "0|0|yes|yes|" \
+  "$(printf '%s' "$SKILL_FLAT" | grep -c 'binds whole')|$(printf '%s' "$SKILL_FLAT" | grep -c 'read it again at each such moment')|$(printf '%s' "$SKILL_FLAT" | grep -qF '`references/lifecycle.md` › « Pause, opening and move »' && echo yes || echo no)|$(printf '%s' "$SKILL_FLAT" | grep -qF 'the section the moment names' && echo yes || echo no)|$(lifecycle_named_missing "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS/lifecycle.md" | paste -sd, -)"
+check "the spawn row of the kernel does not send a spawn to the pause, the opening or the move" "0" \
+  "$(grep '^| Spawning' "$ROOT/skills/orchestrator/SKILL.md" | grep -c 'pause\|opening\|move')"
+check "the lifecycle reference is read by the section a moment names" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Read the section the moment names')|$(spells "$ORCH_REFS/lifecycle.md" 'Read before spawning, dispatching a phase to a running agent')"
+# The coordinator's round points at the method for the question's rules; it does not restate them.
+check "coordinator-decide points at the method's « Questions to the operator » and does not restate one question per message" "yes|no" \
+  "$(tr '\n' ' ' < "$ROOT/commands/coordinator-decide.md" | tr -s ' ' | grep -qF '`method:lifecycle`, « Questions to the operator »' && echo yes || echo no)|$(spells "$ROOT/commands/coordinator-decide.md" 'one question per message')"
 check "the lifecycle's step 3 points at the brief's first task, not at whole files" "no|yes|no" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'read the brief and its pointed state')|$(spells "$ORCH_REFS/lifecycle.md" "3. The successor's first task is its brief's, step by step")|$(spells "$ORCH_REFS/lifecycle.md" 'then its brief'"'"'s steps 3 to 5')"
 # The never-implement rule left the succession brief's first paragraph: the design says where a
@@ -5685,8 +5709,8 @@ OQ_PAD=$(( 9100 - $(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ') 
 { cat "$OQ_BIG"; printf '%s\n' "$(head -c "$OQ_PAD" /dev/zero | tr '\0' 'x')"; } > "$OQ_BIG_PLUS"
 check "a succession brief whose open-questions value is a 4,000-character block, the rest within the limit, lints clean" "yes|0" \
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
-check "succeed.md says the open-questions value is outside the 9,000-character cap" "yes" \
-  "$(spells "$ROOT/commands/succeed.md" '9,000 characters, the open-questions value apart')"
+check "the lifecycle reference says the open-questions value is outside the 9,000-character cap, once" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
 # His answer in the round is the module's record, which answers the same question asked again
 # (hooks/tests/relay.test.ts, « a successor asking a question its predecessor had answered »): the
 # decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
@@ -12803,8 +12827,8 @@ done
 spells_before() { case "$1" in *"$2"*) ;; *) echo no; return ;; esac; local head="${1%%"$2"*}"; case "$head" in *"$3"*) echo yes ;; *) echo no ;; esac; }
 SUCCEEDMD="$ROOT/commands/succeed.md"
 SUCCEEDFLAT=$(tr '\n' ' ' < "$SUCCEEDMD" | tr -s ' ')
-check "succeed.md has the predecessor name its successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
-  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF "send each running agent of your own ONE message giving the successor's exact name and reference" && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' 'ONE message giving the successor')"
+check "succeed.md points at the lifecycle's naming of the successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
+  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF '**Name the successor to your agents** once the spawn is verified' && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' '`references/lifecycle.md`, « Succession — the predecessor », step 4')"
 check "lifecycle.md says the predecessor names its successor to its agents" "yes" \
   "$(flat_has "$ROOT/skills/orchestrator/references/lifecycle.md" "gives its successor's exact name and reference to each of its agents")"
 check "the successor names its predecessor in its message to the agents" "1" \

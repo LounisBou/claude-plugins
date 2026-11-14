@@ -30,7 +30,7 @@ A pull request is done at its head when:
 - the checks its plan owes passed (github `writing/pull-requests.md`, « Ready pull requests »);
 - CI is green.
 
-The github ready gate computes it. A content change voids it until the four hold.
+The github ready gate computes it. A content change voids it until three hold.
 
 ## Consent
 
