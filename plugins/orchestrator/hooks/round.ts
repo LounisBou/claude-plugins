@@ -461,7 +461,7 @@ export function questionKey(entry: RoundEntry): string | null {
   const shape = questionShape(entry.question, entry.choices)
   const blocks = (entry.blocks ?? '').split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
   if (!shape || blocks.length === 0) return null
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : null] : null
+  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
   return JSON.stringify([
     parseSessionName(entry.from)?.subject ?? entry.from, blocks, consent,
     shape.fields.map(field => [flatText(field.label), flatText(field.text)]),

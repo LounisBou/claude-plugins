@@ -9,7 +9,7 @@
 // the declaration spells (waitLine), written last in the message every later reader of the
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
-import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { fencedLines, openFence, outsideFences } from './one-question.ts'
 import { entryQuestions, numberOfLine, parseChoices, questionShape, type QuestionField } from './round.ts'
@@ -140,7 +140,7 @@ export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { err
   const consent = e.consent === undefined ? undefined : parseConsentSubject(e.consent)
   if (e.consent !== undefined && kind !== 'operator') return { error: 'only an operator question asks consent' }
   if (e.consent !== undefined && consent === undefined) {
-    return { error: 'consent is {"kind": "e2e-waiver" or "norms-waiver", "repo": "owner/name", "pr": <n>}, or {"kind": "e2e-exemption" or "auto-merge", "repo": "owner/name"}' }
+    return { error: `consent is {"kind": "e2e-waiver" or "norms-waiver", "repo": "owner/name", "pr": <n>}, {"kind": "e2e-exemption" or "auto-merge", "repo": "owner/name"} or {"kind": "auto-deploy", "repo": "owner/name", "env": "${DEPLOY_ENVS.join('" or "')}"}` }
   }
   const blocks = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   if (kind === 'done') return { wait: { kind, blocks: '' } }
@@ -209,8 +209,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
-          + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, or to put it in or out of auto-merge, '
-          + 'names it in consent: {kind: "e2e-waiver" or "norms-waiver", repo, pr}, {kind: "e2e-exemption", repo} or {kind: "auto-merge", repo}; his answer is then recorded as that consent. '
+          + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
+          + 'names it in consent: {kind: "e2e-waiver" or "norms-waiver", repo, pr}, {kind: "e2e-exemption", repo}, {kind: "auto-merge", repo} or {kind: "auto-deploy", repo, env}; his answer is then recorded as that consent. '
           + 'An `operator` wait needs `question`, the whole `**Question i of N**` block. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
@@ -222,7 +222,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             question: { type: 'string' },
             consent: {
               type: 'object',
-              properties: { kind: { type: 'string', enum: [...CONSENT_KINDS] }, repo: { type: 'string' }, pr: { type: 'integer' } },
+              properties: { kind: { type: 'string', enum: [...CONSENT_KINDS] }, repo: { type: 'string' }, pr: { type: 'integer' }, env: { type: 'string', enum: [...DEPLOY_ENVS] } },
               required: ['kind', 'repo'],
             },
           },
