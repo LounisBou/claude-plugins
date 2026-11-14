@@ -204,7 +204,7 @@ test('surface and audit', async () => {
   assert.deepEqual(rows()[0]?.['surface'], { kind: 'ui', pr: 'o/r#12', reason: '', at: '2026-11-08T10:11:12Z' })
 })
 
-test('ready: the surface, the audit, then the heads; no E2E line', async () => {
+test('ready: the surface and the audit only; the head, the review and the label are the gate\'s', async () => {
   await withGoals()
   const r = rec()
   const two = '![a](x.png)\n<img src=y>'
@@ -224,28 +224,25 @@ test('ready: the surface, the audit, then the heads; no E2E line', async () => {
   await cli(['audit', r, '1', '--head', 'abc1234', '--images', '2'])
   // The E2E line is the github gate's, not this pre-check's: none is asked, none is refused.
   assert.equal(await cli(['ready', r, '1', '--head', 'abc1234', '--e2e', 'E2E: none — x'], d(two)), '1||ERROR: ready: unknown option --e2e\n')
-  assert.match(await cli(['ready', r, '1', '--head', 'abc1234'], d(two)),
-    /^1\|\|.*ready: no review recorded on row 1: dispatch a review round and record it with `review`: not ready/s)
+  // The review at the head and the `Ready` label are the github gate's: a row no review touched,
+  // or one read at another head (a rebase), is neither refused here nor handed a label command.
+  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234'], d(two)), '0|ready: row 1: 2 screenshot(s) on o/r#12, audited clean at abc1234\n|')
   await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'tool'])
-  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234ffff'], d(two)),
-    '0|ready: row 1 reviewed at abc1234ffff, norms check tool; 2 screenshot(s) on o/r#12, audited clean at abc1234\npr-readiness 12 ready on o/r\n|')
-  assert.match(await cli(['ready', r, '1', '--head', '9999999'], d(two)), /last review read abc1234, head is 9999999: the head in front of you has not been read/)
+  assert.equal(await cli(['ready', r, '1', '--head', 'abc1234ffff'], d(two)), '0|ready: row 1: 2 screenshot(s) on o/r#12, audited clean at abc1234\n|')
+  assert.equal(await cli(['ready', r, '1', '--head', '9999999'], d(two)), '0|ready: row 1: 2 screenshot(s) on o/r#12, audited clean at abc1234\n|')
   assert.match(await cli(['ready', r, '1', '--head', '99'], d(two)), /head 99 is too short/)
 
-  // A minor row, a review then its correction.
+  // A minor row: no review, a review, its correction and a head neither read: the same line.
   await cli(['surface', r, '2', '--minor', 'a tooltip'])
+  const minor = '0|ready: row 2: frontend change ruled minor: a tooltip - tell the operator this reason with the ready\n|'
+  assert.equal(await cli(['ready', r, '2', '--head', 'aaaaaaa']), minor)
   await cli(['review', r, '2', '--head', 'aaaaaaa', '--norms', 'none'])
-  assert.equal(await cli(['ready', r, '2', '--head', 'aaaaaaa']),
-    '0|ready: row 2 reviewed at aaaaaaa, norms check none; frontend change ruled minor: a tooltip - tell the operator this reason with the ready\npr-readiness <n> ready on <owner/repo>\n|')
-  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc']), '1||ERROR: ready: last review read aaaaaaa, head is ccccccc: the head in front of you has not been read\n')
   await cli(['fixed', r, '2', '--head', 'bbbbbbb'])
-  assert.match(await cli(['ready', r, '2', '--head', 'bbbbbbb']), /^0\|ready: row 2 reviewed at aaaaaaa, corrected and verified at bbbbbbb, norms check none/)
-  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc']), '1||ERROR: ready: last review read aaaaaaa, its correction bbbbbbb, head is ccccccc: the head in front of you has been neither read nor verified\n')
+  assert.equal(await cli(['ready', r, '2', '--head', 'ccccccc']), minor)
 
   // A row of no surface, with no E2E line: ready, and no E2E field written.
   await cli(['surface', r, '3', '--none'])
-  await cli(['review', r, '3', '--head', 'abc1234', '--norms', 'tool'])
-  assert.equal(await cli(['ready', r, '3', '--head', 'abc1234']), '0|ready: row 3 reviewed at abc1234, norms check tool; no frontend surface\npr-readiness <n> ready on <owner/repo>\n|')
+  assert.equal(await cli(['ready', r, '3', '--head', 'abc1234']), '0|ready: row 3: no frontend surface\n|')
   assert.equal(rows()[2]?.['e2e'], undefined)
   assert.match(await cli(['exempt', r, '--e2e', 'fine 2026-11-02']), /unknown subcommand: exempt/)
 })

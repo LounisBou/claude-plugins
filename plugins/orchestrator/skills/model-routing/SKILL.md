@@ -107,7 +107,6 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 Triggers, each a thing you have read:
 
-- the same class of finding survives one corrective round;
 - the agent STOPs twice on the same ambiguity;
 - the agent crosses the context gate without a single push.
 
@@ -115,11 +114,11 @@ An escalation IS a rotation — fresh session, resume brief, one notch up the cl
 
 ## The false economy
 
-**A pair drop that produces a second corrective round is reverted for that class, and the reversion is recorded, unless you name the mechanism, other than the pair, that cost the round.** The summary's `signal=` lines name those drops (« The record »).
+**A pair drop whose rows close in more than one round is reverted for that class, and the reversion is recorded, unless you name the mechanism, other than the pair, that cost the round.** The summary's `signal=` lines name those drops (« The record »).
 
 ## A second reader, armed by evidence
 
-A defect found later in work already approved is recorded with `dispatch-record.sh escaped <record> <id>`: `summary` then prints `signal=double-read <class> at <pair or tier>`, and that class's next round gets a second reader with a DIFFERENT lens, a finding kept only when both see it.
+A defect found later in work already approved is recorded with `dispatch-record.sh escaped <record> <id>`: `summary` then prints `signal=double-read <class> at <pair or tier>`, and that class's next review gets, inside its one pass, a second reader with a DIFFERENT lens, a finding kept only when both see it.
 
 ## The record
 
@@ -133,13 +132,13 @@ dispatch-record.sh review <record> <id> --head <sha> [--norms tool|none]  # and 
 dispatch-record.sh fixed <record> <id> --head <sha>                     # the one correction round, verified
 dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>|--minor <reason>|--none  # whether the pull request changes what a user sees
 dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...  # the screenshots agent's audit of the images on a --ui pull request, read by ready
-dispatch-record.sh ready <record> <id> --head <sha>  # refuses a head neither reviewed nor fixed, no surface, a --ui pull request with no image or audit, or a row with no review
+dispatch-record.sh ready <record> <id> --head <sha>  # refuses a row with no surface, or a --ui pull request with no image or audit
 dispatch-record.sh close <record> <id> --verdict approved
 dispatch-record.sh cost <record> <id> --session <session id>         # after each session of the dispatch ends
 dispatch-record.sh summary <record>
 ```
 
-`review` records instead of `round` the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the ONE correction round at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` stands in front of telling the operator a pull request is ready: it passes at the head the last review read or the one its correction round was verified at, and refuses any other, and a row with no review (the rule: `skills/orchestrator/references/review.md`, « Thresholds a verdict never crosses »). It is the pre-check of what the github ready gate does not read, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
+`review` records instead of `round` the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the ONE correction round at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
 
 The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed rows whose cost is complete, and prints `frozen=<class>` and `promote=<class> <pair>` for the explorations above.
 
