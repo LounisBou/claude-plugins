@@ -4,8 +4,8 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstTurn, sessionEnd, sessionStart, toolEvents, turnEnd, usageFacts,
-  type Event,
+  agentClosed, agentSpawned, checkOf, Collector, firstTurn, renamedTo, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
+  turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
 type Next = (e: unknown) => Promise<unknown>
@@ -22,12 +22,15 @@ export interface Host {
     id(): Promise<string>
     model(): Promise<string>
     usage(): Promise<unknown>
+    info(): Promise<unknown>
   }
   readonly ui: { log(text: string, options?: { to?: string }): void }
 }
 
 /** A write never holds the turn's end past this. */
 export const WRITE_TIMEOUT_MS = 10_000
+/** The read of a transcript's head is given this long. */
+export const HEAD_READ_TIMEOUT_MS = 2_000
 /** The export clones and pushes: it is given longer. */
 export const EXPORT_TIMEOUT_MS = 120_000
 
@@ -68,6 +71,21 @@ async function flush($: Host, collector: Collector): Promise<void> {
   if (said !== '') $.ui.log(said)
 }
 
+/**
+ * The session's title from the head of its transcript, read once, while no other source gave it.
+ * A read that fails leaves the title unknown: no error, no second try.
+ */
+async function readTitle($: Host, collector: Collector): Promise<void> {
+  if (!collector.wantsHeadRead()) return
+  try {
+    const info = await $.session.info()
+    const path = typeof info === 'object' && info !== null ? (info as Record<string, unknown>)['transcriptPath'] : undefined
+    if (typeof path !== 'string' || path === '') return
+    const run = await $.process.run(['head', '-c', String(TRANSCRIPT_HEAD_BYTES), '--', path], { timeoutMs: HEAD_READ_TIMEOUT_MS })
+    if (run.exitCode === 0) collector.setTitle(titleFromTranscriptHead(run.stdout))
+  } catch { /* the title stays unknown */ }
+}
+
 /** Buffers `events`, and writes them once the buffer reaches its threshold. */
 async function add($: Host, collector: Collector, events: readonly Event[]): Promise<void> {
   if (collector.push(...events)) await flush($, collector)
@@ -81,6 +99,7 @@ export function mount(on: On, collector: Collector): void {
       const usage = usageFacts(await $.session.usage())
       collector.startAt = at
       collector.launchedAt = usage.startedAt
+      collector.setTitle(sessionTitleOf(e))
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned })])
     })
@@ -103,6 +122,7 @@ export function mount(on: On, collector: Collector): void {
     await quietly($, 'turn.complete', async () => {
       const at = await $.clock.now()
       const session = await $.session.id()
+      if (e['agentId'] === undefined) await readTitle($, collector)
       const events = [turnEnd(at, session, e, usageFacts(await $.session.usage()))]
       const child = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
       const spawnedAt = collector.closing(child)
@@ -132,6 +152,7 @@ export function mount(on: On, collector: Collector): void {
       const at = await $.clock.now()
       const check = collector.takeCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
       await add($, collector, toolEvents(at, await $.session.id(), e, result, check, started === undefined ? 0 : Math.max(0, at - started)))
+      collector.setTitle(renamedTo(e, result, check))
     })
     return result
   })

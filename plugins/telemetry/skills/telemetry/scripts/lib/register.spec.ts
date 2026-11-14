@@ -13,7 +13,7 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string } = {}) {
+function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number } = {}) {
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
@@ -21,7 +21,16 @@ function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string
     plugin: { root: '/p/telemetry' },
     env: { get: async name => ({ HOME: '/home/u', ORCHESTRATOR_SPAWNED: '1' } as Record<string, string>)[name] },
     clock: { now: async () => (clock += 100) },
-    process: { run: async (argv, init) => (runs.push({ argv, stdin: init?.stdin }), { exitCode: options.exitCode ?? 0, stdout: options.stdout ?? 'export: done\n', stderr: '' }) },
+    process: {
+      run: async (argv, init) => {
+        runs.push({ argv, stdin: init?.stdin })
+        if (argv[0] === 'head') {
+          if (options.head instanceof Error) throw options.head
+          return { exitCode: options.headExit ?? 0, stdout: options.head ?? '', stderr: '' }
+        }
+        return { exitCode: options.exitCode ?? 0, stdout: options.stdout ?? 'export: done\n', stderr: '' }
+      },
+    },
     session: {
       id: async () => S,
       model: async () => 'claude-opus-5-5',
@@ -29,6 +38,7 @@ function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string
         if (options.failUsage) throw new Error('no usage')
         return fixture['usage']
       },
+      info: async () => ({ transcriptPath: options.transcript ?? '' }),
     },
     ui: { log: text => logs.push(text) },
   }
@@ -132,4 +142,63 @@ test('what the writer says when it writes (the automatic export\'s one-time noti
   const silent = host({ stdout: '' })
   await hooks().hook('session.end')(silent.$, F('session.end'), through({ sessionId: S }))
   assert.deepEqual(silent.logs, [])
+})
+
+const HEAD_TEXT = '{"type":"last-prompt","sessionId":"s"}\n{"type":"custom-title","customTitle":"Agent: actor","sessionId":"s"}\n'
+const lines = (runs: { argv: readonly string[]; stdin: string | undefined }[]) =>
+  runs.filter(r => r.argv[4] === 'append').flatMap(r => (r.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>))
+const heads = (runs: { argv: readonly string[] }[]) => runs.filter(r => r.argv[0] === 'head')
+
+test('who: the title the host gives at the session\'s start is on every line from the first', async () => {
+  const { $, runs } = host({ transcript: '/t/s.jsonl', head: HEAD_TEXT })
+  const { hook } = hooks()
+  await hook('session.start')($, { ...F('session.start'), session_title: 'Orch: billing' }, through({ cwd: '/w' }))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  assert.deepEqual(lines(runs).map(l => [l['event'], l['title'], l['role']]), [['session_start', 'Orch: billing', 'orchestrator'], ['turn_end', 'Orch: billing', 'orchestrator']])
+  assert.equal(heads(runs).length, 0)
+})
+
+test('who: a successful rename names the session from then on, and replaces the title it had', async () => {
+  const { $, runs } = host({ transcript: '/t/s.jsonl', head: HEAD_TEXT })
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({ cwd: '/w' }))
+  const rename = { tool: 'mcp__orchestrator__rename_session', tool_use_id: 'toolu_01Rn', name: 'Coord: machine' }
+  await hook('tool.call')($, rename, through(F('result.failed')))
+  await hook('tool.call')($, rename, through(F('result.ok')))
+  await hook('tool.call')($, F('tool.call.skill'), through(F('result.ok')))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  await hook('tool.call')($, { ...rename, name: 'Orch: billing' }, through(F('result.ok')))
+  await hook('tool.call')($, F('tool.call.skill'), through(F('result.ok')))
+  await hook('session.end')($, F('session.end'), through({ sessionId: S }))
+  assert.deepEqual(lines(runs).map(l => [l['event'], l['title']]), [
+    ['session_start', undefined], ['tool_call', undefined], ['tool_call', undefined], ['tool_call', 'Coord: machine'], ['turn_end', 'Coord: machine'],
+    ['tool_call', 'Coord: machine'], ['tool_call', 'Orch: billing'], ['session_end', 'Orch: billing'],
+  ])
+  assert.equal(heads(runs).length, 0)
+})
+
+test('who: unknown at the first main turn\'s end, the title is read once from the transcript head', async () => {
+  const { $, runs } = host({ transcript: '/t/s.jsonl', head: HEAD_TEXT })
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({ cwd: '/w' }))
+  await hook('turn.complete')($, F('turn.complete.child'), through({ text: '' }))
+  assert.equal(heads(runs).length, 0)
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  assert.deepEqual(heads(runs).map(r => r.argv), [['head', '-c', '8192', '--', '/t/s.jsonl']])
+  assert.deepEqual(lines(runs).map(l => [l['event'], l['title'], l['role']]), [
+    ['session_start', undefined, undefined], ['turn_end', undefined, undefined], ['turn_end', 'Agent: actor', 'agent'], ['turn_end', 'Agent: actor', 'agent'],
+  ])
+})
+
+test('who: a transcript that cannot be read gives no title, no error and no second try', async () => {
+  for (const options of [{ head: new Error('no head') }, { head: HEAD_TEXT, headExit: 1 }, { head: 'not json\n' }, { transcript: '' }]) {
+    const { $, runs, logs } = host({ transcript: '/t/s.jsonl', ...options })
+    const { hook } = hooks()
+    await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+    await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+    assert.ok(heads(runs).length <= 1)
+    assert.ok(lines(runs).every(l => l['title'] === undefined && l['role'] === undefined))
+    assert.ok(logs.every(line => !line.includes('skipped')), logs.join('\n'))
+  }
 })
