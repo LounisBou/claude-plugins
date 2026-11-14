@@ -10931,6 +10931,25 @@ round c-done | done | from Orch: c | since 2026-10-18T10:04:00.000Z | blocks: - 
 round a-gone | operator | from Orch: a | since 2026-10-18T09:00:00.000Z | blocks: phase 3 | withdrawn
     Close the tab?" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord round --all 2>&1)"
+# A question asked with `ask` (hooks/question.ts, `v` 2) is printed as the relay's entries are: its
+# sender's name and session, its stamp, its blocks, then its block read from its fields; due as they are.
+VROUND="$WORK/coord-v2"
+mkdir -p "$VROUND/round"
+jq -n '{v:2, id:"q-s-v2-1", sender:{session:"s-v2", name:"Orch: v", role:"orchestrator", machine:"box"},
+  subject:"merge order", context:"Two pull requests touch one file.", ask:"Which one merges first?",
+  choices:[{letter:"A", text:"acme/app#1 first"}, {letter:"B", text:"acme/app#2 first"}], recommended:"A", why:"no rebase",
+  blocks:"acme/app#1", urgent:true, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null, seq:1}' > "$VROUND/round/q-s-v2-1.json"
+: > "$CLAUDE_CONFIG_DIR/claude-orchestrator/store/sessions/s-v2"
+check "round prints a question asked with ask from its fields, due when urgent" \
+  "round q-s-v2-1 | operator | from Orch: v | since 2026-10-18T10:02:00.000Z | blocks: acme/app#1 | open | due
+    _Subject_ : merge order
+    _Context_ : Two pull requests touch one file.
+    _Question_ : Which one merges first?
+    _Choices_ :
+    - **A** : acme/app#1 first
+    - **B** : acme/app#2 first
+    _Recommendation_ : A — no rebase" \
+  "$(ORCHESTRATOR_STATE_DIR="$VROUND" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
 check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord_status round)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round 2>&1)|$(mkdir -p "$WORK/coord-empty-round/round" && ORCHESTRATOR_STATE_DIR="$WORK/coord-empty-round" bash "$COORD" round 2>&1)"
 # round-archive moves the entries settled over a day ago into round/archive/, the withdrawn into

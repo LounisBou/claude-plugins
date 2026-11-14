@@ -18,7 +18,7 @@
 import { updateOver } from '../core/store-io.ts'
 import { CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { machineLabel } from './remote-row.ts'
-import { plainText } from './round.ts'
+import { plainText, type RoundEntry } from './round.ts'
 import { callTodo, whoAmI } from './todo.ts'
 import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
@@ -182,6 +182,19 @@ export function questionBlock(entry: Asked, number: { i: number; n: number }): s
  */
 export function shownLines(block: string): string[] {
   return block.split('\n').map(line => plainText(line))
+}
+
+/**
+ * A question asked with `ask` as the readers of the relay's entries see it, for what they only read
+ * (the coordinator's told line and due wake): its sender's name and session, its stamp as its start,
+ * what it blocks, its block from its fields. Never written back.
+ */
+export function askedAsEntry(entry: Asked): RoundEntry {
+  return {
+    id: entry.id, from: entry.sender.name, session: entry.sender.session, kind: 'operator', since: entry.at, blocks: entry.blocks,
+    question: questionBlock(entry, { i: 1, n: 1 }).split('\n').slice(1).join('\n'), choices: entry.choices, recommendation: entry.recommended,
+    status: entry.status, at: entry.at, answer: null, ...(entry.urgent ? { urgent: true as const } : {}),
+  }
 }
 
 /** Every object `ask` stored in this machine's round, open or not; a file that is no such object is skipped. */

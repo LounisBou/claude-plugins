@@ -3148,6 +3148,26 @@ test('a told line drawn before one the host refuses is recorded, and told once',
   expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: phase 3', 'Question pending from Orch: b — blocks: phase 3'])
 })
 
+// A question asked with `ask` reaches the coordinator as the relay's entries did: told once, and
+// due in its tab when urgent or with its pane closed, while its asker lives here.
+test('a question asked with ask is told to the coordinator once, and wakes it when urgent', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const urgent = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true })
+  const plain = askedObject('sb', 'Orch: b', minutesAgo(2))
+  const settled = askedObject('sc', 'Orch: c', minutesAgo(3), { status: 'answered', urgent: true })
+  for (const [asked, name] of [[urgent, 'Orch: a'], [plain, 'Orch: b'], [settled, 'Orch: c']] as const) {
+    fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+    fx.files.set(`${SESSIONS}/${asked.sender.session}`, JSON.stringify(row({ role: 'orchestrator', name })) + '\n')
+  }
+  await tick()
+  expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)', 'Question pending from Orch: b — blocks: acme/app#1'])
+  expect(fx.submitted.length).toBe(1)
+  expect(String(fx.submitted[0])).toContain('Orch: a')
+  await tick()
+  expect(fx.notices.length).toBe(2)
+  expect(fx.submitted.length).toBe(1)
+})
+
 // --- what the pane leaves out, and what it shows, said in its log ---------------------------------
 
 // The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on

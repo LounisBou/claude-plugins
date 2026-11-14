@@ -37,7 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { askedAsEntry, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1253,13 +1253,15 @@ async function wakeForDue($: any): Promise<void> {
   await reconcileRound($)
   const store = await readStore($)
   const local = store.rows
-  const read = (await readRound($)).map(found => found.entry)
+  const relayed = (await readRound($)).map(found => found.entry)
+  // The questions asked with `ask`, told and due as the relay's entries are, read through them only.
+  const read = [...relayed, ...(await readAsked($)).map(askedAsEntry)]
   const paneOpen = await paneIsOpen($)
   const present = new Set(read.map(entry => entry.id))
   const now = Date.now()
-  if (paneOpen) await traceUnseen($, read, now)
+  if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
-  const hosted = await hostedSuccessors($, read, local, store.alive)
+  const hosted = await hostedSuccessors($, relayed, local, store.alive)
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
     (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
   if (!read.some(dueBeside(await readWoken($)))) return

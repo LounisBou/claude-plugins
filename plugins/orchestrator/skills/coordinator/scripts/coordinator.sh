@@ -555,8 +555,18 @@ round_entries() {
 }
 
 # round_entries_of: the entry one file holds, as one compact JSON line, nothing when it does not parse.
+# A question asked with `ask` (hooks/question.ts, `v` 2) is read as an entry: its sender's name and
+# session, its stamp for its start, its block written from its fields.
 round_entries_of() {
-    jq -s -c 'select(length == 1) | .[0] | select(type == "object" and (.id | type) == "string"
+    jq -s -c 'select(length == 1) | .[0]
+        | if type == "object" and .v == 2 and (.sender | type) == "object" then
+            . + {from: .sender.name, session: .sender.session, kind: "operator", since: .at,
+              question: ([ "_Subject_ : \(.subject)", "_Context_ : \(.context)", "_Question_ : \(.ask)" ]
+                + (if (.choices | length) > 0 then [ "_Choices_ :" ] + (.choices | map("- **\(.letter)** : \(.text)")) else [] end)
+                + (if (.why | type) == "string" then [ "_Recommendation_ : \(if (.recommended | type) == "string" then "\(.recommended) — " else "" end)\(.why)" ] else [] end)
+                | join("\n"))}
+          else . end
+        | select(type == "object" and (.id | type) == "string"
             and (.from | type) == "string" and (.since | type) == "string" and (.status | type) == "string"
             and (.kind | type) == "string" and (.question | type) == "string")' "$1" 2>/dev/null
 }
