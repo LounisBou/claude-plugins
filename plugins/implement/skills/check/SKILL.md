@@ -58,13 +58,10 @@ each bash block below is its own shell and inherits nothing from the one before 
 `export RANGE=<base>..<head>` before the blocks below, and, when `--docs <path>` was
 given, `export DOCS_OVERRIDE=<path>` before EVERY block below, not only the first.
 
-When the `mcp__implement__state` tool is listed, one call replaces the derivation:
-`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
-the codename, the artifacts path and mode, the ignore-guard verdict, the head,
-whether the tree is clean, and the parsed state file with its next phase. A verdict
-other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
-is not a stop. The range is still exported for verification 2. Without the tool, the
-blocks below are the path, and they compute the same values.
+When the `mcp__implement__state` tool is listed, `get` (with `docs` when `--docs` was
+given) answers these values in one call; a verdict other than `ok` is the stop it names,
+`artifacts path given, ignore guard skipped` is not one. The range is still exported for
+verification 2. Without the tool, the blocks below compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
@@ -196,21 +193,3 @@ not settle.
 Each stop says its line once and waits for its answer, the orchestrator's in an
 orchestrated build (`ORCHESTRATOR_SPAWNED` set). This skill never repairs what it finds and
 never asks whether it should continue.
-
----
-
-## Quick Reference
-
-```
-1. Preflight, then export RANGE; derive BRANCH, CODENAME, DOCS (--docs exports
-   DOCS_OVERRIDE)
-2. Read the plan file of the phase and DESIGN.md
-3. 1 truncation   — the delivery ends on the item it announces
-4. 2 git range    — log, diff --stat, diff --name-only against what is claimed
-5. 3 plan         — every deliverable present, nothing claimed that is absent
-6. 4 gate         — re-run it here, every command with its exit code
-7. 5 drift        — files outside the phase file's list
-8. 6 design       — the diff against the sentences it implements
-9. 7 contracts    — every named interface, with its spelling
-10. The table, the verdict line, the status. Edit nothing.
-```

@@ -501,6 +501,10 @@ check "Ready is the github gate's: no pre-check label command, none of it restat
   "$(spells "$ORCH_REFS/review-thresholds.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the github ready gate's")"
 check "a rebase is never the orchestrator's: a mechanical one goes to an agent" "yes|no|no" \
   "$(spells "$ORCH_REFS/rebase.md" 'One whose conflicts are mechanical (no behaviour decided) goes to a rebase agent')|$(spells "$ORCH_REFS/rebase.md" 'and never by a spawned session')|$(spells "$ORCH_REFS/standing-rules.md" '(§30 of the design)')"
+# Stacks and the light CI (the operator's rulings of 2026-11-14, « A » on the light CI): the stack rules and
+# the one question per repository live in phases.md; the tool is github's, named, never restated.
+check "phases.md carries the stack rules and the light CI's one question per repository" "yes|yes|yes|yes|yes" \
+  "$(spells "$ORCH_REFS/phases.md" 'Merge top-down with merge commits, the bottom last.')|$(spells "$ORCH_REFS/phases.md" 'Re-merge the base into a stacked branch only on a conflict or when the files overlap')|$(spells "$ORCH_REFS/phases.md" 'mcp__github__light_ci status {repo}')|$(spells "$ORCH_REFS/phases.md" 'ONE question for the repository in the Q4-A shape')|$(spells "$ORCH_REFS/phases.md" 'mcp__github__light_ci run {pr}')"
 # The rationalizations table left the review references (rule 169 of the rules review): each row repeated a
 # rule kept elsewhere, the ready and the rebase --onto pinned just above.
 check "the review reference carries no rationalizations table" "0|0" \

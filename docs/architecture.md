@@ -117,6 +117,8 @@ pull request keeps its version on a re-run, and one that carries its own `market
 orchestrator) has it raised with its manifest.
 A release runs at the end of each merge wave, and at least daily.
 A release is its merge: the host installs the version the catalogue names, and no tag is made.
+Once the release is installed on a machine, every session on it is restarted: a running session
+keeps the plugin version it loaded and runs it until it ends.
 The release pull request also asks the operator whether to re-run the outcome measure (cap
 `measure` of `evals/outcome/caps.json`); nothing runs without their yes.
 
