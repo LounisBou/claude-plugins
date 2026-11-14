@@ -591,6 +591,16 @@ test("an orchestrator's long turn is never held to the agents' limit", async () 
   expect(said).toContain('o'.repeat(VERDICT_LIMIT * 2))
 })
 
+const stopOf = (message: string, extra: object = {}) => ({ session_id: 's-one', transcript_path: '', last_assistant_message: message, ...extra })
+
+test('an agent whose turn ends with no status line, its background work running or not, is not refused', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const running = [{ type: 'bash', command: 'npm test', status: 'running' }]
+  expect((await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: running }))).block).toBeUndefined()
+  expect((await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: [] }))).block).toBeUndefined()
+})
+
 test('a waiting status is reported once, however many turns repeat it, and again when it changes', async () => {
   const chains = mounted()
   const fx = fake()
