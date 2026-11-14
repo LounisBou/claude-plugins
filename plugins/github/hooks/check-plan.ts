@@ -71,11 +71,6 @@ export function planPath(dataDir: string, repo: string, pr: number): string {
   return dataDir + '/' + PLAN_DIR + '/' + repo.toLowerCase() + '/' + pr + '.json'
 }
 
-/** The required E2E or norms a new plan lifts: lifted only by the operator's waiver. */
-export function relaxed(before: CheckPlan | undefined, after: Checks): Planned[] {
-  return before ? WAIVABLE.filter((kind) => before[kind].need === 'required' && after[kind].need !== 'required') : []
-}
-
 /** The kinds the plan excuses, each named with the plan's date and reason. */
 export function planExcuses(plan: CheckPlan | undefined): Excused {
   if (!plan) return {}
@@ -117,5 +112,5 @@ export const needText = (check: Check): string => check.need + (check.max !== un
 /** The plan as the pull request shows it, in one comment. */
 export function planText(plan: Checks): string {
   const line = (kind: Planned) => '- ' + kind + ': ' + needText(plan[kind]) + (plan[kind].reason ? ' — ' + plan[kind].reason : '')
-  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required; only the operator\'s waiver lifts one.'
+  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required.'
 }

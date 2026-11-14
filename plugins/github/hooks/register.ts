@@ -15,7 +15,7 @@ import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -1852,8 +1852,7 @@ async function showPlan($: any, raw: any): Promise<{ result: string; isError?: b
 
 /*
  * The record tool's {pr, plan: {e2e, norms}}: the proofs the pull request owes, decided when the work is
- * scoped, kept across its heads and posted on it. A new plan may require more; one that no longer requires
- * a check the plan required is refused, as only the operator's waiver lifts it.
+ * scoped, kept across its heads and posted on it. A new plan replaces the previous one.
  */
 async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const checks = planInput(e.plan)
@@ -1866,10 +1865,6 @@ async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string
   if (!repo || !isRepoName(repo)) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
   const dir = await dataDir($)
   if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
-  const lifted = relaxed(await readPlan($, repo, pr), checks)
-  if (lifted.length > 0) {
-    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' requires ' + lifted.join(' and ') + ': only the operator\'s waiver lifts a required check, never a new plan.' }
-  }
   const path = planPath(dir, repo, pr)
   const body = { v: 1, repo: repo.toLowerCase(), pr, ...checks, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }
   await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(body, null, 2) + '\n'))

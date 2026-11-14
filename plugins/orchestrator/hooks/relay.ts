@@ -68,7 +68,7 @@ export function confirmsTakeover(text: string): boolean {
 }
 
 // An agent's last line, its brief's own: `status: done|blocked|question — <one line>`, or
-// `status: waiting — <what is watched>` while its own background work runs (agent-stop.ts), read
+// `status: waiting — <what is watched>` while its own background work runs, read
 // by core's reportStatus. The text above it is its report or question.
 const STATUS_KIND = { done: 'delivered', blocked: 'blocked', question: 'question', waiting: 'waiting' } as const
 
