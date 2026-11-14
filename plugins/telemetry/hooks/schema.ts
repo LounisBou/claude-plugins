@@ -79,7 +79,7 @@ export const EVENT_SCHEMA = {
   },
   tool_call: {
     summary: 'A tool call, its outcome and who refused it.',
-    writers: ['hooks `tool.call` around `next`, and `tool.check` when the decision is not `allow`'],
+    writers: ['hooks `tool.call` around `next`, and `tool.check` when the decision is not `allow`', 'hook `turn.complete`, for the plugin and MCP calls a plugin answered in place of `next` (the `tool.call` hook beneath never runs): read back from the transcript once answered, with no `duration_ms` and no `check`, and the turn\'s end as `ts`'],
     fields: [
       field('tool', 'string', 'The tool\'s name.'),
       field('mcp_server', 'string', 'The MCP server, for an `mcp__<server>__<tool>` call.'),
@@ -88,7 +88,7 @@ export const EVENT_SCHEMA = {
       field('outcome', 'string', '`ok`, `error` or `refused`.'),
       field('decided_by', 'string', 'Who refused: `user`, `auto_mode`, `safety`, `rule`, `hook`, `plugin`, `plugin:<name>`.'),
       field('check', 'object', 'The permission check when it did not allow: `decision`, `rule`, `hook`, `plugin`, `setting`.'),
-      field('duration_ms', 'number', 'The call\'s duration, the permission wait included.', 'ms'),
+      field('duration_ms', 'number', 'The call\'s duration, the permission wait included; absent on a call read back from the transcript.', 'ms'),
       field('bash', 'object', 'A Bash call: `head` (first command), `heads` (every command), `line` (redacted, cut to 400 characters).'),
       field('skill', 'string', 'The skill a `Skill` call loaded.'),
       field('subagent_type', 'string', 'The type an `Agent` call started.'),
