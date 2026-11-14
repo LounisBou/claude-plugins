@@ -81,7 +81,7 @@ export type Loop = {
 }
 
 // The rounds a review runs at most: core's cap on a check plan's review rounds.
-export const MAX_PASSES = REVIEW_ROUNDS.cap
+export const MAX_PASSES: number = REVIEW_ROUNDS.cap
 
 export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 
