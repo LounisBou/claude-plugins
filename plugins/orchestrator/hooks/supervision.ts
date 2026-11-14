@@ -1723,7 +1723,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
-        if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body))
+        if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
         if (isAck(delivery.body)) return await receiveAck($, oldAck(parseAck(delivery.body), 'ask'))
         if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, oldAck(parseAnswerAck(delivery.body), 'answer'))
         const q = isQ(delivery.body) ? parseQ(delivery.body) : null
@@ -3784,9 +3784,9 @@ async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: s
 }
 
 // An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
-async function receiveQAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
-  if (ack?.of === 'asked') return receiveAskedAck($, ack)
-  if (ack?.of === 'reply') return receiveReplyAck($, ack)
+async function receiveQAck($: any, ack: QAck | null, from: string | null): Promise<{ consumed: string }> {
+  if (ack?.of === 'asked') return receiveAskedAck($, from, ack)
+  if (ack?.of === 'reply') return receiveReplyAck($, from, ack)
   return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
 }
 

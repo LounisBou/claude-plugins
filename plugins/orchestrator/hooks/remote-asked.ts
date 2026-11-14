@@ -144,8 +144,8 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
   try {
     await updateOver(storeIo($), await pathOf($, asked.id), current => {
       const held = current === undefined ? null : parseAsked(current)
-      // A file here that is no replica of that machine's (this machine's own question, or one it cannot read) is never overwritten.
-      owned = current !== undefined && (held === null || held.origin === undefined || held.origin.machine !== asked.sender.machine)
+      // A file here that is no replica of that machine's pushed from that address (this machine's own question, one it cannot read, or a peer claiming that machine) is never overwritten.
+      owned = current !== undefined && (held === null || held.origin === undefined || held.origin.machine !== asked.sender.machine || held.origin.address !== from)
       if (owned || (held !== null && held.seq >= asked.seq)) return undefined
       const pending = held?.delivery?.state === 'pending' || held?.delivery?.state === 'sent'
       const keeps = asked.status === 'open' && pending
@@ -167,7 +167,7 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
     return { consumed: 'orchestrator: a remote question asked with ask, not written' }
   }
   if (owned) {
-    await logLine($, 'question', `a remote push of ${asked.id} from ${asked.sender.machine} meets a question here that is no replica of that machine's, ignored`)
+    await logLine($, 'question', `a remote push of ${asked.id} from ${asked.sender.machine} at ${from} meets a question here that is no replica of that machine's from that address, ignored`)
     return { consumed: 'orchestrator: a remote push of a question owned here, ignored' }
   }
   await ack($, from, { id: asked.id, seq: asked.seq, of: 'asked' })
@@ -183,8 +183,15 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
   return { consumed: 'orchestrator: a remote question asked with ask, replicated' }
 }
 
-/** The coordinator's acknowledgment of a push, on the owner's machine: the push of that very `seq` acknowledged. */
-export async function receiveAskedAck($: any, ack: QAck): Promise<{ consumed: string }> {
+/**
+ * The coordinator's acknowledgment of a push, on the owner's machine: the push of that very `seq`
+ * acknowledged. One from any other address than the coordinator's is consumed and written nowhere.
+ */
+export async function receiveAskedAck($: any, from: string | null, ack: QAck): Promise<{ consumed: string }> {
+  if (!await fromCoordinator($, from)) {
+    await logLine($, 'question', `an acknowledgment of the push of ${ack.id} from ${from ?? 'no address'}, not the coordinator's, refused`)
+    return { consumed: "orchestrator: an acknowledgment of a push from no coordinator, refused" }
+  }
   let taken = false
   try {
     await updateOver(storeIo($), await pathOf($, ack.id), current => {
@@ -207,8 +214,14 @@ export async function receiveAskedAck($: any, ack: QAck): Promise<{ consumed: st
  * acknowledged, and told to its asker — this session's model, by the readable line that replaces the
  * marked one, or its asker's session by a message. Settled first here: acknowledged `already`, its
  * own state pushed again. The same reply received again is acknowledged again and told nowhere.
+ * A reply from any other address than the coordinator's is consumed, applied nowhere, acknowledged
+ * to nobody.
  */
 export async function receiveReply($: any, from: string, id: string, seq: number, reply: QReply): Promise<{ consumed: string } | { readable: string }> {
+  if (!await fromCoordinator($, from)) {
+    await logLine($, 'question', `a remote reply to ${id} from ${from}, not the coordinator's, refused`)
+    return { consumed: 'orchestrator: a remote reply from no coordinator, refused' }
+  }
   let held: Asked | null = null
   let applied: Asked | null = null
   try {
@@ -253,12 +266,18 @@ export async function receiveReply($: any, from: string, id: string, seq: number
   return { consumed: 'orchestrator: a remote reply, applied and sent to its asker' }
 }
 
-/** The owner's acknowledgment of a reply, on the replica's machine: delivered, or failed when it was settled there first. */
-export async function receiveReplyAck($: any, ack: QAck): Promise<{ consumed: string }> {
+/**
+ * The owner's acknowledgment of a reply, on the replica's machine: delivered, or failed when it was
+ * settled there first. One from any other address than the replica's origin is written nowhere.
+ */
+export async function receiveReplyAck($: any, from: string | null, ack: QAck): Promise<{ consumed: string }> {
   let taken = false
+  let foreign = false
   try {
     await updateOver(storeIo($), await pathOf($, ack.id), current => {
       const now = current === undefined ? null : parseAsked(current)
+      foreign = now !== null && now.origin !== undefined && now.origin.address !== from
+      if (foreign) return undefined
       const state = now?.delivery?.state
       // A failure said « already answered » stays: no plain acknowledgment answers a reply its owner did not apply.
       if (now === null || now.origin === undefined || (state !== 'pending' && state !== 'sent' && state !== 'failed') || (state === 'failed' && now.delivery!.reason === ALREADY_ANSWERED && !ack.already)) return undefined
@@ -270,7 +289,8 @@ export async function receiveReplyAck($: any, ack: QAck): Promise<{ consumed: st
   } catch (err) {
     await logLine($, 'question', `the acknowledgment of the reply to ${ack.id} not written: ${messageOf(err)}`)
   }
-  if (!taken) await logLine($, 'question', `an acknowledgment of a reply to ${ack.id} matches no reply sent`)
+  if (foreign) await logLine($, 'question', `an acknowledgment of a reply to ${ack.id} from ${from ?? 'no address'}, not its owner's, refused`)
+  else if (!taken) await logLine($, 'question', `an acknowledgment of a reply to ${ack.id} matches no reply sent`)
   else $.ui.invalidate('ui.render')
   return { consumed: "orchestrator: a reply's acknowledgment, recorded" }
 }
@@ -344,6 +364,12 @@ export async function resendReplies($: any, now: number = Date.now()): Promise<v
       await logLine($, 'question', `the answer to ${entry.id} not sent again: ${messageOf(err)}`)
     }
   }
+}
+
+// The sender is the coordinator on another machine this one pushes to: the address it learnt.
+async function fromCoordinator($: any, from: string | null): Promise<boolean> {
+  const coordinator = await coordinatorAddress($)
+  return from !== null && coordinator !== null && !coordinator.local && coordinator.to === from
 }
 
 async function ack($: any, to: string, ack: QAck): Promise<void> {

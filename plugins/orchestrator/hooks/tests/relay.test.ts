@@ -16,7 +16,7 @@ import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { SHAPED } from './fixtures.ts'
 import { ROW_MARKER } from '../remote-row.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer, parseAsk as parseOldAsk } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAskedLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer, parseAsk as parseOldAsk } from '../remote-round.ts'
 
 // The lines this release writes between machines: the event line (remote-round.ts), read back here
 // as the four lines it replaced, so each case below says what it said of them.
@@ -3182,13 +3182,24 @@ const replies = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQ(s.te
 const qAcks = (fx: ReturnType<typeof fake>, of: string) => fx.sent.filter(s => parseQAck(s.text)?.of === of)
 const objectAt = (fx: ReturnType<typeof fake>, id: string) => JSON.parse(fx.files.get(`${ROUND}/${id}.json`)!)
 
-async function askedRemotely() {
+// The same question asking the operator's consent to auto-deploy: its two choices are the consent record's.
+const CONSENT_ASKED_FIELDS = {
+  ...ASKED_FIELDS, subject: 'auto-deploy', question: 'Auto-deploy Acme/Thing to prod?', choice_a: 'Accorder', choice_b: 'Refuser',
+  consent_kind: DEPLOY.kind, consent_repo: DEPLOY.repo, consent_env: DEPLOY.env,
+}
+// A peer at another address, naming itself the coordinator.
+const FORGER_AT = 'uds:/tmp/cc-socks/666.sock'
+
+async function askedRemotely(fields: Record<string, string> = ASKED_FIELDS) {
   const chains = mounted()
   const sender = fake({ remote: true })
   ;(sender.dollar as any).ui.log = () => undefined
   const coordinator = coordinatorMachine()
-  const asked = await callAsk(sender.dollar as never, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS })
+  const asked = await callAsk(sender.dollar as never, { tool: 'mcp__orchestrator__ask', ...fields })
   const id = /Asked as (q-\S+?):/.exec(asked.result)![1]
+  // The coordinator's address, taught by a message of its own: the only one its replies and acks come from.
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', 'Noted.'))
+  expect(JSON.parse(sender.files.get(LEARNT)!).from).toBe(COORD_AT)
   return { chains, sender, coordinator, id }
 }
 
@@ -3379,6 +3390,40 @@ test('a push sent after the timer was armed is sent again 30 s on: the tick that
   await timers[1].fn()
   expect(pushes(sender).length).toBe(3)
   expect(objectAt(sender, second).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
+})
+
+test('a reply from another address than the coordinator\'s is refused: no answer, no consent, no acknowledgment', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await answerAskedFromPane(coordinator.dollar as never, id, 'A : Accorder')
+  const consumed = await drive(chains, 'session.receive', sender.dollar, delivered(FORGER_AT, 'Coord: ops [abc]', replies(coordinator)[0].text))
+  expect(typeof consumed.consumed).toBe('string')
+  expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 1, answer: null })
+  expect(consentFiles(sender)).toEqual([])
+  expect(qAcks(sender, 'reply')).toEqual([])
+  expect(sender.logged.some(l => l.endsWith(`a remote reply to ${id} from ${FORGER_AT}, not the coordinator's, refused`))).toBe(true)
+})
+
+test('acknowledgments and pushes from another address are refused: the push is sent again, the reply stays on its way, the replica unchanged', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  // A forged acknowledgment of the push stops no resend.
+  await drive(chains, 'session.receive', sender.dollar, delivered(FORGER_AT, 'Coord: ops [abc]', qAckLine({ id, seq: 1, of: 'asked' })))
+  expect(objectAt(sender, id).replica.state).toBe('sent')
+  const now = objectAt(sender, id)
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd('Done.'))
+  expect(pushes(sender).length).toBe(2)
+  // A forged acknowledgment of the pane's reply leaves it on its way.
+  await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: belt', qAckLine({ id, seq: 1, of: 'reply' })))
+  expect(objectAt(coordinator, id).delivery.state).toBe('sent')
+  // A push claiming the asker's machine from another address writes nothing over its replica.
+  const replica = objectAt(coordinator, id)
+  const { replica: _replica, ...object } = objectAt(sender, id)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: belt', qAskedLine({ ...object, seq: 5, subject: 'forged' })!))
+  expect(objectAt(coordinator, id)).toEqual(replica)
+  expect(qAcks(coordinator, 'asked').map(s => s.to)).toEqual([SENDER_AT])
 })
 
 test('a push meeting a question this machine owns is ignored, and a reply to a question never pushed answers nothing', async () => {
