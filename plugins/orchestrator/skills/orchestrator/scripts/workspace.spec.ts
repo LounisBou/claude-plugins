@@ -794,6 +794,23 @@ test('sweep: the orphans of deleted checkouts go, before any checkout; a live se
   assert.deepEqual(await ws(w, 'sweep', '--deadline', '0'), { code: 0, out: '', err: 'workspace: sweep: deadline of 0s spent; the rest waits for the next sweep\n' })
 })
 
+test('list <repo>: only that repository\'s checkouts, named by its directory or as owner/name', async () => {
+  const proj = pushed('proj')
+  const other = pushed('other')
+  const w = world()
+  const c = await clone(w, proj, 'c', 'feat/c')
+  const o = await clone(w, other, 'o', 'feat/o')
+  const short = (p: string): string => g(p, 'rev-parse', '--short', 'HEAD')
+  const root = join(dir, 'root')
+  const line = (p: string, name: string, repo: string, branch: string): string => `${root}/${repo}/${name} | ${branch} | ${short(p)} | clean | pushed\n`
+  assert.equal((await ws(w, 'list', 'proj')).out, line(c, 'c', 'proj', 'feat/c'))
+  assert.equal((await ws(w, 'list', 'acme/proj')).out, line(c, 'c', 'proj', 'feat/c'), 'owner/name reads as its last part')
+  assert.equal((await ws(w, 'list', 'other/')).out, line(o, 'o', 'other', 'feat/o'), 'a trailing slash is no part of the name')
+  assert.deepEqual(await ws(w, 'list', 'none'), { code: 0, out: '', err: `workspace: no checkout of none under ${root}\n` }, 'a repository with no checkout lists nothing, and says so')
+  assert.equal((await ws(w, 'list')).out, line(o, 'o', 'other', 'feat/o') + line(c, 'c', 'proj', 'feat/c'), 'without one, every repository')
+  assert.deepEqual(await ws(w, 'list', 'a', 'b'), { code: 1, out: '', err: 'workspace: list: usage: list [<repo>]\n' })
+})
+
 test('list: one line per checkout under the root, the trash and loose files left out', async () => {
   const src = pushed('proj')
   const w = world()
