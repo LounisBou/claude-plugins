@@ -1,12 +1,13 @@
 // hooks/gauge.ts
 import { gateThresholds } from '../core/env.ts'
-import { gateTokensOf, MEASURE_VERSION } from '../core/orchestration.ts'
+import { gateTokensOf, MEASURE_DIR, MEASURE_VERSION, moduleDirOf } from '../core/orchestration.ts'
 import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { configDir, logLine } from './module-io.ts'
+import { removeArgv } from '../core/store-io.ts'
+import { configDir, logLine, writeAtomic } from './module-io.ts'
 
 // The nouns the gauge holds.
-type Gauge = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui'>
+type Gauge = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui'>
 
 // Module memory only — a reload resets all three, by design (Review Focus 3): drift is
 // announced between two measures of the same load, never re-announced from a stale
@@ -44,16 +45,49 @@ export function driftAnnouncement(model: string, previous: string): string {
 }
 
 export async function writeMeasure(
-  $: Host<'fs' | 'env'>,
+  $: Host<'fs' | 'env' | 'process' | 'clock'>,
   sessionId: string,
   reading: MeasureReading,
 ): Promise<void> {
-  // One JSON line; the trailing newline ends it, and a partial line reads as
-  // unmeasured everywhere ($.fs.write is not atomic).
-  await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
+  // One JSON line, put in place in one rename: $.fs.write alone creates the file empty and
+  // fills it after, and a reader (or a crash) in between found — or left — a 0-byte measure.
+  await writeAtomic($, measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
+}
+
+// A session with no figures has no measure file: removed, never rewritten empty — $.fs.write
+// creates the file when it is absent, so an empty write left a 0-byte file for every session
+// that ended, was compacted or had not answered yet. Removing a file that is not there is no failure.
+async function removeMeasure($: Host<'env' | 'process'>, sessionId: string): Promise<void> {
+  const path = measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))
+  const removed = await $.process.run(removeArgv(path), { timeoutMs: 5000 })
+  if (removed.exitCode !== 0) throw new Error(`the measure file ${path} could not be removed${removed.stderr ? `: ${removed.stderr.trim()}` : ''}`)
+}
+
+// The 0-byte measure files an earlier version left behind (it wrote an empty file at every session
+// end and compaction), removed at the next start: past a day, so no file a write is about to fill.
+const EMPTY_MEASURE_AGE_MS = 24 * 3600 * 1000
+
+async function sweepEmptyMeasures($: Host<'env' | 'fs' | 'process'>): Promise<void> {
+  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/${MEASURE_DIR}`
+  const now = Date.now()
+  const stale = (await $.fs.list(dir))
+    .filter(entry => entry.kind === 'file' && entry.size === 0 && entry.name.endsWith('.json') && now - (entry.mtimeMs ?? now) > EMPTY_MEASURE_AGE_MS)
+    .map(entry => `${dir}/${entry.name}`)
+  if (stale.length > 0) await $.process.run(removeArgv(...stale), { timeoutMs: 5000 })
 }
 
 export function register(on: On<Gauge>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      await sweepEmptyMeasures($)
+    } catch (err) {
+      await logLine($, 'gauge', messageOf(err))
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'gauge', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
   on('session.measure', async ($, e, next) => {
     try {
       const usage = await $.session.usage()
@@ -105,7 +139,7 @@ export function register(on: On<Gauge>): void {
   })
   // A compaction of the main conversation starts: the figures measured before it go
   // with what it summarises, and the next answer measures again. The measure file is
-  // emptied now — the gate reads it — so the next prompt is not told a fill the
+  // removed now — the gate reads it — so the next prompt is not told a fill the
   // conversation no longer has. A subagent's own compaction is not the session's.
   on('session.compact', async ($, e, next) => {
     try {
@@ -125,9 +159,7 @@ export function register(on: On<Gauge>): void {
     currentIn = null
     starts.delete(e.sessionId ?? '')
     try {
-      // $.fs offers no remove: an empty file reads as unmeasured everywhere, and
-      // install.sh purges the stale ones.
-      await $.fs.write(measureFilePath(await configDir($), e.sessionId ?? await $.session.id(), await $.env.get('ORCHESTRATOR_MODULE_DIR')), '')
+      await removeMeasure($, e.sessionId ?? await $.session.id())
     } catch (err) {
       // Never blocks the end; the failure is said — one line, the
       // every-handler-logs rule.
@@ -174,10 +206,10 @@ async function startBrief($: Host<'fs' | 'env'>): Promise<{ path: string; bytes:
 
 // The figures of a conversation that no longer has them: memory, and the measure
 // file when they were this session's — another session's (a /clear's predecessor)
-// was emptied by its own end.
-async function forget($: Host<'env' | 'fs' | 'ui'>, sessionId: string, mine = currentIn === sessionId): Promise<void> {
+// was removed by its own end.
+async function forget($: Host<'env' | 'process' | 'ui'>, sessionId: string, mine = currentIn === sessionId): Promise<void> {
   current = null
   currentIn = null
   $.ui.invalidate('ui.render')
-  if (mine) await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), '')
+  if (mine) await removeMeasure($, sessionId)
 }

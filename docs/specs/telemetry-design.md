@@ -20,18 +20,9 @@ sessions that ended before the plugin was installed or ended without a `session.
 Every line: `v`, `ts` (ISO, UTC), `event`, `session` (the host's session id); `agent` when the
 fact happened in a subagent's loop.
 
-| Event | Fields | Source |
-|---|---|---|
-| `session_start` | `cwd`, `project`, `model`, `interactive`, `surface`, `spawned` (launched by the orchestrator), `startup_ms` (launch to `session.start`) | `session.start`, `$.session.usage().startedAt` |
-| `first_turn` | `since_start_ms`, `since_launch_ms` (the « started after 5 minutes ») | the first main `turn.start` |
-| `turn_end` | `turn`, `reason`, `duration_ms`, `model`, `tokens` {`in`,`out`,`cache_read`,`cache_write`}, `context_tokens`, `window`, `cost_usd` (the session's, cumulative) | `turn.complete`, `$.session.usage()` |
-| `tool_call` | `tool`, `mcp_server`, `mcp_tool`, `tool_use_id`, `outcome` (`ok`, `error`, `refused`), `decided_by` (`user`, `auto_mode`, `safety`, `rule`, `hook`, `plugin`, `plugin:<name>`), `check` {`decision`,`rule`,`hook`,`plugin`,`setting`}, `duration_ms` (permission wait included), `bash` {`head`, `heads`, `line`}, `skill`, `subagent_type`, `command` (an MCP tool's `command` argument) | `tool.call` around `next`, `tool.check` when not `allow` |
-| `agent_spawned` | `kind` `subagent`: `child`, `subagent_type`, `model`, `requested_model`, `background`, `provider`, `description`; `kind` `session`: `title`, `role`, `tier`, `model`, `effort`, `permission_mode` | `agent.spawn`; the launcher's `iterm-agent.sh spawn` command line |
-| `agent_closed` | `kind`, `child` and `duration_ms` (subagent's first run end), or `title` (launcher's `close`) | `turn.complete` of the child; `iterm-agent.sh close` |
-| `question` | `source` (`ask_user`, `round`), `count`, `headers`, `options`, `chosen` (letters), `wait_ms`; for a round, `kind` | `AskUserQuestion`; `mcp__orchestrator__declare_wait` |
-| `dispatch` | `sub` (`open`, `round`, `review`, `ready`, `close`, `cost`, …), `record` (file name), `row`, `class`, `tier`, `model`, `effort`, `head`, `verdict` | the `dispatch-record.sh` command line |
-| `session_end` | `reason`, `duration_ms`, `turns`, `cost_usd`, `context_tokens`, `window`; enriched: `title`, `role`, `effort`, `models`, `first_turn_ms`, `totals` | `session.end`, then the transcript |
-| `session_summary` | the enrichment of `session_end`, plus `cwd`, `started`, `ended`, `tools`, `errors`, `refusals` by decider | `backfill <transcript>` |
+The kinds, each one's fields with their units and the hook or command line that writes it, are
+declared once in `plugins/telemetry/hooks/schema.ts`. The writer accepts exactly the declared
+kinds, and the export generates the logs repository's schema pages from the same list (« Index »).
 
 `role` is read from the title by core's `parseSessionName` (`orchestrator`, `coordinator`,
 `agent`, `auditor`), `reviewer` for a title starting with `Review`, else `other`. Merges and
@@ -102,3 +93,35 @@ them and pushes to `main`, which the first push creates; a commit a refused push
 pushed by the next export. Git's own output is redacted, the
 repository's address included in each form git prints (without its credentials, without `.git`,
 its path), before it is printed.
+
+### Automatic export
+
+The export needs no one to remember it. When the writer stores a `session_end`, it starts
+`telemetry.ts export --auto` as a detached process, so the session's end is not held. That run
+exports at most once per UTC day (`<config>/telemetry/auto.json` records the day of the last
+export that finished); a failed one is retried no sooner than an hour later. It takes the lock
+beside the clone (`<config>/telemetry/export.lock`) without waiting: sessions ending together
+leave the export to the one that holds it, and the lock is re-read for the day under it. A
+`/telemetry:export` takes the same lock and waits its turn. The last automatic run's lines are
+in `<config>/telemetry/export.log`. With `CLAUDE_LOGS_REPO` unset the writer says so once, in the
+session's log, and pushes nothing; it says so again if the variable is set and later unset. The
+secret scan refuses the automatic export as it refuses the manual one.
+
+### Index
+
+Each export also writes `index/` in the logs repository, regenerated whole from the declared
+kinds and the day files, so a reader (an auditor, the learning distiller) queries it without
+reading every line:
+
+- `index/README.md`: the layout and the list of kinds.
+- `index/schema/<event>.md`: one page per declared kind, its fields, units and writers;
+  `index/schema/manifest.md` for the manifest; `index/schema.json`, the same machine-readable.
+  A kind added to the list in `hooks/schema.ts` joins the pages with no other edit.
+- `index/<machine>/<day>.json`: the day's manifest, built by `lib/manifest.ts` from the day file:
+  its sessions (role, models, title, project, cost, span, whether it ended), the pull requests,
+  branches and dispatch rows its events name, the github tool's commands by count, and for each
+  session the path of its transcript under the machine's configuration directory.
+
+Raw transcripts are not exported: they hold prompts and possibly secrets. The manifest names their
+local path and the session id, nothing of their content. The index is scanned as the day files
+are: a secret it would carry refuses the export, nothing pushed.

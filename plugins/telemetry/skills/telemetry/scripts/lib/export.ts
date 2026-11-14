@@ -1,10 +1,14 @@
 // The export: the day files committed to a local clone of the logs repository and pushed, after
 // the scan of every file finds no secret. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { withLock } from '../../../../core/store.ts'
+import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
+import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
 import { redactText, type EnvSecrets } from './redact.ts'
+import { INDEX_DIR, schemaFiles, type IndexFile } from './schema-docs.ts'
 
 /** The variable that names the logs repository, in the environment or in ~/.env. */
 export const REPO_VARIABLE = 'CLAUDE_LOGS_REPO'
@@ -24,7 +28,19 @@ export interface ExportOptions {
   readonly repo: string | undefined
   readonly machine: string
   readonly git: Git
+  /** The kinds the index documents: the declared list unless a caller passes another. */
+  readonly kinds?: Readonly<Record<string, KindSpec>>
+  /** Where a session's transcript is on this machine; the manifest points to it. */
+  readonly transcript?: (session: string) => string | undefined
 }
+
+export interface ExportResult {
+  readonly lines: string[]
+  readonly code: number
+}
+
+/** A lock older than this is a holder that died: longer than the slowest export (every git command is bounded). */
+export const EXPORT_LOCK_STALE_MS = 600_000
 
 /** The logs repository: the environment's value, else ~/.env's. */
 export function logsRepo(env: Readonly<Record<string, string | undefined>>, secrets: EnvSecrets): string | undefined {
@@ -62,8 +78,32 @@ function unpushed(git: Git, clone: string): boolean {
   return remote.status !== 0 || remote.stdout.trim() !== head.stdout.trim()
 }
 
+/** The index of the repository: the schema pages, and the manifest of each day file of the store. */
+function indexFiles(options: ExportOptions, events: string, days: readonly string[]): IndexFile[] {
+  const transcript = options.transcript ?? (() => undefined)
+  return [
+    ...schemaFiles(options.kinds ?? EVENT_SCHEMA),
+    ...days.map((name): IndexFile => {
+      const day = name.slice(0, 10)
+      const manifest = buildManifest({ day, machine: options.machine, text: readFileSync(join(events, name), 'utf8'), transcript })
+      return { path: `${INDEX_DIR}/${options.machine}/${day}.json`, text: `${JSON.stringify(manifest, null, 2)}\n` }
+    }),
+  ]
+}
+
+/** Replaces the generated index of `machine` in the clone: schema pages and the machine's manifests, nothing stale left. */
+function writeIndex(clone: string, machine: string, files: readonly IndexFile[]): void {
+  rmSync(join(clone, INDEX_DIR, 'schema'), { recursive: true, force: true })
+  rmSync(join(clone, INDEX_DIR, machine), { recursive: true, force: true })
+  for (const file of files) {
+    const path = join(clone, file.path)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, file.text)
+  }
+}
+
 /** Exports the store; answers the lines to print and the exit code. */
-export function exportStore(options: ExportOptions): { lines: string[]; code: number } {
+export function exportStore(options: ExportOptions): ExportResult {
   const { stateDir, secrets, repo, machine, git } = options
   const events = eventsDir(stateDir)
   if (repo === undefined) return { lines: [`export: ${REPO_VARIABLE} is not set; the events stay local in ${events}, nothing pushed`], code: 0 }
@@ -76,8 +116,12 @@ export function exportStore(options: ExportOptions): { lines: string[]; code: nu
   }
   const days = dayFiles(events)
   if (days.length === 0) return { lines: ['export: no event recorded yet, nothing pushed'], code: 0 }
+  // The index is generated from the same events, and held to the same scan before anything is cloned.
+  const index = indexFiles(options, events, days)
+  const leaks = index.flatMap(file => [...new Set(redactText(file.text, secrets).hits)].map(pattern => `  ${file.path}: ${pattern}`))
+  if (leaks.length > 0) return { lines: [`export refused: the index would carry ${leaks.length} secret(s), nothing pushed`, ...leaks], code: 1 }
   const clone = join(stateDir, 'export')
-  const fail = (step: string, result: GitResult): { lines: string[]; code: number } => ({
+  const fail = (step: string, result: GitResult): ExportResult => ({
     lines: [`export failed at ${step} (git exit ${result.status}): ${safeOutput(`${result.stderr}\n${result.stdout}`, repo, secrets)}`],
     code: 1,
   })
@@ -100,8 +144,9 @@ export function exportStore(options: ExportOptions): { lines: string[]; code: nu
   const target = join(clone, 'machines', machine)
   mkdirSync(target, { recursive: true })
   for (const day of days) copyFileSync(join(events, day), join(target, day))
+  writeIndex(clone, machine, index)
   // Forced: an ignore rule of the clone or the machine matching a day file would leave it out unsaid.
-  const added = git(['add', '--force', '--', join('machines', machine)], clone)
+  const added = git(['add', '--force', '--', join('machines', machine), INDEX_DIR], clone)
   if (added.status !== 0) return fail('add', added)
   if (git(['diff', '--cached', '--quiet'], clone).status !== 0) {
     const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${days.length} day file(s) up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
@@ -113,4 +158,24 @@ export function exportStore(options: ExportOptions): { lines: string[]; code: nu
   const pushed = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
   if (pushed.status !== 0) return fail('push', pushed)
   return { lines: [`export: ${days.length} day file(s) of ${machine} pushed to the logs repository`], code: 0 }
+}
+
+/**
+ * The export, one at a time on this machine: it takes the lock beside the clone and waits for it up to
+ * `waitMs`. A holder is a session's export running; when the lock stays held, nothing is pushed.
+ * `when`, asked once the lock is held, declines the export by answering false (`skipped`).
+ */
+export function exportExclusive(
+  options: ExportOptions,
+  lock: { readonly waitMs: number; readonly when?: () => boolean },
+): ExportResult & { readonly busy: boolean; readonly skipped?: true } {
+  try {
+    return withLock(join(options.stateDir, 'export'), () => {
+      if (lock.when?.() === false) return { lines: [], code: 0, busy: false, skipped: true as const }
+      return { ...exportStore(options), busy: false }
+    }, { waitMs: lock.waitMs, staleMs: EXPORT_LOCK_STALE_MS })
+  } catch (error) {
+    if (error instanceof Error && /stayed locked/.test(error.message)) return { lines: ['export: another export is running, nothing pushed'], code: 1, busy: true }
+    throw error
+  }
 }
