@@ -25,7 +25,7 @@ import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
-import { operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
+import { operatorWaitRefusal, asksTheOperator, turnQuestionReader, QUESTION_BY_MESSAGE } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -42,7 +42,7 @@ import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from '
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
 import { MODE_DIALOG_DENY, WAITED_ON_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
-import { unnamedReport } from './relay.ts'
+import { handsOver, unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
@@ -242,6 +242,21 @@ async function transcriptHasAnswer($: any, path: string): Promise<boolean> {
     (l: string) => /"type"\s*:\s*"assistant"/.test(l),
   )
   return line !== null
+}
+
+// Whether this turn already put the operator a question, in a text it wrote or in a declared wait's
+// call (turnQuestionReader): the last message that only names the wait is then no unasked one. A
+// transcript that cannot be read has asked nothing the gate can know.
+async function askedThisTurn($: any, path: string, until: number): Promise<boolean> {
+  if (!path) return false
+  const reader = turnQuestionReader()
+  await scanTail(
+    async (p: string) => (await $.fs.stat(p)).size,
+    (p: string, index: number) => readBlock($, p, index, Math.max(1, until - Date.now())),
+    path,
+    reader.matches,
+  )
+  return reader.asked()
 }
 
 // How many times a re-fired stop is refused again for an operator wait with no question block.
@@ -473,6 +488,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (!e.agentId && isSuccessorSpawn(command) && out && !out.isError && !out.deny) {
       try {
         handedOverIn = await $.session.id()
+        declarations.handOver(handedOverIn)
       } catch (err) {
         await logLine($, 'guards', `the hand-over could not be kept: ${(err as Error).message}`)
       }
@@ -488,6 +504,25 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (next.called) return next(e)
     const fallback = guardFallback(spawnedMark, String(e.command ?? ''), next.error?.message ?? 'the guard did not finish')
     return fallback ?? next(e)
+  })
+
+  // The model's own « handed over », delivered, is the hand-over too: the successor spawned by another
+  // route (or before a reload of this module) leaves no spawn to read, and the session that sent its last
+  // word to its successor is no more refused a done for what is now the successor's.
+  on('session.send', async ($: any, e: any, next: (e: any) => any) => {
+    const sent = await next(e)
+    if (!e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text) && sent?.isDelivered !== false) {
+      try {
+        handedOverIn = await $.session.id()
+        declarations.handOver(handedOverIn)
+      } catch (err) {
+        await logLine($, 'guards', `the hand-over could not be kept: ${(err as Error).message}`)
+      }
+    }
+    return sent
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
   })
 
   // The stop gate (hooks/stop_gate.py ported; the decisions in stop-gate.ts). The
@@ -549,12 +584,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {
         if (role !== 'orchestrator') return next(e)
+        if (await askedThisTurn($, transcript, until)) return next(e)
         return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, String(e.last_assistant_message ?? ''), until) ?? next(e)
       }
       if (role === 'coordinator') return next(e)
       // An orchestrator ending on a wait for the operator puts him a question: read off the message too.
       const unasked = operatorWaitRefusal(String(e.last_assistant_message ?? ''))
-      if (unasked !== null) {
+      if (unasked !== null && !(await askedThisTurn($, transcript, until))) {
         await logLine($, 'guards', 'stop gate: an operator wait with no question')
         return refuse(unasked)
       }

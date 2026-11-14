@@ -1,4 +1,0 @@
-{
-  "$comment": "pm2.config.js is CommonJS, as PM2 loads it: this stops the repository root package.json, an ES module one, from deciding for it.",
-  "type": "commonjs"
-}
