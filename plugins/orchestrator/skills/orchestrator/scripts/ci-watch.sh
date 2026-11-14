@@ -35,6 +35,9 @@
 # On a draft the watch settled on its guards, a check that depends on no guard (a secret scanner)
 # is no evidence either: only a passed check whose job needs a guard counts (`draft_guard.py
 # --dependents`), else `no-checks` with the count skipped.
+# Nor is a pull request GitHub reports as conflicting: it starts no workflow run, so what passed is an
+# external check at most, and the suites never ran. It says `no-checks` with the word `conflicting`,
+# before any wait for a merge: the head is rebased, never reported ready.
 # Green with auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
 # so the pull request is read again at the interval, bounded, until it merges.
 #
@@ -56,6 +59,8 @@
 #                                                                  (a cancelled check is one, though the watch
 #                                                                  exits 0 over it)
 #   ci-watch: no-checks <pr> <head>                             2  none registered within the bound
+#   ci-watch: no-checks <pr> <head> conflicting                 2  the pull request conflicts with its base: its
+#                                                                  suites never ran
 #   ci-watch: no-checks <pr> <head> skipped=<n>                 2  every check done and none passed: each one
 #                                                                  skipped or a draft guard; with auto-merge: no
 #                                                                  merge within the bound
@@ -84,7 +89,8 @@
 #     session (the implementer was stood down at its delivery).
 #   moved: re-arm on the new head.
 #   no-checks: ready on the suite's evidence; with auto-merge enabled, no merge came within the
-#     bound either.
+#     bound either. `conflicting` is the exception: never ready, rebase the branch onto its base
+#     and re-arm the watch.
 #   closed: stop the work on it.
 #   closed MERGED with --no-base, or merged by hand: start the watch again in the background: it
 #     enters on MERGED and follows the base branch.
