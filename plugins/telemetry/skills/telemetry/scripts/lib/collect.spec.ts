@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, repositoryOf, roleOf,
-  sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, turnEnd, usageFacts,
+  sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, transcriptToolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
 
@@ -110,6 +110,24 @@ test('tool_call: an MCP call names its server, tool and command; refused by a pl
     ...HEAD, event: 'tool_call', tool: 'mcp__github__gh', mcp_server: 'github', mcp_tool: 'gh', tool_use_id: 'toolu_01Mcp',
     outcome: 'refused', decided_by: 'plugin:github', duration_ms: 30, command: 'pr-merge', target: { pr: 12 },
   })
+})
+
+test('tool_call: the plugin and MCP calls read back from the transcript, each once, none still running, no built-in tool', () => {
+  const claimed = new Collector()
+  claimed.claim('toolu_01Seen')
+  const events = transcriptToolEvents(AT, S, F('session.messages'), 'a1b2c3', id => claimed.claim(id))
+  assert.deepEqual(events.map(e => [e['tool'], e['tool_use_id'], e['outcome']]), [
+    ['mcp__github__gh', 'toolu_01Plug', 'ok'],
+    ['mcp__orchestrator__review', 'toolu_01Fail', 'error'],
+  ])
+  assert.deepEqual(events[0], {
+    ...HEAD, event: 'tool_call', agent: 'a1b2c3', tool: 'mcp__github__gh', mcp_server: 'github', mcp_tool: 'gh', tool_use_id: 'toolu_01Plug',
+    outcome: 'ok', command: 'pr-merge', target: { repo: 'acme/app', pr: 12 },
+  })
+  assert.equal('duration_ms' in (events[0] ?? {}), false)
+  assert.deepEqual(events[1]?.['target'], { repo: 'acme/app', pr: 7 })
+  assert.deepEqual(transcriptToolEvents(AT, S, F('session.messages'), undefined, id => claimed.claim(id)).map(e => e['tool_use_id']), [])
+  assert.deepEqual(transcriptToolEvents(AT, S, 'not a transcript', undefined, () => true), [])
 })
 
 test('tool_call: who refused — auto mode, the user, a rule, a hook, a plugin above; an error is no refusal', () => {

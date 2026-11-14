@@ -472,7 +472,7 @@ export function orchestrationOf(command: string): { event: 'agent_spawned' | 'ag
 }
 
 /** The `tool_call` event, and the events the call's arguments carry (a question, a spawn, a dispatch). */
-export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number): Event[] {
+export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number | undefined): Event[] {
   const e = record(input)
   const tool = text(e['tool']) ?? 'unknown'
   const agent = text(e['agentId'])
@@ -510,6 +510,34 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   return events
 }
 
+/**
+ * The `tool_call` events of the plugin and MCP tools a conversation holds that the `tool.call` hook
+ * never saw. A plugin serves its own tool by answering `tool.call` in place of `next`, and a hook
+ * beneath that answer is never run: this module's own `tool.call` hook cannot see those calls, so
+ * they are read back from the transcript (`$.session.messages`) once answered. `claim` says whether
+ * a call's id is new, and records it, so a call is written once however often the transcript is
+ * read. A call without its result is still running: it is left for the next read. The transcript
+ * holds no clock and no permission check, so these events carry neither a duration nor a `check`,
+ * and their `ts` is the read's.
+ */
+export function transcriptToolEvents(at: number, session: string, messages: unknown, agent: string | undefined, claim: (id: string) => boolean): Event[] {
+  const events: Event[] = []
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const uses = record(message)['toolUses']
+    for (const raw of Array.isArray(uses) ? uses : []) {
+      const use = record(raw)
+      const id = text(use['tool_use_id'])
+      const tool = text(use['tool'])
+      if (id === undefined || tool === undefined || mcpOf(tool) === undefined) continue
+      if (use['text'] === undefined && use['result'] === undefined && use['isError'] !== true) continue
+      if (!claim(id)) continue
+      const input = { ...record(use['input']), tool, tool_use_id: id, agentId: agent }
+      events.push(...toolEvents(at, session, input, { result: use['result'], text: use['text'], isError: use['isError'] }, undefined, undefined))
+    }
+  }
+  return events
+}
+
 // ----- agents -----
 
 export function agentSpawned(at: number, session: string, input: unknown, result: unknown): Event {
@@ -542,6 +570,7 @@ export class Collector {
   private buffer: Event[] = []
   private readonly checks = new Map<string, Check>()
   private readonly running = new Map<string, number>()
+  private readonly recorded = new Set<string>()
   startAt: number | undefined
   launchedAt: number | undefined
   firstTurnSeen = false
@@ -602,6 +631,13 @@ export class Collector {
 
   get size(): number {
     return this.buffer.length
+  }
+
+  /** True once per call id: the plugin and MCP calls are written by the hook or by the transcript read, never twice. */
+  claim(toolUseId: string): boolean {
+    if (this.recorded.has(toolUseId)) return false
+    this.recorded.add(toolUseId)
+    return true
   }
 
   noteCheck(toolUseId: string | undefined, check: Check | undefined): void {

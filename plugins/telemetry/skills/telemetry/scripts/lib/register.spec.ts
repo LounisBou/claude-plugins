@@ -13,7 +13,7 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string } = {}) {
+function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string; messages?: unknown } = {}) {
   const costs = [...(options.costs ?? [])]
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
@@ -41,6 +41,7 @@ function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolea
         const cost = costs.shift()
         return cost === undefined ? fixture['usage'] : { ...fixture['usage'], cost: { usd: cost } }
       },
+      messages: async () => options.messages ?? [],
       info: async () => ({ transcriptPath: options.transcript ?? '' }),
       repo: async () => {
         if (options.repo instanceof Error) throw options.repo
@@ -98,6 +99,34 @@ test('a session: every result passes through, the events are written at the main
   assert.equal(runs.length, 2)
   const last = JSON.parse(runs[1]?.stdin ?? '{}') as Record<string, unknown>
   assert.deepEqual([last['event'], last['turns']], ['session_end', 1])
+})
+
+test('plugin tool calls: a plugin that answers in place of next hides its call from tool.call, so the turn\'s end reads it from the transcript, once', async () => {
+  const { $, runs } = host({ messages: F('session.messages') })
+  const { hook } = hooks()
+  // The call the hook did see is claimed there and not written a second time.
+  await hook('tool.call')($, { tool: 'mcp__github__gh', tool_use_id: 'toolu_01Seen', command: 'pr-get', args: { pr: 3 } }, through(F('result.ok')))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const written = runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).filter(l => l !== '').map(l => JSON.parse(l) as Record<string, unknown>)
+  const calls = written.filter(e => e['event'] === 'tool_call')
+  assert.deepEqual(calls.map(e => e['tool_use_id']), ['toolu_01Seen', 'toolu_01Plug', 'toolu_01Fail'])
+  assert.deepEqual(calls.slice(1).map(e => [e['mcp_server'], e['mcp_tool']]), [['github', 'gh'], ['orchestrator', 'review']])
+})
+
+test('plugin tool calls: a subagent\'s turn end reads that agent\'s own conversation; a host that cannot read it loses no turn_end', async () => {
+  const asked: unknown[] = []
+  const { $, runs } = host({ messages: F('session.messages') })
+  const read = $.session.messages
+  $.session.messages = async args => (asked.push(args), read(args))
+  const { hook } = hooks()
+  await hook('turn.complete')($, F('turn.complete.child'), through({ text: '' }))
+  assert.deepEqual(asked, [{ agentId: 'a1b2c3' }])
+  $.session.messages = async () => { throw new Error('denied') }
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const events = runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).map(l => JSON.parse(l) as Record<string, unknown>).map(e => e['event'])
+  assert.equal(events.filter(e => e === 'turn_end').length, 2)
+  assert.equal(events.filter(e => e === 'tool_call').length, 3)
 })
 
 test('turn_end: each turn records its own cost, and the turns\' costs add up to the session\'s cumulative figure', async () => {
