@@ -10,7 +10,7 @@ Preconditions, verify each before acting:
 
 - the moment is quiet: no verdict pending, no agent mid-delivery;
 - the project state file is current and the rulings marked (lifecycle item 0);
-- the standing succession brief exists (`references/lifecycle.md`, « Succession — the predecessor », step 1),
+- the standing succession brief exists (`references/lifecycle.md`, « Succession — the predecessor », step 1), never a brief written by hand,
   a missing `Mode: ` line added with yours;
 - its « Live state » is generated now, never written by hand:
   `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
