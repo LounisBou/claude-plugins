@@ -13,7 +13,10 @@
     "not-applicable",
     "accepted"
   ],
-  "waivable": "e2e",
+  "waivable": [
+    "e2e",
+    "norms"
+  ],
   "not_applicable": "e2e",
   "acceptance": {
     "result": "accepted",
@@ -45,6 +48,6 @@
     "head": "^[0-9a-fA-F]{40}$",
     "repo_part": "^[A-Za-z0-9_.-]+$",
     "producer": "^[a-z0-9-]+$",
-    "waiver_date": "\\b\\d{4}-\\d{2}-\\d{2}\\b"
+    "waiver_date": "\\b\\d{4}-\\d{2}-\\d{2}(?:\\b|(?=T\\d))"
   }
 }

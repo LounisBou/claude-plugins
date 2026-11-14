@@ -11,10 +11,10 @@
 // directory that may be gone tomorrow. The override (ORCHESTRATOR_COMMANDS_DIR) names a
 // directory the caller chose, and is synced from any root. The run is bounded, a failure is
 // logged, and the start goes on either way.
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { commandsDirOf } from './short-names.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { messageOf, type Host, type On } from './host.ts'
+import { configDir, logLine } from './module-io.ts'
 
 // The nouns the sync holds.
 type Held = Host<'plugin' | 'env' | 'process'>
@@ -40,13 +40,13 @@ export function register(on: On<Held>): void {
     const bound = startBoundMs(next.budget?.remainingMs)
     try {
       const done = await withDeadline(signal => sync($, signal), bound)
-      if (isDegradedPass(done)) await withDeadline(() => logLine($, `short commands not synced: did not finish within ${bound} ms`), TIMEOUT_LOG_MS)
+      if (isDegradedPass(done)) await withDeadline(() => logLine($, 'short-commands', `short commands not synced: did not finish within ${bound} ms`), TIMEOUT_LOG_MS)
     } catch (err) {
-      await logLine($, `short commands not synced: ${messageOf(err)}`)
+      await logLine($, 'short-commands', `short commands not synced: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'short-commands', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -58,18 +58,5 @@ async function sync($: Held, signal: AbortSignal): Promise<void> {
   if (!argv || signal.aborted) return
   const done = await $.process.run(argv, { timeoutMs: SYNC_TIMEOUT_MS })
   if (signal.aborted) return
-  if (done.exitCode !== 0) await logLine($, `short commands not synced (exit ${done.exitCode}): ${String(done.stderr ?? '').trim()}`)
-}
-
-// The config dir, this file's own resolution: $ never crosses an import.
-async function configDir($: Host<'env'>): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-}
-
-// One line appended to the module's log (module-log.ts). Never throws, never blocks the start.
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'short-commands', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the start */ }
+  if (done.exitCode !== 0) await logLine($, 'short-commands', `short commands not synced (exit ${done.exitCode}): ${String(done.stderr ?? '').trim()}`)
 }

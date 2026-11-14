@@ -21,7 +21,7 @@ The host's stop gate refused that stop and handed it back to you with this reaso
 
 « Nothing will wake you: no agent of yours is running, and no command or monitor you started
 runs in the background. Launch what you announced — an agent, or a command whose end or events
-wake you, then end with `waiting: tool — …` —, or end with `waiting: operator — blocks: …` if a
-question for the operator truly blocks, or with `waiting: done`. »
+wake you, then declare a tool wait on it —, or declare an operator wait if a question for the
+operator truly blocks, or done. »
 
 Continue this turn, then write your final message.

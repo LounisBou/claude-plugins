@@ -14,8 +14,7 @@ export const NO_QUESTION =
   + 'in the method\'s question format (method:lifecycle, references/questions.md): a block is the '
   + '`**Question i of N**` line followed by its labelled fields (`_Subject_ :`, `_Context_ :`, '
   + '`_Question_ :`, `_Choices_ :`, `_Free answer_ :`, `_Recommendation_ :`, in the operator\'s language): '
-  + 'a heading alone is refused. If you ask him nothing, end on the line that fits: '
-  + '`waiting: tool — <what is watched>`, `waiting: deferred — <n> items`, `waiting: done`, or no machine line.'
+  + 'a heading alone is refused. If you ask him nothing, declare the wait that fits (a tool, deferred or done wait), or none.'
 
 // The message without its fenced code blocks (``` or ~~~, the closing fence of the opening one's
 // marker and at least its length; one never closed runs to the end), the text the rules count
@@ -29,19 +28,27 @@ export function openFence(message: string): string | null {
   return scanFences(message).fence
 }
 
-function scanFences(message: string): { kept: string[]; fence: string | null } {
+function scanFences(message: string): { kept: string[]; fence: string | null; inside: boolean[] } {
   const kept: string[] = []
+  const inside: boolean[] = []
   let fence: string | null = null
   for (const line of message.split('\n')) {
     const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null
     if (fence === null) {
       if (marker !== null) fence = marker
       else kept.push(line)
-    } else if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) {
-      fence = null
+      inside.push(marker !== null)
+    } else {
+      inside.push(true)
+      if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null
     }
   }
-  return { kept, fence }
+  return { kept, fence, inside }
+}
+
+// Whether each line of the message is a fence line or inside a fenced block: the lines outsideFences drops.
+export function fencedLines(message: string): boolean[] {
+  return scanFences(message).inside
 }
 
 // The refusal for a message whose machine line is a wait for the operator (the urgent form

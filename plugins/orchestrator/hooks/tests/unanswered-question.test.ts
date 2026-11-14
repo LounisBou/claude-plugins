@@ -91,7 +91,7 @@ test('a turn that does not show the pending question is refused, the refusal nam
   expect(reason).toContain('**Question 1 of 2** — which one ships first?')
   expect(reason).toContain('own chat')
   expect(reason).toContain('IN FULL')
-  expect(reason).toContain(WAIT_LINE)
+  expect(reason).toContain('declare its operator wait again')
   expect(reason).not.toContain('Recorded')
   expect(reason).toContain('2026-11-03')
 })

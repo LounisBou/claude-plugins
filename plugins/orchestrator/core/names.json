@@ -1,0 +1,11 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "roles": {
+    "Orch": "orchestrator",
+    "Coord": "coordinator",
+    "Audit": "auditor",
+    "Agent": "agent"
+  },
+  "subject": "\\S(?:.{0,23}\\S)?"
+}

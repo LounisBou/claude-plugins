@@ -2,7 +2,12 @@
 
 **Status: proposal for the next version, awaiting the operator's confirmation.** Nothing in it
 is decided or scheduled until the operator answers the « Open questions »; the current program
-does not build it.
+does not build it. One part is built ahead of the answers, small and undoable: the learning
+event contract of phase L2 (`packages/core/src/learning.ts`), on the recommendation of question 9
+(a window of 30 days, journals kept 180 days and at most 2,000 events a plugin) while the operator
+has not answered it.
+The event's kinds and fields are version 1's list, open to additions as new versions (an audit
+trail's events, for one), not a final list.
 
 **Review notes (2026-11-11).** Seven notes, each marked « Review note » at the section it
 concerns, check this design against published evidence on coding agents. They propose; they

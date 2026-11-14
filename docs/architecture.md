@@ -36,8 +36,8 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── bugs-bot, drift, github, implement, norms, orchestrator, pr-review, statusbar,
-               telemetry (a copy in core/)
+        └───── bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review,
+               statusbar, telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
@@ -45,7 +45,7 @@ change: a change that crosses plugins is one pull request.
   contract (`contracts.md`) and a dependency declared, with a version range, in its manifest.
 - The edges above are the dependencies the manifests declare. One reading is not declared
   yet and is listed in `contracts.md`: implement and bugs-bot run the orchestrator's
-  launcher. statusbar, cloudflare and telemetry depend on no plugin.
+  launcher. statusbar, cloudflare, telemetry and learning depend on no plugin (learning reads the journals the others write through the contract in `contracts.md`).
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
@@ -61,7 +61,7 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
 reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
-cloudflare stands outside it; telemetry observes every role and changes none.
+cloudflare stands outside it; telemetry observes every role and changes none; learning reads what the roles journal and changes none.
 
 ## Packaging
 
@@ -112,7 +112,10 @@ language; when another language needs it, it reads it as data, never as a re-imp
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
 from it. A pull request raises no version. The release pull request (`npm run release`) raises
 the version of every plugin changed since its last release, because the host caches by version.
+A release runs at the end of each merge wave, and at least daily.
 A release is its merge: the host installs the version the catalogue names, and no tag is made.
+The release pull request also asks the operator whether to re-run the outcome measure (cap
+`measure` of `evals/outcome/caps.json`); nothing runs without their yes.
 
 ## What CI holds
 
@@ -125,7 +128,7 @@ A release is its merge: the host installs the version the catalogue names, and n
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
-| prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
+| prompt budgets and duplicates only fall, lowered only by the release | `npm run prompts -- --base <ref>`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
