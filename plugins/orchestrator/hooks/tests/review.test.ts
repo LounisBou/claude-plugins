@@ -5,7 +5,8 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR } from '../review.ts'
+import { NOT_ORCHESTRATOR, register as registerReview } from '../review.ts'
+import { PLAN_NEEDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
@@ -135,4 +136,18 @@ test('a subagent of the orchestrator writes no check plan', async () => {
   const fx = fake('Orch: belt')
   expect((await handler()(fx.dollar, { ...PLANNED, agentId: 'a1' })).isError).toBe(true)
   expect(fx.calls).toEqual([])
+})
+
+test('the plan\'s schema names the needs core\'s readiness contract gives each check', async () => {
+  let started: Function | null = null
+  registerReview((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    if (args[0] === 'session.start') started = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const registered: any[] = []
+  const fx = fake('Orch: belt')
+  const dollar = { ...fx.dollar, tool: { ...fx.dollar.tool, register: async (tool: unknown) => { registered.push(tool) } } }
+  await started!(dollar, {}, async () => undefined)
+  const plan = registered.find((t) => t.name === 'review').inputSchema.properties.plan.properties
+  for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
 })
