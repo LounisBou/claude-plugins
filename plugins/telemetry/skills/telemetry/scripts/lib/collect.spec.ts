@@ -294,7 +294,7 @@ test('target: arguments that name a pr are the only source: the result is not re
   assert.deepEqual(targetOf(gh('pr-status', {}), cited), { repo: 'other/z', pr: 3 })
   const gate5 = { result: JSON.stringify({ repo: 'acme/thing', pr: 5, head: SHA }) }
   assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), gate5), { repo: 'acme/thing', pr: 5, head: SHA.slice(0, 12) })
-  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), { text: JSON.stringify({ repo: 'acme/thing', pr: 5 }), ...cited }), { pr: 5 })
+  assert.deepEqual(targetOf(gh('pr-gate', { pr: 5 }), { result: JSON.stringify({ pr: 5, note: 'see https://github.com/other/z/pull/3' }) }), { pr: 5 })
   assert.deepEqual(targetOf(gh('pr-gate', { pr: 6 }), gate5), { pr: 6 })
 })
 
