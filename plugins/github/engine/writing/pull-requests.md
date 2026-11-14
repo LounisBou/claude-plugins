@@ -130,9 +130,9 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 
 ## Ready pull requests
 
-What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`). A
-required E2E or norms check goes laxer only by the operator's waiver: « Accorder » to
-« Dispense d'E2E|de normes pour <owner/name>#<n> : <why> » / « Refuser ».
+What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`).
+A required E2E or norms check goes laxer only by the operator's waiver:
+« Accorder » to « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> » / « Refuser ».
 
 The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. When CI does not run on
 a draft, the plugin takes it out of draft, still `Not Ready`, and back once it is ready.
