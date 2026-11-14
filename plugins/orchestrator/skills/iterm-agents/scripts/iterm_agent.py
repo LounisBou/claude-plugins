@@ -4539,6 +4539,9 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
     """`(model, effort, source)` the launch types, for every way in (decision 3). An empty
     model and effort is the host's default, typed as nothing, and only an opening or a wake
     with nothing to read gets it."""
+    if args.auditor and args.model:
+        # An auditor given its pair runs on it; given none, on its caller's live pair below.
+        return args.model, args.effort, pair_from or "flag"
     succession = (args.successor or auditor_successor or args.auditor
                   or args.coordinator_successor or args.inherit)
     if succession:
@@ -4747,19 +4750,21 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                 "session reads '%s': an agent never opens an orchestrator"
                 % (caller[:40] or "no name"))
     if args.auditor:
-        # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
-        # of its caller, `Audit: <subject>`, the caller's model, remote control on. Each of
-        # these would quietly replace one of those terms with the launcher's default, so
-        # each is refused rather than obeyed.
+        # An auditor is placed, named and reached ONE way (§52): immediately left of its
+        # caller, `Audit: <subject>`, remote control on. Each of these would quietly replace
+        # one of those terms with the launcher's default, so each is refused rather than obeyed.
+        # Its pair is --model and --effort together, or neither (the caller's).
         for flag, given in (("--successor", args.successor), ("--right-of", args.right_of),
                             ("--left-of", args.left_of), ("--title-free", args.title_free),
-                            ("--tier", args.tier), ("--model", args.model),
-                            ("--effort", args.effort),
+                            ("--tier", args.tier),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
                     "left of its caller, reads \"Audit: <subject>\", runs on the caller's "
                     "model and effort and comes up under remote control" % flag)
+        if bool(args.model) != bool(args.effort):
+            die("spawn: refused: an auditor takes --model and --effort together, or neither "
+                "(the caller's pair): half a pair is a guess at the other half")
         if not args.title:
             die('spawn: refused: --auditor needs --title "Audit: <subject>"')
         if not AUDIT_TITLE_SHAPE.match(args.title):
@@ -4891,7 +4896,8 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     # So is the caller's pair, for the launches that always read it there: an inheriting
     # agent, an auditor and the coordinator's successor.
     args.caller_pair = (own_pair("a successor, an auditor or an inheriting spawn")
-                        if args.inherit or args.auditor or args.coordinator_successor
+                        if args.inherit or (args.auditor and not args.model)
+                        or args.coordinator_successor
                         else None)
     # The anchor first, before a prompt file is written or a trust record changed: an
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
