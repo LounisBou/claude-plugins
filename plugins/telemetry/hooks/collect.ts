@@ -552,17 +552,16 @@ export class Collector {
 
   /**
    * The cost of the turn that just ended, from the session's cumulative `costUsd`: the difference
-   * with the previous turn's figure, subagent turns included, so the turns' costs add up to the
-   * session's cost. The first turn costs its whole figure, and so does a turn whose figure fell
-   * below the previous one (the host's count restarted). Undefined, and the baseline kept, when
-   * the host gave no figure.
+   * with the highest figure seen so far, subagent turns included, so the turns' costs add up to
+   * the session's cost. The first turn costs its whole figure. A figure below the baseline (two
+   * turns that ended together read the host out of order) costs nothing and leaves the baseline
+   * where it is. Undefined, and the baseline kept, when the host gave no figure.
    */
   turnCost(costUsd: number | undefined): number | undefined {
     if (costUsd === undefined) return undefined
-    const before = this.costSoFar
-    this.costSoFar = costUsd
-    const own = before === undefined || costUsd < before ? costUsd : costUsd - before
-    return Math.round(own * 1e9) / 1e9
+    const before = this.costSoFar ?? 0
+    this.costSoFar = Math.max(before, costUsd)
+    return Math.round(Math.max(0, costUsd - before) * 1e9) / 1e9
   }
 
   /** The session's title, once known. */

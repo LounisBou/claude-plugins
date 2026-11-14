@@ -14,6 +14,7 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
 function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string } = {}) {
+  const costs = [...(options.costs ?? [])]
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
@@ -37,7 +38,7 @@ function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolea
       model: async () => 'claude-opus-5-5',
       usage: async () => {
         if (options.failUsage) throw new Error('no usage')
-        const cost = options.costs?.shift()
+        const cost = costs.shift()
         return cost === undefined ? fixture['usage'] : { ...fixture['usage'], cost: { usd: cost } }
       },
       info: async () => ({ transcriptPath: options.transcript ?? '' }),
