@@ -77,14 +77,14 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
 const recordOf = (answer: unknown): AgentRecord | undefined => {
-  const result = isObject(answer) ? answer.result : undefined
+  const result = isObject(answer) ? answer['result'] : undefined
   if (!isObject(result)) return undefined
-  const report = result.handbackReport
-  const reportText = isObject(report) && typeof report.text === 'string' ? report.text : undefined
-  const content = Array.isArray(result.content)
-    ? result.content.map((part: unknown) => (isObject(part) && typeof part.text === 'string' ? part.text : ''))
+  const report = result['handbackReport']
+  const reportText = isObject(report) && typeof report['text'] === 'string' ? report['text'] : undefined
+  const content = Array.isArray(result['content'])
+    ? result['content'].map((part: unknown) => (isObject(part) && typeof part['text'] === 'string' ? part['text'] : ''))
     : undefined
-  return { status: result.status, agentId: result.agentId, handback: result.handback, reportText, content }
+  return { status: result['status'], agentId: result['agentId'], handback: result['handback'], reportText, content }
 }
 
 // What an agent answered: a completed record's report (the one its hand-back tool delivered, else its

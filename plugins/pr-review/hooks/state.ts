@@ -12,7 +12,7 @@ export type Walkthrough = {
   // The user's own last prompt since the skill started: the only source of a grant.
   lastPrompt: string
   // The PR scratch directory the walkthrough wrote to, once seen.
-  scratchDir?: string
+  scratchDir?: string | undefined
 }
 
 export const walkthrough: Walkthrough = { skill: null, lastPrompt: '' }
@@ -38,23 +38,23 @@ export type Loop = {
   maxPasses: number
   testCommand: string
   // The checkout the loop started in, as its top directory: the record is written for it, wherever the session's directory moves.
-  dir?: string
+  dir?: string | undefined
   // Why no checkout was read at the start, when there is none: the record then says so.
-  dirWhy?: string
+  dirWhy?: string | undefined
   seen: string[]
   lastFindings: number
   // The Critical and Important findings of the last pass, or undefined when the
   // review did not say.
-  lastBlocking?: number
+  lastBlocking?: number | undefined
   fixes: Fix[]
   // Why the loop ended: clean, max_passes, or released by the user.
-  exit?: string
+  exit?: string | undefined
   // Whether this loop's review record was attempted: one per loop.
   isRecorded: boolean
   // Whether the review record is still owed: GitHub kept failing transiently when it was written.
   isRecordPending: boolean
   // The head the checkout was at when the loop ended: the record is written at it, and no other.
-  reviewedHead?: string
+  reviewedHead?: string | undefined
   // Whether a review runs: from begin_pass to the findings the loop accepts.
   isReviewing: boolean
   // A reviewer's loop: one pass, no fix, its findings are the verdict.

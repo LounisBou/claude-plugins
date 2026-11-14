@@ -256,7 +256,7 @@ export type Band = { codename: string; phase: string; of: number; status: string
 
 export function bandOf(s: Snapshot): Band | null {
   if (!s.state || s.state.rows.length === 0) return null
-  const current = s.next ?? s.state.rows[s.state.rows.length - 1]
+  const current = s.next ?? s.state.rows[s.state.rows.length - 1]!
   return {
     codename: s.codename, phase: current.phase, of: s.state.rows.length, status: current.status,
     title: current.title, milestone: current.milestone, head: s.head,
@@ -306,7 +306,7 @@ export function bandSegments(b: Band, columns: number): BandPiece[] {
     cut.push({ ...p, text: p.text.slice(0, room) })
     room -= p.text.length
   }
-  cut[cut.length - 1].text += '…'
+  cut[cut.length - 1]!.text += '…'
   return cut
 }
 
