@@ -267,6 +267,22 @@ test('an operator wait lands in the row and is entered once in the round of the 
   expect(row.relayed).toBe(fingerprint(wait))
 })
 
+// A coordinator's and an auditor's declared operator wait enter the round of the coordinator on
+// this machine as an orchestrator's do: one entry, its consent, and nothing sent (row 161).
+for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a ${role}'s declared operator wait is entered once in the round, with its consent, and sent to no one`, async () => {
+    const chains = mounted()
+    const fx = fake({ name, role, coordinator: 'Coord: ops' })
+    const consent = { kind: 'auto-merge' as const, repo: 'acme/thing' }
+    DECLARATIONS.turnStarted()
+    DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+    expect(fx.row()!.waiting).toBe('operator')
+    expect(entries(fx).map(e => [e.kind, e.consent])).toEqual([['operator', consent]])
+    expect(fx.sent.length).toBe(0)
+  })
+}
+
 test('the subject a declared question asks consent on rides with its round entry, in that turn only', async () => {
   const chains = mounted()
   const fx = fake()
@@ -355,8 +371,8 @@ test('no coordinator registered: the row is written, nothing is sent', async () 
   expect(fx.row()!.waiting).toBe('operator')
 })
 
-for (const [name, role] of [['Coord: ops', 'coordinator'], ['Agent: belt-p3', 'agent'], ['Audit: method', 'auditor']] as const) {
-  test(`a session that is no orchestrator (${role}) writes nothing and sends nothing`, async () => {
+for (const [name, role] of [['Agent: belt-p3', 'agent']] as const) {
+  test(`a session that is no orchestrator, coordinator or auditor (${role}) writes nothing and sends nothing`, async () => {
     const chains = mounted()
     const fx = fake({ name, role })
     const before = fx.files.get(ROW)
@@ -502,6 +518,18 @@ for (const [label, setup, kind] of [
     expect(fx.sent.length).toBe(0)
     expect(entries(fx)).toEqual(written)
     expect(fx.files.get(WAIT)).toBe(before)
+  })
+}
+
+// A coordinator's and an auditor's operator question is withdrawn at their own prompt as an
+// orchestrator's is (row 161-bis).
+for (const [name, role] of [['Coord: ops [abc]', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a composer prompt in a ${role} holding a question withdraws it at prompt submit, by the tab`, async () => {
+    const { chains, fx } = await relayedQuestion({ name, role })
+    expect(entries(fx).map(e => e.status)).toEqual(['open'])
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+    const [entry] = entries(fx)
+    expect([entry.status, entry.answer?.by, entry.answer?.text]).toEqual(['withdrawn', 'tab', "answered in the sender's own tab"])
   })
 }
 
@@ -2361,8 +2389,22 @@ test('the orchestrator withdraws its own open question when it acts on an answer
   expect((await toolHandler()(fx.dollar, { author: 'x', agentId: 'a' })).isError).toBe(true)
 })
 
-test('a tool call from a session that is no orchestrator withdraws nothing', async () => {
-  const fx = fake({ name: 'Coord: ops [abc]', role: 'coordinator' })
+// A coordinator's and an auditor's question is closed by the tool as an orchestrator's is (row 161-bis).
+for (const [name, role] of [['Coord: ops [abc]', 'coordinator'], ['Audit: method', 'auditor']] as const) {
+  test(`a tool call from a ${role} marks its open question answered by message`, async () => {
+    const chains = mounted()
+    const fx = fake({ name, role })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    const [asked] = entries(fx)
+    const call = await toolHandler()(fx.dollar, { author: 'Coord: other [def]' })
+    expect(call.isError).toBeUndefined()
+    const [now] = entries(fx)
+    expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord: other [def]'])
+  })
+}
+
+test('a tool call from a session that is no orchestrator, coordinator or auditor withdraws nothing', async () => {
+  const fx = fake({ name: 'Agent: belt-p3', role: 'agent' })
   const asked = { ...roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, 'T', 'T') }
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   expect((await toolHandler()(fx.dollar, { author: 'x' })).isError).toBe(true)
