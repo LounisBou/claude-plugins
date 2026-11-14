@@ -74,7 +74,7 @@ changed by a pull request that edits this file and the code it governs together.
 - What differs between platforms is written for both: GNU `stat -f` reads the filesystem (try
   `stat -c` first), GNU `tar` needs an external `gzip`, GNU `tr` is not multibyte, bash 5.2 reads
   `&` in a pattern replacement as the match, bash 3.2 does not reseed `$RANDOM` in a subshell,
-  Ubuntu's `awk` is mawk. A plugin's CommonJS file needs its own `package.json`: the root one is
+  Ubuntu's `awk` is mawk. A plugin's CommonJS file takes the `.cjs` extension: the root `package.json` is
   `"type": "module"`.
 
 ## Code decides, the model judges
