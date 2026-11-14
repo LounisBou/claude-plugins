@@ -1,7 +1,7 @@
 // hooks/register.ts
 // Entry point of the hooks module: mounts the domains. Each domain lands in
 // its own task; the gauge arrived first, the guards second, the store third,
-// the commands fourth, the naming fifth, the moving sixth, the short commands' sync seventh, the declared wait eighth;
+// the commands fourth, the naming fifth, the moving sixth, the short commands' sync seventh, the declared wait eighth, the to-do tool with the answered one;
 // the round's wake, the pane's tool and the relay of a round-close ride with the supervision.
 // The gauge stays before the supervision: a chain answers in registration order, and the store's row
 // reads the figure through the gauge's own module memory — mounted after it,
@@ -15,8 +15,9 @@ import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay } from './supervision.ts'
 import { register as registerAnswered } from './answered.ts'
+import { register as registerTodo } from './todo.ts'
 import { register as registerReview } from './review.ts'
-import { register as registerCommands } from './commands.ts'
+import { register as registerCommands, registerEnd as registerCommandsEnd } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
 import { register as registerShortCommands } from './short-commands.ts'
@@ -42,8 +43,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerPaneTool(on)
   registerCloseRelay(on)
   registerAnswered(on)
+  registerTodo(on)
   registerReview(on)
   registerCommands(on)
+  registerCommandsEnd(on)
   registerNaming(on)
   registerMoving(on)
   registerShortCommands(on)
