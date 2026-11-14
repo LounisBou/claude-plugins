@@ -1216,7 +1216,8 @@ check "and prints no review refusal and no label command" "0|0" \
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms]|join("|")' "$G")"
-check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
+# The review verdict tool is the one writer of `rounds`: a review records the head and raises none.
+check "a review raises no round: the verdict tool counts it" "0" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
 check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 
 # The head moves on every corrective round and on a rebase: the head a review read is the github
@@ -1226,7 +1227,7 @@ check "and names no head a review read" "0" \
   "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
-check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
+check "the row keeps the LAST review, and raises no round" "bbb2222|none|0" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check "a review adds no row" "1" "$(wc -l < "$G" | tr -d ' ')"
 check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
@@ -1262,10 +1263,10 @@ check "the correction round is recorded anyway" "ddd4444|1" \
 # A proper review round replaces the whole `.review` object — the out-of-order fix it
 # carried does not survive it, which is the point: a review is the row's fresh read.
 bash "$REC" review "$G" "$g3" --head ccc3333 --norms tool >/dev/null
-check "the review starts the row fresh" "ccc3333|tool||2" \
+check "the review starts the row fresh" "ccc3333|tool||1" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.norms,(.review.fixed.head // ""),.rounds]|join("|")' "$G")"
 bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
-check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
+check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|2" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
 check "and says the surface it read, not a reading of the heads" "1|0" \
@@ -1278,7 +1279,7 @@ check "and names no head" "0" \
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
-check "the second fix overwrites the first" "eee5555|4" \
+check "the second fix overwrites the first" "eee5555|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "fixed without --head is an error" 1 bash "$REC" fixed "$G" "$g2"
 check "and says the head is required" "1" "$(bash "$REC" fixed "$G" "$g2" 2>&1 | grep -c 'fixed: --head is required')"
@@ -1288,7 +1289,7 @@ check_status "fixed on an unknown option is an error" 1 bash "$REC" fixed "$G" "
 # `none` is a fact about the PROJECT, not a verdict a round may reach for: any third value
 # is refused rather than recorded, because an unreadable record gates nothing.
 check_status "a norms value that is neither tool nor none is refused" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms manual
-check "a refused review leaves the row as it was" "bbb2222|none|2" \
+check "a refused review leaves the row as it was" "bbb2222|none|0" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
@@ -1369,7 +1370,7 @@ check "and names the subcommand that records it" "1" \
 srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
 check "audit records the head, the images and no defect" "aaa1111|1|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
-check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
+check "an audit is not a round" "0" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
 check_status "ready refuses an audit that covered fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111
 check "and names both counts" "1" \
   "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#14 carries 2: audit every image')"
