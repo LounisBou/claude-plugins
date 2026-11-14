@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import { roleLine, gateAnnouncement, register as registerGuards } from '../guards.ts'
 import { register as registerGauge, driftAnnouncement } from '../gauge.ts'
-import { logLineOf, blockOf } from './fakes.ts'
+import { logLineOf, blockOf, disk } from './fakes.ts'
 
 test('each role gets its own line, verbatim from the shell gate', () => {
   expect(roleLine('orchestrator')).toBe('Succeed at the next quiet boundary — run /orchestrator-succeed: spawn the successor in the operator\'s decision mode, then tell the user; do not ask.')
@@ -264,8 +264,8 @@ test('a model drift the gauge measured rides the next prompt to the model, once,
   })
   let model = 'a-model'
   const g = {
+    ...disk(),
     session: { usage: async () => ({ context: { tokens: 1, window: 2, percent: 3 } }), model: async () => model, id: async () => 's-gate' },
-    fs: { write: async () => undefined },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
     ui: { toast: () => undefined, invalidate: () => undefined },
   }

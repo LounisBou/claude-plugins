@@ -423,9 +423,10 @@ test('the composed register writes the row the gauge just measured', async () =>
 })
 
 // The processes a measure spawns once the session is known: the walk's two reads of its own
-// process, the row's rename, the liveness reads and the deck's rename. The repository is read at
+// process, the row's rename, the measure file's rename, the liveness reads and the deck's rename. The repository is read at
 // the first measure and kept, as the pane keeps it: a steady measure runs no git (at 0.98.10 it
-// ran one at every measure, eight processes in this case where seven run now).
+// ran one at every measure, eight processes in this case where seven ran; the measure file's own
+// rename, no longer written in place, makes it eight).
 test('a steady measure reads the repository no more', async () => {
   const chains = mounted(register)
   const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch: belt' })
@@ -435,8 +436,8 @@ test('a steady measure reads the repository no more', async () => {
   fx.usage.context.percent = 56
   await drive(chains, 'session.measure', fx.dollar, {})
   expect(fx.ran.filter(r => r.startsWith('git '))).toEqual([])
-  expect(fx.ran.filter(r => r.startsWith('mv ')).length).toBe(2)
-  expect(fx.ran.length).toBe(7)
+  expect(fx.ran.filter(r => r.startsWith('mv ')).length).toBe(3)
+  expect(fx.ran.length).toBe(8)
   expect((await readSessions(fx.dollar))['sessions/s-one'].repo).toBe('me/belt')
 })
 

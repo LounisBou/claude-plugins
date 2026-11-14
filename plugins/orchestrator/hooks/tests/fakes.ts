@@ -39,3 +39,31 @@ export function lockRun(argv: readonly string[], files: Map<string, string>): { 
   files.set(lock, '1\n')
   return { exitCode: 0, stdout: '', stderr: '' }
 }
+
+// A disk the gauge's I/O runs over: fs.write lands in place (as the host's does, not atomic), the
+// store's rename and remove arrive through process.run as `mv -f` and `rm -f`. `history` keeps every
+// state a path took, so a test sees a file that was ever empty, not only the last state.
+export function disk(files: Map<string, string> = new Map()) {
+  const history: [string, string][] = []
+  const inPlace: string[] = []
+  const put = (path: string, text: string) => { files.set(path, text); history.push([path, text]) }
+  return {
+    files, history, inPlace,
+    fs: {
+      write: async (p: string, text: string) => { if (!p.includes('.tmp-')) inPlace.push(p); put(p, text) },
+      read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { size: files.get(p)!.length } },
+    },
+    process: {
+      run: async (argv: readonly string[]) => {
+        if (argv[0] === 'mv') { put(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
+        if (argv[0] === 'rm') for (const path of argv.slice(2)) files.delete(path)
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    },
+    clock: { sleep: async () => undefined },
+    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+  }
+}
+export const emptied = (d: ReturnType<typeof disk>) => d.history.filter(([, text]) => text === '').map(([path]) => path)
+export const MEASURES = '/tmp/cfg/claude-orchestrator/measure'

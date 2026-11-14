@@ -25,7 +25,7 @@ Python launcher.
 | `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |
-| `measure/<id>.json` | the session's own gauge | one writer, plain write, read as unmeasured when partial |
+| `measure/<id>.json` | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at session end and compaction; read as unmeasured when empty or partial |
 | `store/moves/<move>.json` | the session that sent the move (`hooks/moving.ts`) | read-modify-write under the file's lock: the receiver's address pinned, a round of « missing » counted, the outcome |
 | `store/moves/<move>/` | the session that receives the move, its messages one at a time | one rename per file (the manifest, each chunk, each acknowledgment); a file's chunks removed once it landed |
 | `briefs/<subject>/<file>` landed by a move, and a dispatch record kept elsewhere landed at its path | the receiving session | under the landed path's lock, one rename; a file already there with other content is refused and left alone |
