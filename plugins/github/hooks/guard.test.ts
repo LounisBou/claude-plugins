@@ -2659,6 +2659,21 @@ test('a plan that needs no norms check and screenshots in place of E2E leaves th
     + ' one CSS line), no E2E needed (check plan, 2026-11-14: desktop and mobile screenshots in its place, a colour change) and green CI hold at its head.'])
 })
 
+test('a plan that gives the review none is Ready with no review record, its line naming the plan\'s reason', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'none', reason: 'a typo' } }
+  const seen = await world($, on, { records: OTHERS_PASSED, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual(['github: acme/thing#12 Ready at 0123456: no review needed (check plan, 2026-11-14: a typo), passed E2E and green CI hold at its head.'])
+})
+
+test('a plan that requires a review of two rounds stays Not Ready with no review record', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 2 } }
+  const seen = await world($, on, { records: OTHERS_PASSED, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
 for (const [label, w] of [
   ['a plan that requires E2E', { records: TWO, plan: planOf({ need: 'required' }) }],
   ['a failed run under a plan that needs no E2E', { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, plan: planOf({ need: 'none', reason: 'docs only' }) }],
@@ -2675,7 +2690,7 @@ test('the record tool writes the plan, posts it on the pull request, and the gat
   const seen = await world($, on, { records: TWO })
   const out: any = await planned($, { e2e: 'none: docs only', norms: 'required' })
   expect(out.deny).toBeUndefined()
-  expect(out.result).toContain('github: check plan of acme/thing#12: e2e none, norms required, review full')
+  expect(out.result).toContain('github: check plan of acme/thing#12: e2e none, norms required, review required: max 1')
   expect(out.result).toContain('Ready at 0123456')
   expect(JSON.parse(seen.files[PLAN])).toMatchObject({ v: 1, repo: 'acme/thing', pr: 12, e2e: { need: 'none', reason: 'docs only' }, norms: { need: 'required', reason: '' } })
   const comment = seen.runs.find((r) => r.command === 'pr-comment')
@@ -2686,7 +2701,7 @@ test('the record tool writes the plan, posts it on the pull request, and the gat
 
 test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
-  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'one-pass' }, []]) {
+  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'none' }, []]) {
     expect((await planned($, plan)).deny).toContain('github: a check plan is')
   }
   expect(seen.files[PLAN]).toBeUndefined()

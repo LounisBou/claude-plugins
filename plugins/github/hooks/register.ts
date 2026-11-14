@@ -11,11 +11,11 @@ import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.ts'
-import { PLAN_NEEDS } from '../core/readiness.ts'
+import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_GRANT, WAIVER_REFUSE, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_GRANT, WAIVER_REFUSE, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -1895,7 +1895,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
 async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const checks = planInput(e.plan)
   if (typeof checks === 'string') {
-    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "full|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|none"}, each "<need>: <reason>" but the first: ' + checks }
   }
   const pr = Number(String(e.pr ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
@@ -1917,7 +1917,7 @@ async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string
     posted = '\ngithub: the plan is not posted on ' + repo + '#' + pr + ': ' + String(err?.message ?? err).trim()
   }
   const { line } = await followGate($, repo, pr, undefined, true)
-  return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + checks.review.need + posted + (line ? '\n' + line : '') }
+  return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + needText(checks.review) + posted + (line ? '\n' + line : '') }
 }
 
 // ---- records ----
@@ -2123,7 +2123,7 @@ export function register(on: any): void {
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
             plan: {
               type: 'object',
-              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
               // The needs each check may be given are core's readiness contract's alone.
               properties: Object.fromEntries(
                 Object.entries(PLAN_NEEDS).map(([check, needs]) => [check, { type: 'string', description: needs.join(', ') }]),
