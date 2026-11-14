@@ -127,6 +127,9 @@ reading every line:
   its sessions (role, models, title, project, cost, span, whether it ended), the pull requests,
   branches and dispatch rows its events name, the github tool's commands by count, and for each
   session the path of its redacted transcript in the repository.
+- `index/projects/<owner-name>/<machine>/<day>.json`: the same manifest per project, over the sessions
+  whose `project` is that repository (`owner/name` of the session's git remote, read once at its
+  start, the same from any worktree; the directory's last segment when it has no remote).
 
 Raw transcripts are exported, redacted (the operator's order of 2026-11-14: everything goes into
 the logs repository, indexed like the rest). The export copies the transcript of each session the

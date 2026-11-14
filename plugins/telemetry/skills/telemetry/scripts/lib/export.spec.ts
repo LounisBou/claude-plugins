@@ -194,6 +194,91 @@ test('the export pushes the index with the day files: the schema pages and the d
   })
 })
 
+const PLUGINS = 'LounisBou/claude-plugins'
+type Slice = { sessions: { session: string; project: string }[]; events: Record<string, number>; day: string; machine: string }
+const projectIndex = (remote: string, path: string): Slice => JSON.parse(git(['show', `main:${path}`], remote).stdout) as Slice
+
+test('the index holds a view per project: index/projects/<owner-name>/<machine>/<day>.json, only that project\'s sessions', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const at = (second: number): string => `2026-11-13T10:00:${String(second).padStart(2, '0')}Z`
+    const lineOf = (session: string, extra: Record<string, unknown>, second: number): string => JSON.stringify({ v: 1, ts: at(second), session, ...extra })
+    append(eventsDir(state), [
+      lineOf(S, { event: 'session_start', project: PLUGINS }, 0),
+      lineOf(OTHER, { event: 'session_start', project: 'acme/tool' }, 1),
+      lineOf(S, { event: 'turn_end' }, 2),
+      lineOf('80ed5626-9879-4041-892a-5db0ff0bad69', { event: 'turn_end' }, 3),
+      lineOf(OTHER, { event: 'turn_end' }, 4),
+    ].join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const ours = projectIndex(remote, 'index/projects/lounisbou-claude-plugins/box/2026-11-13.json')
+    assert.deepEqual(ours.sessions.map(({ session, project }) => ({ session, project })), [{ session: S, project: PLUGINS }])
+    assert.deepEqual(ours.events, { session_start: 1, turn_end: 1 })
+    assert.equal(ours.day, '2026-11-13')
+    assert.equal(ours.machine, 'box')
+    assert.deepEqual(projectIndex(remote, 'index/projects/acme-tool/box/2026-11-13.json').sessions.map(entry => entry.session), [OTHER])
+    // The machine's whole index still lists every session, those of no project included.
+    assert.equal(projectIndex(remote, 'index/box/2026-11-13.json').sessions.length, 3)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/acme-tool/box/2026-11-13.json', 'index/projects/lounisbou-claude-plugins/box/2026-11-13.json'])
+    assert.match(git(['show', 'main:index/README.md'], remote).stdout, /index\/projects\/<owner-name>\/<machine>\/<day>\.json/)
+  })
+})
+
+test('a session that crosses UTC midnight stays in its project\'s view on the later day, though only its start names the project', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), [
+      JSON.stringify({ v: 1, ts: '2026-11-13T23:59:00Z', event: 'session_start', session: S, project: PLUGINS }),
+      JSON.stringify({ v: 1, ts: '2026-11-14T00:01:00Z', event: 'turn_end', session: S }),
+    ].join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/lounisbou-claude-plugins/box/2026-11-13.json', 'index/projects/lounisbou-claude-plugins/box/2026-11-14.json'])
+    const later = projectIndex(remote, 'index/projects/lounisbou-claude-plugins/box/2026-11-14.json')
+    assert.deepEqual(later.sessions.map(entry => entry.session), [S])
+    assert.deepEqual(later.events, { turn_end: 1 })
+  })
+})
+
+test('the project views of a machine are made again: a project no day names any longer leaves nothing stale; another machine\'s are kept', () => {
+  scratch((root, remote) => {
+    const first = join(root, 'first')
+    const second = join(root, 'second')
+    const start = (project: string): string => JSON.stringify({ v: 1, ts: '2026-11-13T10:00:00Z', event: 'session_start', session: S, project })
+    append(eventsDir(first), start('acme/old'), new Map())
+    append(eventsDir(second), start('acme/old'), new Map())
+    assert.equal(exportStore({ stateDir: first, secrets: new Map(), repo: remote, machine: 'one', git }).code, 0)
+    assert.equal(exportStore({ stateDir: second, secrets: new Map(), repo: remote, machine: 'two', git }).code, 0)
+    rmSync(eventsDir(first), { recursive: true })
+    append(eventsDir(first), start('acme/new'), new Map())
+    assert.equal(exportStore({ stateDir: first, secrets: new Map(), repo: remote, machine: 'one', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/acme-new/one/2026-11-13.json', 'index/projects/acme-old/two/2026-11-13.json'])
+  })
+})
+
+test('two spellings of one repository\'s case share one project directory, the project field keeping its case', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), ['LounisBou/x', 'lounisbou/x'].map((project, i) => JSON.stringify({ v: 1, ts: `2026-11-13T10:00:0${i}Z`, event: 'session_start', session: i === 0 ? S : OTHER, project })).join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/lounisbou-x/box/2026-11-13.json'])
+    assert.deepEqual(projectIndex(remote, files[0] ?? '').sessions.map(entry => entry.project).sort(), ['LounisBou/x', 'lounisbou/x'])
+  })
+})
+
+test('a project name that is no safe directory name is made one', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), ['..', 'a b/../c'].map((project, i) => JSON.stringify({ v: 1, ts: `2026-11-13T10:00:0${i}Z`, event: 'session_start', session: i === 0 ? S : OTHER, project })).join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/_/box/2026-11-13.json', 'index/projects/a-b-..-c/box/2026-11-13.json'])
+  })
+})
+
 const ENV_VALUE = 'a-long-enough-value'
 const OTHER = '70ed5626-9879-4041-892a-5db0ff0bad69'
 
