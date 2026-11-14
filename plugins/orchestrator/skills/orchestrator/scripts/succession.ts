@@ -256,13 +256,15 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
  */
 export function leanSteps(brief: string, rulings: string): { readonly text: string; readonly refreshed: number } {
   const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
+  // The replacement strings read `$` as a pattern: a path or a name carrying one is escaped.
+  const lit = (value: string): string => value.replaceAll('$', '$$$$')
   const steps: [RegExp, string][] = [
     ...(rulings === '' || rulings === 'none' ? [] : [[
       /^1\. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole\.$/m,
-      `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
+      `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${lit(rulings)}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
     ] as [RegExp, string]]),
     [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
-    ...(project === '' ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
+    ...(project === '' ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${lit(project)}\`:`] as [RegExp, string]]),
     [/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'],
   ]
   let text = brief

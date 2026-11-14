@@ -306,6 +306,8 @@ test('leanSteps brings the reading orders of a standing brief to the template\'s
   assert.ok(lean.text.includes('`references/succession-successor.md`, « Succession — the successor »'))
   assert.ok(!lean.text.includes('WHOLE') && !lean.text.includes('read whole'))
   assert.deepEqual(leanSteps(lean.text, '/b/rulings.md'), { text: lean.text, refreshed: 0 })
+  // A `$` in a path is a character, never a replacement pattern.
+  assert.ok(leanSteps(STALE, '/b/$&/r.md').text.includes("`grep -v '\\[for: ' /b/$&/r.md`"))
   // No rulings file to name, no rewrite of the rulings step.
   assert.ok(leanSteps(STALE, 'none').text.includes('Read the rulings file WHOLE'))
 })
