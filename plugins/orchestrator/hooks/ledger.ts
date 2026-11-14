@@ -9,7 +9,7 @@ import { ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText } from './audit-events.ts'
-import { isDegradedPass, isOwnRecord, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
+import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 
@@ -82,16 +82,18 @@ async function orchestrationOfSession($: any, sessionId: string, row: { role: st
     }
   }
   if (id === null) return null
-  const named = parseSessionRow(await readOr($, `${store}/${sessionKey(id)}`))?.name ?? String((await $.env.get('ORCHESTRATOR_REPORTS_TO')) ?? '')
-  return { id, name: named }
+  // The session the launch record names may be any live one (a coordinator's): only an orchestrator's is an orchestration.
+  const held = parseSessionRow(await readOr($, `${store}/${sessionKey(id)}`))
+  return held?.role === 'orchestrator' ? { id, name: held.name } : null
 }
 
 // The records the orchestration owns that its session registered, each readable.
 async function ownRecords($: any, state: string, id: string, name: string | null): Promise<string[]> {
   const own = orchestrationOf(name)
+  if (own === null) return []
   const found: string[] = []
   for (const path of (await readOr($, `${state}/records/${safe(id)}`)).split('\n').map(line => line.trim()).filter(Boolean)) {
-    if (isOwnRecord(ownerOf(await readOr($, `${path}.owner`)), own) && await $.fs.exists(path).catch(() => false)) found.push(path)
+    if (ownerOf(await readOr($, `${path}.owner`)) === own && await $.fs.exists(path).catch(() => false)) found.push(path)
   }
   return found
 }

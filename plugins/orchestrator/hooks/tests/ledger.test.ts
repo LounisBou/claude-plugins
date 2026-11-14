@@ -273,3 +273,53 @@ test('a tool call that throws is caught by the hook\'s net: one log line, the ca
   expect(passed).toEqual([e])
   expect(logged.some(l => l.includes('ledger') && l.includes('unhandled (failure): boom'))).toBe(true)
 })
+
+// An agent a coordinator launched: its launch record names the coordinator's session, which is no
+// orchestrator and owns no orchestration.
+const COORD = 'Coord: all'
+const coordinated = (records: string, files: Record<string, string> = {}) => fake({
+  reportsTo: `${COORD} [c0c0c0]`,
+  rows: {
+    [`${STATE}/store/sessions/s-coord`]: row('coordinator', COORD),
+    [`${HOME}/.claude/sessions/401.json`]: JSON.stringify({ pid: 401, sessionId: 's-coord', name: COORD, startedAt: 2 }),
+    [`${STATE}/records/s-coord`]: records,
+    ...files,
+  },
+})
+
+test('the pull request of an agent a coordinator launched takes no line, whatever record the coordinator registered', async () => {
+  const unowned = '/briefs/all/dispatch-record.jsonl'
+  const world = coordinated(`${unowned}\n`, { [unowned]: ROWS })
+  await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/50'))
+  expect(world.files.get(unowned)).toBe(ROWS)
+  expect(world.files.get(RECORD)).toBe(ROWS)
+})
+
+test('a session that is no orchestrator\'s is no orchestration, even one that bears an orchestration\'s name and registered its record', async () => {
+  const world = fake({
+    reportsTo: `${ORCH} [a1b2c3]`,
+    rows: { [`${STATE}/store/sessions/s-orch`]: row('coordinator', ORCH, '/dev/ttys001') },
+  })
+  await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/51'))
+  expect(world.files.get(RECORD)).toBe(ROWS)
+})
+
+test('a record that has no owner is no orchestration\'s: the line is not written into it', async () => {
+  const world = fake({ rows: { [`${STATE}/records/s-orch`]: '/briefs/app/loose-record.jsonl\n', '/briefs/app/loose-record.jsonl': ROWS } })
+  await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/52'))
+  expect(world.files.get('/briefs/app/loose-record.jsonl')).toBe(ROWS)
+  const own = fake({ session: 's-orch', reportsTo: null, rows: { [`${STATE}/records/s-orch`]: '/briefs/app/loose-record.jsonl\n', '/briefs/app/loose-record.jsonl': ROWS } })
+  await call(mounted(), own.dollar, github(), created('https://github.com/acme/app/pull/53'))
+  expect(own.files.get('/briefs/app/loose-record.jsonl')).toBe(ROWS)
+})
+
+test('an orchestrator whose name names no orchestration owns no record, an unowned one included', async () => {
+  const loose = '/briefs/app/loose-record.jsonl'
+  const world = fake({ session: 's-orch', reportsTo: null, rows: {
+    [`${STATE}/store/sessions/s-orch`]: row('orchestrator', 'nameless', '/dev/ttys001'),
+    [`${STATE}/records/s-orch`]: `${loose}\n`,
+    [loose]: ROWS,
+  } })
+  await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/54'))
+  expect(world.files.get(loose)).toBe(ROWS)
+})
