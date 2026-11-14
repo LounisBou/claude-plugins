@@ -30,9 +30,10 @@ NEVER close while a phase is not done, or while the tree is dirty
 NEVER touch a version file when the bump type is none
 ```
 
-This skill's own steps end at the branch (`method:lifecycle`: consent, ready). Once
-the pull request is open at its final head, run `/implement:review`: the review is made by
-another session, never by this one.
+This skill's own steps end at the branch (`method:lifecycle`: self-review, consent, ready). The
+self-review comes after the last step below and before the pull request opens. Once the pull
+request is open at its final head, run `/implement:review`: the review is made by another
+session, never by this one.
 
 ---
 
