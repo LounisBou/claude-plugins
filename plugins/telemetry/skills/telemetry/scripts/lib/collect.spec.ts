@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, roleOf,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, repositoryOf, roleOf,
   sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
@@ -23,6 +23,27 @@ test('session_start: directory, project, model, surface, launch latency', () => 
     interactive: true, surface: 'terminal', spawned: true, startup_ms: 1500,
   })
   assert.deepEqual(usage, { contextTokens: 42000, window: 1000000, costUsd: 1.25, startedAt: 1794600000000 })
+})
+
+test('session_start: the project is the repository when the session has one', () => {
+  const event = sessionStart(AT, S, F('session.start'), { repository: 'LounisBou/claude-plugins' })
+  assert.equal(event['project'], 'LounisBou/claude-plugins')
+  assert.equal(event['cwd'], '/Users/me/dev/claude-plugins')
+})
+
+test('repositoryOf: owner/name from the remote, in its https and ssh forms; none from a path or nothing', () => {
+  for (const remote of [
+    'https://github.com/LounisBou/claude-plugins.git',
+    'https://github.com/LounisBou/claude-plugins',
+    'https://github.com/LounisBou/claude-plugins/',
+    'https://user:token@github.com/LounisBou/claude-plugins.git',
+    'git@github.com:LounisBou/claude-plugins.git',
+    'git@github.com:LounisBou/claude-plugins',
+    'ssh://git@github.com/LounisBou/claude-plugins.git',
+    'ssh://git@github.com:22/LounisBou/claude-plugins.git',
+  ]) assert.equal(repositoryOf(remote), 'LounisBou/claude-plugins', remote)
+  assert.equal(repositoryOf('https://gitlab.example/group/sub/name.git'), 'sub/name')
+  for (const remote of ['/srv/git/logs.git', '../logs.git', 'https://github.com/alone', '', null, undefined]) assert.equal(repositoryOf(remote), undefined, String(remote))
 })
 
 test('first_turn: time since the start and since the launch', () => {
@@ -155,6 +176,7 @@ test('roles from titles; projects from directories; MCP names', () => {
   )
   assert.equal(roleOf(undefined, true), 'agent')
   assert.equal(projectOf('/a/b/'), 'b')
+  assert.equal(projectOf('/a/b/', 'o/n'), 'o/n')
   assert.equal(projectOf(undefined), undefined)
   assert.equal(mcpOf('Bash'), undefined)
   assert.deepEqual(mcpOf('mcp__plugin-authoring__scan_secrets'), { server: 'plugin-authoring', name: 'scan_secrets' })
