@@ -94,7 +94,7 @@ test('the list grants a repository and an environment together, the repository w
 test('a deploy the list does not grant is refused in one line naming how the operator adds it', () => {
   const line = firstRefusal(LIST, bashDeploys('composer deploy:api:prod', DECLARED))
   expect(line).toBe('github: composer deploy:api:prod refused: acme/infra is not in the deploy list for prod; only the operator adds it, with mcp__github__gh auto-deploy-set'
-    + ' {"repo": "acme/infra", "env": "prod", "on": true, "words": "<their words naming auto-deploy, verbatim>"}.')
+    + ' {"repo": "acme/infra", "env": "prod", "on": true, "words": "<their recorded answer naming auto-deploy, verbatim>"}.')
   expect(line).not.toContain('\n')
   expect(firstRefusal(LIST, bashDeploys('composer deploy:api:staging', DECLARED))).toBeUndefined()
   expect(firstRefusal(LIST, [])).toBeUndefined()

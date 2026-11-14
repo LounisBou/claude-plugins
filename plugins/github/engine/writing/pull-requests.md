@@ -97,8 +97,7 @@ auto-merge, leaving draft (a CI undraft aside) is the operator's, on GitHub afte
 review, and a merge needs their explicit word, given through this tool. In a
 repository in auto-merge, the merge, leaving draft and the deployment its method
 foresees need no approval of the operator once the pull request is ready. A repository
-enters or leaves auto-merge only through `auto-merge-set`, on the operator's words quoted
-verbatim.
+enters or leaves auto-merge only through `auto-merge-set`, on the operator's recorded answer.
 Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.
 A colleague's PR and any review comment are proposed first.

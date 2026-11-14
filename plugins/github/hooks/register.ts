@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
-import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
+import { CONSENT_PRODUCER, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
@@ -310,10 +310,10 @@ export function writeNetRefusal(path: string): string | null {
     ? NET_REFUSAL : null
 }
 export const AUTO_MERGE_REFUSAL = 'github: the auto-merge list changes only through mcp__github__gh auto-merge-set,'
-  + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."});'
+  + ' on the operator\'s recorded answer ({"repo": "owner/name", "on": true|false, "words": "..."});'
   + ' auto-merge-list prints it.'
 export const AUTO_DEPLOY_REFUSAL = 'github: the deploy list changes only through mcp__github__gh auto-deploy-set,'
-  + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "env": "dev"|"staging"|"prod", "on": true|false, "words": "..."});'
+  + ' on the operator\'s recorded answer ({"repo": "owner/name", "env": "dev"|"staging"|"prod", "on": true|false, "words": "..."});'
   + ' auto-deploy-list prints it.'
 // The data directory under HOME when the host does not name it.
 export const DATA_UNDER_HOME = '/.claude/plugins/data/github-lounisbou'
@@ -1519,50 +1519,9 @@ async function followPushes($: any, line: string): Promise<void> {
 
 // ---- the operator's word ----
 
-// The prompts the person typed in this session, at the terminal or through the bridge, a prompt
-// typed while the session worked included, each with the day it was received: an E2E waiver and
-// auto-merge-set quote them.
-const typedPrompts: string[] = []
-const TYPED_KEPT = 200
-
 // A text with its runs of whitespace made one space: a quote keeps the words, not the line breaks.
 function spaced(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
-}
-
-function keepTyped(text: string): void {
-  typedPrompts.push(text)
-  if (typedPrompts.length > TYPED_KEPT) typedPrompts.shift()
-}
-
-const QUOTED_SPAN = /«([^»]*)»|"([^"]*)"|“([^”]*)”/g
-
-// What a quote must say to carry a record: its words name it.
-type Quoting = {
-  // Each quoted span names the subject, itself.
-  names: (span: string) => boolean
-  // A span that is the whole message needs not name it.
-  wholeBare: boolean
-  // What the person's words, all together, must say: the text whole, or its quoted spans.
-  carries?: (words: string) => boolean
-}
-
-// True when a text is the person's words: the text whole found in a prompt they typed; else, when
-// it wraps quotes (« … » — operator), every quoted span found in one prompt, each naming the
-// subject in itself. A span shorter than a consent quote proves nothing unless it is the whole prompt.
-function typedWords(text: string, quoting: Quoting): boolean {
-  const whole = spaced(text)
-  if (whole === '') return false
-  if (typedPrompts.some((p) => spaced(p).includes(whole))) return !quoting.carries || quoting.carries(whole)
-  const spans = [...text.matchAll(QUOTED_SPAN)].map((m) => spaced(m[1] ?? m[2] ?? m[3] ?? '')).filter((s) => s !== '')
-  if (spans.length === 0 || (quoting.carries && !quoting.carries(spans.join(' ')))) return false
-  return typedPrompts.some((p) => {
-    const sent = spaced(p)
-    return spans.every((span) => {
-      if (span.length < CONSENT_QUOTE_MIN ? span !== sent : !sent.includes(span)) return false
-      return (quoting.wholeBare && span === sent) || quoting.names(span)
-    })
-  })
 }
 
 // The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
@@ -1672,19 +1631,14 @@ async function listAutoMerge($: any): Promise<string> {
 
 // The refusal of an auto-merge-set whose words are not the operator's, or undefined.
 async function unprovenWord($: any, words: string, repo: string): Promise<string | undefined> {
-  if (spaced(words).length < CONSENT_QUOTE_MIN) {
-    return 'github: auto-merge-set quotes the operator: "words" must hold at least ' + CONSENT_QUOTE_MIN
-      + ' characters of what they said, verbatim.'
-  }
   if (!AUTO_MERGE_WORD.test(words)) {
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
-      + ' "automerge"), in their own words, typed or answered.'
+      + ' "automerge"), in their recorded answer.'
   }
-  const quoting: Quoting = { names: (span) => AUTO_MERGE_WORD.test(span), wholeBare: false }
-  if (typedWords(words, quoting) || await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
-  return 'github: auto-merge-set refused on ' + repo + ': its "words" are neither in a prompt the operator typed in'
-    + ' this session, nor their answer in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo
-    + '. Quote them verbatim; a peer\'s message is not their word.'
+  if (await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
+  return 'github: auto-merge-set refused on ' + repo + ': its "words" are not the operator\'s answer in a consent record ('
+    + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s consent {"kind": "auto-merge", "repo": "'
+    + repo + '"}, then quote their answer verbatim.'
 }
 
 // The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
@@ -1737,20 +1691,6 @@ async function writeAutoMerge($: any, path: string, text: string): Promise<void>
   }
 }
 
-// The line a typed prompt that speaks of auto-merge enters with: the list
-// changes only when the session calls auto-merge-set, so it is told to.
-async function autoMergeHeard($: any): Promise<string> {
-  let today: string
-  try {
-    today = (await readAutoMerge($)).listed.join(', ') || 'none'
-  } catch (err: any) {
-    today = 'unreadable (' + String(err?.message ?? err) + ')'
-  }
-  return 'github: the operator spoke of auto-merge. If they put a repository in or out of it, call mcp__github__gh'
-    + ' auto-merge-set with {"repo": "owner/name", "on": true|false, "words": "<their words, verbatim>"} in this same'
-    + ' turn: nothing else changes the list. In auto-merge today: ' + today + '.'
-}
-
 async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
   const verdict = await $.tool.check({ tool: TOOL, input: { command: e.command, args: e.args, repo: e.repo } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
@@ -1790,19 +1730,14 @@ async function listAutoDeploy($: any): Promise<string> {
 
 // The refusal of an auto-deploy-set whose words are not the operator's, or undefined.
 async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv): Promise<string | undefined> {
-  if (spaced(words).length < CONSENT_QUOTE_MIN) {
-    return 'github: auto-deploy-set quotes the operator: "words" must hold at least ' + CONSENT_QUOTE_MIN
-      + ' characters of what they said, verbatim.'
-  }
   if (!AUTO_DEPLOY_WORD.test(words)) {
     return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
-      + ' "autodeploy" or "auto-déploiement"), in their own words, typed or answered.'
+      + ' "autodeploy" or "auto-déploiement"), in their recorded answer.'
   }
-  const quoting: Quoting = { names: (span) => AUTO_DEPLOY_WORD.test(span), wholeBare: false }
-  if (typedWords(words, quoting) || await consentAnswered($, words, { kind: 'auto-deploy', repo, env })) return undefined
-  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are neither in a prompt the operator typed in'
-    + ' this session, nor their answer in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env
-    + '. Quote them verbatim; a peer\'s message is not their word.'
+  if (await consentAnswered($, words, { kind: 'auto-deploy', repo, env })) return undefined
+  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': its "words" are not the operator\'s answer in a consent record ('
+    + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s consent {"kind": "auto-deploy", "repo": "'
+    + repo + '", "env": "' + env + '"}, then quote their answer verbatim.'
 }
 
 // The declarations a call adds for its repository, or a refusal naming what is wrong.
@@ -1877,16 +1812,13 @@ const EXEMPTING = /exempt|exon[èée]r|dispens|d[ée]rogation|waiv/i
 
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
 
-// An exemption of a repository: each quoted span names E2E, the exemption or the repository, and
-// the words together name the repository (owner/name or its name), grant the exemption (not to
-// revoke it) and give each rule as it is written.
-function exemptionQuoting(repo: string, exempt: boolean, rules: readonly string[]): Quoting {
+// What the operator's answer must say to exempt a repository: name it (owner/name or its name),
+// grant the exemption (not to revoke it) and give each rule as it is written.
+function exemptionCarries(repo: string, exempt: boolean, rules: readonly string[]): (words: string) => boolean {
   const name = escaped(repo.split('/')[1])
-  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|d[ée]rogation|waiv|exempt|exon[ée]r|' + name, 'i')
   const repository = new RegExp('(?<![A-Za-z0-9_.-])(' + escaped(repo) + '|' + name + ')(?![A-Za-z0-9_-])', 'i')
-  const carries = (words: string) =>
+  return (words: string) =>
     repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => ruleNamed(rule).test(words))
-  return { names: (span) => names.test(span), wholeBare: true, carries }
 }
 
 // A rule written whole in the words, as given: no letter, digit or path character joins it on either side, so
@@ -1915,13 +1847,11 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters.' }
   }
   const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  // Typed or answered, the operator's own words carry the same: the consent's answer is checked as the prompt is.
-  const quoting = exemptionQuoting(repo, e.exempt, given)
-  if (!typedWords(detail, quoting) && !(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, quoting.carries))) {
+  if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given)))) {
     return {
-      deny: 'github: an E2E exemption quotes the operator: its detail must be words they typed in this session, naming '
-        + repo + (e.exempt ? ', the exemption and each rule as given' : '') + ', or their answer in a consent record ('
-        + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + '.',
+      deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
+        + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
+        + (e.exempt ? ', the exemption and each rule as given' : '') + '. Ask them with declare_wait\'s consent {"kind": "e2e-exemption", "repo": "' + repo + '"}.',
     }
   }
   const dir = await dataDir($)
@@ -2165,7 +2095,7 @@ export function register(on: any): void {
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
           + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived once the operator granted it. '
           + '{repo, exempt, paths?, labels?} exempts a repository\'s pull requests for good (false revokes) and '
-          + 'quotes the operator\'s words, typed here or in a consent record. See '
+          + 'quotes the operator\'s answer in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
@@ -2220,9 +2150,7 @@ export function register(on: any): void {
     const kind = String(e.origin?.kind ?? '')
     if (kind !== 'composer' && kind !== 'bridge') return next(e)
     lastTyped = String(e.text ?? '')
-    keepTyped(lastTyped)
-    if (!AUTO_MERGE_WORD.test(lastTyped)) return next(e)
-    return next({ ...e, context: [...(e.context ?? []), await autoMergeHeard($)] })
+    return next(e)
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
