@@ -1493,11 +1493,11 @@ check "the review brief replays the test, flags one the plan requires and the re
   "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise, the plan requiring one or there being no plan, it is a finding.')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
-# The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
-# question, once, in the host's question tool, his choice the consent.
+# A check the plan required and now judged unneeded is lifted by a new plan; one that cannot run is
+# ONE question, once, in the host's question tool, his choice the consent.
 PRW="$ROOT/../github/engine/writing/pull-requests.md"
 check "review.md asks one waiver question through the round, worded by pull-requests.md, which holds Accorder / Refuser" "yes|yes|yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: ONE question, once, through the round (`declare_wait` operator,')|$(spells "$RV" '`consent` naming the waiver')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
+  "$(spells "$RV" 'now unneeded: a new check plan, that check `none: <reason>`, no question. One that cannot run: ONE question through the round (`declare_wait` operator,')|$(spells "$RV" '`consent_kind`, `consent_repo`, `consent_pr`), worded as github')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
