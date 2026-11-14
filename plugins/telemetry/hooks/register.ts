@@ -63,6 +63,9 @@ async function flush($: Host, collector: Collector): Promise<void> {
   if (lines === '') return
   const run = await $.process.run(scriptArgv($.plugin.root, 'append', await configDir($)), { stdin: lines, timeoutMs: WRITE_TIMEOUT_MS })
   if (run.exitCode !== 0) throw new Error(`append exited ${run.exitCode}: ${run.stderr.trim().split('\n').pop() ?? ''}`)
+  // The writer speaks only to say what the operator should know once (the export has no repository to push to).
+  const said = run.stdout.trim()
+  if (said !== '') $.ui.log(said)
 }
 
 /** Buffers `events`, and writes them once the buffer reaches its threshold. */
