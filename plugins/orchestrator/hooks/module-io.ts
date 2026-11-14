@@ -44,9 +44,12 @@ export function storeIo($: Host<'fs' | 'process' | 'clock'>): StoreIo {
   }
 }
 
-/** A part of a temporary name no other write uses at the same time. */
+/**
+ * A part of a temporary name no other write uses at the same time: the milliseconds and up to six
+ * base-36 characters, the shape the launcher's writer of a store row shares.
+ */
 export function uniqueTag(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 /** `text` written to `path` in one rename through a temporary file beside it: $.fs.write is not atomic. */

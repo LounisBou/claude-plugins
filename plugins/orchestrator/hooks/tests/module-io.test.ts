@@ -12,8 +12,8 @@ function envOf(vars: Record<string, string>) {
 
 test('the config dir is CLAUDE_CONFIG_DIR, else .claude under HOME; an empty value is unset', async () => {
   expect(await configDir(envOf({ CLAUDE_CONFIG_DIR: '/cfg', HOME: '/h' }))).toBe('/cfg')
-  expect(await configDir(envOf({ HOME: '/h' }))).toBe('/h/.claude')
-  expect(await configDir(envOf({ CLAUDE_CONFIG_DIR: '', HOME: '/h' }))).toBe('/h/.claude')
+  expect(`${await configDir(envOf({ HOME: '/h' }))}/`).toBe('/h/.claude/')
+  expect(`${await configDir(envOf({ CLAUDE_CONFIG_DIR: '', HOME: '/h' }))}/`).toBe('/h/.claude/')
 })
 
 test('the state root is ORCHESTRATOR_STATE_DIR, else the config dir\'s claude-orchestrator', async () => {
