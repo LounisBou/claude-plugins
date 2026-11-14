@@ -31,7 +31,7 @@
       "name": "drift",
       "source": "./plugins/drift",
       "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte, their pages captured and compared pixel by pixel, their changed SVG files rendered and compared alike.",
-      "version": "0.3.3",
+      "version": "0.3.4",
       "author": {
         "name": "Lounis Bou"
       }
@@ -40,7 +40,7 @@
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",
-      "version": "0.22.1",
+      "version": "0.22.2",
       "author": {
         "name": "Lounis Bou"
       }
@@ -49,7 +49,7 @@
       "name": "implement",
       "source": "./plugins/implement",
       "description": "The feature lifecycle as five commands: brainstorm and plan a feature, run its phases, check a delivery, close the branch, prepare the next one.",
-      "version": "0.6.13",
+      "version": "0.6.14",
       "author": {
         "name": "Lounis Bou"
       }
@@ -58,7 +58,7 @@
       "name": "method",
       "source": "./plugins/method",
       "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "author": {
         "name": "Lounis Bou"
       }
@@ -67,7 +67,7 @@
       "name": "norms",
       "source": "./plugins/norms",
       "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-      "version": "0.5.17",
+      "version": "0.5.18",
       "author": {
         "name": "Lounis Bou"
       }
@@ -76,7 +76,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.104.0",
+      "version": "0.104.1",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.9.19",
+      "version": "0.9.20",
       "author": {
         "name": "Lounis Bou"
       }
@@ -103,7 +103,7 @@
       "name": "telemetry",
       "source": "./plugins/telemetry",
       "description": "Records what every session does (role, model, effort, turns, context, tokens, cost, tools, refusals, questions, spawns, dispatches) as redacted JSON lines, one file per day, and exports them on demand to a private repository named by the environment.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Lounis Bou"
       }
