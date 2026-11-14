@@ -32,11 +32,11 @@ One more check is fixed on every delivery: its E2E line, from the implementer's 
 
 Every sub-agent is read-only: no edits, no commits, no long runs, no verdicts on the whole. It reports to you; you consolidate.
 
-## 4. Report shape — one message to the orchestrator
+## 4. Report shape — a file, and one message to the orchestrator
 
-The findings are the report's substance and the orchestrator verifies each, so their number is not capped; each finding is ONE line of at most 200 characters — `[severity] file:line — the claim — the evidence in a few words — proposed fix` — with no prose around it. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. No recommendation on the whole; the verdict is the orchestrator's.
+Write the report to `{{REPORT_PATH}}`. The findings are its substance and the orchestrator verifies each, so their number is not capped; each finding is ONE line of at most 200 characters — `[severity] file:line — the claim — the evidence in a few words — proposed fix` — with no prose around it. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. No recommendation on the whole; the verdict is the orchestrator's. Then what was read, a « what the readers could not show » line for anything the fixtures or the environment hid, which of the norms lens's two modes was done, and one line for anything you saw that is wrong or doubtful outside the findings.
 
-Report cap: everything else in the report — what was read, a « what the readers could not show » line for anything the fixtures or the environment hid — is at most 1,000 characters. One line says anything you saw that is wrong or doubtful outside the findings — this line is never cut to fit the cap.
+Your message is one line: `<repo>#{{PR}} {{HEAD}} — <n> findings — blocking: <file:line of each blocker and major, …|none> — report: {{REPORT_PATH}}`.
 
 ## 5. Forbidden
 

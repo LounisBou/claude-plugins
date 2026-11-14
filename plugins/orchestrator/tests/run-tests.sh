@@ -288,10 +288,10 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "no|yes|yes|yes" \
   "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)|$(spells "$ORCH_REFS/briefs.md" "**Scratch lives in the session's own host scratchpad directory**")"
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
-# agent's report is capped, the « wrong or doubtful » line excepted, and no brief still
+# agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs cap the report" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" 'is never cut to fit the cap'; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes|yes" \
+  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
 check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
@@ -301,9 +301,9 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
-# would cut the reviewer's words out of them.
-check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
-  "$(spells "$ROOT/templates/agent-comments-brief.md" "except the per-thread assessments: each is sent in full, the reviewer's words included")"
+# and the verdict limit would cut the reviewer's words out of them, so each goes whole to a file.
+check "the comments brief sends each per-thread assessment whole, in a file" "yes" \
+  "$(spells "$ROOT/templates/agent-comments-brief.md" "each per-thread assessment, the reviewer's words included, goes in full to a file its message names")"
 # The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
 # briefs ask for the status line it reads and no longer for a context read by hand, which
 # cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
