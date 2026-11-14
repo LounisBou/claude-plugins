@@ -11,4 +11,5 @@ Rotation = you write a **resume prompt** (template `agent-rotation-brief.md`) fo
 ## Your own context (the orchestrator is not exempt)
 
 - **Staying compaction-ready** is SKILL.md's principle 10, **refreshing the state from the artifacts** its principle 4, and **measuring your own context** its principle 7.
+- **Keep your turn light**: a measurement or a whole-file read goes to a read-only subagent that returns the conclusion, so a generation lasts longer.
 - **When your own session lacks what the role needs** — a PATH, a credential, a tool the launch did not carry — the repair is a successor spawned with it, never a favour asked of a peer or of the operator.
