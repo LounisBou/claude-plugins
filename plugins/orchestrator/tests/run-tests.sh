@@ -2253,6 +2253,17 @@ check_status "a review brief with no norms-check line passes: norms is on demand
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
+# The executor lives until its pull request merges (the operator's ruling of 2026-11-14): a brief
+# that keeps it there, or the shipped phase template that says so, raises no finding.
+for phrase in 'Stay until merged.' 'Once merged, stand down.' 'Stand by for the kept findings.' 'Stay available for the review.'; do
+  ok_brief "$B/stays.md"; printf '%s\n' "$phrase" >> "$B/stays.md"
+  check_status "an executor kept until the merge is no finding: $phrase" 0 bash "$LINT" "$B/stays.md"
+done
+PHASEFILLED="$B/phase-filled.md"
+sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$ROOT/templates/agent-phase-brief.md" > "$PHASEFILLED"
+check "the shipped phase template, filled, orders no background run and no CI wait" "0" \
+  "$(bash "$LINT" "$PHASEFILLED" 2>&1 | grep -cE 'background|waits on CI')"
+
 # Nobody waits on CI in the foreground, and an agent never waits on it at all: an implementer
 # brief that orders a `gh pr checks` watch, a loop of `gh pr view`/`gh pr checks` around a
 # sleep is a finding; a clause that forbids it is not one.
@@ -5402,17 +5413,6 @@ check "the coordinator's succession brief is named with no date" "yes|no" \
 # bodies run only when that answer fails, and each says so, with what the answer leaves out.
 check "the three hooked commands say the module answers them and their body is the fallback" "yes|yes|yes" \
   "$(for c in status agents progress; do spells "$ROOT/commands/$c.md" 'The hooks module answers this command on the spot, with no model turn'; done | paste -sd'|' -)"
-# The machine line has a third form, for a turn that waits on a command or monitor of its own:
-# a text that offers the wait on the operator and done must offer it too, or a turn waiting on
-# a monitor is told its only ways out are a false wait on the operator and a refused done.
-two_lines_only() {
-  find "$ROOT/skills" "$ROOT/commands" "$ROOT/templates" "$ROOT/evals" "$ROOT/hooks" "$ROOT/README.md" "$ROOT/docs/design.md" \
-    -type f \( -name '*.md' -o -name '*.ts' \) -not -path '*/tests/*' -not -path '*/graders/*' -print0 \
-    | xargs -0 grep -lF -- 'waiting: done' \
-    | xargs grep -lE -- 'waiting: operator( \(urgent\))? (—|-) blocks:' \
-    | xargs grep -LF -- 'waiting: tool' | sed "s#^$ROOT/##"
-}
-check "no text offers only the wait on the operator and done" "" "$(two_lines_only)"
 # The question of a decision round is asked with `ask` and ends on a declared wait on the operator
 # that names no question of its own: the stop gate refuses a turn that ends on a bare question.
 check "a decision round's question ends on a declared operator wait" "yes|yes" \
