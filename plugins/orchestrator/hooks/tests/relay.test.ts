@@ -3347,6 +3347,19 @@ test('a claim in the asker\'s tab moves the seq and is pushed; the replica keeps
   expect(replica.claimed).toBeUndefined()
 })
 
+test('a push older than the replica, arriving after a newer one, changes nothing and is acked', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  const [first, second] = pushes(sender)
+  expect([parseQ(first.text)?.seq, parseQ(second.text)?.seq]).toEqual([1, 2])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', second.text))
+  const replica = objectAt(coordinator, id)
+  expect(replica.seq).toBe(2)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', first.text))
+  expect(objectAt(coordinator, id)).toEqual(replica)
+  expect(qAcks(coordinator, 'asked').map(s => [s.to, parseQAck(s.text)?.seq])).toEqual([[SENDER_AT, 2], [SENDER_AT, 1]])
+})
+
 test('a close its owner makes reaches an open replica, and the coordinator here that was shown it is told', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely()
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
