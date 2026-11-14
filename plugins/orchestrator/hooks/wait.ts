@@ -11,8 +11,8 @@
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { openFence, outsideFences } from './one-question.ts'
-import { entryQuestions, parseChoices, questionShape, type QuestionField } from './round.ts'
+import { fencedLines, openFence, outsideFences } from './one-question.ts'
+import { entryQuestions, numberOfLine, parseChoices, questionShape, type QuestionField } from './round.ts'
 import { logLine } from './module-io.ts'
 
 // The nouns the declaration holds.
@@ -72,14 +72,58 @@ function recommendationOf(question: string, recommendation: QuestionField | null
 
 // The question block an operator wait holds that the message does not show: appended above the line.
 // The call's question is authoritative: a block in the message is the declared one only when its
-// content matches it, whitespace and line breaks aside. Any other block, of the same numbering and
-// subject or not, does not hide it: the two are then both shown.
+// content matches it, whitespace and line breaks aside. A block of the message that bears the
+// numbering of a declared one is that question worded another way, and is dropped for it
+// (withoutRestated), so a question is shown once. A block of another numbering is another question,
+// kept beside it.
 function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
   if (wait.kind !== 'operator' || !wait.question) return null
   if (flat(outsideFences(message)).includes(flat(wait.question))) return null
   const shown = blockKeys(message)
   const declared = blockKeys(wait.question)
   return declared.length > 0 && declared.every(key => shown.includes(key)) ? null : wait.question
+}
+
+// The numberings the question blocks of a text bear, outside its fences.
+function numberings(text: string): Set<string> {
+  const inside = fencedLines(text)
+  return new Set(text.split('\n').flatMap((line, i) => {
+    const number = inside[i] ? null : numberOfLine(line)
+    return number === null ? [] : [flat(number)]
+  }))
+}
+
+// The message less the question blocks that bear the numbering of a declared block: from its
+// numbering line to the next numbering line, or for the last block to the end of its recommendation's
+// lines, never past the machine line. The text around them stays.
+function withoutRestated(message: string, declared: string): string {
+  const taken = numberings(declared)
+  const lines = message.split('\n')
+  const inside = fencedLines(message)
+  const heads = lines.flatMap((line, i) => (inside[i] || numberOfLine(line) === null ? [] : [i]))
+  const dropped = new Set<number>()
+  heads.forEach((head, k) => {
+    if (!taken.has(flat(numberOfLine(lines[head] ?? '') ?? ''))) return
+    const next = heads[k + 1]
+    const end = next ?? blockEnd(lines, head)
+    for (let i = head; i < end; i++) dropped.add(i)
+  })
+  return lines.filter((_, i) => !dropped.has(i)).join('\n')
+}
+
+// Where the last block of a message ends, from its numbering line: the line after its recommendation's
+// argument, else the machine line or the end of the text.
+function blockEnd(lines: readonly string[], head: number): number {
+  const machine = lines.findIndex((line, i) => i > head && /^\s*waiting\s*:/.test(line))
+  const limit = machine < 0 ? lines.length : machine
+  const block = lines.slice(head, limit).join('\n')
+  const { choices } = parseChoices(block)
+  const recommendation = questionShape(block, choices)?.recommendation ?? null
+  if (recommendation === null) return limit
+  const at = lines.findLastIndex((line, i) => i >= head && i < limit && line.includes(recommendation.label) && line.includes(recommendation.text))
+  if (at < 0) return limit
+  const end = lines.findIndex((line, i) => i > at && i < limit && line.trim() === '')
+  return end < 0 ? limit : end
 }
 
 // The tool's input, validated: the declaration, or why it is none.
@@ -144,7 +188,8 @@ export function withDeclaredQuestion(message: string, wait: DeclaredWait | null)
   if (missing === null) return message
   // A message that ends inside a code fence has it closed first: the block would else be quoted text.
   const fence = openFence(message)
-  return `${message.replace(/\s+$/, '')}${fence === null ? '' : `\n${fence}`}\n\n${missing}`
+  const closed = fence === null ? message : `${message.replace(/\s+$/, '')}\n${fence}`
+  return `${withoutRestated(closed, missing).replace(/\s+$/, '')}\n\n${missing}`
 }
 
 // The message as the gate and the turn's end read it: the declaration's question, then its line written last.

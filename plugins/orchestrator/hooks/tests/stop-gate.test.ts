@@ -15,9 +15,9 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, TOOL_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
-import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
+import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredQuestion, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
-import { roundEntry } from '../round.ts'
+import { entryQuestions, roundEntry } from '../round.ts'
 import { parseWait } from '../relay.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
 import { unnamedReport } from '../relay.ts'
@@ -2516,49 +2516,47 @@ test('a message ending in an open code fence still carries the declared question
   expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
 })
 
-test('a different question block in the message does not hide the declared one: both are shown, and the stop is not refused for it', async () => {
+test('a question block of the declared numbering in the message is the declared one: replaced by it, never shown beside it', async () => {
   const wait = waitMounted()
   const fx = fakeDollar({})
   await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: ASKED })
   const other = ASKED.replace('the report', 'another subject')
-  const handed = withDeclaredWait(other, { kind: 'operator', blocks: 'the mode', question: ASKED })
-  expect(handed).toContain('another subject')
+  const handed = withDeclaredWait(`Voici.\n\n${other}\n\nJ'attends.`, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(handed).not.toContain('another subject')
   expect(handed).toContain('_Subject_ : the report')
+  expect(handed.split('**Question 1 of 1**').length).toBe(2)
+  expect(handed).toContain('Voici.')
   const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: other, ...NOTHING_RUNS }))
   expect(held.answer).toBe(held.passed)
   // The same block, differently spaced, is the declared one: not given a second copy.
   const spaced = withDeclaredWait(ASKED.replace('_Subject_ : the', '_Subject_  :  the'), { kind: 'operator', blocks: 'the mode', question: ASKED })
   expect(spaced.split('**Question 1 of 1**').length).toBe(2)
+  // A block of another numbering is another question: kept beside the declared one.
+  const apart = withDeclaredWait(ASKED.replace('1 of 1', '3 of 3'), { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(apart.split('**Question 3 of 3**').length).toBe(2)
+  expect(apart.split('**Question 1 of 1**').length).toBe(2)
+  // A numbering line quoted in a code fence is no block: the message keeps it.
+  const quoted = withDeclaredWait('Le format :\n```\n**Question 1 of 1**\n```', { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(quoted.split('**Question 1 of 1**').length).toBe(3)
 })
 
-test('a block of the declared number and subject but another content does not hide the declared one: appended, the stop passes', async () => {
+test('a declared question of two blocks that the message words its own way is stored once, each block once', async () => {
   const declared = [
-    '**Question 1 of 1**', '_Subject_ : the report', '_Context_ : the report is ready for review.', '_Question_ : merge it?',
-    '- **A** : yes', '- **B** : no', '', '_Recommendation_ : A, the checks are green', 'and the review is clean.',
+    '**Question 1 of 2**', '_Subject_ : merge', '_Context_ : le contexte', '_Question_ : comment ?',
+    '_Choices_ :', '- **A** : oui — coût : x — gain : y', '- **B** : non', '_Free answer_ : ou vos mots', '_Recommendation_ : B. parce que', 'et pour deux raisons.', '',
+    '**Question 2 of 2**', '_Subject_ : mesure', '_Question_ : relance ?', '_Choices_ :', '- **A** : oui', '- **B** : non', '_Recommendation_ : A. simple',
   ].join('\n')
-  const wait = waitMounted()
-  const fx = fakeDollar({})
-  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: declared })
-  const divergent = {
-    stub: ['**Question 1 of 1**', '_Subject_ : the report'].join('\n'),
-    context: declared.replace('ready', 'done'),
-    choices: declared.replace('- **B** : no', '- **B** : later'),
-    recommendation: declared.replace('_Recommendation_ : A,', '_Recommendation_ : B,'),
-    argument: declared.replace('and the review is clean.', 'and nobody objected.'),
-  }
-  for (const [what, copy] of Object.entries(divergent)) {
-    const handed = withDeclaredWait(copy, { kind: 'operator', blocks: 'the mode', question: declared })
-    expect([what, handed.split('**Question 1 of 1**').length]).toEqual([what, 3])
-    expect([what, handed.includes(declared)]).toEqual([what, true])
-    const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: copy, ...NOTHING_RUNS }))
-    expect([what, held.answer === held.passed]).toEqual([what, true])
-  }
-  // The same block with its whitespace and line breaks changed is the declared one: not appended, the stop passes.
-  const respaced = declared.replace('_Context_ : the report is ready', '_Context_  :  the report\nis   ready').replace('- **A** : yes', '-   **A** :  yes')
-  const handed = withDeclaredWait(`Voici ma question.\n\n${respaced}\n\nJ'attends.`, { kind: 'operator', blocks: 'the mode', question: declared })
-  expect(handed.split('**Question 1 of 1**').length).toBe(2)
-  const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: respaced, ...NOTHING_RUNS }))
-  expect(passed.answer).toBe(passed.passed)
+  const worded = declared.replace(/coût/g, 'cost').replace('le contexte', 'le contexte, autrement dit').replace('parce que', 'car')
+  const message = `Bilan.\n\n${worded}\n\nVous décidez : A ou B.\n\nwaiting: operator — blocks: merge`
+  const handed = withDeclaredQuestion(message, { kind: 'operator', blocks: 'merge', question: declared })
+  for (const n of ['**Question 1 of 2**', '**Question 2 of 2**']) expect([n, handed.split(n).length]).toEqual([n, 2])
+  expect(handed).toContain('Bilan.')
+  expect(handed).toContain('_Context_ : le contexte\n')
+  expect(handed).not.toContain('autrement dit')
+  expect(handed).not.toContain('cost :')
+  // The round entry the relay writes holds each question once, so the pane draws each once.
+  const entry = roundEntry('a1b2c3', 'Orch: belt', parseWait(withDeclaredWait(message, { kind: 'operator', blocks: 'merge', question: declared }))!, '2026-11-12T10:00:00.000Z', '2026-11-12T10:00:00.000Z')
+  expect(entryQuestions(entry).map(part => part.number)).toEqual(['Question 1 of 2', 'Question 2 of 2'])
 })
 
 // The coordinator of the machine, as its record names it, and the messages the module sent it.
