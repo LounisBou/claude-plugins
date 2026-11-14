@@ -75,7 +75,10 @@ mechanical work the markdown would otherwise hand the model:
 - `/norms:check` leaves a norms record at its end, through the `check_done` tool
   and the `github` plugin's record tool (0.12.0 or later), for the `github`
   plugin's ready guard: `pass` when no finding is left open, `fail` otherwise,
-  at the head commit the check ended on. Commits made after the check may only
+  at the head commit the check ended on. The findings are the ones the check's
+  agents reported, each ending its answer with a JSON block the module reads:
+  the call is refused when no agent reported, when one gave no readable block,
+  or when its figures do not account for every finding once. Commits made after the check may only
   touch the files it read. It leaves none, and says why on a `record:` line of
   the report, when `/norms:check` did not compute its scope in the session, the
   branch has no pull request, tracked files have changes, a later commit touches
@@ -128,11 +131,11 @@ The suite also runs the hooks module's tests in `hooks/tests/` in the host's
 kit (`claude plugin test`).
 
 The suite runs offline and needs no GitHub account or installed plugin; it
-resolves the `github` plugin from `CLAUDE_GITHUB_ROOT` (or the platform's own
-install record) purely to check that `/norms:learn` calls only subcommands and
-formats that tool actually exposes. If the `github` plugin can't be resolved,
-the suite fails loudly with an `error:`/`fix:` pair rather than skipping the
-check.
+reads the `github` plugin from `CLAUDE_GITHUB_ROOT` (the sibling directory
+`../github` of the repository when unset) purely to check that `/norms:learn`
+calls only subcommands and formats that tool actually exposes. If the `github`
+plugin is not there, the suite fails loudly rather than skipping the check.
+The `github` plugin owns locating itself: this plugin carries no locator.
 
 ## Licence
 

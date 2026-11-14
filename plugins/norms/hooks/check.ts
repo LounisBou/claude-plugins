@@ -14,6 +14,7 @@ import {
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
+import { REPORT_REQUEST } from './findings.ts'
 import { branchPull, markScope, markedDir, openPullAt, repositoryDir, repositoryOf, type Lookup } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
@@ -185,6 +186,6 @@ export function register(on: any): void {
       }
     }
     const block = contextBlock({ agent, dir, base: scope.base, head: scope.head, files, diff, diffPath, diffStat, contributing })
-    return next({ ...e, prompt: `${e.prompt}\n\n${block}` })
+    return next({ ...e, prompt: `${e.prompt}\n\n${block}${REPORT_REQUEST}` })
   }).catch(($: any, e: any, next: any) => next(e))
 }
