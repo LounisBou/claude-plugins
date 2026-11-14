@@ -22,9 +22,10 @@ export const READINESS_CONTRACT = {
   // The severities a review finding blocks with.
   blocking: ['critical', 'important'],
   // The needs a check plan gives each check, the strictest first; one left out of a plan takes its
-  // `omitted` need. Only `required` requires; the operator's waiver alone lifts a required E2E or
-  // norms check (pr-record's `waivable`). With no plan, the E2E and the review are owed and norms
-  // are on demand. A required review runs at most `max` rounds, `required: max <n>` from 1 to the
+  // `omitted` need. Only `required` requires; a required E2E or norms check is lifted by the
+  // operator's waiver (pr-record's `waivable`) or by a new plan, which replaces the previous one
+  // whatever it requires. With no plan, the E2E and the review are owed and norms are on demand.
+  // A required review runs at most `max` rounds, `required: max <n>` from 1 to the
   // cap, the review loop's own limit; a plan silent on them runs `omitted`. No plan excuses the
   // review: `one-pass`, for a mechanical pull request, is one round by an independent reviewer with
   // no correction round expected, and still needs its record at the head. A review need other than
