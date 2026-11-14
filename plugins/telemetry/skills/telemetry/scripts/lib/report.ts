@@ -160,7 +160,9 @@ function filesOf<T>(dir: string, parse: (body: string) => T, skipped: { n: numbe
   }
   return names.flatMap(name => {
     try {
-      return [{ name, value: parse(readFileSync(join(dir, name), 'utf8')) }]
+      const body = readFileSync(join(dir, name), 'utf8')
+      // The module empties the measure file of a closed session: that is no damage.
+      return body.trim() === '' ? [] : [{ name, value: parse(body) }]
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EISDIR') skipped.n++
       return []

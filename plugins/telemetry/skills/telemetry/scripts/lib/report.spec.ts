@@ -282,6 +282,7 @@ test('lines the report cannot read are counted in its heading, and a refused wee
     writeFileSync(join(config, 'telemetry', 'events', '2026-11-10.jsonl'), `${JSON.stringify(ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' }))}\nnot json\n\n`)
     mkdirSync(join(config, 'claude-orchestrator', 'round'), { recursive: true })
     writeFileSync(join(config, 'claude-orchestrator', 'round', 'torn.json'), '{')
+    writeFileSync(join(config, 'claude-orchestrator', 'round', 'emptied.json'), '')
     assert.match(lines(config)[0] ?? '', / \(2 unreadable event lines or files left out\)$/)
       })
   for (const week of ['2026-13-45', '2026-02-30', 'monday']) assert.match(String(parseOptions(['--week', week])), /expected --week/)
