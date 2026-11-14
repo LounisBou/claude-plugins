@@ -18,6 +18,7 @@
     "plugins/orchestrator/hooks/host.ts",
     "plugins/telemetry/skills/*/scripts/**/*.ts",
     "plugins/telemetry/hooks/collect.ts",
-    "plugins/telemetry/hooks/register.ts"
+    "plugins/telemetry/hooks/register.ts",
+    "plugins/telemetry/hooks/schema.ts"
   ]
 }
