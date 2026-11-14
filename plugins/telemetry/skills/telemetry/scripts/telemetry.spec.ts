@@ -106,6 +106,8 @@ test('an env file that exists but cannot be read refuses to write and to export,
 })
 
 const gitEnv = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' }
+// realGit, which the export runs, inherits this process's environment: the commit needs an identity a runner has no config for.
+Object.assign(process.env, gitEnv)
 
 /** A bare repository in the config's parent, and the deps pointing at it. */
 function withLogs(config: string, deps: Deps): { remote: string; env: Deps['env']; show: (path: string) => string } {
