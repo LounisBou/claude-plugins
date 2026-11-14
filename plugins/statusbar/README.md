@@ -151,10 +151,8 @@ cleanliness, ahead/behind and stash count in one shot. It runs with
 `GIT_OPTIONAL_LOCKS=0`, so the bar never takes the index lock an agent beside it may need.
 
 In an orchestration session, the context segment shows the tokens against the
-orchestrator's context gate, resolved from the same variables and defaults as the
-orchestrator's gate (`ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS`,
-`ORCHESTRATOR_LARGE_WINDOW`): a fixed count on a large window, a percentage of the window
-otherwise.
+orchestrator's context gate, read from the session's measure file the orchestrator plugin
+writes (`docs/contracts.md` of the repository, « Measure file »).
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.
