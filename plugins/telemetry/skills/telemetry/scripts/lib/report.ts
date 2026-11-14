@@ -44,7 +44,7 @@ export function parseOptions(args: readonly string[]): { week: string | undefine
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i]
     const value = args[i + 1]
-    if (flag === '--week' && value !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(value)) week = value
+    if (flag === '--week' && value !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && addDays(value, 0) === value) week = value
     else if (flag === '--tool' && value !== undefined && /^[\w.-]+\/[\w.-]+$/.test(value)) tools.push(value)
     else return `${[flag, value].filter(x => x !== undefined).join(' ')}: expected --week <YYYY-MM-DD> or --tool <owner/name>`
   }
@@ -81,6 +81,10 @@ interface Session {
   tokens: number
   life: number | undefined
   firstContext: number | undefined
+  /** The session began in the window, or an event of it came before. */
+  began: boolean
+  seenBefore: boolean
+  live: boolean
   targets: Set<string>
   refused: Pending[]
   summarized: { day: string; all: number; plugin: number } | undefined
@@ -89,7 +93,7 @@ interface Session {
 const isPlugin = (decider: string | undefined): boolean => decider === 'hook' || (decider ?? '').startsWith('plugin')
 
 /** The events of the store, folded into what the report needs. */
-function gather(input: ReportInput, start: string, end: string) {
+function gather(input: ReportInput, start: string, end: string, skipped: { n: number }) {
   const sessions = new Map<string, Session>()
   const questions = new Map<string, number>()
   const turns: { session: string; tokens: number }[] = []
@@ -99,24 +103,28 @@ function gather(input: ReportInput, start: string, end: string) {
       try {
         e = record(JSON.parse(line))
       } catch {
+        if (line.trim() !== '') skipped.n++
         continue
       }
       const kind = text(e['event'])
       const id = text(e['session'])
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
-      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, tokens: 0, life: undefined, firstContext: undefined, targets: new Set<string>(), refused: [], summarized: undefined }
+      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
       s.project = text(e['project']) ?? s.project
       s.role = text(e['role']) ?? s.role
       const inWindow = day >= start && day <= end
+      if (day < start) s.seenBefore = true
+      if (kind === 'tool_call') s.live = true
       const cost = num(e['cost_usd'])
       if (cost !== undefined && day <= end) {
         if (day < start) s.before = Math.max(s.before, cost)
         s.upTo = Math.max(s.upTo ?? 0, cost)
       }
       if (!inWindow) continue
+      if (kind === 'session_start') s.began = true
       if (kind === 'turn_end') {
         const context = num(e['context_tokens'])
         if (context !== undefined) turns.push({ session: id, tokens: context })
@@ -130,7 +138,8 @@ function gather(input: ReportInput, start: string, end: string) {
       } else if (kind === 'session_end' || kind === 'session_summary') {
         s.tokens = Math.max(s.tokens, sum(e['totals']))
         const started = Date.parse(text(e['started']) ?? '')
-        s.life = kind === 'session_end' ? num(e['duration_ms']) : Number.isFinite(started) ? Date.parse(text(e['ended']) ?? '') - started : undefined
+        const life = kind === 'session_end' ? num(e['duration_ms']) : Date.parse(text(e['ended']) ?? '') - started
+        if (life !== undefined && Number.isFinite(life)) s.life = life
         if (kind === 'session_summary') {
           const refusals = Object.entries(record(e['refusals']))
           s.summarized = { day, all: refusals.reduce((n, [, v]) => n + (num(v) ?? 0), 0), plugin: refusals.reduce((n, [k, v]) => n + (isPlugin(k) ? (num(v) ?? 0) : 0), 0) }
@@ -142,7 +151,7 @@ function gather(input: ReportInput, start: string, end: string) {
 }
 
 /** The files of a directory of the orchestrator's module, read by `parse`; a file `parse` refuses is left out. */
-function filesOf<T>(dir: string, parse: (body: string) => T): { name: string; value: T }[] {
+function filesOf<T>(dir: string, parse: (body: string) => T, skipped: { n: number }): { name: string; value: T }[] {
   let names: string[]
   try {
     names = readdirSync(dir)
@@ -152,7 +161,8 @@ function filesOf<T>(dir: string, parse: (body: string) => T): { name: string; va
   return names.flatMap(name => {
     try {
       return [{ name, value: parse(readFileSync(join(dir, name), 'utf8')) }]
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EISDIR') skipped.n++
       return []
     }
   })
@@ -160,9 +170,9 @@ function filesOf<T>(dir: string, parse: (body: string) => T): { name: string; va
 const json = (body: string): unknown => JSON.parse(body)
 
 /** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms. */
-function dispatchLines(module: string): { opened: number; closed: number }[] {
+function dispatchLines(module: string, skipped: { n: number }): { opened: number; closed: number }[] {
   const paths = new Set<string>()
-  for (const { value } of filesOf(join(module, RECORDS_DIR), body => body)) {
+  for (const { value } of filesOf(join(module, RECORDS_DIR), body => body, skipped)) {
     for (const path of value.split('\n')) if (path.trim() !== '') paths.add(path.trim())
   }
   const rows: { opened: number; closed: number }[] = []
@@ -182,12 +192,13 @@ function dispatchLines(module: string): { opened: number; closed: number }[] {
   return rows
 }
 
-function ghJson(gh: Gh, args: readonly string[]): unknown[] | string {
-  const r = gh(args)
+function ghJson(gh: Gh, args: readonly string[], limit: number): unknown[] | string {
+  const r = gh([...args, '--limit', String(limit)])
   if (r.status !== 0) return `gh ${args.slice(0, 2).join(' ')} ${args[3] ?? ''} failed: ${r.stderr.trim().split('\n')[0] ?? ''}`.trim()
   try {
     const value: unknown = JSON.parse(r.stdout)
-    return Array.isArray(value) ? value : 'gh answered something else than a list'
+    if (!Array.isArray(value)) return 'gh answered something else than a list'
+    return value.length >= limit ? `the listing reached its limit of ${limit}, the week may be cut` : value
   } catch {
     return 'gh answered no JSON'
   }
@@ -200,7 +211,11 @@ export function report(input: ReportInput): string[] {
   const inWindow = (day: string | undefined): boolean => day !== undefined && day >= start && day <= end
   const module = moduleDirOf(input.config, input.env['ORCHESTRATOR_MODULE_DIR'])
   const tools = input.tools.length > 0 ? input.tools : [input.repositoryAt(input.cwd)].filter((r): r is string => r !== undefined)
-  const { sessions, questions, turns } = gather(input, start, end)
+  const skipped = { n: 0 }
+  const { sessions, questions, turns } = gather(input, start, end, skipped)
+  const isTool = (name: string): boolean => tools.some(t => t.toLowerCase() === name.toLowerCase())
+  const remotes = new Map<string, string | undefined>()
+  const repositoryAt = (dir: string): string | undefined => (remotes.has(dir) ? remotes.get(dir) : remotes.set(dir, input.repositoryAt(dir)).get(dir))
   const out: string[] = [`weekly report ${start} → ${end} (Europe/Paris), tool: ${tools.join(', ') || NA('not run in a repository and no --tool')}`]
 
   // Spend: a session's cost in the week is its cumulative cost at the week's end less before it.
@@ -210,57 +225,63 @@ export function report(input: ReportInput): string[] {
   let active = 0
   let unnamed = 0
   for (const s of sessions.values()) {
-    const cost = s.upTo === undefined ? undefined : s.upTo - s.before
+    // A session seen before the week with no cost before it has no baseline: its cost is unknown, not all of the week's.
+    const cost = s.upTo === undefined || (s.seenBefore && s.before === 0) ? undefined : s.upTo - s.before
     if (s.tokens === 0 && (cost ?? 0) === 0) continue
     active++
     if (cost !== undefined) known++
-    const project = s.project?.includes('/') ? s.project : s.cwd === undefined ? undefined : input.repositoryAt(s.cwd)
+    const project = s.project?.includes('/') ? s.project : s.cwd === undefined ? undefined : repositoryAt(s.cwd)
     const g = groups.get(project ?? 'unattributed') ?? { cost: 0, tokens: 0 }
     groups.set(project ?? 'unattributed', { cost: g.cost + (cost ?? 0), tokens: g.tokens + s.tokens })
     const [only, ...more] = s.targets
-    if (only !== undefined && more.length === 0) prCost.set(only, (prCost.get(only) ?? 0) + (cost ?? 0))
-    else if ((cost ?? 0) > 0) unnamed += cost ?? 0
+    if (cost === undefined) continue
+    if (only !== undefined && more.length === 0) prCost.set(only, (prCost.get(only) ?? 0) + cost)
+    else unnamed += cost
   }
   const share = (pick: (g: { cost: number; tokens: number }) => number): string => {
     const all = [...groups.values()].reduce((n, g) => n + pick(g), 0)
+    if (all === 0) return NA('none known in the week')
     const of = (keep: (name: string) => boolean): number => [...groups].reduce((n, [name, g]) => n + (keep(name) ? pick(g) : 0), 0)
-    const [tool, other] = [of(name => tools.includes(name)), of(name => name !== 'unattributed' && !tools.includes(name))]
+    const [tool, other] = [of(isTool), of(name => name !== 'unattributed' && !isTool(name))]
     return `tool ${pct(tool, all)}, product ${pct(other, all)}, unattributed ${pct(all - tool - other, all)}`
   }
   out.push('', `spend (cost known for ${known} of ${active} sessions; tokens are the whole-session totals of those that ended in the week)`)
   out.push(`  cost    ${share(g => g.cost)}`, `  tokens  ${share(g => g.tokens)}`)
   const spent = [...groups.values()].reduce((n, g) => n + g.cost, 0)
-  const toolShare = (100 * [...groups].reduce((n, [name, g]) => n + (tools.includes(name) ? g.cost : 0), 0)) / spent
-  out.push(spent === 0 ? `  cap     ${NA('no cost known in the week')}` : `  cap     tool ${Math.round(toolShare)} % of the week's spend, cap ${TARGETS.toolSpendPercent} %: ${toolShare > TARGETS.toolSpendPercent ? `OVER by ${Math.round(toolShare - TARGETS.toolSpendPercent)} points, only removal pull requests pass` : 'within'}`)
+  const toolShare = (100 * [...groups].reduce((n, [name, g]) => n + (isTool(name) ? g.cost : 0), 0)) / spent
+  out.push(spent === 0 || tools.length === 0 ? `  cap     ${NA(tools.length === 0 ? 'no tool repository' : 'no cost known in the week')}` : `  cap     tool ${Math.round(toolShare)} % of the week's spend, cap ${TARGETS.toolSpendPercent} %: ${toolShare > TARGETS.toolSpendPercent ? `OVER by ${Math.round(toolShare - TARGETS.toolSpendPercent)} points` : 'within'}`)
   for (const [name, g] of [...groups].sort(([, a], [, b]) => b.cost - a.cost || b.tokens - a.tokens)) {
-    out.push(`  ${name.padEnd(36)} ${(tools.includes(name) ? 'tool' : name === 'unattributed' ? 'unattributed' : 'product').padEnd(12)} ${usd(g.cost).padStart(9)} ${tok(g.tokens).padStart(7)}`)
+    out.push(`  ${name.padEnd(36)} ${(isTool(name) ? 'tool' : name === 'unattributed' ? 'unattributed' : 'product').padEnd(12)} ${usd(g.cost).padStart(9)} ${tok(g.tokens).padStart(7)}`)
   }
 
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
   const repos = [...new Set([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')])].filter(r => r !== '')
   const delays: number[] = []
+  let unlisted = 0
   out.push('', 'pull requests merged (created → merged, cost of the sessions that name that one pull request)')
   for (const repo of repos) {
-    const listed = ghJson(input.gh, ['pr', 'list', '-R', repo, '--state', 'merged', '--search', `merged:>=${addDays(start, -1)}`, '--limit', '1000', '--json', 'number,createdAt,mergedAt'])
+    const listed = ghJson(input.gh, ['pr', 'list', '-R', repo, '--state', 'merged', '--search', `merged:>=${addDays(start, -1)}`, '--json', 'number,createdAt,mergedAt'], 1000)
     if (typeof listed === 'string') {
+      unlisted++
       out.push(`  ${repo}: ${NA(listed)}`)
       continue
     }
     for (const row of listed.map(record).filter(r => inWindow(dayOf(text(r['mergedAt'])))).sort((a, b) => (num(a['number']) ?? 0) - (num(b['number']) ?? 0))) {
       const delay = Date.parse(text(row['mergedAt']) ?? '') - Date.parse(text(row['createdAt']) ?? '')
-      delays.push(delay)
+      if (Number.isFinite(delay)) delays.push(delay)
       const spent = prCost.get(`${repo}#${num(row['number'])}`)
-      out.push(`  ${repo}#${num(row['number'])}  ${span(delay).padStart(8)}  ${spent === undefined ? 'cost n/a' : usd(spent)}`)
+      out.push(`  ${repo}#${num(row['number'])}  ${(Number.isFinite(delay) ? span(delay) : 'n/a').padStart(8)}  ${spent === undefined ? 'cost n/a' : usd(spent)}`)
     }
   }
   if (delays.length === 0) out.push('  none listed')
   out.push(`  cost of sessions that name no pull request or several: ${usd(unnamed)}${prCost.size === 0 ? ' (no tool call of the week names its pull request: the per-pull-request cost is n/a)' : ''}`)
 
   // Questions and refusals per day.
-  const round = filesOf(join(module, ROUND_DIR), json).map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
+  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, 'archive'), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
   const refusals = new Map<string, { all: number; plugin: number }>()
   for (const s of sessions.values()) {
-    const counted = s.summarized === undefined ? s.refused.map(r => ({ day: r.day, all: 1, plugin: r.plugin ? 1 : 0 })) : [s.summarized]
+    // A session with live calls counts them on their days; one with only a summary counts its lifetime refusals on the day it ended.
+    const counted = s.live || s.summarized === undefined ? s.refused.map(r => ({ day: r.day, all: 1, plugin: r.plugin ? 1 : 0 })) : [s.summarized]
     for (const c of counted) {
       const d = refusals.get(c.day) ?? { all: 0, plugin: 0 }
       refusals.set(c.day, { all: d.all + c.all, plugin: d.plugin + c.plugin })
@@ -282,31 +303,32 @@ export function report(input: ReportInput): string[] {
   const orchestrators = [...sessions].filter(([, s]) => s.role === 'orchestrator')
   const lives = orchestrators.flatMap(([, s]) => (s.life !== undefined && Number.isFinite(s.life) ? [s.life] : []))
   const starts = new Map<string, number>()
-  for (const { name, value } of filesOf(join(module, MEASURE_DIR), json)) {
+  for (const { name, value } of filesOf(join(module, MEASURE_DIR), json, skipped)) {
     const measured = parseMeasure(JSON.stringify(value))
     if (measured?.start !== undefined && inWindow(dayOf(measured.start.at))) starts.set(name.replace(/\.json$/, ''), measured.start.tokens)
   }
-  const firsts = orchestrators.flatMap(([id, s]) => { const f = starts.get(id) ?? s.firstContext; return f === undefined ? [] : [f] })
-  const lines = dispatchLines(module).filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
+  const firsts = orchestrators.flatMap(([id, s]) => { const f = starts.get(id) ?? (s.began ? s.firstContext : undefined); return f === undefined ? [] : [f] })
+  const lines = dispatchLines(module, skipped).filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
   const asked = round.map(r => text(r['blocks'])).filter((b): b is string => b !== undefined)
   const repeated = asked.filter((b, i) => asked.indexOf(b) < i).length
   const merged = median(delays)
   const lineMedian = median(lines)
-  const runs = tools.map(repo => [repo, ghJson(input.gh, ['run', 'list', '-R', repo, '--branch', 'main', '--limit', '500', '--json', 'conclusion,createdAt'])] as const)
+  const runs = tools.map(repo => [repo, ghJson(input.gh, ['run', 'list', '-R', repo, '--branch', 'main', '--created', `>=${addDays(start, -1)}`, '--json', 'conclusion,createdAt'], 500)] as const)
   const failed = runs.find(([, r]) => typeof r === 'string')
   const rows = runs.flatMap(([, r]) => (typeof r === 'string' ? [] : r.map(record).filter(x => inWindow(dayOf(text(x['createdAt']))))))
   const figures: string[] = [
     NA('which lines can run and which agents are alive is host state (ListAgents), never recorded'),
-    NA('the time from a merge to its installation needs the plugin cache\'s install times, which nothing records'),
-    turns.length === 0 ? NA('no turn_end event with a context fill in the week') : `${high} of ${turns.length} turns above ${tok(TARGETS.contextTokens)} (${pct(high, turns.length)}), peak ${tok(Math.max(...turns.map(t => t.tokens)))}; ${[...roleTurns].map(([role, xs]) => `${role} ${xs.filter(x => x > TARGETS.contextTokens).length}/${xs.length}`).join(', ')}`,
+    NA('the time from a merge to its installation needs the plugin cache\'s install times, which nothing here records'),
+    turns.length === 0 ? NA('no turn_end event with a context fill in the week') : `${high} of ${turns.length} turns above ${tok(TARGETS.contextTokens)} (${pct(high, turns.length)}), peak ${tok(turns.reduce((n, t) => Math.max(n, t.tokens), 0))}; ${[...roleTurns].map(([role, xs]) => `${role} ${xs.filter(x => x > TARGETS.contextTokens).length}/${xs.length}`).join(', ')}`,
     lives.length === 0 ? NA('no orchestrator session ended in the week') : `median ${span(median(lives) ?? 0)} over ${lives.length} orchestrator sessions (target ≥ ${span(TARGETS.generationMs)})`,
     firsts.length === 0 ? NA('no orchestrator start in a measure file and no turn_end of one') : `median ${tok(median(firsts) ?? 0)} over ${firsts.length} orchestrator sessions (target ≤ ${tok(TARGETS.firstTurnTokens)})`,
-    merged === undefined && lineMedian === undefined ? NA('no pull request merged and no line closed in the week') : `pull request ${merged === undefined ? NA('none merged') : `median ${span(merged)} over ${delays.length}`}; line ${lineMedian === undefined ? NA('none closed') : `median ${span(lineMedian)} over ${lines.length}`} (target ≤ ${span(TARGETS.lineToMergeMs)})`,
+    merged === undefined && lineMedian === undefined ? NA('no pull request merged and no line closed in the week') : `pull request ${merged === undefined ? NA('none merged') : `median ${span(merged)} over ${delays.length}${unlisted > 0 ? `, ${unlisted} repository listing(s) n/a` : ''}`}; line ${lineMedian === undefined ? NA('none closed') : `median ${span(lineMedian)} over ${lines.length}`} (target ≤ ${span(TARGETS.lineToMergeMs)})`,
     round.length === 0 ? NA('no operator question in round/ for the week') : `${repeated} of ${round.length} questions repeat an earlier one's blocks line, exact match (a floor; target 0)`,
     NA('the lines of code per release need the git history of each release, which no source here holds'),
-    tools.length === 0 ? NA('no tool repository') : failed !== undefined && typeof failed[1] === 'string' ? NA(`${failed[0]}: ${failed[1]}`) : `${rows.filter(x => x['conclusion'] === 'success').length} green, ${rows.filter(x => x['conclusion'] === 'failure').length} red runs on main (target 0 red)`,
+    tools.length === 0 ? NA('no tool repository') : failed !== undefined && typeof failed[1] === 'string' ? NA(`${failed[0]}: ${failed[1]}`) : rows.length === 0 ? NA('no run of main in the week') : `${rows.filter(x => x['conclusion'] === 'success').length} green, ${rows.filter(x => x['conclusion'] === 'failure').length} red runs on main (target 0 red)`,
   ]
   const names = ['agents on every runnable line', 'merge → in service', 'context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'method code per release', 'main green']
   out.push('', ...figures.map((f, i) => `${i + 1} ${names[i] ?? ''}: ${f}`))
+  if (skipped.n > 0) out[0] += ` (${skipped.n} unreadable event lines or files left out)`
   return out
 }

@@ -102,6 +102,16 @@ export function run(args: readonly string[], deps: Deps): number {
   }
   const operands = rest.filter((_, i) => i !== at && i !== at + 1)
   const stateDir = join(config, 'telemetry')
+  if (sub === 'report') {
+    // Read-only and secret-free: an unreadable env file does not stop it.
+    const options = parseOptions(operands)
+    if (typeof options === 'string') {
+      deps.err(`report: ${options}`)
+      return 2
+    }
+    for (const line of report({ config, env: deps.env, now: deps.now(), ...options, cwd: deps.cwd, gh: deps.gh, repositoryAt: deps.repositoryAt })) deps.out(line)
+    return 0
+  }
   const read = readSecrets(deps.env)
   if ('error' in read) {
     deps.err(`telemetry: ${sub} refused, nothing written or pushed: ${read.error}`)
@@ -154,15 +164,6 @@ export function run(args: readonly string[], deps: Deps): number {
       }
       const { written } = append(eventsDir(stateDir), events.join('\n'), secrets)
       deps.out(`backfill: ${written} session(s) summarized`)
-      return 0
-    }
-    case 'report': {
-      const options = parseOptions(operands)
-      if (typeof options === 'string') {
-        deps.err(`report: ${options}`)
-        return 2
-      }
-      for (const line of report({ config, env: deps.env, now: deps.now(), ...options, cwd: deps.cwd, gh: deps.gh, repositoryAt: deps.repositoryAt })) deps.out(line)
       return 0
     }
     default:

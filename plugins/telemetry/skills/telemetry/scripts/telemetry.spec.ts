@@ -209,6 +209,15 @@ test('report: the week\'s report is printed, an option it does not know refused'
   })
 })
 
+test('report needs no secret: an env file that cannot be read does not stop it', () => {
+  harness((config, deps) => {
+    const env = { ...deps.env, TELEMETRY_ENV_FILE: join(config, 'env-dir') }
+    mkdirSync(join(config, 'env-dir'), { recursive: true })
+    assert.equal(run(['report', '--config', config, '--tool', 'acme/tool'], { ...deps, env, gh: () => ({ status: 1, stdout: '', stderr: 'offline' }) }), 0)
+    assert.match(deps.outs[0] ?? '', /^weekly report /)
+  })
+})
+
 test('gh and the repository of a directory, read for real: a failure is a status, a remote is its owner/name, none is nothing', () => {
   harness((_config, deps) => {
     assert.notEqual(realGh(['--no-such-flag']).status, 0)

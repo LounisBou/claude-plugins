@@ -16,6 +16,7 @@ interface Files {
   events?: Record<string, unknown>[]
   round?: Record<string, unknown>[]
   measure?: Record<string, unknown>
+  archive?: Record<string, unknown>[]
   record?: string[]
 }
 
@@ -32,6 +33,7 @@ function scratch(files: Files, work: (config: string, dir: string) => void): voi
     for (const [day, lines] of byDay) put(join(config, 'telemetry', 'events', `${day}.jsonl`), `${lines.join('\n')}\n`)
     const module = join(config, 'claude-orchestrator')
     ;(files.round ?? []).forEach((r, i) => put(join(module, 'round', `${i}.json`), JSON.stringify(r)))
+    ;(files.archive ?? []).forEach((r, i) => put(join(module, 'round', 'archive', `${i}.json`), JSON.stringify(r)))
     for (const [id, m] of Object.entries(files.measure ?? {})) put(join(module, 'measure', `${id}.json`), JSON.stringify(m))
     if (files.record !== undefined) {
       put(join(dir, 'record.jsonl'), `${files.record.join('\n')}\n`)
@@ -91,7 +93,7 @@ test('a session\'s cost in the week is its cumulative cost at the week\'s end le
     assert.match(find(out, 'spend'), /^spend \(cost known for 2 of 3 sessions;/)
     assert.equal(find(out, '  cost '), '  cost    tool 40 %, product 60 %, unattributed 0 %')
     assert.equal(find(out, '  tokens '), '  tokens  tool 50 %, product 50 %, unattributed 0 %')
-    assert.equal(find(out, '  cap '), "  cap     tool 40 % of the week's spend, cap 20 %: OVER by 20 points, only removal pull requests pass")
+    assert.equal(find(out, '  cap '), "  cap     tool 40 % of the week's spend, cap 20 %: OVER by 20 points")
     assert.match(find(out, '  acme/app '), /^ {2}acme\/app +product +\$3\.00 +0k$/)
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
   })
@@ -132,7 +134,7 @@ test('with no call naming its pull request, the per-pull-request cost says it is
   })
 })
 
-test('questions come from the round files and the operator-asked ones; refusals from the summary when there is one, else the live calls', () => {
+test('questions come from the round files and their archive and the operator-asked ones; refusals from the live calls, else from the summary of a session that has none', () => {
   const asked = (since: string, blocks: string, kind = 'operator'): Record<string, unknown> => ({ kind, since, blocks })
   const events = [
     ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' }),
@@ -142,13 +144,14 @@ test('questions come from the round files and the operator-asked ones; refusals 
     ev('2026-11-10T10:00:02Z', 'tool_call', S(1), { outcome: 'ok' }),
     ev('2026-11-11T10:00:00Z', 'tool_call', S(2), { outcome: 'refused', decided_by: 'hook' }),
     ev('2026-11-11T12:00:00Z', 'session_summary', S(2), { refusals: { 'plugin:github': 2, user: 3 } }),
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(4), { refusals: { 'plugin:github': 2, user: 3 } }),
   ]
   const round = [asked('2026-11-10T08:00:00Z', 'a'), asked('2026-11-11T08:00:00Z', 'a'), asked('2026-11-11T09:00:00Z', 'b'), asked('2026-11-11T09:00:00Z', 'c', 'done'), asked('2026-11-01T09:00:00Z', 'b')]
-  scratch({ events, round }, config => {
+  scratch({ events, round, archive: [asked('2026-11-10T08:30:00Z', 'd')] }, config => {
     const out = lines(config)
-    assert.equal(find(out, '2026-11-10'), '2026-11-10          2         2                    1')
-    assert.equal(find(out, '2026-11-11'), '2026-11-11          2         5                    2')
-    assert.match(find(out, '7 '), /^7 a question reaches him once: 1 of 3 questions repeat an earlier one's blocks line/)
+    assert.equal(find(out, '2026-11-10'), '2026-11-10          3         2                    1')
+    assert.equal(find(out, '2026-11-11'), '2026-11-11          2         6                    3')
+    assert.match(find(out, '7 '), /^7 a question reaches him once: 1 of 4 questions repeat an earlier one's blocks line/)
   })
 })
 
@@ -205,6 +208,83 @@ test('without --tool the tool is the repository of the working directory; with n
     assert.match(none[0] ?? '', /tool: n\/a — not run in a repository and no --tool$/)
     assert.equal(find(none, '9 '), '9 main green: n/a — no tool repository')
   })
+})
+
+test('the cap line says within at or under 20 %, over above it, n/a with no tool, and a tool match ignores case', () => {
+  const at = (tool: number, product: number): Record<string, unknown>[] => [
+    ev('2026-11-10T11:00:00Z', 'session_end', S(1), { cost_usd: tool, project: 'acme/tool' }),
+    ev('2026-11-10T11:00:00Z', 'session_end', S(2), { cost_usd: product, project: 'acme/app' }),
+  ]
+  const cap = (events: Record<string, unknown>[], over: Partial<ReportInput> = {}): string => {
+    let line = ''
+    scratch({ events }, config => { line = find(lines(config, over), '  cap ') })
+    return line
+  }
+  assert.equal(cap(at(1, 4)), "  cap     tool 20 % of the week's spend, cap 20 %: within")
+  assert.equal(cap(at(1, 3)), "  cap     tool 25 % of the week's spend, cap 20 %: OVER by 5 points")
+  assert.equal(cap(at(1, 3), { tools: ['Acme/Tool'] }), "  cap     tool 25 % of the week's spend, cap 20 %: OVER by 5 points")
+  assert.equal(cap(at(1, 3), { tools: [] }), '  cap     n/a — no tool repository')
+})
+
+test('a pull request\'s cost sums its single-PR sessions; a session with no cost leaves it n/a; a merge after midnight Paris is the next day\'s', () => {
+  const named = (n: number, project: string, pr: number, cost?: number): Record<string, unknown>[] => [
+    ev('2026-11-10T09:00:00Z', 'tool_call', S(n), { target: { repo: 'acme/tool', pr }, project }),
+    ...(cost === undefined ? [] : [ev('2026-11-10T10:00:00Z', 'turn_end', S(n), { cost_usd: cost })]),
+    ev('2026-11-10T10:00:00Z', 'session_summary', S(n), { totals: { in: 1 } }),
+  ]
+  const events = [...named(1, 'acme/tool', 7, 1), ...named(2, 'acme/tool', 7, 2.5), ...named(3, 'acme/tool', 8)]
+  const prs = merged([[7, '2026-11-10T09:00:00Z', '2026-11-10T09:10:00Z'], [8, '2026-11-10T09:00:00Z', '2026-11-10T09:10:00Z'], [9, '2026-11-14T22:00:00Z', '2026-11-14T23:30:00Z']])
+  scratch({ events }, config => {
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs } }) })
+    assert.deepEqual(out.filter(l => l.startsWith('  acme/tool#')), ['  acme/tool#7    10 min  $3.50', '  acme/tool#8    10 min  cost n/a'])
+    assert.match(find(out, 'spend'), /cost known for 2 of 3 sessions/)
+  })
+})
+
+test('gh is asked for the week\'s merged pull requests and main\'s runs, and a listing that reaches its limit is n/a, a partial one said', () => {
+  scratch({ events: [ev('2026-11-10T11:00:00Z', 'session_end', S(1), { project: 'acme/app', cost_usd: 1 })] }, config => {
+    const asked: string[][] = []
+    const full = JSON.stringify(Array.from({ length: 500 }, () => ({ conclusion: 'success', createdAt: '2026-11-10T10:00:00Z' })))
+    const gh: Gh = args => {
+      asked.push([...args])
+      return args[0] === 'run' ? { status: 0, stdout: full, stderr: '' } : args[3] === 'acme/app' ? { status: 1, stdout: '', stderr: 'denied' } : { status: 0, stdout: merged([[1, '2026-11-10T09:00:00Z', '2026-11-10T10:00:00Z']]), stderr: '' }
+    }
+    const out = lines(config, { gh })
+    assert.deepEqual(asked.find(a => a[0] === 'pr' && a[3] === 'acme/tool'), ['pr', 'list', '-R', 'acme/tool', '--state', 'merged', '--search', 'merged:>=2026-11-07', '--json', 'number,createdAt,mergedAt', '--limit', '1000'])
+    assert.deepEqual(asked.find(a => a[0] === 'run'), ['run', 'list', '-R', 'acme/tool', '--branch', 'main', '--created', '>=2026-11-07', '--json', 'conclusion,createdAt', '--limit', '500'])
+    assert.match(find(out, '9 '), /n\/a — acme\/tool: the listing reached its limit of 500/)
+    assert.match(find(out, '6 '), /median 60 min over 1, 1 repository listing\(s\) n\/a/)
+  })
+})
+
+test('a session seen before the week with no cost before it has an unknown cost, not all of it; a first turn counts only for a session that began in the week', () => {
+  const events = [
+    ev('2026-11-05T10:00:00Z', 'tool_call', S(1), { project: 'acme/app' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 9, context_tokens: 70_000 }),
+    ev('2026-11-10T11:00:00Z', 'session_summary', S(1), { totals: { in: 5 } }),
+    ev('2026-11-10T09:00:00Z', 'session_start', S(2), { role: 'orchestrator' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { context_tokens: 30_000 }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(3), { context_tokens: 40_000, role: 'orchestrator' }),
+  ]
+  const measure = { [S(2)]: { version: 1, context_tokens: 1, context_window: 2, context_percent: 3, model: 'm', updated_at: '2026-11-10T13:00:00Z', start: { tokens: 90_000, at: '2026-11-10T09:00:00Z', brief: null, brief_bytes: null } } }
+  scratch({ events }, config => {
+    const out = lines(config)
+    assert.match(find(out, 'spend'), /cost known for 0 of 1 sessions/)
+    assert.equal(find(out, '5 '), '5 first turn of a new session: median 30k over 1 orchestrator sessions (target ≤ 60k)')
+  })
+  scratch({ events, measure }, config => {
+    assert.equal(find(lines(config), '5 '), '5 first turn of a new session: median 90k over 1 orchestrator sessions (target ≤ 60k)')
+  })
+})
+
+test('lines the report cannot read are counted in its heading, and a refused week is never accepted', () => {
+  scratch({ events: [ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' })] }, config => {
+    writeFileSync(join(config, 'telemetry', 'events', '2026-11-10.jsonl'), `${JSON.stringify(ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' }))}\nnot json\n\n`)
+    mkdirSync(join(config, 'claude-orchestrator', 'round'), { recursive: true })
+    writeFileSync(join(config, 'claude-orchestrator', 'round', 'torn.json'), '{')
+    assert.match(lines(config)[0] ?? '', / \(2 unreadable event lines or files left out\)$/)
+      })
+  for (const week of ['2026-13-45', '2026-02-30', 'monday']) assert.match(String(parseOptions(['--week', week])), /expected --week/)
 })
 
 test('options: a week, tools, and what is refused', () => {
