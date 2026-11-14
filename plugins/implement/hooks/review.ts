@@ -7,8 +7,8 @@
 // session that pushed the head, so the implementer can never stand in for it.
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { sessionName } from '../core/names.ts'
+import { launcherOf } from '../core/orchestration.ts'
 
-export const LAUNCHER = 'skills/iterm-agents/scripts/iterm-agent.sh'
 export const SUBJECT_MAX = 25
 
 export function reviewerPrompt(branch: string): string {
@@ -30,7 +30,7 @@ export function reviewerTitle(codename: string): string {
 /** Where the orchestrator's launcher would be, for each install the record gives it. */
 export function candidateLaunchers(record: string): string[] {
   const recorded = recordedInstallPaths(record, 'orchestrator', ['lounisbou'])
-  return 'problem' in recorded ? [] : recorded.paths.map(root => `${root.replace(/\/+$/, '')}/${LAUNCHER}`)
+  return 'problem' in recorded ? [] : recorded.paths.map(launcherOf)
 }
 
 /** The headless reviewer: detached, its output in `log`, the same permission mode the launcher gives agents, Remote Control off. */

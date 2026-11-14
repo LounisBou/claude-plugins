@@ -164,6 +164,18 @@ def test_measure_reads_the_gate_from_the_project_file(run, bound, measure_of, ca
     assert out[0] == "gate_tokens=100000" and out[-1] == "handover=yes"
 
 
+def test_measure_holds_the_project_gate_to_the_owner_percentage_on_any_window(run, bound, measure_of, capsys):
+    project_file = Path.cwd() / ".bugs-bot.json"
+    data = json.loads(project_file.read_text())
+    project_file.write_text(json.dumps(data | {"gate_tokens": 900000}))
+    measure_of(line(810000, 1000000))
+
+    assert run("gate", "--measure") == 0
+
+    out = capsys.readouterr().out.split()
+    assert out[0] == "gate_tokens=800000" and out[-1] == "handover=yes"
+
+
 def test_measure_reads_the_file_of_its_own_session(run, bound, env, tmp_path, capsys):
     config = tmp_path / "claude"
     env["BUGS_BOT_CLAUDE_DIR"] = str(config)

@@ -1,17 +1,9 @@
 // hooks/gauge-core.ts
-// The measurement rules, pure: the same numbers the shell gate read, with no host
-// API in reach so the boundaries stay testable.
-import { moduleDirOf } from './module-log.ts'
+// The measurement rules, pure, with no host API in reach so the boundaries stay testable. The
+// measure file's shape and path and the gate are core's (orchestration.ts), read here.
+import type { MeasureStart } from '../core/orchestration.ts'
 
-export type MeasureReading = {
-  context_tokens: number; context_window: number; context_percent: number
-  model: string; updated_at: string
-  // The session's start: its first figure, and the brief it was started on with its size
-  // (the launcher's ORCHESTRATOR_BRIEF), kept on every later measure of the session.
-  start?: MeasureStart
-}
-
-export type MeasureStart = { tokens: number; at: string; brief: string | null; brief_bytes: number | null }
+export { hasFigures, measureFilePath, parseMeasure, tripGate, type MeasureReading, type MeasureStart } from '../core/orchestration.ts'
 
 // The start a measure carries: the one the session already holds, else this measure's own.
 export function startOf(
@@ -20,51 +12,4 @@ export function startOf(
   brief: { path: string; bytes: number | null } | null,
 ): MeasureStart {
   return kept ?? { tokens: reading.context_tokens, at: reading.updated_at, brief: brief?.path ?? null, brief_bytes: brief?.bytes ?? null }
-}
-
-// The gate is a token count no reported window moves: the smaller of the session's gate in
-// tokens and its percentage of the reported window, the model's window, so a session hands
-// over at the same token count on any large window. A model whose real window is small keeps
-// the percentage.
-export function tripGate(
-  percent: number | null, tokens: number | null, window: number | null,
-  env: { gate?: number; gateTokens?: number } = {},
-): { tripped: boolean; words: string } {
-  const gate = env.gate ?? 80
-  const gateTokens = env.gateTokens ?? 300000
-  const thousands = (n: number) => n.toLocaleString('en-US')
-  const windowLabel = (n: number) => (n % 1000000 === 0 ? `${n / 1000000}M` : thousands(n))
-  if (percent !== null && percent >= gate) return { tripped: true, words: `${percent}% (gate ${gate}%)` }
-  if (tokens !== null && window !== null && tokens >= gateTokens) {
-    return { tripped: true, words: `${thousands(tokens)} tokens (gate ${thousands(gateTokens)} on a ${windowLabel(window)} window)` }
-  }
-  return { tripped: false, words: '' }
-}
-
-// The module sandbox exposes no process global: the config dir is resolved
-// through the host's env surface by the caller that holds $ (gauge.ts), then
-// handed in — the pure half stays testable, the impure half stays in one place.
-// `override` is ORCHESTRATOR_MODULE_DIR as the caller read it (module-log.ts, moduleDirOf).
-export function measureFilePath(config: string, sessionId: string, override?: string | null): string {
-  return `${moduleDirOf(config, override)}/measure/${sessionId}.json`
-}
-
-export function parseMeasure(line: string): MeasureReading | null {
-  // $.fs.write is not atomic: a line caught mid-write is data, and every reader
-  // treats it as unmeasured rather than crashing (gate.py reuses the same rule).
-  // A line that parses but lacks a figure is unmeasured too.
-  try {
-    const reading: unknown = JSON.parse(line)
-    if (typeof reading !== 'object' || reading === null || !hasFigures(reading)) return null
-    return reading as MeasureReading
-  } catch {
-    return null
-  }
-}
-
-// The host leaves the token count and the percentage out until the session's
-// first answer (SessionContextUsage marks both optional): a reading without
-// all three figures is no reading, never a figure of undefined.
-export function hasFigures(r: { context_tokens?: unknown; context_window?: unknown; context_percent?: unknown }): boolean {
-  return [r.context_tokens, r.context_window, r.context_percent].every(n => typeof n === 'number' && Number.isFinite(n))
 }
