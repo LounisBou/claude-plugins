@@ -1330,6 +1330,32 @@ test('the predecessor of a succession may stop: its last line « handed over »,
   expect(done.answer).toBe(done.passed)
 })
 
+// The « handed over » the predecessor sends its successor, delivered, is the hand-over too: a spawn this
+// module did not see leaves no other mark, and the done line it ends on was held on what is the successor's.
+const HANDED_OVER_SEND = { origin: { kind: 'model' }, to: 'Orch: belt [b7f1]', text: 'handed over' }
+
+test('a delivered « handed over » message lets the done line pass, as the successor spawn does', async () => {
+  const { handlers } = mounted()
+  const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
+  const before = fakeDollar(open)
+  expect(((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+  await handlers['session.send'](before.dollar, HANDED_OVER_SEND, async () => ({ isDelivered: true }))
+  const after = fakeDollar(open)
+  const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect(done.answer).toBe(done.passed)
+})
+
+test('a « handed over » that was refused, or any other message, hands nothing over', async () => {
+  const { handlers } = mounted()
+  const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
+  const fx = fakeDollar(open)
+  await handlers['session.send'](fx.dollar, HANDED_OVER_SEND, async () => ({ isDelivered: false, reason: 'nobody by that name' }))
+  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, text: 'takeover confirmed' }, async () => ({ isDelivered: true }))
+  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, origin: { kind: 'user' } }, async () => ({ isDelivered: true }))
+  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, agentId: 'a-1' }, async () => ({ isDelivered: true }))
+  expect(((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+})
+
 test('a successor spawn that failed hands nothing over', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
@@ -2594,6 +2620,42 @@ test('a re-fired stop whose operator wait still holds no question is refused twi
   // A later turn starts over: its first stop is refused, and so is its re-fired one.
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
   expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+})
+
+// A question the turn already put, in a text it wrote or in the call that declared its wait, is not asked for
+// again in the message that ends the turn: the transcript says what the turn wrote, up to the operator's prompt.
+const entryLine = (type: string, content: unknown, extra: object = {}) => JSON.stringify({ type, message: { role: type, content }, ...extra })
+const PROMPT = entryLine('user', 'go on')
+const WROTE_IT = entryLine('assistant', [{ type: 'text', text: ASKED }])
+const CALLED_IT = entryLine('assistant', [{ type: 'tool_use', name: `mcp__orchestrator__${WAIT_TOOL}`, input: { kind: 'operator', blocks: 'the report', question: ASKED } }])
+const transcriptOf = (...lines: string[]) => lines.join('\n') + '\n'
+
+test('an operator wait whose question the turn already wrote passes, whichever way it wrote it', async () => {
+  const { handlers } = mounted()
+  for (const asked of [WROTE_IT, CALLED_IT]) {
+    const fx = fakeDollar({ transcript: transcriptOf(PROMPT, asked, entryLine('user', [{ type: 'tool_result', content: 'ok' }]), entryLine('assistant', [{ type: 'text', text: 'Waiting.' }])) })
+    const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
+    expect(out.answer).toBe(out.passed)
+    expect(fx.written.filter(l => l.includes('an operator wait with no question')).length).toBe(0)
+  }
+})
+
+test('a question of an earlier turn, or none in the turn, still leaves the operator wait refused', async () => {
+  const { handlers } = mounted()
+  const earlier = fakeDollar({ transcript: transcriptOf(PROMPT, WROTE_IT, PROMPT, entryLine('assistant', [{ type: 'text', text: 'Waiting.' }])) })
+  expect(((await stop(handlers['classic.Stop'], earlier.dollar, stopEvent({ last_assistant_message: UNASKED }))).answer as any).block).toContain('**Question i of N**')
+  const none = fakeDollar({ transcript: transcriptOf(PROMPT, entryLine('assistant', [{ type: 'text', text: 'Waiting.' }])) })
+  expect(((await stop(handlers['classic.Stop'], none.dollar, stopEvent({ last_assistant_message: UNASKED }))).answer as any).block).toContain('**Question i of N**')
+})
+
+test('the stop-hook feedback of a refusal is no turn boundary: a re-fired stop still finds the question the turn put before it', async () => {
+  const { handlers } = mounted()
+  const feedback = entryLine('user', 'Stop hook feedback:\nthe CI is not finished', { isMeta: true })
+  const fx = fakeDollar({ transcript: transcriptOf(PROMPT, CALLED_IT, feedback, entryLine('assistant', [{ type: 'text', text: 'Still waiting.' }])) })
+  const sent = withCoordinator(fx)
+  const again = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(again.answer).toBe(again.passed)
+  expect(sent).toEqual([])
 })
 
 test('a fresh stop starts the refusal count over: the next re-fired stops are refused the whole bound again', async () => {
