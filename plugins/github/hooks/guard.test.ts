@@ -982,7 +982,7 @@ const RECORDS_READS = [
   'cat ~/.claude/pr-records/o/r/' + HEAD + '/e2e.x.json',
   'head -n 5 ~/.claude/pr-records/o/r/x.json',
   'tail -f ~/.claude/pr-records/o/r/x.json',
-  'grep -rn pass ~/.claude/pr-records/o/r 2>/dev/null',
+  'grep -rn pass ~/.claude/pr-records/o/r',
   'find ~/.claude/pr-records -name "e2e.*" -newer /tmp/x',
   'stat ~/.claude/pr-records/o/r/x.json',
   'wc -l ~/.claude/pr-records/o/r/x.json',
@@ -1017,6 +1017,14 @@ const RECORDS_WRITES = [
   'cd ~/.claude/pr-records/o/r && rm x.json',
   'ls ~/.claude/pr-records; python3 -c "open(1)"',
   'bash -c "rm ~/.claude/pr-records/o/r/x.json"',
+  'ls ~/.claude/pr-records/o/r >&~/.claude/pr-records/o/r/x.json',
+  'ls ~/.claude/pr-records/o/r 1>&~/.claude/pr-records/o/r/x.json',
+  'echo "$(echo x > ~/.claude/pr-records/o/r/x.json)"',
+  'echo "`echo x > ~/.claude/pr-records/o/r/x.json`"',
+  "echo $'a\\'' > ~/.claude/pr-records/o/r/x.json",
+  'cd ~/.claude/pr-records',
+  '/tmp/x/cat ~/.claude/pr-records/o/r/x.json',
+  './ls ~/.claude/pr-records/o/r',
   'python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
   'cat ~/.claude/pr-records/o/r/x.json && python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
 ]
@@ -1030,14 +1038,34 @@ for (const command of RECORDS_WRITES) {
   })
 }
 
-test('a Bash command that only reads the auto-merge list passes, one that writes it is refused', async ($, on) => {
+const LIST = '~/.claude/plugins/data/github-lounisbou/auto-merge.json'
+
+test('a Bash command that only reads the auto-merge list passes', async ($, on) => {
   const seen = await world($, on)
-  const read: any = await $.tool.call(bash('cat ~/.claude/plugins/data/github-lounisbou/auto-merge.json'))
+  const read: any = await $.tool.call(bash('cat ' + LIST))
   expect(read.deny).toBeUndefined()
-  const write: any = await $.tool.call(bash('sed -i s/a/b/ ~/.claude/plugins/data/github-lounisbou/auto-merge.json'))
-  expect(write.deny).toContain('auto-merge-set')
-  expect(seen.bash).toEqual(['cat ~/.claude/plugins/data/github-lounisbou/auto-merge.json'])
+  expect(seen.bash).toEqual(['cat ' + LIST])
 })
+
+for (const command of [
+  'sed -i s/a/b/ ' + LIST,
+  'cat ' + LIST + ' > /tmp/copy',
+  'ls ' + LIST + ' >&' + LIST,
+  'ls ' + LIST + ' 1>&' + LIST,
+  'echo "$(echo x > ' + LIST + ')"',
+  'echo "`echo x > ' + LIST + '`"',
+  "echo $'a\\'' > " + LIST,
+  'cd ~/.claude/plugins/data/github-lounisbou && cat auto-merge.json',
+  '/tmp/x/cat ' + LIST,
+  './ls ' + LIST,
+]) {
+  test('a Bash command that writes the auto-merge list stays refused: ' + command.slice(0, 40), async ($, on) => {
+    const seen = await world($, on)
+    const out: any = await $.tool.call(bash(command))
+    expect(out.deny).toContain('auto-merge-set')
+    expect(seen.bash).toEqual([])
+  })
+}
 
 // ---- the record tool ----
 
