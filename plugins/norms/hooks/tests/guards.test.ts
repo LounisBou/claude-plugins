@@ -43,6 +43,15 @@ test('a push during a walkthrough asks the user; words in a prompt grant nothing
   expect(pushQuestion('check', 'git stash push -m wip')).toBeNull()
 })
 
+test('the push is read as the shell reads it: wrapped and evaluated pushes ask, words that only name one do not', () => {
+  for (const command of ["sh -c 'git push'", 'bash -lc "git push origin feature"', 'eval "git push"', 'env GIT_TRACE=1 git push', 'sudo git push', 'xargs git push', 'git -c core.x=1 push --force']) {
+    expect(pushQuestion('check', command), command).toContain('push now, during /norms:check?')
+  }
+  for (const command of ['echo do not git push yet', 'git commit -m "tidy; git push later"', "cat <<'EOF'\ngit push\nEOF", 'git log --grep=push', '# git push']) {
+    expect(pushQuestion('check', command), command).toBeNull()
+  }
+})
+
 test('a commit message naming the check or its tooling is refused, unless the user used that word', () => {
   expect(commitDecision('check', 'fix', 'git commit -m "fix: apply norms check finding"')).toContain('"norms"')
   expect(commitDecision('check', 'fix', 'git commit -m "refactor: per norms-variable-naming"')).toContain('norms-variable-naming')
