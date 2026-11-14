@@ -3158,7 +3158,7 @@ export async function sendToCoordinator($: any, to: CoordinatorTo, text: string)
 
 // A consent subject as a log line names it: the pull request of a waiver, the repository of auto-merge.
 function subjectLabel(consent: ConsentSubject): string {
-  return consent.kind === 'e2e-waiver' ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
+  return 'pr' in consent ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
 }
 
 // A recipient as a log line names it.

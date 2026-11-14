@@ -44,7 +44,7 @@ const QUESTION_CAP = cutQuestion('x'.repeat(RELAY_CAP + 1)).length - String(RELA
 const SKELETON = JSON.stringify({
   id: '', from: '', session: '', kind: 'operator', since: '', blocks: '', question: '',
   choices: 'ABCDE'.split('').map(letter => ({ letter, text: '' })), recommendation: 'A',
-  status: 'open', at: '', answer: null, urgent: true, consent: { kind: 'e2e-waiver', repo: '', pr: Number.MAX_SAFE_INTEGER }, machine: '',
+  status: 'open', at: '', answer: null, urgent: true, consent: { kind: 'norms-waiver', repo: '', pr: Number.MAX_SAFE_INTEGER }, machine: '',
 }).length
 const JSON_ESCAPE = 6
 export const ASK_LINE_CAP = ASK_MARKER.length + SKELETON

@@ -75,8 +75,8 @@ def validate(args):
     if len(args.detail) > DETAIL_MAX:
         raise UsageError("--detail is %d characters, at most %d" % (len(args.detail), DETAIL_MAX))
     if args.result == "waived":
-        if args.kind != WAIVABLE:
-            raise UsageError("only an %s record can be waived" % WAIVABLE)
+        if args.kind not in WAIVABLE:
+            raise UsageError("only an %s record can be waived" % " or ".join(WAIVABLE))
         if not _DATE.search(args.detail):
             raise UsageError("a waiver needs a --detail carrying its date, YYYY-MM-DD")
     if args.result == "not-applicable":

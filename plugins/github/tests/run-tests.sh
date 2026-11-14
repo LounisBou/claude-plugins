@@ -2207,6 +2207,8 @@ check "record.py writes under HOME/.claude without CLAUDE_CONFIG_DIR" \
 
 path=$(recbase --kind e2e --result waived --detail "waived by the operator on 2026-11-02: no browser here")
 check "record.py accepts an e2e waiver whose detail carries a date" "0" "$?"
+recbase --kind norms --result waived --detail "operator: Accorder (tab, 2026-11-02T10:00:00Z)" >/dev/null
+check "record.py accepts a norms waiver whose detail carries a date" "0" "$?"
 check "record.py lowercases an upper-case head" "$WORK/cfgrec/pr-records/acme/thing/$HEAD40" \
   "$(dirname "$(rec --repo acme/thing --pr 12 --head "$(printf %s "$HEAD40" | tr a-f A-F)" --kind review --result pass --producer x)")"
 
