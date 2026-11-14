@@ -16,14 +16,14 @@ from samples import FakeTelegram
 
 
 def _pm2_app(python: str | None, launcher_dir: str | None = None, cwd: str | None = None) -> dict:
-    """Evaluate ``pm2.config.js`` with node, with or without ``BUGS_BOT_PYTHON`` and the launcher dir; return its one app."""
+    """Evaluate ``pm2.config.cjs`` with node, with or without ``BUGS_BOT_PYTHON`` and the launcher dir; return its one app."""
     env = {k: v for k, v in os.environ.items() if k not in ("BUGS_BOT_PYTHON", "BUGS_BOT_LAUNCHER_DIR")}
     if python is not None:
         env["BUGS_BOT_PYTHON"] = python
     if launcher_dir is not None:
         env["BUGS_BOT_LAUNCHER_DIR"] = launcher_dir
     out = subprocess.run(
-        ["node", "-e", "console.log(JSON.stringify(require(process.argv[1])))", str(REPO_ROOT / "pm2.config.js")],
+        ["node", "-e", "console.log(JSON.stringify(require(process.argv[1])))", str(REPO_ROOT / "pm2.config.cjs")],
         env=env, capture_output=True, text=True, check=True, cwd=cwd,
     )
     (app,) = json.loads(out.stdout)["apps"]
@@ -70,6 +70,16 @@ def test_pm2_launcher_dir_comes_from_the_environment():
 def test_pm2_hands_the_chosen_interpreter_to_the_launcher_through_env():
     assert _pm2_app("/opt/py/bin/python3")["env"]["BUGS_BOT_PYTHON"] == "/opt/py/bin/python3"
     assert "BUGS_BOT_PYTHON" not in (_pm2_app(None).get("env") or {})
+
+
+def test_pm2_config_is_a_cjs_file_so_the_plugin_needs_no_commonjs_package_json():
+    """The hooks compile as ES modules under the root package.json; PM2 reads `.config.cjs` as CommonJS."""
+    from bugs_bot import install
+
+    assert install.PM2_CONFIG.name == "pm2.config.cjs"
+    assert install.PM2_CONFIG.is_file()
+    assert not (REPO_ROOT / "pm2.config.js").exists()
+    assert not (REPO_ROOT / "package.json").exists()
 
 
 def test_api_root_defaults_to_telegram():

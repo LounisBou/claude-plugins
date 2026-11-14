@@ -2946,6 +2946,40 @@ test('a waived record over an « Accorder » carries his answer, dated by the mo
   expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
 })
 
+// ---- the operator's recorded answer, quoted: his own words, from any channel ----
+
+const QUOTED = 'operator, 2026-11-03: ' + CONSENT_WORDS
+const NOT_RECORDED = 'github: an E2E waiver is the operator\'s « Accorder »'
+const QUOTE_SAYS = 'quote his recorded answer to it, whatever its channel, in "detail"'
+
+for (const by of ['pane', 'tab', 'coordinator']) {
+  test('an E2E waiver quoting his recorded answer given by ' + by + ' is written as given', async ($, on) => {
+    const seen = await world($, on, consentWorld({ a: consent({ by }) }))
+    const out: any = await $.tool.call(waiveCall(QUOTED))
+    expect(out.deny).toBeUndefined()
+    const argv = recordRun(seen)!
+    expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
+  })
+}
+
+for (const [why, records, detail] of [
+  ['no consent record', {}, QUOTED],
+  ['an answer that is no part of the quote', { a: consent() }, 'operator, 2026-11-03: waive it, he said'],
+  ['his « Refuser »', { a: consent({ answer: 'Refuser' }) }, QUOTED],
+  ['a free-text refusal, quoted whole', { a: consent({ answer: 'Refuser, no waiver for this one' }) }, 'operator: Refuser, no waiver for this one'],
+  ['a record naming another pull request', { a: consent({ subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }) }, QUOTED],
+  ['a record of the norms waiver', { a: consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 } }) }, QUOTED],
+  ['a newer « Refuser » than the answer quoted', { a: consent(), b: consent({ answer: 'Refuser', entry: 'b', at: '2026-11-04T10:00:00Z' }) }, QUOTED],
+] as const) {
+  test('an E2E waiver quoting ' + why + ' is refused', async ($, on) => {
+    const seen = await world($, on, consentWorld(records as Record<string, unknown>))
+    const out: any = await $.tool.call(waiveCall(detail))
+    expect(out.deny).toContain(NOT_RECORDED)
+    expect(out.deny).toContain(QUOTE_SAYS)
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
 // ---- the operator's waiver of required norms: the same question, naming the check ----
 
 const NORMS_Q = 'Dispense de normes pour acme/thing#12 : the plan required the norms check, the repository has no CONTRIBUTING.md'

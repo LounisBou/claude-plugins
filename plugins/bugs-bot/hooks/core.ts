@@ -41,7 +41,9 @@ export function versionAtLeast(version: string, min: string): boolean {
   const w = versionParts(min)
   if (!v || !w) return false
   for (let i = 0; i < 3; i++) {
-    if (v[i] !== w[i]) return v[i] > w[i]
+    const a = v[i] ?? 0
+    const b = w[i] ?? 0
+    if (a !== b) return a > b
   }
   return true
 }
@@ -49,7 +51,7 @@ export function versionAtLeast(version: string, min: string): boolean {
 // The last non-empty line of a child's output: the spawn's tty, the prompt's path.
 export function lastLine(text: string): string {
   const lines = String(text ?? '').split('\n').map(l => l.trim()).filter(Boolean)
-  return lines.length > 0 ? lines[lines.length - 1] : ''
+  return lines[lines.length - 1] ?? ''
 }
 
 export function isTty(text: string): boolean {
@@ -68,7 +70,7 @@ export function tabRows(listing: string): TabRow[] {
     const cells = line.split(' | ').map(c => c.trim())
     const at = (cells[0] ?? '').match(/^w(\d+)\/t(\d+)$/)
     if (!at || cells.length < 2) continue
-    rows.push({ window: Number(at[1]), tab: Number(at[2]), tty: cells[1], isSelf: cells.slice(2).includes('self') })
+    rows.push({ window: Number(at[1]), tab: Number(at[2]), tty: cells[1] ?? '', isSelf: cells.slice(2).includes('self') })
   }
   return rows
 }
@@ -146,7 +148,7 @@ export function pythonFile(bugsHome: string | undefined, home: string): string {
 
 // The remembered interpreter, its file's first line; none (or an empty file) leaves python3.
 export function chosenPython(remembered: string | null): string {
-  return (remembered ?? '').split('\n')[0].trim() || 'python3'
+  return (remembered ?? '').split('\n')[0]?.trim() || 'python3'
 }
 
 export function toolArgv(python: string, root: string, command: string, args: readonly string[]): string[] {
@@ -201,7 +203,7 @@ export function shellWords(line: string): Word[] | null {
   const expands = (i: number) => line[i] === '`' || (line[i] === '$' && /[({A-Za-z_]/.test(line[i + 1] ?? ''))
   let i = 0
   while (i < line.length) {
-    const c = line[i]
+    const c = line.charAt(i)
     if (c === "'") {
       const end = line.indexOf("'", i + 1)
       if (end < 0) return null
@@ -214,7 +216,7 @@ export function shellWords(line: string): Word[] | null {
         if (i >= line.length) return null
         const d = line[i]
         if (d === '"') { i += 1; break }
-        if (d === '\\' && i + 1 < line.length && '"\\$`\n'.includes(line[i + 1])) { cur += line[i + 1]; i += 2; continue }
+        if (d === '\\' && i + 1 < line.length && '"\\$`\n'.includes(line.charAt(i + 1))) { cur += line[i + 1]; i += 2; continue }
         if (expands(i)) dynamic = true
         cur += d
         i += 1
@@ -260,6 +262,7 @@ export function postedWords(command: string, args: readonly Word[]): Word[] {
   const out: Word[] = []
   for (let i = 0; i < args.length; i++) {
     const w = args[i]
+    if (!w) continue
     if (w.text.startsWith('--')) {
       const eq = w.text.indexOf('=')
       if (eq > 0) {
@@ -282,11 +285,15 @@ export function bugsCalls(words: readonly Word[]): Call[] {
   const calls: Call[] = []
   for (let i = 0; i < words.length; i++) {
     const w = words[i]
-    if (w.isOperator || !/(^|\/)bugs-bot$/.test(w.text)) continue
+    if (!w || w.isOperator || !/(^|\/)bugs-bot$/.test(w.text)) continue
     const next = words[i + 1]
     if (!next || next.isOperator) continue
     const args: Word[] = []
-    for (let j = i + 2; j < words.length && !words[j].isOperator; j++) args.push(words[j])
+    for (let j = i + 2; j < words.length; j++) {
+      const arg = words[j]
+      if (!arg || arg.isOperator) break
+      args.push(arg)
+    }
     calls.push({ command: next.text, args })
   }
   return calls
@@ -311,7 +318,7 @@ const LOCAL_HOST = /\b(localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?|(?:\d{1,3}\.){3}
 
 export function hostOf(url: string): string | null {
   const m = String(url).match(/^[a-z]+:\/\/(?:[^@/?#]*@)?([^/?#:]+)/i)
-  return m ? m[1].toLowerCase() : null
+  return m?.[1]?.toLowerCase() ?? null
 }
 
 export function leaksOf(text: string, deployUrl: string | null): Leak[] {
@@ -325,14 +332,15 @@ export function leaksOf(text: string, deployUrl: string | null): Leak[] {
     if (!allowed || hostOf(url) !== allowed) found.push({ token: url, rule: 'a link to a host other than the deployment URL' })
     rest = rest.replace(m[0], ' ')
   }
-  for (const m of rest.matchAll(LOCAL_HOST)) found.push({ token: m[1], rule: 'a local host or address' })
-  for (const m of rest.matchAll(PATH)) found.push({ token: m[1], rule: 'a path of the machine' })
-  for (const m of rest.matchAll(BRANCH)) found.push({ token: m[1], rule: 'a branch name' })
-  for (const m of rest.matchAll(ISSUE)) found.push({ token: m[1], rule: 'a PR or ticket number' })
+  for (const m of rest.matchAll(LOCAL_HOST)) found.push({ token: m[1] ?? m[0], rule: 'a local host or address' })
+  for (const m of rest.matchAll(PATH)) found.push({ token: m[1] ?? m[0], rule: 'a path of the machine' })
+  for (const m of rest.matchAll(BRANCH)) found.push({ token: m[1] ?? m[0], rule: 'a branch name' })
+  for (const m of rest.matchAll(ISSUE)) found.push({ token: m[1] ?? m[0], rule: 'a PR or ticket number' })
   for (const m of rest.matchAll(HEX)) {
     // A hash mixes digits and letters: a plain number (a date, a count) and a
     // plain word (« effaced ») are neither.
-    if (/\d/.test(m[1]) && /[a-f]/i.test(m[1])) found.push({ token: m[1], rule: 'a commit hash' })
+    const hash = m[1] ?? m[0]
+    if (/\d/.test(hash) && /[a-f]/i.test(hash)) found.push({ token: hash, rule: 'a commit hash' })
   }
   return found
 }
