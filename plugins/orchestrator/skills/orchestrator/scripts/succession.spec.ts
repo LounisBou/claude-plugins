@@ -312,7 +312,7 @@ test('leanSteps brings the reading orders of a standing brief to the template\'s
   // A title that is no repository name is never put in a command.
   assert.ok(leanSteps(STALE.replace('acme/belt', 'acme/belt (v2)'), '/b/rulings.md').text.includes('Then `workspace.sh list`: delete'))
   // A stale order worded otherwise is counted, not rewritten.
-  assert.ok(leanSteps(STALE.replace('acme/belt', 'a$&b'), '/b/rulings.md').text.includes('workspace.sh list`'), 'a title with a dollar sign is no repository name')
+  assert.ok(leanSteps(STALE.replaceAll('acme/belt', () => 'a$b'), '/b/rulings.md').text.includes('workspace.sh list`'), 'a title with a dollar sign is no repository name')
   assert.equal(leanSteps('# Orchestrator succession brief — \n3. Then `workspace.sh list`: x', '').text.includes('workspace.sh list`'), true, 'no project, no rewrite')
   assert.equal(leanSteps('1. Read the rulings file WHOLE, then the rulebook and more.', '/b/r.md').left, 1)
   // No rulings file to name, no rewrite of the rulings step.
