@@ -3652,7 +3652,13 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
   }
   const path = `${await storeOf($)}/${remoteKey(row.name)}`
   const io = storeIo($)
-  await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(row) + '\n'))
+  try {
+    await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(row) + '\n'))
+  } catch (err) {
+    // The lock stayed held, or the write failed: the next row the sender sends is stored instead.
+    await logLine($, 'supervision', `receive: a remote row of ${row.name} was not stored: ${(err as Error).message}`)
+    return { consumed: 'orchestrator: a supervision row, not stored' }
+  }
   await reconcileRound($)
   return { consumed: 'orchestrator: a supervision row, stored' }
 }

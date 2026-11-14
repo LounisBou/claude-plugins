@@ -389,6 +389,21 @@ test('a received row is written under the lock the sweep takes, and the lock is 
   expect(fx.files.has(`${path}.lock`)).toBe(true)
 })
 
+test('a received row whose lock stays held is consumed, with one log line, and never reaches the model', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const path = `${STORE}/remote/Orch__far`
+  // Another writer holds the row's lock past every try.
+  fx.files.set(`${path}.lock`, '1\n')
+  fx.mtimes.set(`${path}.lock`, Date.now())
+  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  const { result, queued } = await receive(chains, fx.dollar, envelope(rowText(remote())))
+  expect(typeof result.consumed).toBe('string')
+  expect(queued.length).toBe(0)
+  expect(fx.files.has(path)).toBe(false)
+  expect(fx.logged.filter(l => l.includes('receive: a remote row of Orch: far was not stored:')).length).toBe(1)
+})
+
 test('the row out of a store row: an orchestrator only, its waits only when shown', () => {
   expect(remoteRowOf(JSON.parse(storeRow({ role: 'agent', name: 'Agent: x' })), 'm')).toBeNull()
   const row = remoteRowOf({ ...JSON.parse(storeRow()), waiting: 'delivered', blocks: 'x' }, 'm.local')!
