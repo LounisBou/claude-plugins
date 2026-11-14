@@ -69,7 +69,7 @@ fact that changes a question still to come updates it before it is presented.
 
 1. « Recorded: <the ruling in one line> » — the user sees their decision written back.
 2. His answer in the round is the module's dated record, answering any re-ask, a successor's
-   too: never copy it. By hand only what binds beyond it (rulings file, `references/lifecycle.md`
+   too: never copy it. By hand only what binds beyond it (rulings file, `references/succession-predecessor.md`
    item 0; plan; register) and, with no coordinator, the ruling there, verbatim and dated. A goal
    ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
    stop gate reads. Work deferred (« later, when I say so »):

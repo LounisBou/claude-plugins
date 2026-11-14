@@ -65,13 +65,21 @@ words.
 
 ## Where the rest lives, read at the moment of the action
 
-Each reference opens on its contents: read the section the moment names.
+Each file is one moment's: read the file or files the moment names, and no other.
 
 | Moment | Read |
 |---|---|
-| `build`: planning phases, writing a brief, choosing a tier | `references/briefs.md` |
-| Spawning, dispatching, standing down, closing, rotating | `references/lifecycle.md` › « The agents' lifecycle is yours », « Context rotation » |
-| A pause, an opening, a move | `references/lifecycle.md` › « Pause, opening and move » |
-| Handing over, or taking over | `/orchestrator-succeed`, then `references/lifecycle.md` › « Succession » |
-| `build`: a review or comments round, a verdict, the ready, the rebase, a CI watch | `references/review.md` |
-| A question to the operator, a coordinator running or not | `commands/decide.md` |
+| Planning the phases (`build`) | `references/phases.md` |
+| Writing a brief, choosing a tier (`build`) | `references/brief.md`, `references/standing-rules.md` |
+| Spawning, dispatching, verifying, standing down, closing an agent | `references/agents.md` |
+| Rotating an agent past its gate | `references/rotation.md` |
+| Handing over | `/orchestrator-succeed`, then `references/succession-predecessor.md` |
+| Taking over | `references/succession-successor.md` |
+| Pausing, opening, moving | `references/pause-opening-move.md` |
+| Launching a review round (`build`) | `references/review-thresholds.md`, `references/review-round.md` |
+| Launching a comments round, publishing as the operator (`build`) | `references/review-comments.md`, `references/review-round.md` (« The cost of a round ») |
+| Judging a delivery, recording a verdict, telling it ready (`build`) | `references/review-thresholds.md`, `references/review-verdict.md`, `references/standing-rules.md` |
+| Watching a pull request's checks (`build`) | `references/ci-watch.md` |
+| Rebasing (`build`) | `references/review-thresholds.md`, `references/rebase.md` |
+| Recording a changed decision, a defect found | `references/directives.md` |
+| Asking the operator a question, a coordinator running or not | `commands/decide.md` |

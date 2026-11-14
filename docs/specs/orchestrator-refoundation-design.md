@@ -143,7 +143,7 @@ takes it.
   or dropped, never carried. A memory a model rewrites summary after summary degrades
   (Zhang 2026, arXiv:2605.12978); immutable sources with derived summaries is the remedy, and
   this is it.
-- **A brief makes the agent verify the state, not believe it** (`references/briefs.md`, item
+- **A brief makes the agent verify the state, not believe it** (`references/brief.md`, item
   2), and the successor reads the artifact before the brief when they disagree.
 - **A light start** (goal 8, 1,960 tokens at a `build` start). Standing context files did not generally
   improve task success (Gloaguen et al. 2026, arXiv:2602.11988), and across 288 runs their
