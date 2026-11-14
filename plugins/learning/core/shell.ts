@@ -76,7 +76,9 @@ export function simpleCommands(line: string): string[][] {
 /**
  * Every simple command of the line, in the order the shell finishes reading them (a
  * substitution's commands before the command that holds it), each with its structure. The
- * command line a shell's -c or eval runs is not read again: innerLine gives it.
+ * command line a shell's -c or eval runs is not read again: innerLine gives it. Throws a
+ * RangeError when a word's brace expansion would give more than 1000 words: the line cannot be
+ * read, and a caller that protects refuses it.
  */
 export function readCommands(line: string): ShellCommand[] {
   return tokenize(line)
@@ -193,8 +195,11 @@ interface Feed {
   readonly hds: readonly number[]
 }
 
-// The most words one brace expansion may give: a word that would give more is left as it is.
+// The most words one brace expansion may give: a word that would give more cannot be read, and
+// the reader throws a RangeError, as a guard that cannot read a line refuses it.
 const BRACE_LIMIT = 1000
+
+const OVER_LIMIT = 'brace expansion over the limit'
 
 // A word as characters and, one per character, whether it was quoted or escaped ('1') or not ('0').
 interface Marked {
@@ -203,7 +208,8 @@ interface Marked {
 }
 
 // The values of a sequence expression `x..y` or `x..y..step` (two integers, or two single letters
-// of the same kind), or undefined when the body is no sequence or would give more than the limit.
+// of the same kind), undefined when the body is no sequence; throws when it would give more than
+// the limit.
 function sequence(body: string): string[] | undefined {
   const m = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$/.exec(body)
   if (m === null) return undefined
@@ -213,7 +219,7 @@ function sequence(body: string): string[] | undefined {
   const first = letters ? from.charCodeAt(0) : Number(from)
   const last = letters ? to.charCodeAt(0) : Number(to)
   const step = Math.abs(Number(by ?? 1)) || 1
-  if (Math.abs(last - first) / step + 1 > BRACE_LIMIT) return undefined
+  if (Math.abs(last - first) / step + 1 > BRACE_LIMIT) throw new RangeError(OVER_LIMIT)
   const width = !letters && (/^-?0\d/.test(from) || /^-?0\d/.test(to)) ? Math.max(from.length, to.length) : 0
   const out: string[] = []
   for (let v = first; first <= last ? v <= last : v >= last; v += first <= last ? step : -step) {
@@ -270,7 +276,7 @@ function braces(w: Marked, budget: { left: number }): Marked[] | undefined {
     const out: Marked[] = []
     for (const alt of alternatives) {
       for (const tail of tails) {
-        if (--budget.left < 0) throw new RangeError('brace expansion over the limit')
+        if (--budget.left < 0) throw new RangeError(OVER_LIMIT)
         out.push({ text: w.text.slice(0, i) + alt.text + tail.text, quoted: w.quoted.slice(0, i) + alt.quoted + tail.quoted })
       }
     }
@@ -280,14 +286,9 @@ function braces(w: Marked, budget: { left: number }): Marked[] | undefined {
 }
 
 // The words of one unquoted-or-quoted word after brace expansion; the word itself, as one, when
-// it holds no expansion or would give more than BRACE_LIMIT words.
+// it holds no expansion. Throws when it would give more than BRACE_LIMIT words.
 function expandWord(text: string, quoted: string): string[] {
-  try {
-    return (braces({ text, quoted }, { left: BRACE_LIMIT }) ?? [{ text, quoted }]).map(word => word.text)
-  } catch (error) {
-    if (error instanceof RangeError) return [text]
-    throw error
-  }
+  return (braces({ text, quoted }, { left: BRACE_LIMIT }) ?? [{ text, quoted }]).map(word => word.text)
 }
 
 function tokenize(command: string): ShellCommand[] {
