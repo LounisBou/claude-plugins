@@ -32,7 +32,6 @@ USAGE_EXIT = 2
 _HEAD = re.compile(_CONTRACT["patterns"]["head"])
 _PART = re.compile(_CONTRACT["patterns"]["repo_part"])
 _PRODUCER = re.compile(_CONTRACT["patterns"]["producer"])
-_DATE = re.compile(_CONTRACT["patterns"]["waiver_date"])
 
 
 class UsageError(Exception):
@@ -77,8 +76,8 @@ def validate(args):
     if args.result == "waived":
         if args.kind not in WAIVABLE:
             raise UsageError("only an %s record can be waived" % " or ".join(WAIVABLE))
-        if not _DATE.search(args.detail):
-            raise UsageError("a waiver needs a --detail carrying its date, YYYY-MM-DD")
+        if not args.detail.strip():
+            raise UsageError("a waiver needs a --detail carrying the operator's answer")
     if args.result == "not-applicable":
         if args.kind != NOT_APPLICABLE:
             raise UsageError("only an %s record can be not applicable" % NOT_APPLICABLE)
