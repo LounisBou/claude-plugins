@@ -82,7 +82,7 @@ async function orchestrationOfSession($: any, sessionId: string, row: { role: st
 }
 
 // The records the orchestration owns that its session registered, each readable.
-async function ownRecords($: any, state: string, id: string, name: string | null): Promise<string[]> {
+export async function ownRecords($: any, state: string, id: string, name: string | null): Promise<string[]> {
   const own = orchestrationOf(name)
   if (own === null) return []
   const found: string[] = []

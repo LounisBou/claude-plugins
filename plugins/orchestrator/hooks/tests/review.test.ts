@@ -60,7 +60,8 @@ test('an orchestrator\'s acceptance is written through github\'s record tool, ea
     tool: 'mcp__github__record', pr: 128, repo: 'acme/thing', dir: '/work/thing', kind: 'review', result: 'accepted',
     detail: 'set aside: a.ts:3 — naming only; b.ts — out of the phase\'s scope',
   }])
-  expect(out).toEqual({ result: WRITTEN })
+  // The verdict is a review round: the answer also says that no dispatch-record row named the pull request.
+  expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/thing#128, none raised` })
 })
 
 for (const verdict of ['pass', 'fail']) {
@@ -179,7 +180,7 @@ test('a fail keeps the findings the correction round fixes, and may set others a
     kept: [{ point: 'a.ts:3 the guard fails open', file: 'a.ts', line: 3, severity: 'critical' }, { point: 'b.ts: no test' }],
     set_asides: [{ point: 'c.ts naming', reason: 'naming only', severity: 'minor' }],
   })
-  expect(out).toEqual({ result: 'written' })
+  expect(out).toEqual({ result: 'written\nrounds: none raised, the repository of the pull request is not known: give repo' })
   expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 128, kind: 'review', result: 'fail', detail: 'two to fix; set aside: c.ts naming — naming only' }])
 })
 

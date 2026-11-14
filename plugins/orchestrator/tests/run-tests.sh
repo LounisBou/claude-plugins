@@ -10046,7 +10046,7 @@ check "an uninstall that could not unwire keeps the tap's copy, removes the rest
 # What the old pipeline left behind: the tap's ctx/ directory, its copy and saved object,
 # the shell gates' logs and heads, and measure files from sessions long ended. A session
 # writes its measure file only when a turn ends, so age alone proves nothing: an idle one
-# waits for days. A file is pruned only past a week AND when no live session owns it —
+# waits for days. A file is pruned only past 90 days AND when no live session owns it —
 # the host's registry names each session's pid; a dead or absent pid frees the file.
 H5="$WORK/home5"; mkdir -p "$H5/.claude"; stub_venv "$H5"
 S5="$H5/.claude/claude-orchestrator"
@@ -10056,7 +10056,7 @@ for f in statusline-tap.sh context-gate.log stop-gate.log stop-gate/s-a.heads st
   printf 'old\n' > "$S5/$f"
 done
 printf '{"type":"command","command":"/x/bar.sh"}\n' > "$S5/statusline.previous.json"
-for sid in s-gone s-dead s-live s-idle s-kept; do
+for sid in s-gone s-dead s-live s-idle s-kept s-month s-quarter; do
   printf '{"context_tokens":1,"context_window":200000,"context_percent":0,"model":"a-model","updated_at":"2026-10-10T00:00:00Z"}\n' \
     > "$S5/measure/$sid.json"
 done
@@ -10065,13 +10065,19 @@ printf '{"pid":%s,"sessionId":"s-live"}\n' "$$" > "$H5/.claude/sessions/$$.json"
 printf '{"pid":%s,"sessionId":"s-dead"}\n' "$deadpid" > "$H5/.claude/sessions/$deadpid.json"
 touch -t 202001010000 "$S5/measure/s-gone.json" "$S5/measure/s-dead.json" "$S5/measure/s-live.json"
 touch -t "$(date -v-3d +%Y%m%d%H%M 2>/dev/null || date -d '3 days ago' +%Y%m%d%H%M)" "$S5/measure/s-idle.json"
+touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$S5/measure/s-month.json"
+touch -t "$(date -v-91d +%Y%m%d%H%M 2>/dev/null || date -d '91 days ago' +%Y%m%d%H%M)" "$S5/measure/s-quarter.json"
 inst "$H5" >/dev/null 2>&1
 check "the tap's ctx/ is purged" "gone" \
   "$([ -d "$S5/ctx" ] && echo kept || echo gone)"
 present() { [ -e "$1" ] && echo present || echo absent; }
-check "a measure file is pruned only past a week with no live session: gone, dead pid, live pid, idle, fresh" \
+check "a measure file is pruned only past 90 days with no live session: gone, dead pid, live pid, idle, fresh" \
   "absent|absent|present|present|present" \
   "$(present "$S5/measure/s-gone.json")|$(present "$S5/measure/s-dead.json")|$(present "$S5/measure/s-live.json")|$(present "$S5/measure/s-idle.json")|$(present "$S5/measure/s-kept.json")"
+# The series of closed sessions is what shows whether a change of method helped: a closed session's
+# file (no live session owns it) is kept for 90 days, a month old included, and pruned past them.
+check "a closed session's measure file is kept 90 days: a month old stays, 91 days old goes" "present|absent" \
+  "$(present "$S5/measure/s-month.json")|$(present "$S5/measure/s-quarter.json")"
 check "with no tap wired, the old pipeline's files are removed and the module's heads kept" \
   "absent|absent|absent|absent|absent|present" \
   "$(present "$S5/statusline-tap.sh")|$(present "$S5/statusline.previous.json")|$(present "$S5/context-gate.log")|$(present "$S5/stop-gate.log")|$(present "$S5/stop-gate/s-a.heads")|$(present "$S5/stop-gate/s-a.mheads")"

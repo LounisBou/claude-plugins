@@ -12,6 +12,7 @@ import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
+import { countRound } from './review-rounds.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs'>
 
@@ -108,7 +109,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: REVIEW_TOOL,
         isDeferred: false,
-        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. In place of the verdict, plan sets the proofs the pull request owes.',
+        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the dispatch-record row naming the pull request, and says which row, or that none matched. In place of the verdict, plan sets the proofs the pull request owes.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -154,7 +155,11 @@ export function register(on: On<Held>): void {
     const call = verdictCall(e)
     if (typeof call === 'string') return { result: call, isError: true }
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
-    return answerOf(await $.tool.call(call))
+    const answer = answerOf(await $.tool.call(call))
+    // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
+    if (answer.isError === true || !('result' in call)) return answer
+    const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}) })
+    return { result: `${answer.result}\n${counted}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }
