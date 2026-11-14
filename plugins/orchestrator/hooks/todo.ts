@@ -117,7 +117,14 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   // The list first, the message after: a send that fails leaves the item written.
   const made = await writeTodos($, to, text => addTodo(text, set, now))
   if ('error' in made) return refuse(made.error)
-  const sent = await $.session.send({ to, text: messageOfRequest(made.item, set, now) })
+  // A send that throws is a send that failed: the item is written, and the model must be told so, or it retries and duplicates it.
+  let sent: Awaited<ReturnType<Held['session']['send']>>
+  try {
+    sent = await $.session.send({ to, text: messageOfRequest(made.item, set, now) })
+  } catch (err) {
+    await logLine($, 'todo', `to-do ${made.item.id} recorded for ${holderOf(to)}, the send threw: ${messageOf(err)}`)
+    return refuse(`Recorded as to-do ${made.item.id} in the list of ${holderOf(to)}; the send failed: ${messageOf(err)}`)
+  }
   if (sent.isDelivered) return { result: `Recorded as to-do ${made.item.id} in the list of ${holderOf(to)}, and sent.` }
   return refuse(`Recorded as to-do ${made.item.id} in the list of ${holderOf(to)}, but not sent: ${sent.reason}. The next session of that name reads the list; send it the words again if it must know now.`)
 }

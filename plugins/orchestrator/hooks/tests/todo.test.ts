@@ -139,6 +139,14 @@ test('an absent list is an empty one: the first add starts it', async () => {
   expect(listOf(files, 'Orch: billing')).toHaveLength(1)
 })
 
+test('a send that throws after the write leaves one item and says it was recorded, so no retry duplicates it', async () => {
+  const { dollar, files } = world({ send: () => { throw new Error('the session is gone') } })
+  const answered = await call(dollar, { action: 'add', words: 'tell him', to: 'Coord: general' })
+  expect(answered.isError).toBe(true)
+  expect(answered.result).toBe('Recorded as to-do 1 in the list of Coord: general; the send failed: the session is gone')
+  expect(listOf(files, 'Coord: general')).toHaveLength(1)
+})
+
 test('add to the caller\'s own name records once and sends nothing', async () => {
   const { dollar, files, sent } = world()
   const answered = await call(dollar, { action: 'add', words: 'mine', to: 'Orch: billing [ref-1]' })
