@@ -104,11 +104,11 @@ async function checkPaths($: any, paths: string[], dir?: string): Promise<Refere
 // The last scope /norms:check computed, for the agents it then spawns. A
 // module variable: a reload loses it, and the spawn hook computes afresh.
 // `dir` is the repository it was computed in: a scope is reused there only.
-let cached: { scope: Scope; at: number; dir?: string } | undefined
+let cached: { scope: Scope; at: number; dir?: string | undefined } | undefined
 
 // The repository is the one the check marked, so a shell `cd` into another repository between the
 // check and its agents is not taken for the reviewed one.
-async function scopeForSpawn($: any): Promise<{ scope: Scope; dir?: string }> {
+async function scopeForSpawn($: any): Promise<{ scope: Scope; dir?: string | undefined }> {
   const dir = (await markedDir($)) ?? await repositoryDir($)
   const head = (await run($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
   if (cached && cached.dir === dir && cached.scope.head === head && Date.now() - cached.at < SCOPE_TTL_MS) return cached

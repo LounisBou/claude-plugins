@@ -34,9 +34,9 @@ export function existingRules(text: string): [string, string[]][] {
     if (/^\s*(```|~~~)/.test(line)) inFence = !inFence
     if (inFence) continue
     const h2 = line.match(/^##\s+(.*?)\s*$/)
-    if (h2) out.push([h2[1], []])
+    if (h2) out.push([h2[1]!, []])
     const h3 = line.match(/^###\s+(.*?)\s*$/)
-    if (h3 && out.length) out[out.length - 1][1].push(h3[1])
+    if (h3 && out.length) out[out.length - 1]![1].push(h3[1]!)
   }
   return out
 }

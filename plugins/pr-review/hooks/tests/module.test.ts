@@ -168,6 +168,10 @@ test('open_comments reads through the github tool and hands the bundle to triage
     ['comments-resolved-batch', 'comments-resolved-batch', 'pr-get', 'pr-issue-comments', 'pr-reviews', 'pr-threads'],
   )
   expect(calls.find((c) => c.command === 'pr-threads').args).toEqual({ pr: 7, format: 'open-threads' })
+  // These three answer a few lines by default; the triage parses their objects.
+  for (const command of ['pr-get', 'pr-issue-comments', 'pr-reviews']) {
+    expect(calls.find((c) => c.command === command).args.format).toBe('raw')
+  }
   expect(calls.filter((c) => c.command === 'comments-resolved-batch').map((c) => c.args.nodes)).toEqual([['IC_1'], ['PRR_1']])
   expect(runs[0].argv.slice(-1)).toEqual(['--stdin'])
   expect(runs[0].argv[1].endsWith('/skills/process-comments/scripts/triage.py')).toBe(true)
@@ -1303,7 +1307,7 @@ test('a detached review checkout records at the open pull request whose head it 
   const stubs: Stubs = { records: [], prCalls: 0, ghCalls: [], branch: 'HEAD', pulls: JSON.stringify([openPull(7, 'c'.repeat(40)), openPull(34)]) }
   wireRecord(on, stubs)
   await cleanLoop($)
-  expect(stubs.ghCalls).toEqual([{ command: 'pr-list', args: {}, repo: REPO }])
+  expect(stubs.ghCalls).toEqual([{ command: 'pr-list', args: { format: 'raw' }, repo: REPO }])
   expect(stubs.records.map((r) => r.pr)).toEqual([34])
 })
 

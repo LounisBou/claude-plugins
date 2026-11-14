@@ -48,7 +48,7 @@ const OTHER_NAMES = /^(LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CODEOWNERS)(\..*)?
 // `*/test/*`; config is `*.json`, `*.yml`, `*.yaml`, `*.toml`, `*.xml`, `*.env*`.
 export function classify(path: string): Category {
   const parts = path.split('/')
-  const name = parts[parts.length - 1]
+  const name = parts[parts.length - 1]!
   const dirs = parts.slice(0, -1)
   if (/\.(test|spec)\./i.test(name) || /_test\.[^.]+$/i.test(name) || dirs.some(d => d === 'tests' || d === 'test' || d === '__tests__')) {
     return 'test'
@@ -87,7 +87,7 @@ export function projectTypes(rootNames: readonly string[]): string[] {
 }
 
 export type CheckArgs = {
-  base?: string
+  base?: string | undefined
   // 'all': no agent named. 'free-text': agent words inside a sentence, which
   // only the model can read. Otherwise the agents the words name.
   agents: 'all' | 'free-text' | string[]
@@ -162,7 +162,7 @@ export function applicable(files: Classified, hasTestInfra: boolean): Applicabil
 
 export type Scope = {
   base: string
-  baseArg?: string
+  baseArg?: string | undefined
   head: string
   branch: string
   files: Classified
@@ -253,8 +253,8 @@ export function contributingExcerpt(agent: string, contributing: string): Excerp
     if (/^\s*(```|~~~)/.test(line)) inFence = !inFence
     const h = inFence ? null : line.match(/^(#{1,2})\s+(.*?)\s*$/)
     if (h) {
-      keep = h[1] === '##' && rule(h[2])
-      if (keep) headings.push(h[2])
+      keep = h[1] === '##' && rule(h[2]!)
+      if (keep) headings.push(h[2]!)
     }
     if (keep) out.push(line)
   }
@@ -273,14 +273,14 @@ export const DIFF_INLINE_MAX = 40_000
 export type AgentContext = {
   agent: string
   // The repository the check read, named in the git command the block gives the agent.
-  dir?: string
+  dir?: string | undefined
   base: string
   head: string
   files: string[]
-  diff?: string
-  diffPath?: string
-  diffStat?: string
-  contributing?: string
+  diff?: string | undefined
+  diffPath?: string | undefined
+  diffStat?: string | undefined
+  contributing?: string | undefined
 }
 
 // The block appended to a norms agent's prompt at spawn.

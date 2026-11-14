@@ -513,6 +513,8 @@ out=$(python3 "$TRIAGE" --gh "$WORK/fakegh/gh.py" | python3 -c 'import json,sys;
 check "triage's Bash route fetches, resolves and counts" "2 review-thread,review-body" "$out"
 check "triage's Bash route asks for the open threads by formatter" "1" \
   "$(grep -c '^pr-threads 7 --format open-threads$' "$WORK/fakegh/calls.log")"
+check "triage's Bash route asks the full object of the three reads that answer a few lines by default" "1 1 1" \
+  "$(printf '%s %s %s' "$(grep -c '^pr-get --format raw$' "$WORK/fakegh/calls.log")" "$(grep -c '^pr-issue-comments 7 --format raw$' "$WORK/fakegh/calls.log")" "$(grep -c '^pr-reviews 7 --format raw$' "$WORK/fakegh/calls.log")")"
 check "triage's Bash route checks both node id sets" "2" \
   "$(grep -c '^comments-resolved-batch' "$WORK/fakegh/calls.log")"
 

@@ -344,7 +344,7 @@ async function pullOf($: any, repo: string, ask: (call: Record<string, unknown>)
   const headRun = await git($, ['rev-parse', 'HEAD'], dir)
   const head = String(headRun.stdout ?? '').trim()
   if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
-  const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
+  const listed = await ask({ tool: GH_TOOL, command: 'pr-list', args: { format: 'raw' }, repo })
   if (listed?.deny || listed?.isError) return 'record: none — ' + (textOf(listed) || 'the pull requests could not be read')
   let pulls: unknown
   try {
@@ -566,10 +566,10 @@ export function register(on: any): void {
       const found: { repo?: string; pr?: number } = {}
       const written = await recordReview($, String(loop.exit), isOwed, found)
       loop.isRecordPending = written.isOwed
-      const verdict = written.line && found.repo && found.pr ? await verdictFor($, loop.exit, found.repo, found.pr, written.line) : null
+      const verdict = written.line && found.repo && found.pr ? await verdictFor($, loop.exit!, found.repo, found.pr, written.line) : null
       if (written.line) return { result: text + '\n' + (written.isOwed ? written.line + PENDING_NOTE : written.line) + (verdict ? '\n' + verdict : '') }
     }
-    return { result: text, ...(answer.error ? { isError: true } : {}) }
+    return { result: text, ...(answer['error'] ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
 
   on('classic.Stop', async ($: any, e: any, next: any) => {

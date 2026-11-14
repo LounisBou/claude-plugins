@@ -158,8 +158,8 @@ async function describe($: any, e: any): Promise<string> {
 async function publishing($: any, args: Record<string, unknown>, host: string | undefined): Promise<string> {
   const known = ['host', 'to', 'ip', 'no-proxy', 'extra-file']
   const parts = [
-    '--to ' + cut(String(args.to)),
-    '--ip ' + (args.ip === undefined ? 'the default_target of the config' : cut(String(args.ip))),
+    '--to ' + cut(String(args['to'])),
+    '--ip ' + (args['ip'] === undefined ? 'the default_target of the config' : cut(String(args['ip']))),
     args['no-proxy'] === true ? 'DNS only (--no-proxy)' : 'proxied',
   ]
   let text = parts.join(', ') + '. It may overwrite an existing DNS record of ' + host + ' and its existing site block.'
