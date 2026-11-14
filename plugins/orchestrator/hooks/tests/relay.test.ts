@@ -2477,9 +2477,9 @@ test('the notice of a question settled in the tab carries his words on one line,
 // --- the answer typed in the tab to a question that asks consent -------------------------------
 
 const CONSENT = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
-const CONSENT_QUESTION = 'Question 1 of 1 — waive the E2E on thing#12?\n- **A** : waive it, docs only\n- **B** : run the E2E first'
+const CONSENT_QUESTION = 'Question 1 of 1 — waive the E2E on thing#12?\n- **A** : Accorder\n- **B** : Refuser'
 const consentFiles = (fx: ReturnType<typeof fake>) => [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
-const noAnswerLogs = (fx: ReturnType<typeof fake>) => fx.logged.filter(l => l.includes('answer none of its choices')).map(l => l.replace(/^.*\| supervision \| /, ''))
+const noAnswerLogs = (fx: ReturnType<typeof fake>) => fx.logged.filter(l => l.includes('are not one unambiguous « Accorder »')).map(l => l.replace(/^.*\| supervision \| /, ''))
 
 // An orchestrator that declared the consent its question asks, the question relayed.
 async function askedConsent(declared: typeof CONSENT | null = CONSENT) {
@@ -2516,14 +2516,14 @@ test('the next turn starting while the turn\'s end is relayed leaves the declare
   await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, asked.choices[0])
   expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${asked.id}.json`])
   const record = parseConsentRecord(JSON.parse(fx.files.get(consentFiles(fx)[0])!))
-  expect(record && { ...record, at: 'x' }).toEqual({ v: 1, subject: CONSENT, entry: asked.id, question: asked.question, answer: 'waive it, docs only', by: 'pane', at: 'x' })
-  expect(quotesConsent(record!, CONSENT, 'waive it, docs only')).toBe(true)
+  expect(record && { ...record, at: 'x' }).toEqual({ v: 1, subject: CONSENT, entry: asked.id, question: asked.question, answer: 'Accorder', by: 'pane', at: 'x' })
+  expect(quotesConsent(record!, CONSENT, 'Accorder')).toBe(true)
 })
 
 for (const [label, words, answer] of [
-  ['a choice letter alone', 'A', 'waive it, docs only'],
-  ['a choice letter set apart from its text', 'a : WAIVE it,  docs only', 'waive it, docs only'],
-  ['the text of a choice alone', 'Run the E2E first', 'run the E2E first'],
+  ['a granting choice letter alone', 'A', 'Accorder'],
+  ['a granting choice letter set apart from its text', 'a : ACCORDER', 'Accorder'],
+  ['the text of the granting choice alone', ' accorder ', 'Accorder'],
 ] as const) {
   test(`${label} typed in the tab to a question that asks consent is written as that subject's consent record, by the tab`, async () => {
     const { chains, fx, asked } = await askedConsent()
@@ -2540,13 +2540,17 @@ for (const [label, words, answer] of [
   })
 }
 
-for (const words of ['go on with the next phase', 'C', 'A, but check the diff first', 'do not waive it, docs only', 'B waive it, docs only', 'A - but not yet', 'yes: waive it, docs only']) {
-  test(`« ${words} » typed in the tab answers no choice: no consent record, one line in the log`, async () => {
+// Free prose, an ambiguous answer and a refusing choice: none is a consent.
+for (const words of [
+  'go on with the next phase', 'C', 'A, but check the diff first', 'do not accorder it', 'B Accorder', 'A - but not yet', 'yes: Accorder',
+  'B', 'b : refuser', 'Refuser',
+]) {
+  test(`« ${words} » typed in the tab is no unambiguous grant: no consent record, one line in the log`, async () => {
     const { chains, fx, asked } = await askedConsent()
     await drive(chains, 'prompt.submit', fx.dollar, typed('composer', words))
     expect(entries(fx)[0].status).toBe('withdrawn')
     expect(consentFiles(fx)).toEqual([])
-    expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${asked.id} answer none of its choices, no consent recorded`])
+    expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${asked.id} are not one unambiguous « Accorder », no consent recorded`])
     // The turn's end does not say it again.
     await drive(chains, 'turn.start', fx.dollar, { text: words })
     await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
@@ -2576,7 +2580,7 @@ test('a moved entry that carries the consent, withdrawn with the question asked 
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
   expect(entries(fx).map(e => e.status)).toEqual(['withdrawn', 'withdrawn'])
   expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${moved.id}.json`])
-  expect(JSON.parse(fx.files.get(consentFiles(fx)[0])!)).toMatchObject({ entry: moved.id, answer: 'waive it, docs only', by: 'tab' })
+  expect(JSON.parse(fx.files.get(consentFiles(fx)[0])!)).toMatchObject({ entry: moved.id, answer: 'Accorder', by: 'tab' })
 })
 
 test('a moved entry that carries the consent, withdrawn by a free prompt, leaves no record and one line in the log', async () => {
@@ -2588,10 +2592,10 @@ test('a moved entry that carries the consent, withdrawn by a free prompt, leaves
   DECLARATIONS.turnStarted()
   DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12' })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(CONSENT_QUESTION))
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'do not waive it, docs only'))
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'do not accorder it'))
   expect(entries(fx).map(e => e.status)).toEqual(['withdrawn', 'withdrawn'])
   expect(consentFiles(fx)).toEqual([])
-  expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${moved.id} answer none of its choices, no consent recorded`])
+  expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${moved.id} are not one unambiguous « Accorder », no consent recorded`])
 })
 
 for (const declared of [CONSENT, null]) {

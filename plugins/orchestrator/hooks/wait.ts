@@ -210,7 +210,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
-          + 'names it in consent: {kind: "e2e-waiver" or "norms-waiver", repo, pr}, {kind: "e2e-exemption", repo}, {kind: "auto-merge", repo} or {kind: "auto-deploy", repo, env}; his answer is then recorded as that consent. '
+          + 'names it in consent: {kind: "e2e-waiver" or "norms-waiver", repo, pr}, {kind: "e2e-exemption", repo}, {kind: "auto-merge", repo} or {kind: "auto-deploy", repo, env}; its choices are « Accorder » and « Refuser », and his answer is then recorded as that consent. '
           + 'An `operator` wait needs `question`, the whole `**Question i of N**` block. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {

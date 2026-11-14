@@ -20,7 +20,7 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
-// with the cut said (typedWords in supervision.ts); `text` keeps the reason. An entry answered from
+// with the cut said (tabText in supervision.ts); `text` keeps the reason. An entry answered from
 // the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
 // that holds it.
 export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string; record?: string }
