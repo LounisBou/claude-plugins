@@ -1955,7 +1955,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           || (entry.status !== 'withdrawn' && entry.answer?.at === entry.delivery.answerAt && !pane.forgotten.has(failedKey(entry)))))
           .map(entry => ({ entry, reason: entry.delivery!.reason ?? 'no answer' }))
         // An answer to a question asked with `ask` not delivered, while its asker has a row here.
-        failed.push(...localAsked.filter(entry => entry.status === 'answered' && entry.delivery?.state === 'failed')
+        failed.push(...localAsked.filter(entry => (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' })))
         delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.

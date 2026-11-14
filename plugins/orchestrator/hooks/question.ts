@@ -548,9 +548,9 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
   if (done.deliver === 'remote') {
     const refused = await sendReply($, request.id)
-    said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): sent again at the round's next readings.`)
+    said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
   }
-  if (done.deliver === null && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
+  if (done.deliver !== 'remote' && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
   if (request.work !== null) {
     const own = done.asker.session === me.session
     const made = await callTodo($, { action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)

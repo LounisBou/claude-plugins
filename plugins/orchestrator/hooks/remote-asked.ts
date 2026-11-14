@@ -48,17 +48,48 @@ export async function replicate($: any, entry: Asked): Promise<void> {
       seq: entry.seq, state: line === null ? 'failed' : 'sent', attempts, at: new Date().toISOString(), ...(reason !== null ? { reason } : {}),
     }
     if (reason !== null) await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
+    // Written while the push it replaces is still there: an acknowledgment that landed during the send is kept.
     await updateOver(storeIo($), await pathOf($, entry.id), current => {
       const now = current === undefined ? null : parseAsked(current)
-      return now !== null && now.origin === undefined && now.seq === entry.seq ? `${JSON.stringify({ ...now, replica })}\n` : undefined
+      const same = now !== null && now.origin === undefined && now.seq === entry.seq && JSON.stringify(now.replica ?? null) === JSON.stringify(was ?? null)
+      return same ? `${JSON.stringify({ ...now, replica })}\n` : undefined
     })
+    if (replica.state === 'sent') armResend($)
   } catch (err) {
     await logLine($, 'question', `${entry.id} not pushed: ${messageOf(err)}`)
   }
 }
 
+// One reading of the pushes not acknowledged, ANSWER_RESEND_MS after a push, armed once at a time:
+// an asker waiting on its question ends no turn that would send it again.
+let resendArmed = false
+function armResend($: any): void {
+  if (resendArmed) return
+  try {
+    $.clock.after(ANSWER_RESEND_MS + 1000, () => resendTick($))
+    resendArmed = true
+  } catch {
+    // A host with no timer: the turns' ends send them again.
+  }
+}
+
+/** The module's timer forgotten, as at a module load: the next push arms one. */
+export function forgetResendTimer(): void {
+  resendArmed = false
+}
+
+async function resendTick($: any): Promise<void> {
+  resendArmed = false
+  try {
+    await resendReplicas($)
+  } catch (err) {
+    await logLine($, 'question', `pushes: ${messageOf(err)}`)
+  }
+}
+
 /**
- * The pushes not acknowledged, read at a turn's end on the owner's machine: one whose last send is
+ * The pushes not acknowledged, read at a turn's end on the owner's machine and by the timer each push
+ * arms: one whose last send is
  * ANSWER_RESEND_MS old is sent again, or, sent ANSWER_SENDS times already, failed; an open question
  * never pushed, or changed since its last push, is pushed now.
  */
@@ -79,13 +110,13 @@ export async function resendReplicas($: any, now: number = Date.now()): Promise<
     }
     const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
     try {
+      let written = false
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const read = current === undefined ? null : parseAsked(current)
-        return read?.replica?.seq === replica.seq && read.replica.state === 'sent'
-          ? `${JSON.stringify({ ...read, replica: { ...replica, state: 'failed', at: new Date().toISOString(), reason } })}\n`
-          : undefined
+        written = read?.replica?.seq === replica.seq && read.replica.state === 'sent'
+        return written ? `${JSON.stringify({ ...read, replica: { ...replica, state: 'failed', at: new Date().toISOString(), reason } })}\n` : undefined
       })
-      await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
+      if (written) await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
     } catch (err) {
       await logLine($, 'question', `${entry.id} push not failed: ${messageOf(err)}`)
     }
@@ -110,10 +141,14 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
   try {
     await updateOver(storeIo($), await pathOf($, asked.id), current => {
       const held = current === undefined ? null : parseAsked(current)
-      owned = held !== null && held.origin === undefined
+      // A file here that is no replica of that machine's (this machine's own question, or one it cannot read) is never overwritten.
+      owned = current !== undefined && (held === null || held.origin === undefined || held.origin.machine !== asked.sender.machine)
       if (owned || (held !== null && held.seq >= asked.seq)) return undefined
-      const delivery = held?.delivery
-      const keeps = asked.status === 'open' && (delivery?.state === 'pending' || delivery?.state === 'sent')
+      const pending = held?.delivery?.state === 'pending' || held?.delivery?.state === 'sent'
+      const keeps = asked.status === 'open' && pending
+      // Closed by its owner with another answer while the one given here was on its way: that one lost.
+      const lost = pending && asked.status !== 'open' && !(asked.answer?.at === held!.answer?.at && asked.answer?.text === held!.answer?.text)
+      const delivery = lost ? { ...held!.delivery!, state: 'failed' as const, at: new Date().toISOString(), reason: ALREADY_ANSWERED } : held?.delivery
       const { claimed: _claimed, ...unclaimed } = asked
       const next: Asked = {
         ...(keeps ? { ...unclaimed, status: held!.status, answer: held!.answer } : asked),
@@ -129,7 +164,7 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
     return { consumed: 'orchestrator: a remote question asked with ask, not written' }
   }
   if (owned) {
-    await logLine($, 'question', `a remote push of ${asked.id}, a question asked on this machine, ignored`)
+    await logLine($, 'question', `a remote push of ${asked.id} from ${asked.sender.machine} meets a question here that is no replica of that machine's, ignored`)
     return { consumed: 'orchestrator: a remote push of a question owned here, ignored' }
   }
   await ack($, from, { id: asked.id, seq: asked.seq, of: 'asked' })
@@ -177,7 +212,7 @@ export async function receiveReply($: any, from: string, id: string, seq: number
     await updateOver(storeIo($), await pathOf($, id), current => {
       const entry = current === undefined ? null : parseAsked(current)
       held = entry
-      if (entry === null || entry.origin !== undefined || entry.status !== 'open') return undefined
+      if (entry === null || entry.origin !== undefined || entry.replica === undefined || entry.status !== 'open') return undefined
       const { claimed: _claimed, ...rest } = entry
       applied = { ...rest, status: reply.status, answer: { text: reply.text, by: reply.by, at: reply.at, settler: reply.settler }, seq: entry.seq + 1 }
       return `${JSON.stringify(applied)}\n`
@@ -188,7 +223,7 @@ export async function receiveReply($: any, from: string, id: string, seq: number
   }
   const was = held as Asked | null
   const done = applied as Asked | null
-  if (was === null || was.origin !== undefined) {
+  if (was === null || was.origin !== undefined || was.replica === undefined) {
     await logLine($, 'question', `a remote reply to ${id} matches no question asked here`)
     return { consumed: 'orchestrator: a remote reply to no question here, dropped' }
   }
@@ -222,7 +257,8 @@ export async function receiveReplyAck($: any, ack: QAck): Promise<{ consumed: st
     await updateOver(storeIo($), await pathOf($, ack.id), current => {
       const now = current === undefined ? null : parseAsked(current)
       const state = now?.delivery?.state
-      if (now === null || now.origin === undefined || (state !== 'pending' && state !== 'sent' && state !== 'failed')) return undefined
+      // A failure said « already answered » stays: no plain acknowledgment answers a reply its owner did not apply.
+      if (now === null || now.origin === undefined || (state !== 'pending' && state !== 'sent' && state !== 'failed') || (state === 'failed' && now.delivery!.reason === ALREADY_ANSWERED && !ack.already)) return undefined
       const { reason: _reason, ...delivery } = now.delivery!
       taken = true
       const at = new Date().toISOString()
@@ -243,9 +279,20 @@ export async function receiveReplyAck($: any, ack: QAck): Promise<{ consumed: st
  */
 export async function sendReply($: any, id: string): Promise<string | null> {
   const path = await pathOf($, id)
-  const entry = parseAsked(String(await $.fs.read(path).catch(() => '')))
+  let read = ''
+  try {
+    read = String(await $.fs.read(path))
+  } catch (err) {
+    await logLine($, 'question', `the answer to ${id} not sent: its replica could not be read (${messageOf(err)})`)
+    return `its replica could not be read: ${messageOf(err)}`
+  }
+  const entry = parseAsked(read)
   const was = entry?.delivery
-  if (entry === null || entry.origin === undefined || entry.answer === null || (was?.state !== 'pending' && was?.state !== 'sent')) return null
+  // Only an answer given here, still on its way: one its owner's close replaced is not sent back to it.
+  if (entry === null || entry.origin === undefined || entry.answer === null || !REPLICA_ANSWERS.includes(entry.answer.by) || (was?.state !== 'pending' && was?.state !== 'sent')) {
+    await logLine($, 'question', `the answer to ${id} not sent: no answer given here waits to go`)
+    return 'no answer given here waits to go'
+  }
   const reply: QReply = {
     status: entry.status === 'withdrawn' ? 'withdrawn' : 'answered', text: entry.answer.text,
     by: entry.answer.by === 'coordinator' ? 'coordinator' : 'pane', at: entry.answer.at, settler: entry.answer.settler,
@@ -258,10 +305,14 @@ export async function sendReply($: any, id: string): Promise<string | null> {
     reason = messageOf(err)
   }
   const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: was.attempts + 1, ...(reason !== null ? { reason } : {}) }
-  await updateOver(storeIo($), path, current => {
-    const now = current === undefined ? null : parseAsked(current)
-    return now?.delivery?.state === was.state && now.delivery.attempts === was.attempts ? `${JSON.stringify({ ...now, delivery })}\n` : undefined
-  })
+  try {
+    await updateOver(storeIo($), path, current => {
+      const now = current === undefined ? null : parseAsked(current)
+      return now?.delivery?.state === was.state && now.delivery.attempts === was.attempts ? `${JSON.stringify({ ...now, delivery })}\n` : undefined
+    })
+  } catch (err) {
+    await logLine($, 'question', `the send of the answer to ${id} not written: ${messageOf(err)}`)
+  }
   if (reason !== null) await logLine($, 'question', `the answer to ${id} was not delivered to ${entry.sender.name} on ${entry.origin.machine}: ${reason}`)
   return reason
 }
@@ -277,12 +328,13 @@ export async function resendReplies($: any, now: number = Date.now()): Promise<v
         continue
       }
       const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
+      let written = false
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const read = current === undefined ? null : parseAsked(current)
-        return read?.delivery?.state === delivery.state && read.delivery.attempts === delivery.attempts
-          ? `${JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })}\n`
-          : undefined
+        written = read?.delivery?.state === delivery.state && read.delivery.attempts === delivery.attempts
+        return written ? `${JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })}\n` : undefined
       })
+      if (!written) continue
       await logLine($, 'question', `the answer to ${entry.id} on ${entry.origin.machine} failed: ${reason}`)
       $.ui.invalidate('ui.render')
     } catch (err) {
