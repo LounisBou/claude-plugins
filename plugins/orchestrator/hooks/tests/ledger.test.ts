@@ -206,3 +206,36 @@ test('the pull request a creation names is read from the answer: the last addres
   expect(createdPr({ tool: 'Bash', command: 'gh pr create-draft' }, { result: 'https://github.com/a/b/pull/21' })).toBe(null)
   expect(createdPr({ tool: 'Bash', command: 'gh pr create' }, undefined)).toBe(null)
 })
+
+// Every way the shell can be made to run `gh pr create`: the rewrite this machine gives each Bash `gh`
+// (`rtk gh …`), gh's repository option before or after the noun, and the commands that wrap another.
+const CREATIONS = [
+  'rtk gh pr create --draft --title t',
+  'gh --repo o/r pr create --title t',
+  'gh -R o/r pr create --title t',
+  'gh -Ro/r pr create --title t',
+  'gh pr --repo=o/r create --title t',
+  'gh pr -R o/r create --title t',
+  'if true; then\n  gh pr create --title t\nfi',
+  'time gh pr create --title t',
+  'sudo gh pr create --title t',
+  'env GH_TOKEN=x gh pr create --title t',
+  '/usr/bin/env gh pr create --title t',
+  'bash -c "gh pr create --title t"',
+  'cd /repo && rtk gh pr create --title t',
+]
+for (const command of CREATIONS) {
+  test(`the Bash command \`${command.replace(/\n/g, ' ')}\` is a creation`, () => {
+    expect(createdPr({ tool: 'Bash', command }, { result: 'https://github.com/o/r/pull/30' })).toEqual({ repo: 'o/r', pr: 30 })
+  })
+}
+
+test('a Bash command that only names or lists `gh pr create` is no creation', () => {
+  for (const command of ['git commit -m "gh pr create"', 'rtk gh pr view 3', 'gh pr list --search "gh pr create"', 'gh issue create', 'rtk gh pr create-draft', 'gh pr', 'cat <<EOF\ngh pr create\nEOF']) {
+    expect(createdPr({ tool: 'Bash', command }, { result: 'https://github.com/o/r/pull/30' })).toBe(null)
+  }
+})
+
+test('a command line the shell reader cannot read is no creation, and throws nothing', () => {
+  expect(createdPr({ tool: 'Bash', command: 'echo {1..5000}; gh pr create' }, { result: 'https://github.com/o/r/pull/30' })).toBe(null)
+})

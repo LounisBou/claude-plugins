@@ -6,6 +6,7 @@
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
 import { ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
+import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText } from './audit-events.ts'
 import { isDegradedPass, isOwnRecord, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
@@ -16,15 +17,32 @@ import { logLine, stateDir, storeIo } from './module-io.ts'
 export const LEDGER_BOUND_MS = 10_000
 
 const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)/g
-// `gh pr create` as a command of its own: at the start of the line or after `;`, `&`, `|` or `(`, behind
-// any variables set for it.
-const GH_PR_CREATE = /(?:^|[\n;&|(])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gh\s+(?:-R\s+\S+\s+)?pr\s+create(?=\s|$)/
+// Whether the command line runs `gh pr create`, read as the shell reads it (core's shell reader: quotes,
+// heredocs, assignments, `time`, `rtk`, `sudo`, `bash -c`): the words after `gh`, past its repository
+// option wherever it stands, are `pr create`. A line the reader cannot read creates nothing.
+function runsPrCreate(line: string): boolean {
+  try {
+    return simpleCommands(line).some(command => {
+      const argv = unwrapPath(command).argv
+      if (!/^(.*\/)?gh$/.test(argv[0] ?? '')) return false
+      const named: string[] = []
+      for (let k = 1; k < argv.length && named.length < 2; k++) {
+        const word = argv[k] ?? ''
+        if (word === '-R' || word === '--repo') k++
+        else if (!word.startsWith('-R') && !word.startsWith('--repo=')) named.push(word)
+      }
+      return named[0] === 'pr' && named[1] === 'create'
+    })
+  } catch {
+    return false
+  }
+}
 
 // The pull request a creation opened, from the call and its answer; null for any other call, a failed
 // one, or an answer that names none. A JSON answer is read at its `html_url`, a text one at its last address, the one `gh` prints last.
 export function createdPr(e: Readonly<Record<string, unknown>>, result: unknown): { repo: string; pr: number } | null {
   const opens = e['tool'] === 'mcp__github__gh' ? e['command'] === 'pr-create'
-    : e['tool'] === 'Bash' && typeof e['command'] === 'string' && GH_PR_CREATE.test(e['command'])
+    : e['tool'] === 'Bash' && typeof e['command'] === 'string' && runsPrCreate(e['command'])
   const answer = opens ? answerText(result) : null
   if (answer === null) return null
   const last = [...(htmlUrlOf(answer) ?? answer).matchAll(PULL_URL)].at(-1)
