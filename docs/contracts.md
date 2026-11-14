@@ -37,4 +37,4 @@ script, which validates every argument.
 | Rule | Plugin | Validation the script performs |
 |---|---|---|
 | `Bash(<install>/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)` | orchestrator | permission mode in an allowlist (program, orchestrator defect D2), directory checks |
-| `Bash(bugs-bot:*)`, printed for the operator to add, never written (`bugs_bot/doctor.py` `ALLOW_RULE`) | bugs-bot | the CLI's own parser: one of its fixed subcommands; `deploy_check` still runs the project's command with `shell=True`, and only when the project file is the operator's alone (`bugs_bot/agent.py`) |
+| `Bash(bugs-bot:*)`, printed for the operator to add, never written (`bugs_bot/doctor.py` `ALLOW_RULE`) | bugs-bot | the CLI's own parser: one of its fixed subcommands; `deploy_check` runs the project's command split into words, without a shell, and only when the project file is the operator's alone (`bugs_bot/agent.py`) |

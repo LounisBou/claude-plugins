@@ -99,9 +99,9 @@ changed by a pull request that edits this file and the code it governs together.
   name, an account, a time zone, a language, a stack) lives in configuration, never in a
   plugin.
 - Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
-  more than once, both held by CI (`ci/prompts.json`, `npm run prompts`); they only fall, and
-  only the release lowers them (`npm run release`); `npm run prompts -- --base <ref>` refuses a
-  ceiling lowered in a pull request whose commits include no release.
+  more than once, both held by CI against their ceilings (`ci/prompts.json`, `npm run prompts`);
+  a pull request may lower one after a cut (`npm run prompts -- --lower`), and no ceiling rises
+  outside the release (`npm run release`).
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
