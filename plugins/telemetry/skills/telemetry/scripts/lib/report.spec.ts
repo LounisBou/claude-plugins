@@ -65,6 +65,8 @@ test('an empty store prints every figure it cannot compute as n/a with its reaso
     assert.match(find(out, '9 '), /n\/a — acme\/tool: gh run list acme\/tool failed: no access to acme\/tool$/)
     assert.match(find(out, '  acme/tool: '), /n\/a — gh pr list acme\/tool failed: no access/)
     assert.equal(out.filter(l => l.startsWith('20')).length, 7)
+    assert.equal(find(out, '  cost '), '  cost    n/a — none known in the week')
+    assert.equal(find(out, '  tokens '), '  tokens  n/a — none known in the week')
   })
 })
 
@@ -425,4 +427,53 @@ test('a restart of the cumulative cost is told from a late or equal line, and su
   const mixed = run([turn('2026-11-07T10:00:00Z', S(1), 10, 10), turn('2026-11-09T10:00:00Z', S(1), 1, 1), turn('2026-11-09T11:00:00Z', S(1), 3)])
   assert.equal(find(mixed, '  restarted:'), '  restarted: 1 resumed sessions whose cumulative cost restarted lower: 0 summed from their per-turn costs, 1 n/a')
   assert.match(find(mixed, 'spend'), /cost known for 0 of 1 sessions/)
+})
+
+test('the medians are of three or more unsorted values, the middle one and not the mean: delays, lives, first turns, lines', () => {
+  const min = (n: number): number => n * 60_000
+  const orchestrator = (n: number, day: string, context: number, hours: number): Record<string, unknown>[] => [
+    ev(`${day}T08:00:00Z`, 'session_start', S(n), { role: 'orchestrator' }),
+    ev(`${day}T08:01:00Z`, 'turn_end', S(n), { context_tokens: context }),
+    ev(`${day}T09:00:00Z`, 'session_end', S(n), { duration_ms: hours * 3_600_000, role: 'orchestrator' }),
+  ]
+  // Lives 6 h, 1 h, 2 h (mean 3 h, median 2 h); first turns 90k, 30k, 40k (mean 53k, median 40k).
+  const events = [...orchestrator(1, '2026-11-10', 90_000, 6), ...orchestrator(2, '2026-11-10', 30_000, 1), ...orchestrator(3, '2026-11-11', 40_000, 2)]
+  // Lines 90, 10, 20 minutes (mean 40, median 20), in that order.
+  const row = (id: number, minutes: number): string => JSON.stringify({ id, opened: '2026-11-10T08:00:00Z', closed: new Date(Date.parse('2026-11-10T08:00:00Z') + min(minutes)).toISOString(), state: 'closed' })
+  // Delays 50, 10, 20 minutes (mean 27, median 20), in that order of number.
+  const at = (m: number): string => new Date(Date.parse('2026-11-10T08:00:00Z') + min(m)).toISOString()
+  const prs = merged([[1, '2026-11-10T08:00:00Z', at(50)], [2, '2026-11-10T08:00:00Z', at(10)], [3, '2026-11-10T08:00:00Z', at(20)]])
+  scratch({ events, record: [row(1, 90), row(2, 10), row(3, 20)] }, config => {
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
+    assert.equal(find(out, '4 '), '4 life of an orchestrator session: median 2.0 h over 3 orchestrator sessions (target ≥ 2.0 h)')
+    assert.equal(find(out, '5 '), '5 first turn of a new session: median 40k over 3 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(out, '6 '), '6 delay line → merge: pull request median 20 min over 3; line median 20 min over 3 (target ≤ 60 min)')
+  })
+})
+
+test('what happened before or after the week is read for the cost baseline only: not the turns, the end of a session, nor the pull request it names', () => {
+  const events = [
+    // Before the week: a baseline cost, a high turn, a call naming another pull request, a session end.
+    ev('2026-11-05T10:00:00Z', 'turn_end', S(1), { cost_usd: 1, context_tokens: 300_000, project: 'acme/tool', role: 'orchestrator' }),
+    ev('2026-11-05T10:01:00Z', 'tool_call', S(1), { target: { repo: 'acme/tool', pr: 9 } }),
+    ev('2026-11-05T10:02:00Z', 'session_end', S(1), { duration_ms: 36_000_000, totals: { in: 5_000_000, out: 0, cache_read: 0, cache_write: 0 } }),
+    // In the week.
+    ev('2026-11-10T08:00:00Z', 'session_start', S(1), { role: 'orchestrator' }),
+    ev('2026-11-10T08:01:00Z', 'turn_end', S(1), { cost_usd: 3, context_tokens: 50_000 }),
+    ev('2026-11-10T08:02:00Z', 'tool_call', S(1), { target: { repo: 'acme/tool', pr: 7 } }),
+    ev('2026-11-10T09:00:00Z', 'session_end', S(1), { duration_ms: 7_200_000, totals: { in: 100, out: 0, cache_read: 0, cache_write: 0 } }),
+    // After the week.
+    ev('2026-11-16T10:00:00Z', 'turn_end', S(1), { cost_usd: 99, context_tokens: 300_000 }),
+    ev('2026-11-16T10:01:00Z', 'tool_call', S(1), { target: { repo: 'acme/tool', pr: 8 } }),
+    ev('2026-11-16T10:02:00Z', 'session_end', S(1), { duration_ms: 72_000_000, totals: { in: 9_000_000, out: 0, cache_read: 0, cache_write: 0 } }),
+  ]
+  const prs = merged([[7, '2026-11-10T09:00:00Z', '2026-11-10T09:30:00Z']])
+  scratch({ events }, config => {
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
+    assert.equal(find(out, '3 '), '3 context height: 0 of 1 turns above 200k (0 %), peak 50k; orchestrator 0/1')
+    assert.equal(find(out, '4 '), '4 life of an orchestrator session: median 2.0 h over 1 orchestrator sessions (target ≥ 2.0 h)')
+    assert.equal(find(out, '5 '), '5 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(out, '  acme/tool#7 '), '  acme/tool#7    30 min  $2.00')
+    assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
+  })
 })
