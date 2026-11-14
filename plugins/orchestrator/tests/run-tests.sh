@@ -4370,8 +4370,8 @@ check "a tier bound without an effort types the shipped tier effort" "1" "$(pcmd
 check "an unknown effort on spawn is a refusal" \
   "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p --effort huge 2>&1 | tail -1)"
-check "an auditor refuses an effort: it runs as its caller runs" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+check "an auditor given an effort alone is refused: it takes the pair, or neither" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'an auditor takes --model and --effort together')"
 check "rotate forwards the effort to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
