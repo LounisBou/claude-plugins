@@ -11173,7 +11173,7 @@ check "with no pane open every open question is due, a closing proposal still no
 # it (the module's settle writes it closed) it is never listed again: the tab never presents it.
 check "an entry answered in the pane is never due, and once closed is never listed again" \
   "0|0|0" \
-  "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
+  "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
 check "round refuses a pinned clock that is no UTC time" "exit 1|coordinator: round: COORDINATOR_NOW is no UTC time: soon" \
   "$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round >/dev/null 2>&1; echo "exit $?")|$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round 2>&1)"
 # round --by-urgency lists the same lines, due marked the same, each set ordered urgent first,
