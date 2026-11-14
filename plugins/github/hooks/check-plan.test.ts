@@ -11,7 +11,7 @@ test('a plan gives each need, and a reason for any need but required', () => {
   expect(planInput({ e2e: 'Screenshots: a colour', norms: 'required: kept', review: 'one-pass: a typo' })).toEqual({
     e2e: { need: 'screenshots', reason: 'a colour' }, norms: { need: 'required', reason: '' }, review: { need: 'one-pass', reason: 'a typo' },
   })
-  expect(planInput({})).toEqual({ e2e: { need: 'required', reason: '' }, norms: { need: 'none', reason: '' }, review: { need: 'full', reason: '' } })
+  expect(planInput({})).toEqual({ e2e: { need: 'none', reason: 'not in the plan' }, norms: { need: 'none', reason: 'not in the plan' }, review: { need: 'full', reason: '' } })
   expect(planInput({ review: 'one-pass' })).toBe('review one-pass gives its reason: "one-pass: <why>"')
   expect(planInput({ e2e: 'none', norms: 'required' })).toBe('e2e none gives its reason: "none: <why>"')
   expect(planInput({ e2e: 'required', norms: 'screenshots: x' })).toContain('norms is one of required, none')
@@ -38,8 +38,8 @@ test('only a required check made not required is a relaxation', () => {
 
 test('the plan excuses the kinds it does not require, with its date and reason', () => {
   expect(planExcuses(undefined)).toEqual({})
-  expect(planExcuses(plan('required', 'required'))).toEqual({})
-  expect(planExcuses(plan('none: docs', 'none: tiny'))).toEqual({ e2e: 'check plan, 2026-11-14: docs', norms: 'check plan, 2026-11-14: tiny' })
+  expect(planExcuses(plan('required', 'required'))).toEqual({ required: ['e2e', 'norms'] })
+  expect(planExcuses(plan('none: docs', 'none: tiny'))).toEqual({ required: [], e2e: 'check plan, 2026-11-14: docs', norms: 'check plan, 2026-11-14: tiny' })
   expect(planExcuses(plan('screenshots: colour', 'required')).e2e).toBe('check plan, 2026-11-14: desktop and mobile screenshots in its place, colour')
 })
 
@@ -49,14 +49,17 @@ test('the plan file sits under the data directory by repository and number, and 
   expect(planText(plan('none: docs', 'required'))).toContain('- e2e: none — docs\n- norms: required\n- review: full\n')
 })
 
-test('only the E2E made not required is a relaxation: norms and the review depth, unread by the gate, may relax', () => {
-  const before = plan('required', 'required: kept', 'full')
-  expect(relaxed(before, plan('required', 'none', 'one-pass: small'))).toEqual([])
-  expect(relaxed(before, plan('none: docs', 'none', 'one-pass: small'))).toEqual(['e2e'])
+test('only an explicit required requires: a check left out of a plan is not required, norms or E2E', () => {
+  const omitted = plan(undefined as any, undefined as any)
+  expect(omitted.e2e.need).toBe('none')
+  expect(omitted.norms.need).toBe('none')
+  expect(planExcuses(omitted).required).toEqual([])
+  expect(planExcuses(plan('required', 'required')).required).toEqual(['e2e', 'norms'])
 })
 
-test('norms left out of a plan reads none, on demand, and the plan says the gate requires only the E2E marked required', () => {
-  expect(planInput({}).norms).toEqual({ need: 'none', reason: '' })
-  expect(planInput({ norms: 'none' }).norms).toEqual({ need: 'none', reason: '' })
-  expect(planText(plan('required', 'none')).endsWith('\n\nThe ready gate requires the E2E marked required; the operator\'s waiver lifts it.')).toBe(true)
+test('the lock covers a required E2E and required norms, never the review depth', () => {
+  const before = plan('required', 'required', 'full')
+  expect(relaxed(before, plan('none: docs', 'none: tiny', 'one-pass: small'))).toEqual(['e2e', 'norms'])
+  expect(relaxed(before, plan('required', 'required', 'one-pass: small'))).toEqual([])
+  expect(planText(plan('required', 'required')).endsWith('\n\nThe ready gate requires the E2E and norms checks marked required; only the operator\'s waiver lifts one.')).toBe(true)
 })

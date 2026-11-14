@@ -616,7 +616,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
     const record = latest.get(kind)
     if (record && accepts(record)) continue
     if (excused[kind] && record?.result !== 'fail') continue
-    if (kind === 'norms' && !record) continue // on demand: only a norms check that ran at the head counts
+    if (kind === 'norms' && !record && !excused.required?.includes('norms')) continue // on demand unless the plan requires it
     if (!record && carried.some((c) => c.kind === kind)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))

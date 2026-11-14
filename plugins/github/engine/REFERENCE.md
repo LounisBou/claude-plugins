@@ -281,7 +281,7 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` is on demand, only a failed one is.
+- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
 - The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest; named in the `Ready` line; a `fail` still holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
@@ -310,8 +310,8 @@ Both routes are `hooks/e2e-scope.ts`'s.
 - **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
   head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
-  `full|one-pass` (unread by the gate), each `<need>[: <reason>]`, a reason unless the first, the
-  first when left out. One file per PR in `<data dir>/check-plans/`, posted on the PR. It may grow stricter, never laxer; a waiver lifts only a required E2E.
+  `full|one-pass` (unread by the gate), each `<need>[: <reason>]`, a reason unless the first; rules
+  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator's dated words typed in the session, or a consent record
