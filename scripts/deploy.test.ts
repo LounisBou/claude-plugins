@@ -18,12 +18,14 @@ function stateOf(history: string[], extra: Partial<State> = {}): State {
   return { version: 1, repo: 'acme/app', marketplace: MARKETPLACE, history: history.map((commit, at) => ({ commit, at: new Date(Date.UTC(2026, 0, 10 - at)).toISOString() })), skipped: [], pending: false, plugins: { alpha: '1.2.3' }, ...extra }
 }
 
-/** Writes the tree of a repository at a commit: the catalogue and one plugin. */
-function treeAt(into: string, version = '1.2.3', name = MARKETPLACE): void {
+/** Writes the tree of a repository at a commit: the catalogue and its plugins (alpha alone by default). */
+function treeAt(into: string, version = '1.2.3', name = MARKETPLACE, plugins: readonly string[] = ['alpha']): void {
   mkdirSync(join(into, '.claude-plugin'), { recursive: true })
   writeFileSync(join(into, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name, plugins: [] }))
-  mkdirSync(join(into, 'plugins', 'alpha', '.claude-plugin'), { recursive: true })
-  writeFileSync(join(into, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'alpha', nested: { version: '9.9.9' }, version }))
+  for (const plugin of plugins) {
+    mkdirSync(join(into, 'plugins', plugin, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(into, 'plugins', plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: plugin, nested: { version: '9.9.9' }, version }))
+  }
   mkdirSync(join(into, 'plugins', 'notes'), { recursive: true })
 }
 
@@ -35,17 +37,31 @@ interface Fake {
   failUpdate: boolean
   /** The update exits 0 and changes nothing. */
   idleUpdate: boolean
+  /** The update of this plugin alone throws. */
+  failOn: string
+  /** The installed tree's own `--status` fails. */
+  failSmoke: boolean
+  /** The plugins of the commits extracted. */
+  tree: string[]
+  /** The installed plugins of the marketplace, by id, with the version the host records. */
+  readonly versions: Map<string, string>
+  /** The pids that no longer run. */
+  readonly dead: Set<number>
 }
 
 /** A host that installs as the real one does: an update takes the version of the directory pointed at. */
 function fake(now = Date.UTC(2026, 0, 20)): Fake {
   let pointed = ''
-  let version = '1.2.3'
   const self: Fake = {
     calls: [],
     green: A,
     failUpdate: false,
     idleUpdate: false,
+    failOn: '',
+    failSmoke: false,
+    tree: ['alpha'],
+    versions: new Map([[ALPHA, '1.2.3']]),
+    dead: new Set(),
     host: {
       api: path => {
         self.calls.push(`api ${path}`)
@@ -53,18 +69,23 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
       },
       extract: (repo, commit, into) => {
         self.calls.push(`extract ${repo} ${commit.slice(0, 1)}`)
-        treeAt(into)
+        treeAt(into, '1.2.3', MARKETPLACE, self.tree)
+      },
+      smoke: dir => {
+        if (self.failSmoke) throw new Error(`${dir}/scripts/deploy.ts --status: SyntaxError`)
       },
       repoint: dir => {
         pointed = dir
         self.calls.push(`repoint ${dir.slice(-1)}`)
       },
-      installed: () => [{ id: ALPHA, version }, { id: 'other@elsewhere', version: '0.0.1' }],
+      installed: () => [...[...self.versions].map(([id, version]) => ({ id, version })), { id: 'other@elsewhere', version: '0.0.1' }],
       update: id => {
         if (self.failUpdate) throw new Error('update refused')
+        if (self.failOn === id) throw new Error(`update of ${id} refused`)
         self.calls.push(`update ${id}`)
-        if (!self.idleUpdate) version = versionsIn(pointed)['alpha'] ?? ''
+        if (!self.idleUpdate) self.versions.set(id, versionsIn(pointed)[id.split('@')[0] ?? ''] ?? '')
       },
+      alive: pid => !self.dead.has(pid),
       now: () => now,
     },
   }
@@ -238,6 +259,77 @@ describe('the deploy', () => {
     assert.equal(stateIn(box).pending, true)
   })
 
+  it('updates every plugin when one update fails, and names the failures', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta']
+    f.versions.set('beta@lounisbou', '1.0.0')
+    f.failOn = ALPHA
+    assert.equal(deploy(box, f.host), 1)
+    assert.ok(f.calls.includes('update beta@lounisbou'))
+    assert.match(box.err.join('\n'), /update of alpha@lounisbou refused/)
+    assert.equal(stateIn(box).pending, true)
+  })
+
+  it('leaves alone a plugin the commit no longer carries, and installs the others', () => {
+    const box = sandbox()
+    const f = fake()
+    f.versions.set('gone@lounisbou', '0.9.0')
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.includes('update gone@lounisbou'), false)
+    assert.match(box.err.join('\n'), /gone@lounisbou is not in aaaaaaa: left as installed/)
+    assert.equal(stateIn(box).pending, false)
+  })
+
+  it('records the last failure in the state, prints it in the status, and clears it once a run succeeds', () => {
+    const box = sandbox()
+    const f = fake()
+    deploy(box, f.host)
+    f.green = B
+    f.failUpdate = true
+    assert.equal(deploy(box, f.host), 1)
+    assert.deepEqual(stateIn(box).lastError, { at: '2026-01-20T00:00:00.000Z', message: `${ALPHA}: update refused: run npm run deploy again` })
+    deploy(box, f.host, '--status')
+    assert.match(box.out.at(-1) ?? '', /; last failure 2026-01-20 \d\d:\d\d: alpha@lounisbou: update refused: run npm run deploy again$/)
+    f.failUpdate = false
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(stateIn(box).lastError, undefined)
+  })
+
+  it('refuses a commit whose own deploy script does not run, and keeps the one installed', () => {
+    const box = sandbox()
+    const f = fake()
+    deploy(box, f.host)
+    f.green = B
+    f.failSmoke = true
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 1)
+    assert.match(box.err.at(-1) ?? '', /bbbbbbb does not run: .*--status: SyntaxError/)
+    assert.equal(f.calls.some(call => call.startsWith('repoint')), false)
+    assert.equal(readlinkSync(join(box.root, 'current')), join(box.root, A))
+    assert.equal(stateIn(box).history[0]?.commit, A)
+    assert.equal(deploy(box, f.host, '--rollback'), 1)
+  })
+
+  it('takes over the lock of a run that died, whatever its age', () => {
+    const box = sandbox()
+    mkdirSync(box.root, { recursive: true })
+    writeFileSync(join(box.root, 'installed.json.lock'), '999999\n')
+    const f = fake(Date.now())
+    f.dead.add(999999)
+    assert.equal(deploy(box, f.host), 0)
+    assert.match(box.err.join('\n'), /removed the lock of a run that died/)
+    assert.equal(stateIn(box).history[0]?.commit, A)
+  })
+
+  it('refuses, exit 1, to roll back while another deploy runs', () => {
+    const box = sandbox()
+    mkdirSync(box.root, { recursive: true })
+    writeFileSync(join(box.root, 'installed.json.lock'), `${process.pid}\n`)
+    assert.equal(deploy(box, fake(Date.now()).host, '--rollback'), 1)
+    assert.match(box.err.at(-1) ?? '', /another deploy is running: roll back once it ends/)
+  })
+
   it('leaves a running deploy alone, and takes over the lock of one that died', () => {
     const box = sandbox()
     mkdirSync(box.root, { recursive: true })
@@ -299,16 +391,56 @@ describe('the rollback', () => {
 
 describe('the directories kept', () => {
   it('keeps the installed commit, the one before and any extracted within the window', () => {
-    const now = Date.UTC(2026, 0, 10)
+    const now = Date.UTC(2026, 0, 9) + KEEP_MS
     const old = now - KEEP_MS
     const dirs = [A, B, C, 'installed.json', 'current'].map(name => ({ name, at: old }))
     assert.deepEqual(prunable(stateOf([A, B, C]), dirs, now), [C])
-    assert.deepEqual(prunable(stateOf([A, B, C]), [{ name: C, at: old + 1 }], now), [])
+    assert.deepEqual(prunable(stateOf([A, B]), [{ name: C, at: old + 1 }], now), [])
+  })
+
+  it('ages a commit installed before from when the next one replaced it, not from its extraction', () => {
+    const replaced = Date.UTC(2026, 0, 9)
+    const dirs = [{ name: C, at: replaced - 10 * KEEP_MS }]
+    assert.deepEqual(prunable(stateOf([A, B, C]), dirs, replaced + KEEP_MS - 1), [])
+    assert.deepEqual(prunable(stateOf([A, B, C]), dirs, replaced + KEEP_MS), [C])
+  })
+
+  it('keeps a directory extracted long ago that running sessions may still read', () => {
+    const box = sandbox()
+    const day = 24 * 3_600_000
+    deploy(box, fake(Date.UTC(2026, 0, 1)).host)
+    const old = new Date(Date.UTC(2025, 11, 1))
+    utimesSync(join(box.root, A), old, old)
+    const second = fake(Date.UTC(2026, 0, 25))
+    second.green = B
+    deploy(box, second.host)
+    const third = fake(Date.UTC(2026, 0, 25) + day)
+    third.green = C
+    deploy(box, third.host)
+    assert.equal(existsSync(join(box.root, A)), true)
+  })
+
+  it('ages a commit left by a rollback from the rollback', () => {
+    const box = sandbox()
+    const at = Date.UTC(2026, 0, 1)
+    deploy(box, fake(at).host)
+    const second = fake(at)
+    second.green = B
+    deploy(box, second.host)
+    const old = new Date(Date.UTC(2025, 11, 1))
+    utimesSync(join(box.root, B), old, old)
+    const back = fake(at + KEEP_MS)
+    back.green = B
+    assert.equal(deploy(box, back.host, '--rollback'), 0)
+    const next = fake(at + KEEP_MS + 1)
+    next.green = C
+    deploy(box, next.host)
+    assert.equal(existsSync(join(box.root, B)), true)
   })
 
   it('removes an old commit directory at the next deploy', () => {
     const box = sandbox()
-    const f = fake()
+    const f = fake(Date.UTC(2026, 0, 1))
     deploy(box, f.host)
     f.green = B
     deploy(box, f.host)

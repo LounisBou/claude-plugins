@@ -134,11 +134,14 @@ directory of its own, never changed after, its manifests' versions stamped with 
 the marketplace is pointed at it: a new session reads the new directory, a running one keeps the
 one it loaded. `--rollback` points back at the commit installed before; `--status` prints the
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
-Run every 5 minutes by the machine's scheduler, from the installed tree itself:
+Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
+`deploy.ts --status` fails is refused before `current` moves), its errors kept in a log:
 
 ```
-*/5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts
+*/5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >/dev/null 2>>~/.claude/deploys/lounisbou/deploy.log
 ```
+
+The last failure is also kept in `installed.json` until a run succeeds, and `--status` prints it.
 
 The first run moves the marketplace from its GitHub source, which follows `main` green or not,
 to the directory; `claude plugin marketplace add LounisBou/claude-plugins` moves it back. The
