@@ -140,6 +140,7 @@ export function redactTranscript(text: string, secrets: EnvSecrets): string {
  */
 function indexFiles(options: ExportOptions, events: string, days: readonly string[], has: (session: string) => boolean): { files: IndexFile[]; sessions: Set<string> } {
   const sessions = new Set<string>()
+  const projects = projectsOfSessions(days.map(name => readFileSync(join(events, name), 'utf8')))
   const files = [
     ...schemaFiles(options.kinds ?? EVENT_SCHEMA),
     ...days.map((name): IndexFile => {
@@ -155,7 +156,7 @@ function indexFiles(options: ExportOptions, events: string, days: readonly strin
       })
       return { path: `${INDEX_DIR}/${options.machine}/${day}.json`, text: `${JSON.stringify(manifest, null, 2)}\n` }
     }),
-    ...days.flatMap(name => projectViews(options, name.slice(0, 10), readFileSync(join(events, name), 'utf8'), has)),
+    ...days.flatMap(name => projectViews(options, name.slice(0, 10), readFileSync(join(events, name), 'utf8'), projects, has)),
   ]
   return { files, sessions }
 }
@@ -166,18 +167,30 @@ export function projectDir(project: string): string {
   return /^\.+$/.test(name) ? '_' : name
 }
 
-/**
- * A day's manifest once per project: the same manifest as the day's, built from the events of the
- * sessions that name that project (their `project` field), at `index/projects/<owner-name>/<machine>/<day>.json`.
- * A session naming none is in no project's view.
- */
-function projectViews(options: ExportOptions, day: string, text: string, has: (session: string) => boolean): IndexFile[] {
-  const lines = text.split('\n').filter(line => line.trim() !== '')
-  const projectOfSession = new Map<string, string>()
-  const parsed = lines.map(line => {
+/** The project each session names, over every day file: only its `session_start` carries it, and a session outlives a UTC day. */
+function projectsOfSessions(texts: readonly string[]): Map<string, string> {
+  const projects = new Map<string, string>()
+  for (const line of texts.flatMap(text => text.split('\n'))) {
     try {
       const e = JSON.parse(line) as { session?: unknown; project?: unknown }
-      if (typeof e.session === 'string' && typeof e.project === 'string') projectOfSession.set(e.session, e.project)
+      if (typeof e.session === 'string' && typeof e.project === 'string') projects.set(e.session, e.project)
+    } catch {
+      // A line that is no JSON names no project.
+    }
+  }
+  return projects
+}
+
+/**
+ * A day's manifest once per project: the same manifest as the day's, built from the events of the
+ * sessions that name that project (`projects`, read over every day), at `index/projects/<owner-name>/<machine>/<day>.json`.
+ * A session naming none is in no project's view.
+ */
+function projectViews(options: ExportOptions, day: string, text: string, projects: ReadonlyMap<string, string>, has: (session: string) => boolean): IndexFile[] {
+  const lines = text.split('\n').filter(line => line.trim() !== '')
+  const parsed = lines.map(line => {
+    try {
+      const e = JSON.parse(line) as { session?: unknown }
       return typeof e.session === 'string' ? e.session : undefined
     } catch {
       return undefined
@@ -185,7 +198,7 @@ function projectViews(options: ExportOptions, day: string, text: string, has: (s
   })
   const byDirectory = new Map<string, string[]>()
   parsed.forEach((session, i) => {
-    const project = session === undefined ? undefined : projectOfSession.get(session)
+    const project = session === undefined ? undefined : projects.get(session)
     if (project === undefined) return
     const directory = projectDir(project)
     byDirectory.set(directory, [...(byDirectory.get(directory) ?? []), lines[i] ?? ''])

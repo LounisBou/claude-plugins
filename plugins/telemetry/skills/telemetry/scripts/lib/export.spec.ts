@@ -225,6 +225,22 @@ test('the index holds a view per project: index/projects/<owner-name>/<machine>/
   })
 })
 
+test('a session that crosses UTC midnight stays in its project\'s view on the later day, though only its start names the project', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), [
+      JSON.stringify({ v: 1, ts: '2026-11-13T23:59:00Z', event: 'session_start', session: S, project: PLUGINS }),
+      JSON.stringify({ v: 1, ts: '2026-11-14T00:01:00Z', event: 'turn_end', session: S }),
+    ].join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/LounisBou-claude-plugins/box/2026-11-13.json', 'index/projects/LounisBou-claude-plugins/box/2026-11-14.json'])
+    const later = projectIndex(remote, 'index/projects/LounisBou-claude-plugins/box/2026-11-14.json')
+    assert.deepEqual(later.sessions.map(entry => entry.session), [S])
+    assert.deepEqual(later.events, { turn_end: 1 })
+  })
+})
+
 test('the project views of a machine are made again: a project no day names any longer leaves nothing stale; another machine\'s are kept', () => {
   scratch((root, remote) => {
     const first = join(root, 'first')
