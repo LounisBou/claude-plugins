@@ -271,6 +271,35 @@ test('a line that is no JSON is never pushed as text: a mark when it is complete
   })
 })
 
+test('no field of a transcript line is held to the shape of an event identifier: its secrets are masked, nothing else changes', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const secrets = new Map([['SERVICE_PASS', ENV_VALUE]])
+    // The names of an event's identifiers, holding what a transcript puts under them: none is a uuid, a timestamp or a word.
+    const planted = { type: 'system', session: 'a label, no uuid', event: 'Some Event 2', ts: 'yesterday at noon', turn: `turn one: ${ENV_VALUE}`, nested: { session: 'another label' } }
+    const file = join(root, `${S}.jsonl`)
+    writeFileSync(file, `${JSON.stringify(planted)}\n`)
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), secrets)
+    assert.equal(exportStore({ stateDir: state, secrets, repo: remote, machine: 'box', git, transcript: () => file }).code, 0)
+    const pushed = git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout
+    assert.deepEqual(JSON.parse(pushed), { ...planted, turn: 'turn one: [REDACTED:env]' })
+  })
+})
+
+test('a value of ~/.env used as a key of a transcript line is masked in the copy pushed, at any depth', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const secrets = new Map([['SERVICE_PASS', ENV_VALUE]])
+    const file = join(root, `${S}.jsonl`)
+    writeFileSync(file, `${JSON.stringify({ type: 'system', [ENV_VALUE]: 'a', nested: { [ENV_VALUE]: [{ [ENV_VALUE]: 1 }] } })}\n`)
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), secrets)
+    assert.equal(exportStore({ stateDir: state, secrets, repo: remote, machine: 'box', git, transcript: () => file }).code, 0)
+    const pushed = git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout
+    assert.deepEqual(JSON.parse(pushed), { type: 'system', '[REDACTED:env]': 'a', nested: { '[REDACTED:env]': [{ '[REDACTED:env]': 1 }] } })
+    assert.equal(holds(remote, ENV_VALUE), false)
+  })
+})
+
 test('the manifest points at the copy in the repository; a session with no transcript here points at none', () => {
   scratch((root, remote) => {
     const state = join(root, 'state')
