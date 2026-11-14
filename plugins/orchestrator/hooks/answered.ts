@@ -1,9 +1,9 @@
 // hooks/answered.ts
-// The orchestrator's tool for an answer that reached it by a message. The operator answers in
-// the coordinator's tab and the coordinator relays it: no hook sees that answer, so the entry
-// stays open unless the orchestrator says it acted on it. The call marks the session's open
-// question answered, by message, with the message's author. An unanswered question never
-// leaves the round otherwise.
+// The tool of an orchestrator, a coordinator or an auditor for an answer that reached it by a
+// message. The operator answers in the coordinator's tab and the coordinator relays it: no hook
+// sees that answer, so the entry stays open unless the session says it acted on it. The call
+// marks the session's open question answered, by message, with the message's author. An
+// unanswered question never leaves the round otherwise.
 import { answerByMessage } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
@@ -20,7 +20,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: ANSWERED_TOOL,
         isDeferred: false,
-        description: "Call it when the session acts on an answer to its own open round question that reached it by a message from another session: it withdraws the question, marking it answered by message, with that session's name as author. Only in an orchestrator session.",
+        description: "Call it when the session acts on an answer to its own open round question that reached it by a message from another session: it withdraws the question, marking it answered by message, with that session's name as author. Orchestrator, coordinator, auditor only.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -44,7 +44,7 @@ export function register(on: On<Held>): void {
     const author = typeof e['author'] === 'string' ? e['author'].trim() : ''
     if (author === '') return { result: 'author is the sender of the message that carried the answer', isError: true }
     const left = await answerByMessage($, author, typeof e['entry'] === 'string' && e['entry'] !== '' ? e['entry'] : null)
-    if (left === null) return { result: 'Only an orchestrator has a question to withdraw.', isError: true }
+    if (left === null) return { result: 'Only an orchestrator, a coordinator or an auditor has a question to withdraw.', isError: true }
     return { result: left.length === 0 ? 'Withdrawn as answered by message.' : `Withdrawn as answered by message; still open: ${left.join(', ')}.` }
   }).catch(async ($, e, next) => {
     await logLine($, 'answered', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
