@@ -24,7 +24,7 @@ The orchestrator sized this round by the work, its volume, its scope and its cri
 
 {{LENSES}}
 
-The norms check is no default lens: it runs only when the pull request's check plan says `norms: required` (claude-plugins#164), and then the orchestrator names its command here.
+The norms check is no default lens: it runs only when the pull request's check plan says `norms: required`, and then the orchestrator names its command here.
 
 When the delivery creates or substantially modifies a frontend surface, or creates the interface of a new feature, one more check is fixed: the screenshots on the pull request against the diff. They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding. A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules. Your report opens this check with one line, `frontend surface: yes|minor|no`, and with `yes`, the number of images in the description. With `yes`, you also open and audit every image, one by one, against the checklist in `{{SCREENSHOT_CHECKLIST}}`. Your report carries one line per image, `<image>: clean` or `<image>: <the defect>`, and every defect is also a finding: a capture that shows a defect is never a pass, whatever the diff says. Screenshots you cannot read are reported under « what the readers could not show », never as a pass.
 

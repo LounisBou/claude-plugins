@@ -1,6 +1,6 @@
 # Review
 
-Read before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase that comes before the ready. The evidence review is owed on every agent-produced pull request, small ones included; the norms check is on demand, when the pull request's check plan says `norms: required` (claude-plugins#164); the rules a verdict never crosses — one review round and one correction round, ready as the github gate's — are the first section below; the rest is how the round is run.
+Read before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase that comes before the ready. The evidence review is owed on every agent-produced pull request, small ones included; the norms check is on demand, when the pull request's check plan says `norms: required`; the rules a verdict never crosses — one review round and one correction round, ready as the github gate's — are the first section below; the rest is how the round is run.
 
 - Thresholds a verdict never crosses
 - Review on evidence
