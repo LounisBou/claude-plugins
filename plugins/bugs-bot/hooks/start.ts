@@ -11,10 +11,11 @@
 // the spawn has been asked for, nothing falls back: a second launch from the
 // markdown could open a second agent, so the outcome is said as it stands.
 import {
-  ITERM_SCRIPT, MIN_ORCHESTRATOR, PROJECT_FILE, SPAWN_TIMEOUT_MS, STEP_TIMEOUT_MS,
+  MIN_ORCHESTRATOR, PROJECT_FILE, SPAWN_TIMEOUT_MS, STEP_TIMEOUT_MS,
   chosenPython, isAgentRow, isTty, lastLine, parentsOf, peersOf, projectFacts, pythonFile, selfOf, sitsRightOfSelf,
   versionAtLeast,
 } from './core.ts'
+import { launcherOf, spawnArgv } from '../core/orchestration.ts'
 
 export const START_COMMAND = 'bugs-bot:start'
 
@@ -92,7 +93,7 @@ export async function start($: any): Promise<{ text: string }> {
   if (!versionAtLeast(version, MIN_ORCHESTRATOR)) {
     return { text: `The orchestrator plugin installed is ${version || 'of an unreadable version'}: its launcher does not know --resident. Update it first: claude plugin update orchestrator@lounisbou. Nothing was spawned.` }
   }
-  const script = `${orchestrator}/${ITERM_SCRIPT}`
+  const script = launcherOf(orchestrator)
   if (!(await $.fs.exists(script))) {
     return { text: `The orchestrator's iTerm launcher is missing (${script}): reinstall the orchestrator plugin. Nothing was spawned.` }
   }
@@ -118,7 +119,7 @@ export async function start($: any): Promise<{ text: string }> {
 
   // 5. The spawn. From here on nothing falls back to the markdown.
   try {
-    const spawned = await run($, [script, 'spawn', '--dir', repo, '--title', facts.agentTitle, '--prompt-file', promptFile, '--right-of', 'self', '--resident'], repo, SPAWN_TIMEOUT_MS)
+    const spawned = await run($, spawnArgv(script, { dir: repo, title: facts.agentTitle, promptFile, rightOf: 'self', resident: true }), repo, SPAWN_TIMEOUT_MS)
     const tty = lastLine(spawned.stdout)
     if (spawned.exitCode !== 0 || !isTty(tty)) {
       return { text: `The launcher refused the spawn (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Tell the operator; never spawn it another way.` }

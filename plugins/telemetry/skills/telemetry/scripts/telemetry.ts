@@ -3,25 +3,32 @@
 //   telemetry.ts append   --config <dir>                  JSON lines on stdin, redacted, appended
 //   telemetry.ts check    --config <dir>                  the scan of the store; exit 1 on a finding
 //   telemetry.ts export   --config <dir>                  check, then commit and push to the logs repository
+//   telemetry.ts export   --auto [--foreground] --config <dir>
+//                                                         the export a session's end starts: at most once a day,
+//                                                         detached unless --foreground
 //   telemetry.ts backfill --config <dir> <transcript>...  one session_summary per past transcript
 //
 // <dir> is the host's configuration directory; the store is <dir>/telemetry. The operator's
 // ~/.env (TELEMETRY_ENV_FILE in tests) is read for its secrets, which never leave this process.
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeEvent, type Event } from '../../../hooks/collect.ts'
-import { exportStore, logsRepo, machineName, type Git } from './lib/export.ts'
+import { runAuto } from './lib/auto.ts'
+import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
 import { summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export|backfill} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
+
+/** A command-line export waits this long for another export's lock before saying so. */
+export const EXPORT_WAIT_MS = 90_000
 
 export interface Deps {
   readonly env: Readonly<Record<string, string | undefined>>
@@ -30,6 +37,9 @@ export interface Deps {
   readonly err: (line: string) => void
   readonly git: Git
   readonly now: () => number
+  /** Starts `export --auto --foreground` for `config` as a detached process. */
+  readonly detach: (config: string) => void
+  readonly exportWaitMs: number
 }
 
 /**
@@ -60,6 +70,18 @@ export function enrich(line: string, config: string): string {
   }
 }
 
+/** Where a session's transcript is, relative to the configuration directory; undefined when it is gone. */
+export function transcriptPointer(config: string, session: string): string | undefined {
+  const path = transcriptOf(config, session)
+  return path === undefined ? undefined : relative(config, path)
+}
+
+/** Whether a line to append is a session's end. */
+function endsSession(line: string): boolean {
+  const event = parseEvent(line)
+  return typeof event !== 'string' && event.event === 'session_end'
+}
+
 /** The session_summary of one past transcript, its session read from the file's name. */
 export function backfillEvent(path: string, now: number): Event | undefined {
   const session = basename(path, '.jsonl')
@@ -85,11 +107,28 @@ export function run(args: readonly string[], deps: Deps): number {
     return 1
   }
   const { secrets } = read
+  const exportOptions = () => ({
+    stateDir,
+    secrets,
+    repo: logsRepo(deps.env, secrets),
+    machine: machineName(deps.env['TELEMETRY_MACHINE'] || hostname()),
+    git: deps.git,
+    transcript: (session: string) => transcriptPointer(config, session),
+  })
   switch (sub) {
     case 'append': {
-      const lines = deps.stdin().split('\n').filter(line => line.trim() !== '').map(line => enrich(line, config)).join('\n')
+      const raw = deps.stdin().split('\n').filter(line => line.trim() !== '')
+      const lines = raw.map(line => enrich(line, config)).join('\n')
       const { refused } = append(eventsDir(stateDir), lines, secrets)
       for (const reason of refused) deps.err(`telemetry: a line was refused (${reason})`)
+      if (raw.some(line => endsSession(line))) {
+        // A session's end is the export's trigger; it never fails the write.
+        try {
+          for (const line of runAuto({ ...exportOptions(), now: deps.now, foreground: false, detach: () => deps.detach(config) }).lines) deps.out(line)
+        } catch (error) {
+          deps.err(`telemetry: the automatic export was skipped: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
       return 0
     }
     case 'check': {
@@ -99,8 +138,9 @@ export function run(args: readonly string[], deps: Deps): number {
       return findings.length === 0 ? 0 : 1
     }
     case 'export': {
-      const machine = machineName(deps.env['TELEMETRY_MACHINE'] || hostname())
-      const result = exportStore({ stateDir, secrets, repo: logsRepo(deps.env, secrets), machine, git: deps.git })
+      const result = operands.includes('--auto')
+        ? runAuto({ ...exportOptions(), now: deps.now, foreground: operands.includes('--foreground'), detach: () => deps.detach(config) })
+        : exportExclusive(exportOptions(), { waitMs: deps.exportWaitMs })
       for (const line of result.lines) deps.out(line)
       return result.code
     }
@@ -132,7 +172,13 @@ export const realGit: Git = (args, cwd) => {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
 }
 
-/* node:coverage ignore next 12 */
+/** The automatic export as a process of its own, which outlives the session that started it. */
+export const realDetach = (config: string): void => {
+  const argv = ['--experimental-strip-types', '--no-warnings', fileURLToPath(import.meta.url), 'export', '--auto', '--foreground', '--config', config]
+  spawn(process.execPath, argv, { detached: true, stdio: 'ignore', env: process.env }).unref()
+}
+
+/* node:coverage ignore next 14 */
 const entry = process.argv[1]
 if (entry !== undefined && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
   process.exitCode = run(process.argv.slice(2), {
@@ -142,5 +188,7 @@ if (entry !== undefined && realpathSync(entry) === realpathSync(fileURLToPath(im
     err: line => process.stderr.write(`${line}\n`),
     git: realGit,
     now: Date.now,
+    detach: realDetach,
+    exportWaitMs: EXPORT_WAIT_MS,
   })
 }

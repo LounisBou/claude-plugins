@@ -114,7 +114,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     agent_prompt.add_argument("--predecessor-tty", help="a successor's: the tty of the tab it must close")
     gate = sub.add_parser("gate", parents=[project], help="print the context gate (tokens) at which the agent hands over")
     gate.add_argument("--set", type=_int_arg, metavar="TOKENS", help="change the gate setting")
-    gate.add_argument("--window", type=_int_arg, help="the context window: under 1,000,000 the gate is 80 %% of it")
+    gate.add_argument("--window", type=_int_arg, help="the context window: the gate is at most 80 %% of it")
     gate.add_argument("--tokens", type=_int_arg, help="the measured context: also print handover=yes|no")
     gate.add_argument(
         "--measure", action="store_true", help="measure the context through the orchestrator's measure file"

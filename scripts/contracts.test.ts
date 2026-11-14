@@ -4,11 +4,12 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
+import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
 
 describe('pull request records: github writes, core reads', () => {
   it('reads every record github engine writes', () => {
@@ -34,6 +35,27 @@ describe('pull request records: github writes, core reads', () => {
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'review', '--detail', 'documentation only'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'e2e'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'norms', '--result', 'accepted'], { stdio: 'pipe' }))
+  })
+})
+
+describe('the measure file: the orchestrator writes, bugs-bot reads', () => {
+  it('finds the file core names and reads its figures', () => {
+    const config = mkdtempSync(join(tmpdir(), 'measure-'))
+    const path = measureFilePath(config, 'abc')
+    const reading: MeasureReading = {
+      version: MEASURE_VERSION, context_tokens: 810_000, context_window: 1_000_000, context_percent: 81, model: 'm', updated_at: 't',
+      gate_tokens: gateTokensOf(1_000_000), start: { tokens: 1, at: 't', brief: null, brief_bytes: null },
+    }
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${JSON.stringify(reading)}\n`)
+    const read = execFileSync('python3', ['-c', [
+      'import json, sys',
+      "sys.path.insert(0, 'plugins/bugs-bot')",
+      'from bugs_bot.gate import measure, measure_path',
+      'env = {"CLAUDE_CONFIG_DIR": sys.argv[1], "CLAUDE_CODE_SESSION_ID": "abc"}',
+      'print(json.dumps({"path": str(measure_path(env)), "figures": measure(env)}))',
+    ].join('\n'), config], { encoding: 'utf8' })
+    assert.deepEqual(JSON.parse(read), { path, figures: [810_000, 1_000_000] })
   })
 })
 
