@@ -13,11 +13,12 @@ describe('consent records', () => {
     assert.deepEqual(parseConsentRecord(RECORD), RECORD)
     for (const by of ['pane', 'coordinator', 'tab']) assert.equal(parseConsentRecord({ ...RECORD, by })?.by, by)
     assert.deepEqual(parseConsentSubject({ kind: 'auto-merge', repo: 'o/n' }), { kind: 'auto-merge', repo: 'o/n' })
+    assert.deepEqual(parseConsentSubject({ kind: 'norms-waiver', repo: 'o/n', pr: 3 }), { kind: 'norms-waiver', repo: 'o/n', pr: 3 })
   })
 
   it('refuses a record or a subject that breaks any field of it', () => {
     const broken: Record<string, unknown>[] = [
-      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } },
+      { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } }, { subject: { kind: 'norms-waiver', repo: 'o/n' } },
       { subject: { kind: 'auto-merge', repo: 'o/n', pr: 3 } }, { subject: { kind: 'merge', repo: 'o/n' } }, { subject: { kind: 'auto-merge', repo: 'o/..' } },
       { entry: '../x' }, { entry: 3 }, { question: 3 }, { answer: 'x'.repeat(20_001) }, { by: 'elsewhere' }, { at: 0 },
     ]

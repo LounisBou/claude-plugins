@@ -23,6 +23,10 @@
       "ubuntu-latest",
       "macos-latest"
     ],
+    "learning": [
+      "ubuntu-latest",
+      "macos-latest"
+    ],
     "method": [
       "ubuntu-latest",
       "macos-latest"

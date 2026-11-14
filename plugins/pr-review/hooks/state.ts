@@ -34,6 +34,8 @@ export type Fix = { key: string; sha: string; description: string; reverted: boo
 export type Loop = {
   isActive: boolean
   pass: number
+  // The passes the loop may run: MAX_PASSES alone, ORCHESTRATED_PASSES in a session the orchestrator spawned.
+  maxPasses: number
   testCommand: string
   // The checkout the loop started in, as its top directory: the record is written for it, wherever the session's directory moves.
   dir?: string
@@ -79,10 +81,14 @@ export type Loop = {
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
+// The orchestrator runs one review and one correction round itself: its agent's loop reviews once.
+export const ORCHESTRATED_PASSES = 1
 
-export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string): void {
+export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
+
+export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string, maxPasses = MAX_PASSES): void {
   loop.isActive = true
+  loop.maxPasses = maxPasses
   loop.dir = dir
   loop.dirWhy = dirWhy
   loop.pass = 0

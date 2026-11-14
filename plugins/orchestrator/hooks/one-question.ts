@@ -28,19 +28,27 @@ export function openFence(message: string): string | null {
   return scanFences(message).fence
 }
 
-function scanFences(message: string): { kept: string[]; fence: string | null } {
+function scanFences(message: string): { kept: string[]; fence: string | null; inside: boolean[] } {
   const kept: string[] = []
+  const inside: boolean[] = []
   let fence: string | null = null
   for (const line of message.split('\n')) {
     const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null
     if (fence === null) {
       if (marker !== null) fence = marker
       else kept.push(line)
-    } else if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) {
-      fence = null
+      inside.push(marker !== null)
+    } else {
+      inside.push(true)
+      if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null
     }
   }
-  return { kept, fence }
+  return { kept, fence, inside }
+}
+
+// Whether each line of the message is a fence line or inside a fenced block: the lines outsideFences drops.
+export function fencedLines(message: string): boolean[] {
+  return scanFences(message).inside
 }
 
 // The refusal for a message whose machine line is a wait for the operator (the urgent form

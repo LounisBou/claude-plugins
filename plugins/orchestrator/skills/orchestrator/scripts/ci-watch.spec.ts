@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
 import type { Ran, RunOptions } from './lib/process.ts'
+import { parseJournalEvent } from '../../../core/learning.ts'
 
 const HA = 'a'.repeat(40)
 // The call every green line ends with.
@@ -356,4 +357,21 @@ test('the state directory: one that cannot be made, an owner file that cannot be
 test('main: a failure that is no watch line is not hidden', async () => {
   const deps = fake({})
   await assert.rejects(main(['7'], { ORCHESTRATOR_STATE_DIR: state }, { ...deps, run: () => Promise.reject(new Error('boom')) }), /boom/)
+})
+
+test('a watch is written to the journal as the wait on CI: its start, its end with the result word, the pull request and its head', async () => {
+  const events: Record<string, unknown>[] = []
+  const deps = { ...fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' }), journal: (event: object) => { events.push(event as Record<string, unknown>) } }
+  assert.equal(await main(['acme/thing#7'], { ORCHESTRATOR_STATE_DIR: state, CLAUDE_CODE_SESSION_ID: 'sess-42' }, deps), 0)
+  assert.deepEqual(events.map(e => [(e['source'] as { code: string }).code, e['fact'], e['subject']]), [
+    ['orchestrator.ci-watch.start', { step: 'ci-wait', edge: 'start', record: null, row: null, result: null }, { repo: 'acme/thing', pr: 7, head: null }],
+    ['orchestrator.ci-watch.green', { step: 'ci-wait', edge: 'end', record: null, row: null, result: 'green' }, { repo: 'acme/thing', pr: 7, head: HA }],
+  ])
+  for (const event of events) assert.ok(parseJournalEvent(event), JSON.stringify(event))
+})
+
+test('a watch whose command line is refused writes nothing', async () => {
+  const events: object[] = []
+  assert.equal(await main(['nope'], { ORCHESTRATOR_STATE_DIR: state }, { ...fake({}), journal: (event: object) => { events.push(event) } }), 5)
+  assert.deepEqual(events, [])
 })
