@@ -713,6 +713,25 @@ export function notReadyRefusal(act: string, repo: string, pr: number, head: str
     + '. What Ready needs is core\'s readiness contract (core/readiness.ts).'
 }
 
+// The readiness label a pull request carries, as pr-readiness's answer names it.
+function carriedLabel(labels: string[]): string {
+  if (labels.some((label) => label.toLowerCase() === READY)) return 'Ready'
+  return labels.some((label) => label.toLowerCase() === NOT_READY) ? 'Not Ready' : 'no readiness label'
+}
+
+// pr-readiness ready on a pull request the gate reads not ready: the state it carries now and what
+// is missing, an answer and no refusal.
+export function notReadyAnswer(repo: string, pr: number, head: string, labels: string[], missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + repo + '#' + pr + ' carries ' + carriedLabel(labels) + ' at ' + head7(head) + ', Ready not put: not ready. '
+    + tail(missing, carried) + '.'
+}
+
+// pr-readiness ready whose readiness could not be read: the state it carries, when read, and why.
+export function unverifiedAnswer(repo: string | undefined, pr: number | string | undefined, error: string, labels?: string[]): string {
+  return 'github: ' + (repo ?? 'the origin repository') + '#' + (pr ?? '?') + (labels ? ' carries ' + carriedLabel(labels) : '')
+    + ', Ready not put: readiness unverified: ' + error
+}
+
 // repo undefined: the call names no repository the guard could read.
 export function unverifiedRefusal(repo: string | undefined, pr: number | string | undefined, error: string): string {
   if (repo === undefined) return 'github: readiness unverified: ' + error

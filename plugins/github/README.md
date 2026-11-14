@@ -80,7 +80,8 @@ it. `/github:doctor` then confirms everything is ready.
   `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
   `Ready` is the gate's: put by the module once the pull request is ready (« Ready pull
   requests »). `pr-readiness <pr> ready` puts it only on a pull request the gate reads
-  ready, and refuses with what is missing otherwise.
+  ready, through the check `pr-ready` and `pr-merge` run, and otherwise answers, with no error,
+  the label the pull request carries and what is missing.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's recorded answer, and `auto-merge-list`
   prints the list (below).
@@ -222,7 +223,8 @@ github: <owner/name>#<n> out of draft to run CI, still Not Ready
 
 **Ready.** Taking a pull request out of draft and merging it
 (`gh pr merge --auto` included) need the `Ready` label, which the gate puts itself
-just before the act when the whole contract holds at the head, CI green included, through the tool (`pr-ready`, `pr-merge`) and through the
+just before the act when the whole contract holds at the head, CI green included (a check the base
+branch requires that has not reported at the head yet is not green), through the tool (`pr-ready`, `pr-merge`) and through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
 The act is refused before anyone is asked, and a pull request still carrying

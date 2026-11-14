@@ -320,28 +320,35 @@ test('in auto-merge a not-ready pr-ready is refused before anyone is asked, noth
   expect(seen.writes.some((w) => w.path === '/data/guard-warn.log')).toBe(false)
 })
 
-test('pr-readiness ready on a pull request the gate reads not ready is refused with what is missing, no label put', async ($, on) => {
+/*
+ * pr-readiness ready used to be refused where the gate does not let Ready on. The operator's ruling of
+ * 2026-11-14 (« pr-readiness answers state without an error result ») turns that refusal into an
+ * answer: the state the pull request carries and what is missing, no deny, no error, no label put.
+ */
+test('pr-readiness ready on a pull request the gate reads not ready answers its state and what is missing, no label put', async ($, on) => {
   const seen = await world($, on, NO_RECORDS)
   const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
-    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(out).toEqual({ result: 'github: acme/thing#12 carries Not Ready at 0123456, Ready not put: not ready. Missing: review: no record at'
+    + ' 0123456, e2e: no record at 0123456.' })
   expect(seen.asked.length).toBe(0)
   expect(commands(seen)).toEqual(['pr-gate'])
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('pr-readiness ready on a Ready pull request the gate reads not ready refuses and takes Ready off', async ($, on) => {
+test('pr-readiness ready on a Ready pull request the gate reads not ready takes Ready off and answers Not Ready', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
   const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-  expect(out.deny).toContain('pr-readiness refused on acme/thing#12')
+  expect(out.deny).toBeUndefined()
+  expect(out.isError).toBeUndefined()
+  expect(out.result).toStartWith('github: acme/thing#12 carries Not Ready at 0123456, Ready not put: not ready. Missing: review')
   expect(seen.runs.filter((r) => r.command === 'pr-readiness').every((r) => r.args.state === 'not-ready')).toBe(true)
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('pr-readiness ready whose CI is not green is refused, CI named', async ($, on) => {
+test('pr-readiness ready whose CI is not green answers with CI named, no error', async ($, on) => {
   const seen = await world($, on, { ci: { result: 'PENDING', running: 1 } })
   const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-  expect(out.deny).toBe('github: pr-readiness refused on acme/thing#12 at 0123456: not ready. Missing: CI still running.' + REFUSAL_END)
+  expect(out).toEqual({ result: 'github: acme/thing#12 carries Not Ready at 0123456, Ready not put: not ready. Missing: CI still running.' })
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
@@ -353,12 +360,41 @@ test('pr-readiness ready on a pull request the gate reads ready puts Ready', asy
   expect(seen.pull?.labels).toEqual(['Ready'])
 })
 
-test('pr-readiness ready whose gate cannot be read is refused as unverified', async ($, on) => {
+test('pr-readiness ready whose gate cannot be read answers it unverified, no error', async ($, on) => {
   const seen = await world($, on, { gateFails: 'error: rate limited' })
   const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
-  expect(out.deny).toBe('github: readiness of acme/thing#12 unverified: error: rate limited')
+  expect(out).toEqual({ result: 'github: acme/thing#12, Ready not put: readiness unverified: error: rate limited' })
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
+
+test('pr-readiness ready refused by a permission rule stays refused: only the gate\'s verdict is an answer', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, verdict: { decision: 'deny', reason: 'no labels here' } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out).toEqual({ deny: 'no labels here' })
+  expect(gates(seen)).toBe(0)
+})
+
+/*
+ * One readiness contract: pr-readiness ready, pr-ready and pr-merge read the same head through the
+ * same function, so where one is held the others are, for the same missing conditions. On
+ * claude-plugins at one head, pr-readiness ready put Ready while pr-ready and pr-merge refused it.
+ */
+for (const [label, w, missing] of [
+  ['no review', { records: Object.fromEntries([record('e2e', 'pass')]) }, 'Missing: review: no record at 0123456.'],
+  // A check that passed beside them: no CI undraft, which pr-ready may run on a pull request none of whose checks passed.
+  ['CI still running', { ci: { result: 'PENDING', running: 1, total: 2 } }, 'Missing: CI still running.'],
+  ['CI failed', { ci: { result: 'FAILURE', failed: ['lint'], total: 2 } }, 'Missing: CI failed: lint.'],
+] as const) {
+  test('pr-readiness ready, pr-ready and pr-merge hold the same head for the same reason: ' + label, async ($, on) => {
+    await world($, on, { ...w, autoMerge: ['acme/thing'] })
+    const answer: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+    expect(answer.result).toEndWith('Ready not put: not ready. ' + missing)
+    for (const command of ['pr-ready', 'pr-merge']) {
+      const out: any = await $.tool.call(gh(command, { pr: 12 }))
+      expect(out.deny).toBe('github: ' + command + ' refused on acme/thing#12 at 0123456: not ready. ' + missing + REFUSAL_END)
+    }
+  })
+}
 
 test('pr-readiness not-ready is let through with the gate unread', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })

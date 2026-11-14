@@ -20,7 +20,7 @@ import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, draftRefusal, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
-  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
+  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems, notReadyAnswer, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   type Act, type Carried, type Gate, type Labelling, type RecordFile,
@@ -1208,51 +1208,67 @@ async function prOfBranch($: any, repo: string, branch?: string): Promise<number
   return pull ? Number(pull.number) : undefined
 }
 
-// The refusal of an act that is not ready, which also takes Ready off a pull request
-// that still carries it, so the label never claims what the guard refused.
-async function refuseNotReady($: any, name: string, repo: string, pr: number, r: Readiness): Promise<string> {
+// What the gate says when it does not let Ready on: the refusal of an act, and pr-readiness's answer.
+type Held = { refusal: string; answer: string }
+
+function heldUnverified(repo: string | undefined, pr: number | string | undefined, error: string, gate?: Gate): Held {
+  return { refusal: unverifiedRefusal(repo, pr, error), answer: unverifiedAnswer(repo, pr, error, gate?.labels) }
+}
+
+// A pull request that is not ready, which also loses Ready when it still carries it, so the label
+// never claims what the gate refused.
+async function heldNotReady($: any, name: string, repo: string, pr: number, r: Readiness): Promise<Held> {
   const gate = r.gate as Gate
+  let labels = gate.labels
   if (carriesReady(gate)) {
     try {
       await labelNotReady($, repo, pr)
+      labels = [...labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), 'Not Ready']
     } catch (err: any) {
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
     }
   }
-  return notReadyRefusal(name, repo, pr, gate.head, r.missing, r.carried)
+  return {
+    refusal: notReadyRefusal(name, repo, pr, gate.head, r.missing, r.carried),
+    answer: notReadyAnswer(repo, pr, gate.head, labels, r.missing, r.carried),
+  }
 }
 
 /*
- * A merge or a leaving of draft runs on a pull request the gate labelled Ready: past the records it
- * holds, the gate puts Ready itself when the whole contract holds at the head, CI included, and
- * refuses the act with what is missing otherwise, or when the label could not be put.
+ * The one readiness check of every act that needs Ready (pr-ready, pr-merge, pr-readiness ready,
+ * their shell forms), core's readiness contract read at the head: undefined when the gate put Ready
+ * itself, the whole contract holding, CI included; else what is missing, or why that is unknown.
  */
-async function readyLabelRefusal($: any, name: string, repo: string, pr: number, r: Readiness): Promise<string | undefined> {
+async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness): Promise<Held | undefined> {
+  if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
+  if (r.missing.length > 0) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate)
-  if (followed.missing === undefined) {
-    return unverifiedRefusal(repo, pr, followed.line ?? 'the Ready label could not be put')
-  }
-  if (followed.missing.length > 0) return refuseNotReady($, name, repo, pr, { ...r, missing: followed.missing })
+  if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
+  if (followed.missing.length > 0) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   if (followed.line) note($, followed.line)
   return undefined
 }
 
-// The tool's pr-readiness ready: Ready goes on only where the gate reads the pull request ready,
-// CI included, as for pr-ready; else it refuses with what is missing, or why that is unknown.
-function readyLabelCall($: any, e: any): (() => Promise<string | undefined>) | undefined {
+/*
+ * The tool's pr-readiness ready: Ready goes on only where gateHeld lets it, as for pr-ready. Where
+ * it does not, the call answers the state the pull request carries and what is missing, or why that
+ * is unknown: an answer, no error, as pr-readiness reports a state (`answer`).
+ */
+function readyLabelCall($: any, e: any): { check: () => Promise<string | undefined>; answer: (refused: string) => { result: string } | undefined } | undefined {
   if (e.command !== 'pr-readiness' || e.args?.state !== 'ready') return undefined
-  return async () => {
+  let held: Held | undefined
+  const check = async (): Promise<string | undefined> => {
     const repo = await targetRepo($, e).catch(() => undefined)
     const pr = Number(String(e.args?.pr ?? '').replace('#', ''))
-    if (!repo || !Number.isInteger(pr) || pr < 1) return unverifiedRefusal(repo, e.args?.pr, 'no repository or pull request named')
     try {
-      const r = await readiness($, repo, pr)
-      if (r.error) return unverifiedRefusal(repo, pr, r.error)
-      return await readyLabelRefusal($, e.command, repo, pr, r)
+      if (!repo || !Number.isInteger(pr) || pr < 1) held = heldUnverified(repo, e.args?.pr, 'no repository or pull request named')
+      else held = await gateHeld($, e.command, repo, pr, await readiness($, repo, pr))
     } catch (err: any) {
-      return unverifiedRefusal(repo, pr, String(err?.message ?? err).trim())
+      held = heldUnverified(repo, pr, String(err?.message ?? err).trim())
     }
+    return held?.refusal
   }
+  return { check, answer: (refused) => (held && held.refusal === refused ? { result: held.answer } : undefined) }
 }
 
 // The Bash ready guard failed on its own: the command is refused as a readiness that could not be read.
@@ -1309,11 +1325,11 @@ function toolReady($: any, e: any, act: Act) {
       if (!found) {
         if (forCi || !read?.gate) return undefined
         const { repo, pr } = await repoPr()
-        return repo && pr !== undefined ? readyLabelRefusal($, act.name, repo, pr, read) : undefined
+        return repo && pr !== undefined ? (await gateHeld($, act.name, repo, pr, read))?.refusal : undefined
       }
-      if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
+      if (typeof found.pr !== 'number') return unverifiedRefusal(found.repo, found.pr, found.r.error ?? '')
       try {
-        return await refuseNotReady($, act.name, found.repo, Number(found.pr), found.r)
+        return (await gateHeld($, act.name, found.repo, found.pr, found.r))?.refusal
       } catch (err: any) {
         return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
       }
@@ -1397,10 +1413,8 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     }
     if (!listed) return autoMergeRefusal('undraft', repo, pr, engineName(act))
   }
-  const shown = pr ?? '?'
-  if (r.error) return unverifiedRefusal(repo, shown, r.error)
-  if (r.missing.length > 0) return refuseNotReady($, act.name, repo, Number(pr), r)
-  return readyLabelRefusal($, act.name, repo, Number(pr), r)
+  if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
+  return (await gateHeld($, act.name, repo, pr, r))?.refusal
 }
 
 function stdoutOf(result: any): string {
@@ -2248,8 +2262,9 @@ export function register(on: any): void {
     if (unlabelled) return { deny: unlabelled }
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
-    const refused = await permit($, e, ready?.beforeAsk ?? readyLabelCall($, e), ready?.ciUndraft)
-    if (refused) return { deny: refused }
+    const label = ready ? undefined : readyLabelCall($, e)
+    const refused = await permit($, e, ready?.beforeAsk ?? label?.check, ready?.ciUndraft)
+    if (refused) return label?.answer(refused) ?? { deny: refused }
     try {
       // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
       // which parses the output: no added text may reach parseGate.

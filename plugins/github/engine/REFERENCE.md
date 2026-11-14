@@ -42,7 +42,11 @@ below, and the `args` object holds the subcommand's arguments.
 `pr-gate` reads the pull request, then at its head the status, check runs and Actions runs
 (`per_page=100`); `state` is `open`, `closed` or `merged`, `head` the full sha. `ci.total`:
 statuses and each check's latest run, less a skipped or neutral one of a run older than its
-workflow's latest (greatest run id) if that has a check. `ci.result`: `FAILURE` if one failed
+workflow's latest (greatest run id) if that has a check, plus each check the base branch requires
+(its rulesets and its branch protection) that has not reported at the head yet, as a run or a
+status: that one counts as running, since its workflow may start after another check passed. A
+failed read of the required checks prints an `error:` line on stderr, and the runs are read alone.
+`ci.result`: `FAILURE` if one failed
 (`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
 `skipped`, or `neutral` on a draft), else `SUCCESS`; with no check at all CI has not started and the result is `PENDING`. A skipped check
 never turns green, in `checks-status` too. Actions call failed: `error:` on stderr, every
@@ -114,7 +118,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included; else refused with `Missing: …` (« Guards ») |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included, through the check `pr-ready` and `pr-merge` run; else it answers, with no error, the label the PR carries and what is missing (`github: <owner/name>#<n> carries Not Ready at <head7>, Ready not put: not ready. Missing: …`), or why readiness is unverified (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
@@ -304,7 +308,7 @@ none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `
 on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head (core's readiness contract, « Records » above), CI included: the gate puts `Ready` itself just before the act, which runs on that label only. A `--match-head-commit` or a
+ready at its head (core's readiness contract, « Records » above), CI included: the gate puts `Ready` itself just before the act, which runs on that label only. `pr-readiness <n> ready` goes through the same check, and answers where the acts are refused. A `--match-head-commit` or a
 `pr-merge --sha` other than that head is not ready either. A `Ready` label put by `label-add` or in the shell is no
 act: the gate alone decides readiness. Every act is refused, before any question, with `github: <act>
 refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
