@@ -232,6 +232,12 @@ test('session.start: no origin, one bounded git call names the first remote', as
   assert.deepEqual(got.runs[0]?.slice(0, 3), ['git', '-C', '/r'])
 })
 
+test('session.start: an origin no owner/name can be read from (a local path) falls through to the other remotes', async () => {
+  const got = await projectOfStart({ repo: { root: '/r', remote: '/srv/git/mirror', internal: false }, remotes: 'remote.origin.url /srv/git/mirror\nremote.up.url https://github.com/acme/tool.git\n' })
+  assert.equal(got.project, 'acme/tool')
+  assert.equal(got.runs.length, 1)
+})
+
 test('session.start: not a repository, no remote or a host that fails: the directory\'s last segment', async () => {
   for (const options of [{ repo: undefined }, { repo: { root: '/r', remote: null, internal: false } }, { repo: new Error('no repo') }]) {
     assert.equal((await projectOfStart(options)).project, 'claude-plugins', JSON.stringify(options))

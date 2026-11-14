@@ -127,10 +127,19 @@ export function remoteUrlsArgv(root: string): string[] {
   return ['git', '-C', root, 'config', '--get-regexp', '^remote\\..*\\.url$']
 }
 
+/** The urls of `remoteUrlsArgv`'s answer, in its order. */
+export function remoteUrls(stdout: string): string[] {
+  return stdout.split('\n').filter(l => /^remote\..*\.url /.test(l)).map(l => l.slice(l.indexOf(' ') + 1).trim()).filter(url => url !== '')
+}
+
 /** The url of the first remote line of `remoteUrlsArgv`'s answer. */
 export function firstRemoteUrl(stdout: string): string | undefined {
-  const line = stdout.split('\n').find(l => /^remote\..*\.url /.test(l))
-  return line === undefined ? undefined : line.slice(line.indexOf(' ') + 1).trim() || undefined
+  return remoteUrls(stdout)[0]
+}
+
+/** The repository of the first remote of `remoteUrlsArgv`'s answer that names one: a remote that is a local path is passed over. */
+export function firstRepository(stdout: string): string | undefined {
+  return remoteUrls(stdout).map(repositoryOf).find(repository => repository !== undefined)
 }
 
 /** The project a session belongs to: its repository (`owner/name`) when it has one, else the last segment of its directory. */

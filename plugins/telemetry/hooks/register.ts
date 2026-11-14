@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstRemoteUrl, firstTurn, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
+  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
@@ -99,10 +99,11 @@ async function readRepository($: Host): Promise<string | undefined> {
     const repo = await $.session.repo()
     if (typeof repo !== 'object' || repo === null) return undefined
     const { root, remote } = repo as { root?: unknown; remote?: unknown }
-    if (typeof remote === 'string') return repositoryOf(remote)
+    const named = typeof remote === 'string' ? repositoryOf(remote) : undefined
+    if (named !== undefined) return named
     if (typeof root !== 'string' || root === '') return undefined
     const run = await $.process.run(remoteUrlsArgv(root), { timeoutMs: REMOTES_READ_TIMEOUT_MS })
-    return run.exitCode === 0 ? repositoryOf(firstRemoteUrl(run.stdout)) : undefined
+    return run.exitCode === 0 ? firstRepository(run.stdout) : undefined
   } catch {
     return undefined
   }
