@@ -5,6 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { TODO_TOOL, callTodo, register as registerTodo } from '../todo.ts'
 import { todoItems } from '../../core/todo.ts'
+import { register as registerWait, Declarations, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/todo-home'
@@ -205,4 +206,47 @@ test('the tool is registered loaded, not deferred, with flat fields', async () =
   expect(registrations[0].isDeferred).toBe(false)
   expect(Object.keys(registrations[0].inputSchema.properties)).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome'])
   expect(registrations[0].inputSchema.required).toEqual(['action'])
+})
+
+function declarer() {
+  const handlers: Record<string, Function> = {}
+  const declarations = new Declarations()
+  registerWait((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } }, declarations)
+  return { declarations, declare: (dollar: any, input: object) => handlers['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input }) }
+}
+
+test('declare_wait refuses done while an item is open, and deferred while one he did not put off is, naming each', async () => {
+  const { declare, declarations } = declarer()
+  const { dollar } = world()
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(undefined)
+  await call(dollar, { action: 'add', words: 'ship it' })
+  const done = await declare(dollar, { kind: 'done' })
+  expect(done.isError).toBe(true)
+  expect(done.result).toContain('to-do 1 (ship it) is open')
+  const deferred = await declare(dollar, { kind: 'deferred', blocks: '1 items' })
+  expect(deferred.isError).toBe(true)
+  expect(deferred.result).toContain('1 (ship it)')
+  // The other kinds wait on something else and are never held by a list.
+  expect((await declare(dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })).isError).toBe(undefined)
+  expect(declarations.current()?.kind).toBe('tool')
+})
+
+test('an item he put off holds a done but takes a deferred wait; a closed one holds nothing', async () => {
+  const { declare } = declarer()
+  const { dollar } = world()
+  await call(dollar, { action: 'add', words: 'later' })
+  await call(dollar, { action: 'defer', id: 1, words: 'after the release, 2026-11-14' })
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
+  expect((await declare(dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(undefined)
+  await call(dollar, { action: 'done', id: 1, outcome: 'claude-plugins#230' })
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(undefined)
+})
+
+test('a coordinator or an auditor with an open item is held the same; an agent, which keeps no list, is not', async () => {
+  for (const [role, name, held] of [['coordinator', 'Coord: general [1]', true], ['auditor', 'Audit: todo [2]', true], ['agent', 'Agent: seven [3]', false]] as const) {
+    const { declare } = declarer()
+    const { dollar } = world({ me: [role, name] })
+    if (held) await call(dollar, { action: 'add', words: 'an order' })
+    expect((await declare(dollar, { kind: 'done' })).isError).toBe(held ? true : undefined)
+  }
 })

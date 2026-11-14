@@ -14,9 +14,10 @@ import { messageOf, type Host, type On } from './host.ts'
 import { entryQuestions, fencedLines, numberOfLine, openFence, outsideFences, parseChoices, questionShape, type QuestionField } from '../core/method.ts'
 import { logLine } from './module-io.ts'
 import { holdsDone } from './unattended.ts'
+import { holdsTodos } from './todo.ts'
 
 // The nouns the declaration holds.
-type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
+type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
 
 export const WAIT_TOOL = 'declare_wait'
 
@@ -256,6 +257,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
     const held = await holdsDone($, parsed.wait)
     if (held !== null) return { result: held, isError: true }
+    // So is one while a to-do of the session's own list is open (todo.ts).
+    const owed = await holdsTodos($, parsed.wait)
+    if (owed !== null) return { result: owed, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
   }).catch(async ($, e, next) => {
