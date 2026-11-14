@@ -16,7 +16,9 @@
 // `answered-by-message` and `coordinator.sh round-close`; the relay's other closures (the pane, the
 // prompt typed in the asker's tab, its turn's end) stay as they are until the text path goes.
 import { updateOver } from '../core/store-io.ts'
-import { CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { typedByOperator } from './models-guard.ts'
+import { DECLARATIONS } from './wait.ts'
 import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
@@ -69,6 +71,8 @@ export type Asked = AskFields & {
   delivery?: { state: 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
   /** The session it was asked by, before a succession moved it to its successor. */
   movedFrom?: string
+  /** What the operator typed in its asker's tab while it was open: off the pane until that turn's end answers it. */
+  claimed?: { typed: string; at: string }
   seq: number
 }
 
@@ -216,7 +220,7 @@ export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
  * The open questions a session asked with `ask`, each rewritten under its lock by `change` (null
  * leaves it): what its session's end and its hand-over do to them. Answers the ids written.
  */
-async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked): Promise<string[]> {
+async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked | null): Promise<string[]> {
   const dir = `${await stateDir($)}/round`
   const changed: string[] = []
   for (const entry of await readAsked($)) {
@@ -225,8 +229,10 @@ async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, sess
       await updateOver(storeIo($), `${dir}/${entry.id}.json`, current => {
         const fresh = current === undefined ? null : parseAsked(current)
         if (fresh === null || fresh.status !== 'open' || fresh.sender.session !== session) return undefined
+        const next = change(fresh)
+        if (next === null) return undefined
         changed.push(fresh.id)
-        return `${JSON.stringify(change(fresh))}\n`
+        return `${JSON.stringify(next)}\n`
       })
     } catch (err) {
       // One question not written leaves the others to change: said, never thrown.
@@ -255,15 +261,59 @@ export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, ses
   return ids
 }
 
+// What the operator typed, as an answer keeps it: past this many characters it is cut, the cut said.
+const TYPED_CAP = 500
+
 /**
- * The open questions in the pane's order, grouped by asker: the askers with an urgent question
+ * A prompt the operator typed in the asker's own tab (never the model's, never a command): its open
+ * questions are claimed with his words, and leave the pane at once. Answers the ids claimed.
+ */
+export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 'session'>, kind: string, text: string, now: Date = new Date()): Promise<string[]> {
+  if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return []
+  const said = text.trim()
+  const typed = said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
+  if (typed === '') return []
+  return changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() } }))
+}
+
+/**
+ * The asker's turn ended: each question claimed in it is answered in its tab with his words, its
+ * consent recorded when they name « Accorder » alone, unless the turn's operator wait keeps it
+ * (`kept`): then it is open again, drawn again.
+ */
+export async function settleClaimed($: Held, kept: readonly string[], now: Date = new Date()): Promise<void> {
+  const at = now.toISOString()
+  const answered: Asked[] = []
+  await changeOpenAsked($, await $.session.id(), entry => {
+    if (!entry.claimed) return null
+    const { claimed, ...rest } = entry
+    if (kept.includes(entry.id)) return rest
+    const done: Asked = { ...rest, status: 'answered', answer: { text: claimed.typed, by: 'tab', at, settler: entry.sender.name }, seq: entry.seq + 1 }
+    answered.push(done)
+    return done
+  })
+  for (const entry of answered) {
+    await logLine($, 'question', `${entry.id} answered in its asker's tab`)
+    if (!entry.consent) continue
+    const chosen = answersChoice(entry.answer?.text ?? '', entry.choices)
+    if (!chosen || !grants(chosen.text)) {
+      await logLine($, 'question', `the words typed for ${entry.id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
+      continue
+    }
+    await writeConsent($, { ...entry, question: entry.ask } as never, `${chosen.letter} : ${chosen.text}`, 'tab', at)
+  }
+}
+
+/**
+ * The open questions in the pane's order, grouped by asker, those claimed by his prompt in their
+ * asker's tab left out: the askers with an urgent question
  * first, then by their earliest question; within a group, the urgent first, then in the order asked.
  */
 export function askedGroups(entries: readonly Asked[]): Asked[][] {
   const byAt = (a: Asked, b: Asked) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)
   const urgentFirst = (a: Asked, b: Asked) => Number(b.urgent === true) - Number(a.urgent === true) || byAt(a, b)
   const groups = new Map<string, Asked[]>()
-  for (const entry of entries.filter(e => e.status === 'open').sort(byAt)) groups.set(entry.sender.session, [...(groups.get(entry.sender.session) ?? []), entry])
+  for (const entry of entries.filter(e => e.status === 'open' && !e.claimed).sort(byAt)) groups.set(entry.sender.session, [...(groups.get(entry.sender.session) ?? []), entry])
   const first = (group: readonly Asked[]) => [...group].sort(urgentFirst)[0] as Asked
   return [...groups.values()].sort((a, b) => urgentFirst(first(a), first(b))).map(group => [...group].sort(urgentFirst))
 }
@@ -538,6 +588,36 @@ export function register(on: On<Held>): void {
 
   on('turn.start', {}, async ($, e, next) => {
     if (e.agentId === undefined) askTurnStarted()
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // His prompt in the asker's own tab claims its open questions: they leave the pane at once.
+  on('prompt.submit', {}, async ($, e, next) => {
+    try {
+      await claimAsked($, String(e.origin?.kind ?? ''), String(e.text ?? ''))
+    } catch (err) {
+      await logLine($, 'question', `claim: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // The asker's turn ended: what it claimed is answered with his words, but what its operator wait keeps.
+  on('turn.complete', {}, async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
+    // Read before the first await: a message queued for the session starts its next turn as this one ends.
+    const wait = DECLARATIONS.current()
+    const kept = wait?.kind === 'operator' ? wait.asked ?? [] : []
+    try {
+      await settleClaimed($, kept)
+    } catch (err) {
+      await logLine($, 'question', `claimed: ${messageOf(err)}`)
+    }
     return next(e)
   }).catch(async ($, e, next) => {
     await logLine($, 'question', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
