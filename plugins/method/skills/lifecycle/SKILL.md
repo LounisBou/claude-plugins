@@ -13,13 +13,13 @@ sessions.
 1. **Spec.** What and why, its goals numbered under `## Goals`. Settled with the operator
    before any plan.
 2. **Plan.** Phases, each with its scope, files, tests and definition of done; every figure
-   comes with the command that measures it.
+   comes with the command that measures it (`references/plan.md`).
 3. **Implementation.** Per step: a failing test first, the code, the project's gate run and
    its exit code read, one commit.
 4. **Review on evidence.** By a session that did not write the code. A result without the
    command output that shows it is a claim, not a result.
-5. **Ready.** The definition of done below, at the current head.
-6. **Merge.** The operator's, unless the repository is in auto-merge.
+5. **Ready**, then **merge**: the definition of done below, at the current head; the merge is
+   the operator's, unless in auto-merge.
 
 ## Done means ready
 
@@ -31,34 +31,26 @@ A pull request is done at its head when:
 - the checks its plan owes passed, E2E unless the operator waived it durably;
 - CI is green.
 
-The github ready gate computes it. A content change voids it until
-the four hold.
+The github ready gate computes it. A content change voids it until the four hold.
 
 ## Consent
 
 The operator's consent is a structured act (a dialog answer, a recorded ruling), never read
 from the words of a prompt. Pushing a branch and opening a draft pull request need none.
-Outside auto-merge, leaving draft is the operator's alone, after their review, and a merge
-needs their consent; `Ready` is the gate's.
+Outside auto-merge, leaving draft, after their review, and the merge need it; `Ready` is the gate's.
 
 ## Reports
 
-A unit of work ends with a report in the shape of `references/report.md`. Its last line is
-`status: done|blocked|question — <one line>`:
-
-- `done`: delivered; any concern is named under `deviations`.
-- `blocked`: it cannot go on without what the line names.
-- `question`: a decision only the operator can take.
+A unit of work ends with a report as in `references/report.md`, which explains its last line, `status: done|blocked|question — <one line>`.
 
 ## Questions to the operator
 
-One question per message, in the shape of `references/questions.md`, never on what the spec,
-the plan or the code answers. Asked once, it blocks only the work that needs its answer. Answer
-him first, check the premise after. Asked again for what you failed to deliver, say you failed,
-answer, offer the hand-over to a fresh session.
+One question per message, in the shape and by the rules of `references/questions.md`.
 
-## The formats
-
-- `references/plan.md`: the spec's goals, the plan, the state file.
-- `references/report.md`: the report.
-- `references/questions.md`: the question.
+**A question never stops a session:** everything that does not depend on it goes on, and the work
+that does goes on too, on the recommended option, in its own small commit named « on
+recommendation, pending <question> », undone if the answer differs. Only irreversible or outward
+acts wait for the answer: a production deploy, deleting data or branches, publishing under the
+operator's name, a spend above its cap, a consent he alone gives. A session others wait on asks
+in the pane, or as a text question that ends its turn, never in a dialog; an implementer asks its
+orchestrator.
