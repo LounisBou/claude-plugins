@@ -23,7 +23,7 @@ fact happened in a subagent's loop.
 `title` and `role` name the session that acted, from the host's `session_title` at the start, a
 successful `rename_session` call, or one read of the first 8 KB of the transcript at the first main
 turn's end, and are absent until one gives it; `tool_call.target` (`repo`, `pr`, `head` cut to 12
-characters) names what a GitHub act (the `github` tool, a Bash `gh` or `git push` line) names.
+characters) names what a GitHub act (the `github` tool, a review or a record call, a Bash `gh` or `git push` line) names.
 
 The kinds, each one's fields with their units and the hook or command line that writes it, are
 declared once in `plugins/telemetry/hooks/schema.ts`. The writer accepts exactly the declared
