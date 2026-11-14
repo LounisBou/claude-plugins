@@ -594,13 +594,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const entries = chainEntries(String(chain))
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
+      // An idle agent whose pull request merged is delivered; one whose pull request is open
+      // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
+      const awaitingMerge: string[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
-        if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) {
-          delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
-        }
+        if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
+        if (pr?.state === 'OPEN') awaitingMerge.push(`${agent.label} (pull request #${pr.number})`)
       }
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
@@ -615,13 +617,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return table
       }
       const background = ownBackground(await processes(), pid)
-      // Without the host pid no process can be told as the session's own: a true tool line
-      // is accepted rather than refused as « nothing runs », which sends the turn back to a false operator wait.
-      const hostUnread = !pid
-      if (hostUnread) await logLine($, 'guards', 'stop gate: host pid unread: the process table could not be tied to this session')
       const wake = checkWake({
-        agents, resident, delivered, background, hostUnread,
-        // The host's own list of the session's work in flight: the tool line's reliable reading.
+        agents, resident, delivered, background, awaitingMerge,
+        // The host's own list of the session's work in flight, the reliable reading of what will wake it.
         tasks: hostTasks(e.background_tasks, e.session_crons),
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
@@ -633,8 +631,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // The release the machine line grants, logged as the shell gate logged it — the
         // figures that say whether the gate earns its cost are read there.
         await logLine($, 'guards', `stop gate: check1 blocks ${wake.blocks}`)
-      } else if (wake !== null && typeof wake === 'object' && 'tool' in wake) {
-        await logLine($, 'guards', wake.notRunning ? `stop gate: warn tool-not-running ${wake.tool}` : `stop gate: check1 tool ${wake.tool}`)
       } else if (wake !== null && typeof wake === 'object' && 'warn' in wake) {
         // Measured, not refused: these three reminders cost a turn each and mostly turned out wrong.
         await logLine($, 'guards', `stop gate: warn ${wake.warn}${wake.detail === '' ? '' : ` ${wake.detail}`}`)

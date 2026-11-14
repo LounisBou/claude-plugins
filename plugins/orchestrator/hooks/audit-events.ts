@@ -7,8 +7,12 @@
 // wait's `blocks` never enter one.
 import {
   auditEvent, learningEvent, prRefsOf, type AuditEvent, type Decision, type Edge, type EventInput, type Facts, type FindingSeverity,
-  type LearningEvent, type Verdict, type WaitKind,
+  type LearningEvent, type Verdict, type WaitKind as JournalWaitKind,
 } from '../core/learning.ts'
+
+// The kinds a turn declares (stop-gate.ts WAIT_KINDS); the journal's contract still names `tool`,
+// which past journals carry.
+type WaitKind = Exclude<JournalWaitKind, 'tool'>
 
 export const PLUGIN = 'orchestrator'
 
@@ -142,8 +146,8 @@ export function githubEvents(stamp: Stamp, call: Readonly<Record<string, unknown
   ]
 }
 
-/** On whom a declared wait waits: the operator for his question or his deferral, the tool it watches, nobody once done. */
-const WAIT_ON = { operator: 'operator', deferred: 'operator', tool: 'tool', done: null } as const
+/** On whom a declared wait waits: the operator for his question or his deferral, nobody once done. */
+const WAIT_ON: Record<WaitKind, 'operator' | null> = { operator: 'operator', deferred: 'operator', done: null }
 
 export interface WaitSeen {
   readonly kind: WaitKind

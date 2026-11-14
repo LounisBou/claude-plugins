@@ -297,9 +297,6 @@ test('declare_wait refuses done while an item is open, and deferred while one he
   const deferred = await declare(dollar, { kind: 'deferred', blocks: '1 items' })
   expect(deferred.isError).toBe(true)
   expect(deferred.result).toContain('1 (ship it)')
-  // The other kinds wait on something else and are never held by a list.
-  expect((await declare(dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })).isError).toBe(undefined)
-  expect(declarations.current()?.kind).toBe('tool')
 })
 
 test('an item he put off holds a done but takes a deferred wait; a closed one holds nothing', async () => {
