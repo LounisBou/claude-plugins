@@ -2258,16 +2258,20 @@ test('a declaration is validated: a known kind, and what it blocks where the kin
   }
 })
 
-test('an operator question may declare the subject it asks consent on, read by the relay in its own turn only', () => {
+test('an operator question may declare the subject it asks consent on, in flat fields, read by the relay in its own turn only', () => {
   const waiver = { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: waiver, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver, question: ASKED } })
+  const flat = (s: { kind: string; repo: string; pr?: number; env?: string }) => ({
+    consent_kind: s.kind, consent_repo: s.repo, ...(s.pr === undefined ? {} : { consent_pr: s.pr }), ...(s.env === undefined ? {} : { consent_env: s.env }),
+  })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat(waiver), question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver, question: ASKED } })
   for (const bad of [
-    { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
-    { kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'merge', repo: 'acme/thing' } },
+    { kind: 'tool', blocks: 'x', ...flat(waiver) }, { kind: 'operator', blocks: 'G1', question: ASKED, ...flat({ kind: 'e2e-waiver', repo: 'acme/thing' }) },
+    { kind: 'operator', blocks: 'G1', question: ASKED, ...flat({ kind: 'merge', repo: 'acme/thing' }) },
+    { kind: 'operator', blocks: 'G1', question: ASKED, consent_repo: 'acme/thing' },
   ]) expect('error' in parseDeclaration(bad)).toBe(true)
   const deploy = { kind: 'auto-deploy', repo: 'acme/infra', env: 'staging' }
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED } })
-  expect('error' in parseDeclaration({ kind: 'operator', blocks: 'G1', question: ASKED, consent: { kind: 'auto-deploy', repo: 'acme/infra' } })).toBe(true)
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat(deploy), question: ASKED })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: deploy, question: ASKED } })
+  expect('error' in parseDeclaration({ kind: 'operator', blocks: 'G1', question: ASKED, ...flat({ kind: 'auto-deploy', repo: 'acme/infra' }) })).toBe(true)
   const declarations = new Declarations()
   declarations.turnStarted()
   expect(declaredConsent(declarations)).toBe(null)
@@ -2285,7 +2289,8 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   await wait['session.start'](dollar, {}, (x: unknown) => x)
   expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
   // The consent an operator question asks names the environment of an auto-deploy.
-  expect(tools[0].inputSchema.properties.consent.properties.env).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
+  expect(tools[0].inputSchema.properties.consent_env).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
+  expect(tools[0].inputSchema.properties.consent).toBe(undefined)
   expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.

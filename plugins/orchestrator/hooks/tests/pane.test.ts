@@ -3400,3 +3400,25 @@ test('an origin read that timed out is read again at the next render, one that a
   await redraw(bare, fresh)
   expect(gits).toBe(4)
 })
+
+// --- a consent question worded with unlettered choices draws them once ----------------------------
+
+const CONSENT_ASKED = [
+  '**Question 1 of 1**',
+  '_Subject_ : auto-deploy of acme/thing in prod',
+  '_Question_ : Do you grant it ?',
+  '_Choices_ :',
+  '- **Accorder** : each release installs here as soon as it is cut — cost : a faulty release arrives unattended',
+  '- **Refuser** : each release stays manual — cost : one manual step per release',
+  '_Free answer_ : or in your own words',
+].join('\n')
+
+test('a consent question with unlettered Accorder and Refuser choices shows each choice once in the pane', async () => {
+  const entered = roundEntry('low', 'Orch: low', { kind: 'operator', blocks: 'auto-deploy of acme/thing', question: CONSENT_ASKED }, '2026-10-18T10:03:00.000Z', '2026-10-18T10:03:00.000Z')
+  expect(entered.choices).toEqual([{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }])
+  const { render } = await askingPane([entered])
+  const drawn = JSON.stringify(await render())
+  const once = (word: string) => drawn.split(word).length - 1
+  expect([once('Accorder'), once('Refuser')]).toEqual([1, 1])
+  expect(once('CHOICES')).toBe(1)
+})
