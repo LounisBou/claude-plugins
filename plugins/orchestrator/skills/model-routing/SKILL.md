@@ -127,8 +127,8 @@ One row per dispatch in the project's build state: class, pair (or tier), rounds
 
 ```
 dispatch-record.sh open <record> --class <c> --model <alias> --effort <level> [--explore] --label "<what> <repo>#<n>"   # prints the row id
-dispatch-record.sh open <record> --class <c> --tier <t> --label "<what> <repo>#<n>"   # a tier row, when no pair is chosen
-dispatch-record.sh round <record> <id>                                  # a manual round only, never beside a verdict
+dispatch-record.sh open <record> --class <c> --tier <t> --label <what>   # a tier row, when no pair is chosen
+dispatch-record.sh round <record> <id>                                  # manual only
 dispatch-record.sh review <record> <id> --head <sha> [--norms tool|none]  # and what it read
 dispatch-record.sh fixed <record> <id> --head <sha>                     # the correction round, verified
 dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>|--minor <reason>|--none  # whether the pull request changes what a user sees

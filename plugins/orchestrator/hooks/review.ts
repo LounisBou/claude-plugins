@@ -109,7 +109,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: REVIEW_TOOL,
         isDeferred: false,
-        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the dispatch-record row naming the pull request, and says which row, or that none matched. In place of the verdict, plan sets the proofs the pull request owes.',
+        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the row naming the pull request. In place of the verdict, plan sets the proofs the pull request owes.',
         inputSchema: {
           type: 'object',
           properties: {
