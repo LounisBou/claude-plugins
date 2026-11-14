@@ -8,15 +8,15 @@
 import { ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
-import { answerText } from './audit-events.ts'
+import { answerText, PULL_URL } from './audit-events.ts'
 import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
+import { readOr, safe } from './unattended.ts'
 
 // The bound of one write: the lookups of the mapping and the record's lock.
 export const LEDGER_BOUND_MS = 10_000
 
-const PULL_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)/g
 // Whether the command line runs `gh pr create`, read as the shell reads it (core's shell reader: quotes,
 // heredocs, assignments, `time`, `rtk`, `sudo`, `bash -c`): the words after `gh`, past its repository
 // option wherever it stands, are `pr create`. A line the reader cannot read creates nothing.
@@ -45,7 +45,7 @@ export function createdPr(e: Readonly<Record<string, unknown>>, result: unknown)
     : e['tool'] === 'Bash' && typeof e['command'] === 'string' && runsPrCreate(e['command'])
   const answer = opens ? answerText(result) : null
   if (answer === null) return null
-  const last = [...(htmlUrlOf(answer) ?? answer).matchAll(PULL_URL)].at(-1)
+  const last = [...(htmlUrlOf(answer) ?? answer).matchAll(new RegExp(PULL_URL, 'g'))].at(-1)
   return last?.[1] === undefined || last[2] === undefined ? null : { repo: last[1], pr: Number(last[2]) }
 }
 
@@ -57,12 +57,6 @@ function htmlUrlOf(answer: string): string | null {
   } catch {
     return null
   }
-}
-
-const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
-
-async function readOr($: any, path: string): Promise<string> {
-  return String(await $.fs.read(path).catch(() => ''))
 }
 
 // The orchestration the creating session belongs to: its session and its name. An orchestrator's own,
