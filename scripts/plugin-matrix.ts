@@ -3,6 +3,10 @@
 // platforms listed as blocking for it. A platform joins a plugin's list the day its suite is
 // green there, and never leaves it (docs/conventions.md, « Ratchets »).
 //
+// A suite that is slow on Linux is split in parts that run side by side: `shards` in the table
+// names the plugin and its number of parts, each a Linux cell that carries its `shard` (read by the
+// suite as SUITE_SHARD); macOS runs the whole suite in one cell.
+//
 // A pull request runs the Linux cells of the plugins it changes: a change outside plugins/ runs
 // every plugin, a change of documentation alone one cell without a suite, which passes (a skipped
 // job proves nothing to the gate). macOS runs after the merge, on main.
@@ -29,6 +33,8 @@ export interface Cell {
   readonly plugin: string
   readonly os: Platform
   readonly blocking: boolean
+  /** The part of the suite this cell runs, from 1; absent when it runs the whole suite. */
+  readonly shard?: number
 }
 
 /** Validates ci/plugins.json against the plugins on disk: one entry per plugin, no stray one. */
@@ -52,8 +58,26 @@ export function parseBlocking(raw: unknown, plugins: readonly string[]): Map<str
   return result
 }
 
-export function matrixOf(blocking: ReadonlyMap<string, ReadonlySet<Platform>>): Cell[] {
-  return [...blocking].flatMap(([plugin, platforms]) => PLATFORMS.map(os => ({ plugin, os, blocking: platforms.has(os) })))
+/** The optional `shards` of ci/plugins.json: a plugin of the repository and its number of parts, two or more. */
+export function parseShards(raw: unknown, plugins: readonly string[]): Map<string, number> {
+  const table = isRecord(raw) ? raw['shards'] : undefined
+  const result = new Map<string, number>()
+  if (table === undefined) return result
+  if (!isRecord(table)) throw new Error('ci/plugins.json: "shards" must be { <plugin>: <number of parts> }')
+  for (const [name, parts] of Object.entries(table)) {
+    if (!plugins.includes(name)) throw new Error(`ci/plugins.json: "${name}" in "shards" is not a plugin of the repository`)
+    if (typeof parts !== 'number' || !Number.isInteger(parts) || parts < 2) throw new Error(`ci/plugins.json: "${name}" needs two parts or more in "shards"`)
+    result.set(name, parts)
+  }
+  return result
+}
+
+export function matrixOf(blocking: ReadonlyMap<string, ReadonlySet<Platform>>, shards: ReadonlyMap<string, number> = new Map()): Cell[] {
+  return [...blocking].flatMap(([plugin, platforms]) => PLATFORMS.flatMap(os => {
+    const parts = os === 'ubuntu-latest' ? shards.get(plugin) : undefined
+    const cell = { plugin, os, blocking: platforms.has(os) }
+    return parts === undefined ? [cell] : Array.from({ length: parts }, (_, index) => ({ ...cell, shard: index + 1 }))
+  }))
 }
 
 // Files no plugin reads: their change runs no suite.
@@ -79,7 +103,8 @@ export function pullRequestCells(matrix: readonly Cell[], touched: readonly stri
 
 export function run(root: string, args: readonly string[], io: Io): number {
   const plugins = readPlugins(root).map(plugin => plugin.dir)
-  let matrix = matrixOf(parseBlocking(JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8')), plugins))
+  const table: unknown = JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8'))
+  let matrix = matrixOf(parseBlocking(table, plugins), parseShards(table, plugins))
   if (args[0] === '--pull-request') {
     if (args[1] === undefined) throw new Error('--pull-request needs the base ref')
     const changed = execFileSync('git', ['diff', '--name-only', `${args[1]}...HEAD`], { cwd: root, encoding: 'utf8' })
