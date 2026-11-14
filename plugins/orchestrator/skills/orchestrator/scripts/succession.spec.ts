@@ -270,3 +270,19 @@ test('live moves a ruling for rows the dispatch record closed, and keeps one for
   assert.match(w.out.at(-1) ?? '', / pruned=rulings:1,state:0,round:0 /)
   assert.ok(readFileSync(rulings, 'utf8').includes('the api') && !readFileSync(rulings, 'utf8').includes('the schema'))
 })
+
+test('the brief carries the open questions asked with ask, their block made from their fields, and no settled one', () => {
+  const asked = (id: string, status: string, sender: object) => ({
+    v: 2, id, sender, status, subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which first?',
+    choices: [{ letter: 'A', text: 'acme/app#1' }, { letter: 'B', text: 'acme/app#2' }], recommended: 'A', why: 'no rebase',
+  })
+  const open = roundOpen([
+    asked('q-1', 'open', { session: SESSION, name: 'Orch: other' }), asked('q-2', 'open', { session: 'x', name: NAME }),
+    asked('q-3', 'answered', { session: SESSION, name: NAME }), asked('q-4', 'open', { session: 'x', name: 'Orch: other' }),
+  ], NAME, SESSION)
+  assert.deepEqual(open.map(q => q.id), ['q-1', 'q-2'])
+  assert.equal(open[0]?.text, [
+    '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
+    '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
+  ].join('\n'))
+})

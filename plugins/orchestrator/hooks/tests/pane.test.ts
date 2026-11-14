@@ -1283,6 +1283,16 @@ test('a question asked with ask alone takes the place of the none line, and one 
   expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
 })
 
+test('beside questions asked with ask alone, the section still counts the orchestrators waiting with none drawn, never the asker the pane draws', async () => {
+  const rows = { low: orch('Orch: low', { waiting: 'operator', waiting_since: SINCE }), w1: orch('Orch: w1', { waiting: 'operator', waiting_since: SINCE }) }
+  const asked = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z') as unknown as RoundEntry
+  const drawn = texts(await paneTree(rows, [asked]))
+  expect(drawn).toContain('1 orchestrator waits for you: ask the coordinator')
+  expect(drawn).toContain('Orch: low · orchestrator · box-1')
+  const alone = texts(await paneTree({ low: rows.low }, [asked]))
+  expect(alone.some(t => /waits? for you/.test(t) || t === 'none')).toBe(false)
+})
+
 test('a pick of a choice answers the entry from the pane, sends the asking orchestrator the choice once, and draws the next question', async () => {
   const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const next = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })

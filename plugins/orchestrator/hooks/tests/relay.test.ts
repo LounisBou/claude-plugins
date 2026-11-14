@@ -283,6 +283,26 @@ for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'au
   })
 }
 
+// The operator's ruling of 2026-11-14 (a): a wait on questions asked with `ask` is no entry of the
+// relay's, the questions being their own objects in the round; its row still shows it waiting.
+test('an operator wait on questions asked with ask enters no entry and sends nothing, and its row shows it waiting', async () => {
+  const chains = mounted()
+  const fx = fake()
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', asked: ['q-s-one-1'] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('J\'attends sa réponse.'))
+  expect(entries(fx)).toEqual([])
+  expect(fx.sent.length).toBe(0)
+  const row = fx.row()!
+  expect([row.waiting, row.blocks]).toEqual(['operator', 'phase 3'])
+  expect(paneRows({ a: row })[0].label).toContain('waiting for the operator since')
+  expect(paneRows({ a: row })[0].label).toContain('blocks: phase 3')
+  // The next turn declares the old way: its entry is entered as before.
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(entries(fx).length).toBe(1)
+})
+
 test('the subject a declared question asks consent on rides with its round entry, in that turn only', async () => {
   const chains = mounted()
   const fx = fake()

@@ -138,13 +138,36 @@ export function deckOpen(deckText: string | undefined, name: string): { prs: str
   return { prs: [], agents: [] }
 }
 
-/** The round's open operator questions of this orchestration: its sender's name, or this session. */
+/** A question asked with `ask` (hooks/question.ts, `v` 2) as its block reads, from its fields. */
+export function askedText(entry: Fields): string {
+  const choices = Array.isArray(entry['choices']) ? (entry['choices'] as unknown[]) : []
+  const lettered = choices.flatMap(choice => {
+    const c = typeof choice === 'object' && choice !== null ? (choice as Fields) : {}
+    return typeof c['letter'] === 'string' && typeof c['text'] === 'string' ? [`- **${c['letter']}** : ${c['text']}`] : []
+  })
+  const why = typeof entry['why'] === 'string' ? entry['why'] : null
+  const recommended = typeof entry['recommended'] === 'string' ? `${entry['recommended']} — ` : ''
+  return [
+    `_Subject_ : ${String(entry['subject'] ?? '')}`, `_Context_ : ${String(entry['context'] ?? '')}`, `_Question_ : ${String(entry['ask'] ?? '')}`,
+    ...(lettered.length > 0 ? ['_Choices_ :', ...lettered] : []),
+    ...(why !== null ? [`_Recommendation_ : ${recommended}${why}`] : []),
+  ].join('\n')
+}
+
+/** The round's open operator questions of this orchestration: its sender's name, or this session; asked with `ask` or written by the relay. */
 export function roundOpen(entries: readonly (Fields | undefined)[], name: string, session: string): Question[] {
+  const senderOf = (entry: Fields): Fields => (typeof entry['sender'] === 'object' && entry['sender'] !== null ? (entry['sender'] as Fields) : {})
   return entries
-    .filter((entry): entry is Fields => entry !== undefined)
-    .filter(entry => entry['status'] === 'open' && entry['kind'] === 'operator')
-    .filter(entry => entry['from'] === name || (session !== '' && entry['session'] === session))
-    .map(entry => ({ id: String(entry['id']), text: typeof entry['question'] === 'string' ? entry['question'] : '' }))
+    .filter((entry): entry is Fields => entry !== undefined && entry['status'] === 'open')
+    .flatMap(entry => {
+      if (entry['v'] === 2) {
+        const sender = senderOf(entry)
+        const ours = sender['name'] === name || (session !== '' && sender['session'] === session)
+        return ours ? [{ id: String(entry['id']), text: askedText(entry) }] : []
+      }
+      const ours = entry['kind'] === 'operator' && (entry['from'] === name || (session !== '' && entry['session'] === session))
+      return ours ? [{ id: String(entry['id']), text: typeof entry['question'] === 'string' ? entry['question'] : '' }] : []
+    })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 

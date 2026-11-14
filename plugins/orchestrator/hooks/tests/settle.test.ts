@@ -7,6 +7,8 @@ import { expect, test } from 'claude-code/testing'
 import { askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
 import { parseSettle, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
+import { waitKey } from '../supervision.ts'
+import { entryFingerprint, type RoundEntry } from '../round.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/settle-home'
@@ -231,4 +233,17 @@ test('a relay\'s entry the coordinator here was shown is closed by its sender\'s
   await settle(m.asker, request('r-1', { outcome: 'answered-by-message', author: COORD }), AT)
   expect(entryOf(m, 'r-1')).toMatchObject({ status: 'closed', answer: { by: 'message', author: COORD, text: `withdrawn: answered by a message from ${COORD}` } })
   expect(m.sent.map(s => s.text)).toEqual([expect.stringContaining('[module] Settled')])
+})
+
+test('its sender settles only its open relay\'s entry; the coordinator closes one and forgets its fingerprint in the sender\'s wait', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed({ status: 'withdrawn', answer: { text: 'moot', by: 'sender', at: 'T' } })))
+  expect((await settle(m.asker, request('r-1'), AT)).result).toBe('r-1 is withdrawn already: nothing to settle.')
+  const open = relayed({ id: 'r-2' })
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(open))
+  const wait = `${MODULE}/store/${waitKey('s-ask')}`
+  m.files.set(wait, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(open as RoundEntry) }))
+  await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
+  expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
+  expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
 })

@@ -30,7 +30,7 @@ import { entryQuestions, machineLine, questionBody, questionShape, type Choice }
 import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
-import { declaredConsent } from './wait.ts'
+import { declaredAsked, declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -1589,9 +1589,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // ends, and that start makes the declaration stale while the relay still reads its files.
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
     const consent = e.agentId ? null : declaredConsent()
+    const onAsked = e.agentId ? false : declaredAsked()
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent, onAsked), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -2001,11 +2002,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      // A waiting row with its line in the pane is not one the operator is left without.
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key)).length
-      const says = waiting === 0
-        ? WORDS.none
-        : `${WORDS.none} in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
+      // A waiting row with its line in the pane, or whose question asked with `ask` the pane draws, is
+      // not one the operator is left without.
+      const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
+      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key) && !askedHere.has(row.key)).length
+      const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
+      const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
       // The question the card asks: an entry that asks several presents them one at a time, the
       // first not yet answered.
       const parts = asking ? entryQuestions(asking) : []
@@ -2262,7 +2264,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
-        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
+        // Beside the questions asked with `ask`, the line still counts the orchestrators waiting with none drawn.
+        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 || waiting > 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
         ...(nextLine ? [nextLine] : []),
         ...(askedPieces.length === 0 ? [] : [{
           node: el.Box({ flexDirection: 'column', ...(asking !== null ? { marginTop: 1 } : {}), children: askedPieces.map(piece => piece.node) }),
@@ -2373,7 +2376,9 @@ export function entersRound(role: string | null): boolean {
 // `consent` is the subject the turn's operator question declared it asks consent on, read when the
 // turn ended. It rides with the entry wherever the entry goes: into the round on this machine, on
 // the ask line to a coordinator elsewhere; with no coordinator at all, one log line names it.
-export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null): Promise<void> {
+// `onAsked`: the turn's operator wait waits on questions asked with `ask`, already in the round as
+// their own objects: its wait is written, so its row shows it waiting, and no entry is entered or sent.
+export async function relayTurnEnd($: any, answer: string, turnId: unknown, consent: ConsentSubject | null, onAsked = false): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2437,6 +2442,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     ? waitPatch(reasked && before ? { ...before, waiting_since: null } : before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
+  if (onAsked && wait?.kind === 'operator') return
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
