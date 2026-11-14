@@ -53,7 +53,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     )
     init.add_argument("--title", help="the group's title, with --chat-id")
     init.add_argument("--deploy-url", help="where the project is deployed")
-    init.add_argument("--deploy-check", metavar="CMD", help="a shell command proving a commit is served")
+    init.add_argument("--deploy-check", metavar="CMD", help="a command proving a commit is served, run without a shell (sh -c '…' when it needs one)")
     init.add_argument("--docs", nargs="+", metavar="PATH", help="the documentation the agent answers from")
     init.add_argument("--language", help="the language of the agent's messages in the group")
     init.add_argument("--gate-tokens", type=_int_arg, metavar="N", help="the context size at which the agent hands over")

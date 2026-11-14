@@ -5,6 +5,20 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Security
+
+- `deployed` runs the deploy check as a command split into words, never through a shell: `;`, `&&`, `|`,
+  `$(…)` and redirections in `.bugs-bot.json` are no longer interpreted. A check that needs a shell names
+  it (`sh -c '…'`). A check that is not a command line, or whose program is missing, is reported as
+  « could not run » without its text instead of `deployed=no`.
+
+### Changed
+
+- `agent/AGENT.md` and `skills/bugs-bot/SKILL.md` lose the dated rulings and the restatements: the
+  resident agent's prompt falls from 13,138 to 11,468 tokens (`npm run context`).
+
 ## 0.4.1 — 2026-11-07
 
 ### Security
