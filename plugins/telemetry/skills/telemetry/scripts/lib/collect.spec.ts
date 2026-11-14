@@ -356,3 +356,33 @@ test('target: git push is the git subcommand, not any word', () => {
   assert.equal(targetOf(bashCall('git commit -m push https://github.com/a/b')), undefined)
   assert.deepEqual(targetOf(bashCall('git -C /w push https://github.com/a/b HEAD:x')), { repo: 'a/b' })
 })
+
+// ----- the review and record calls: they act on a pull request at a head like a github call -----
+
+const written = `/home/u/.claude/pr-records/acme/thing/${SHA}/review.20260101T000000Z.orchestrator.json`
+const review = (args: Record<string, unknown>) => ({ tool: 'mcp__orchestrator__review', tool_use_id: 'toolu_01Rv', ...args })
+const recorded = (args: Record<string, unknown>) => ({ tool: 'mcp__github__record', tool_use_id: 'toolu_01Rc', ...args })
+
+test('target: an orchestrator review names its repository and pull request, and its head when the result names it', () => {
+  assert.deepEqual(targetOf(review({ pr: 12, repo: 'acme/thing', verdict: 'pass' })), { repo: 'acme/thing', pr: 12 })
+  assert.deepEqual(targetOf(review({ pr: 12, repo: 'acme/thing', verdict: 'pass' }), { text: written }), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(review({ pr: 12 }), { text: `record: ${written}` }), { repo: 'acme/thing', pr: 12, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(review({ pr: 12 })), { pr: 12 })
+  assert.deepEqual(targetOf(review({ pr: 12, repo: 'acme/thing', dir: '/w/clone' })), { repo: 'acme/thing', pr: 12 })
+  assert.equal(targetOf(review({ verdict: 'pass' })), undefined)
+})
+
+test('target: a record call names its repository and pull request, and its head when the result names it', () => {
+  assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/thing', result: 'pass' })), { repo: 'acme/thing', pr: 7 })
+  assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/thing', result: 'pass' }), { text: written }), { repo: 'acme/thing', pr: 7, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(recorded({ pr: '#7' }), { result: written }), { repo: 'acme/thing', pr: 7, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(recorded({ pr: 7 })), { pr: 7 })
+  assert.deepEqual(targetOf(recorded({ exempt: true, repo: 'acme/thing' })), { repo: 'acme/thing' })
+  assert.equal(targetOf(recorded({ result: 'pass' })), undefined)
+})
+
+test('target: a record result of another repository gives no head to the call, and a case difference does not', () => {
+  assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/other' }), { text: written }), { repo: 'acme/other', pr: 7 })
+  assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'Acme/Thing' }), { text: written }), { repo: 'Acme/Thing', pr: 7, head: SHA.slice(0, 12) })
+  assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/thing' }), { text: 'error: no such head' }), { repo: 'acme/thing', pr: 7 })
+})
