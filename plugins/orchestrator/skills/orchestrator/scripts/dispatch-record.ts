@@ -661,25 +661,8 @@ async function ready(ctx: Context, id: string, args: readonly string[]): Promise
   } else if (kind === 'none') {
     surfaceLine = 'no frontend surface'
   }
-  // The github ready gate needs a review at the head; a row no review has touched is not ready.
-  if (reviewed === '') die(ctx, `ready: no review recorded on row ${id}: dispatch a review round and record it with \`review\`: not ready`)
-  // The label is the orchestrator's to put, with the github tool, in the same move as its ready:
-  // this prints the command and calls nothing.
-  const hash = pr.lastIndexOf('#')
-  const labelCmd = kind === 'ui' ? `pr-readiness ${pr.slice(hash + 1)} ready on ${hash === -1 ? pr : pr.slice(0, hash)}` : 'pr-readiness <n> ready on <owner/repo>'
-  const norms = text(or(field(row['review'], 'norms'), ''))
-  const normsNote = norms === '' ? '' : `, norms check ${norms}`
-  if (sameCommit(ctx, reviewed, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${head}${normsNote}; ${surfaceLine}`)
-    say(ctx, labelCmd)
-  } else if (fixedHead !== '' && sameCommit(ctx, fixedHead, head)) {
-    say(ctx, `ready: row ${id} reviewed at ${reviewed}, corrected and verified at ${head}${normsNote}; ${surfaceLine}`)
-    say(ctx, labelCmd)
-  } else if (fixedHead !== '') {
-    die(ctx, `ready: last review read ${reviewed}, its correction ${fixedHead}, head is ${head}: the head in front of you has been neither read nor verified`)
-  } else {
-    die(ctx, `ready: last review read ${reviewed}, head is ${head}: the head in front of you has not been read`)
-  }
+  // The review at the head and the `Ready` label are the github ready gate's, never this pre-check's.
+  say(ctx, `ready: row ${id}: ${surfaceLine}`)
 }
 
 async function cost(ctx: Context, id: string, args: readonly string[]): Promise<void> {

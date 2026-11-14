@@ -20,8 +20,6 @@ below, and the `args` object holds the subcommand's arguments.
 
 `repo` (`owner/name`) overrides the `origin` remote.
 
-Before writing a text, read its rules in `writing/` beside this file.
-
 ## Subcommands
 
 ### Pull requests

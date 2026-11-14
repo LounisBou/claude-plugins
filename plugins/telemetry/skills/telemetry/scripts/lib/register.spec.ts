@@ -13,7 +13,7 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { exitCode?: number; failUsage?: boolean } = {}) {
+function host(options: { exitCode?: number; failUsage?: boolean; stdout?: string } = {}) {
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
@@ -21,7 +21,7 @@ function host(options: { exitCode?: number; failUsage?: boolean } = {}) {
     plugin: { root: '/p/telemetry' },
     env: { get: async name => ({ HOME: '/home/u', ORCHESTRATOR_SPAWNED: '1' } as Record<string, string>)[name] },
     clock: { now: async () => (clock += 100) },
-    process: { run: async (argv, init) => (runs.push({ argv, stdin: init?.stdin }), { exitCode: options.exitCode ?? 0, stdout: 'export: done\n', stderr: '' }) },
+    process: { run: async (argv, init) => (runs.push({ argv, stdin: init?.stdin }), { exitCode: options.exitCode ?? 0, stdout: options.stdout ?? 'export: done\n', stderr: '' }) },
     session: {
       id: async () => S,
       model: async () => 'claude-opus-5-5',
@@ -120,4 +120,16 @@ test('an export whose flush failed says so, and neither runs nor reports a push'
   const answer = await hook('command.run:telemetry:export')($, { command: 'telemetry:export', args: '' }, through(undefined)) as { text: string }
   assert.match(answer.text, /^telemetry: export not run, the buffered events could not be written: append exited 1/)
   assert.deepEqual(runs.map(r => r.argv[4]), ['append'])
+})
+
+test('what the writer says when it writes (the automatic export\'s one-time notice) is shown, once per write', async () => {
+  const notice = 'telemetry: CLAUDE_LOGS_REPO is not set; the events stay local and nothing is pushed (said once)'
+  const { $, logs } = host({ stdout: `${notice}\n` })
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({ cwd: '/w' }))
+  await hook('session.end')($, F('session.end'), through({ sessionId: S }))
+  assert.deepEqual(logs, [notice])
+  const silent = host({ stdout: '' })
+  await hooks().hook('session.end')(silent.$, F('session.end'), through({ sessionId: S }))
+  assert.deepEqual(silent.logs, [])
 })

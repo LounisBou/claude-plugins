@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
-import { lint, NEGATIVE_PHRASES, proseLines, refusal, TITLE_MAX } from './writing.js'
+import { lint as lintWith, parsePhrases, proseLines, refusal, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
@@ -551,6 +551,15 @@ test('a truncated engine output says so', async ($, on) => {
 // The four sections every pull request description ends with, each empty.
 const NONE = '**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none'
 
+// A fixture of the phrases the mod reads from engine/negative-phrases.json, for the tests of the rule
+// itself: a mod test below reads the file through the mod, and run-tests.sh holds it to the engine's.
+const NEGATIVE_PHRASES = [
+  'unchanged', 'no dependency', 'does not', "doesn't", 'is not changed', 'left untouched',
+  'no other pull request', 'without conflict',
+]
+// The file as the mod reads it in a test: a list of its own, so that a phrase held only here is refused.
+const PHRASES_FILE = JSON.stringify({ phrases: ['zzz-move', 'zzz-stay'] })
+const lint = (command: string, args: any, typed = '') => lintWith(command, args, typed, NEGATIVE_PHRASES)
 const rulesOf = (command: string, args: any, typed = '') => lint(command, args, typed).map((v) => v.field + ': ' + v.rule.split(' (')[0])
 
 test('a semicolon in prose is refused, in a title, a body and an inline comment', () => {
@@ -2061,7 +2070,8 @@ test('a body file the hook cannot read lets the command through, with one log li
   const bash: string[] = []
   const logs: string[] = []
   stubAsk(on, [], 'Deny')
-  on('fs.read', (_$: any, e: any) => ({ deny: 'EACCES ' + e.path }))
+  on('fs.read', (_$: any, e: any) => (e.path.endsWith('/engine/negative-phrases.json')
+    ? { value: PHRASES_FILE } : { deny: 'EACCES ' + e.path }))
   await stubGuard($, on, [], bash, logs)
   logs.length = 0
 
@@ -2071,6 +2081,70 @@ test('a body file the hook cannot read lets the command through, with one log li
   expect(bash).toEqual([command])
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('/locked.md')
+})
+
+test('the negative phrases come from engine/negative-phrases.json, read by the mod on the tool and Bash paths', async ($, on) => {
+  const runs: any[] = []
+  const bash: string[] = []
+  const logs: string[] = []
+  const read: string[] = []
+  await stubMod(on, runs, [], undefined, { decision: 'allow' })
+  on('fs.read', (_$: any, e: any) => {
+    read.push(e.path)
+    return e.path.endsWith('/engine/negative-phrases.json') ? { value: PHRASES_FILE } : { deny: 'ENOENT ' + e.path }
+  })
+  on('ui.log', (_$: any, e: any) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  on('tool.call', { tool: 'Bash' }, (_$: any, e: any) => {
+    bash.push(e.command)
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  await startSession($)
+
+  // The file's phrases are the ones refused, the list the mod once held is not.
+  const body = (text: string) => ({ pr: 1, title: 'feat: add the reset', body: text + '\n\n' + NONE })
+  const held: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset. It will zzz-move on.') })
+  expect(held.deny).toContain('- body: state what the PR does, never what it does not do (the phrasings refused: « zzz-move », « zzz-stay »)')
+  const old: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset. The data is unchanged.') })
+  expect(old.deny).toBeUndefined()
+  expect(read.some((path) => path.endsWith('/engine/negative-phrases.json'))).toBe(true)
+
+  const line = 'gh pr create --draft --title "feat: add the reset" --body "Adds the reset. It will zzz-stay.\n\n' + NONE + '"'
+  const viaBash: any = await $.tool.call({ tool: 'Bash', command: line })
+  expect(viaBash.deny).toContain('(the phrasings refused: « zzz-move », « zzz-stay »)')
+  expect(bash).toEqual([])
+  expect(logs.filter((l) => l.includes('negative-phrases.json'))).toEqual([])
+})
+
+test('a negative-phrases file the mod cannot read leaves that one rule unchecked, logged, the other rules kept', async ($, on) => {
+  const runs: any[] = []
+  const logs: string[] = []
+  await stubMod(on, runs, [], undefined, { decision: 'allow' })
+  on('fs.read', (_$: any, e: any) => ({ deny: 'EACCES ' + e.path }))
+  on('ui.log', (_$: any, e: any) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  await startSession($)
+  logs.length = 0
+
+  const body = (text: string) => ({ pr: 1, title: 'feat: add the reset', body: text + '\n\n' + NONE })
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset. The data is unchanged.') })
+  expect(out.deny).toBeUndefined()
+  expect(logs.length).toBe(1)
+  expect(logs[0]).toContain('negative-phrases.json')
+  expect(logs[0]).toContain('left that rule unchecked')
+  const semicolon: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset; at last.') })
+  expect(semicolon.deny).toContain('- body: no semicolon in prose')
+})
+
+test('a negative-phrases file that holds no list of strings is read as unreadable', () => {
+  expect(parsePhrases(PHRASES_FILE)).toEqual(['zzz-move', 'zzz-stay'])
+  for (const raw of ['', 'not json', '[]', '{}', '{"phrases": "unchanged"}', '{"phrases": [1]}', '{"phrases": [""]}', 'null']) {
+    expect(parsePhrases(raw), raw).toBeNull()
+  }
 })
 
 test('a body in a heredoc substitution is read and linted', async ($, on) => {

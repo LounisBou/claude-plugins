@@ -10,9 +10,10 @@
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
 import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay, runsRoundClose, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
-import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
+import { paneQuestions, waitsInTab, roundEntry, entryFingerprint, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
+import { withdrawalText } from '../relay.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, FIRST_A, FIRST_B, SECOND_A, SECOND_B } from './fixtures.ts'
@@ -2565,6 +2566,159 @@ test('a remote entry is drawn with its machine and answered; an unacked answer i
   expect(texts(await drawn())).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: phase 3)')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, status: 'closed', delivery: { state: 'acked', at: answered.delivery!.at, attempts: 1 } }) + '\n')
   expect(texts(await drawn()).some(t => t.startsWith('being delivered') || t.startsWith('not delivered'))).toBe(false)
+})
+
+// --- a remote orchestrator's open questions, reconciled with its latest row --------------------
+
+const BLOCKS_SINCE = '2026-10-30T10:03:00.000Z'
+const ROW_OF = (held: unknown, over: Record<string, unknown> = {}) => ({
+  name: 'Orch: belt', role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: null, blocks: null,
+  waiting_since: null, updated_at: new Date().toISOString(), machine: 'far', repo: null, prs: [], held, ...over,
+})
+// A marked row, as a remote orchestrator's module sends it, received in the coordinator's session.
+async function receivesRow(handlers: Record<string, Function>, fx: Fx, row: object, body = `[module-row] ${JSON.stringify(row)}`) {
+  return handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${body}\n</cross-session-message>` },
+    (x: unknown) => ({ passed: x }))
+}
+const THE_QUESTION = [{ since: BLOCKS_SINCE, blocks: 'phase 3' }]
+
+test('a remote sender working on while its question stays listed keeps it open', async () => {
+  const asked = remoteEntry({ choices: [], recommendation: null })
+  const { fx, handlers, stored } = await askingPane([asked])
+  remoteRow(fx, 'Orch: belt', 'far')
+  const received = await receivesRow(handlers, fx, ROW_OF(THE_QUESTION))
+  expect(received).toEqual({ consumed: 'orchestrator: a supervision row, stored' })
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a question dropped from the latest row of its sender is withdrawn, with the row named', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  const row = ROW_OF([])
+  await receivesRow(handlers, fx, row)
+  expect(stored(asked.id).status).toBe('withdrawn')
+  expect(stored(asked.id).answer).toEqual({ text: `no longer waited on by Orch: belt (row ${row.updated_at})`, by: 'sender', at: stored(asked.id).answer!.at })
+})
+
+test('a missed withdrawal message is healed by the next row, and the pane no longer counts the question', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, render } = await askingPane([asked])
+  remoteRow(fx, 'Orch: belt', 'far')
+  expect(texts(await render())[0]).toBe('Questions for you — 1 pending')
+  await receivesRow(handlers, fx, ROW_OF([], { waiting: null }))
+  expect(texts(await render())[0]).toBe('Questions for you')
+})
+
+test('a row older than the entry closes nothing', async () => {
+  const asked = remoteEntry({ at: new Date(Date.now() - 60000).toISOString() })
+  const { fx, handlers, stored } = await askingPane([asked])
+  await receivesRow(handlers, fx, ROW_OF([], { updated_at: new Date(Date.now() - 120000).toISOString() }))
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a row that says nothing of the questions held closes nothing: unknown is not none', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  const old = ROW_OF([]) as Record<string, unknown>
+  delete old['held']
+  delete old['repo']
+  delete old['prs']
+  await receivesRow(handlers, fx, old)
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a row newer than a young entry waits for the sender to have written its wait file', async () => {
+  const asked = remoteEntry({ at: new Date(Date.now() - 1000).toISOString() })
+  const { fx, handlers, stored } = await askingPane([asked])
+  await receivesRow(handlers, fx, ROW_OF([], { updated_at: new Date().toISOString() }))
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('an entry moved to a successor stays open whatever the successor\'s row holds', async () => {
+  const asked = remoteEntry({ movedFrom: 's-before' })
+  const { fx, handlers, stored } = await askingPane([asked])
+  await receivesRow(handlers, fx, ROW_OF([]))
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a question with choices stands beside another question its sender holds, and goes when none is held', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  await receivesRow(handlers, fx, ROW_OF([{ since: '2026-10-30T11:00:00.000Z', blocks: 'a note' }]))
+  expect(stored(asked.id).status).toBe('open')
+  await receivesRow(handlers, fx, ROW_OF([]))
+  expect(stored(asked.id).status).toBe('withdrawn')
+})
+
+test('a withdrawal message settles the open entry it names at once; a lost, late or doubled one changes nothing', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, 'yes')
+  const envelope = `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
+  const receive = () => handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
+  expect(await receive()).toEqual({ consumed: 'coordinator: a remote withdrawal, applied' })
+  const settled = stored(asked.id)
+  // The words the message quotes are a peer's: never kept as the operator's typed answer.
+  expect([settled.status, settled.answer!.by, settled.answer!.typed]).toEqual(['withdrawn', 'tab', undefined])
+  // Doubled: the entry is settled already and stays as it was written.
+  await receive()
+  expect(stored(asked.id)).toEqual(settled)
+  // Late: the same question asked again, a new start, is not the one the message names.
+  const again = { ...asked, since: '2026-10-30T12:00:00.000Z', at: new Date().toISOString(), status: 'open', answer: null }
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(again) + '\n')
+  await receive()
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a withdrawal from another peer naming the same sender, start and blocks leaves the entry open', async () => {
+  const asked = remoteEntry()
+  const { fx, handlers, stored } = await askingPane([asked])
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE)
+  const envelope = `<cross-session-message from="uds:/tmp/cc-socks/other.sock" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
+  const received = await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
+  expect(received).toEqual({ consumed: 'coordinator: a remote withdrawal, applied' })
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a remote withdrawal writes no consent record, whatever words it quotes', async () => {
+  const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
+  const asked = remoteEntry({ consent })
+  const { fx, handlers, stored } = await askingPane([asked])
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, CHOICES[0].text)
+  const envelope = `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
+  await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
+  expect(stored(asked.id).status).toBe('withdrawn')
+  expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))).toEqual([])
+})
+
+test('a re-asked question stays open under the row that lists it', async () => {
+  const asked = remoteEntry({ since: '2026-10-30T12:00:00.000Z', choices: [], recommendation: null })
+  const { fx, handlers, stored } = await askingPane([asked])
+  await receivesRow(handlers, fx, ROW_OF([{ since: '2026-10-30T12:00:00.000Z', blocks: 'phase 3' }]))
+  expect(stored(asked.id).status).toBe('open')
+})
+
+test('a sender on this machine: its wait file vouching for the question keeps it, the question gone from it closes it, no wait file says nothing', async () => {
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low' })
+  const { fx, render, stored } = await askingPane([asked])
+  const WAITS = `${HOME}/.claude/claude-orchestrator/store/waits/low`
+  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: asked.since, name: 'Orch: low', pid: null }
+  await render()
+  expect(stored(asked.id).status).toBe('open')
+  fx.files.set(WAITS, JSON.stringify({ ...wait, relayed: entryFingerprint(asked) }) + '\n')
+  await render()
+  expect(stored(asked.id).status).toBe('open')
+  fx.files.set(WAITS, JSON.stringify({ ...wait, relayed: null }) + '\n')
+  await render()
+  expect(stored(asked.id).status).toBe('withdrawn')
+})
+
+test('the pane draw heals an entry its sender\'s stored row no longer holds', async () => {
+  const asked = remoteEntry()
+  const { fx, render, stored } = await askingPane([asked])
+  fx.files.set(`${REMOTE_DIR}/Orch__belt`, JSON.stringify(ROW_OF([])) + '\n')
+  expect(texts(await render())[0]).toBe('Questions for you')
+  expect(stored(asked.id).status).toBe('withdrawn')
 })
 
 test('a remote entry whose sender\'s remote row is gone is not drawn', async () => {

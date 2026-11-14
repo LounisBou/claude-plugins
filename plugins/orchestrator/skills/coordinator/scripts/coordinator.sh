@@ -57,11 +57,13 @@
 # round prints, for each entry whose status is open (and with --all, then for each answered one,
 # chosen in the coordinator's pane and sent to the asking orchestrator, then for each withdrawn one),
 # a line
-#   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | sender gone]
+#   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | remote on <machine> | sender gone]
 # followed by the question's lines, each indented by four spaces. Without --all, the first line is
 #   settled: <n> answered, <n> withdrawn (round --all prints them)
 # when the round holds any of them, and none of theirs is printed: they are done, and a round that
-# keeps them whole grows with every question ever asked. « due » marks an open question
+# keeps them whole grows with every question ever asked. « remote on <machine> » marks a
+# sender on another machine whose remote row is in the store, « sender gone » one with neither a row
+# nor a session. « due » marks an open question
 # the coordinator presents in its tab: its sender marked it urgent, or no pane of the
 # coordinator is open (<state>/pane.json, written by the hooks module while it is, names a pid
 # that is not running, or is absent); any other open question is the pane's alone, however long
@@ -576,6 +578,17 @@ pane_open() {
     fi
 }
 
+# remote_machines: the machine each remote row of the module's store names, by its orchestrator's name,
+# as one JSON object; {} when there is none. A file that is no row is skipped.
+remote_machines() {
+    local file
+    for file in "$MODULE/store/remote"/*; do
+        [ -f "$file" ] || continue
+        case "$(basename "$file")" in *.tmp-*) continue ;; esac
+        jq -c 'select(type == "object" and (.name | type) == "string" and (.machine | type) == "string") | {(.name): .machine}' "$file" 2>/dev/null
+    done | jq -s -c 'add // {}'
+}
+
 cmd_round() {
     local pane=false all=false
     while [ $# -gt 0 ]; do
@@ -587,6 +600,8 @@ cmd_round() {
         esac
     done
     pane_open && pane=true
+    local remote
+    remote=$(remote_machines)
     # A clock a test pins must still read as a UTC time, though no rule reads an age any more.
     jq -n --arg now "${COORDINATOR_NOW:-}" 'if $now == "" then now else $now | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 end' >/dev/null 2>&1 \
         || die "round: COORDINATOR_NOW is no UTC time: ${COORDINATOR_NOW:-}"
@@ -596,7 +611,7 @@ cmd_round() {
     entries=$(round_entries)
     # An entry whose sender's sessions file is absent keeps its place, and its header says the
     # sender is gone: the session ended with its question still open.
-    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson all "$all" '
+    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson all "$all" --argjson remote "$remote" '
         # Grouped by sender, the groups by their earliest wait, each in the order its waits began.
         def grouped: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
@@ -604,7 +619,8 @@ cmd_round() {
         # urgent first, then the others, each level grouped by sender.
         def ordered: group_by(if .urgent == true then 0 else 1 end) | map(grouped) | add // [];
         # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
-        def gone: .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end;
+        def gone: if (.origin | type) == "object" then $remote[.from] == null
+            else .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end end;
         # An open question is due in the tab of the coordinator when its sender marked it urgent, or
         # when no pane of the coordinator is open (hooks/round.ts isDue).
         def due: .status == "open" and .kind == "operator" and (.urgent == true or ($pane | not));
@@ -613,7 +629,7 @@ cmd_round() {
         (if $all or (settled | length) == 0 then empty else "settled: \(settled | join(", ")) (round --all prints them)" end),
         # The open entries, then (with --all) those the operator answered from the pane, then the withdrawn.
         (([(if $all then ("open", "answered", "withdrawn") else "open" end) as $status | map(select(.status == $status)) | ordered] | add // [])[]
-        | (if gone then " | sender gone" else "" end) as $gone
+        | (if (.origin | type) == "object" and $remote[.from] != null then " | remote on \($remote[.from])" elif gone then " | sender gone" else "" end) as $gone
         | (if due then " | due" else "" end) as $due
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
           (.question | select(. != "") | split("\n")[] | "    " + .),

@@ -162,7 +162,7 @@ Testers never perceive a change of session: you keep the threads, promises and t
 
 Your context is measured, not guessed; at the gate you hand over to a fresh agent of the same title by yourself. Nobody asks you to; nobody is asked.
 
-**The gate** is a project-file setting (300,000 tokens by default on a window of 1,000,000 or more, 80 % of a smaller one), printed by `bugs-bot gate`; the operator sets it with `bugs-bot gate --set <tokens>`, you never change it.
+**The gate** is a project-file setting (300,000 tokens by default, at most 80 % of the window), printed by `bugs-bot gate`; the operator sets it with `bugs-bot gate --set <tokens>`, you never change it.
 
 **When you measure.** After every handled event (a relay, a post, a launcher message), never on an empty exit: ONE call, alone — the `bugs` tool's `{"command": "gate", "args": ["--measure"]}`, which measures this session's own context, or, without that tool, the plain command `bugs-bot gate --measure`, which reads the orchestrator plugin's measure file (located by the tool itself: no path of yours). Either prints `gate_tokens=`, `context_tokens=`, `context_window=` and `handover=yes|no`. Exit 1: tell your launcher its error line once, and go on.
 

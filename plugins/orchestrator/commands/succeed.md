@@ -16,9 +16,7 @@ Preconditions, verify each before acting:
 - its « Live state » is generated now, never written by hand:
   `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
   judgment; each note of the last generation is promoted into an artifact
-  (`--promote <n>=<path>`) or dropped. The script overwrites the previous handover's Live state,
-  and the spawn refuses a brief that misses an open item.
-  The brief stays within 9,000 characters, the open-questions value apart.
+  (`--promote <n>=<path>`) or dropped. The spawn refuses a brief that misses an open item.
 
 Then:
 
@@ -37,15 +35,10 @@ Then:
    `Orch: <subject>` with a reference of its own, which is what every brief cites. Where the
    launcher reads no such name, it says to type one: pass `--title "<this session's current
    name>"`, the name `ListAgents` prints for it without its bracketed reference.
-   The successor runs on the model this session runs on NOW — the operator's choice, carried
-   across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,
-   and hands it the chain (spec §34).
-4. **Name the successor to your agents.** Once the spawn is verified and the successor's name and
-   reference are read in `ListAgents`, send each running agent of your own ONE message giving
-   the successor's exact name and reference and saying that the successor's messages are its own
-   from now on. An agent takes no word from a session it was never told of, and the successor
-   cannot vouch for itself.
+   and hands it the chain.
+4. **Name the successor to your agents** once the spawn is verified and its name and reference
+   are read in `ListAgents`: `references/lifecycle.md`, « Succession — the predecessor », step 4.
 5. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only,
    and the operator's in one line naming the successor, who answers them.
    On the confirmation, send it « handed over » as your
@@ -53,10 +46,5 @@ Then:
    a line written in your own tab reaches no one, and the successor waits on it.
    Nothing of yours is left to write; end the turn: that message is what it closes
    your tab on.
-6. Never close your own tab: the successor closes it on your « handed over » message — or,
-   five minutes after "takeover confirmed" without it, on a reading of your tab's screen —
-   its brief says so (template step 4), and you do not run this command without that step
-   in the brief.
-7. Do not ask the user whether to succeed. At the gate you succeed, then you tell them.
 
 $ARGUMENTS
