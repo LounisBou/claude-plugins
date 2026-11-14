@@ -8,11 +8,11 @@ const plan = (e2e: string, norms: string, review?: string) => {
 }
 
 test('a plan gives each need, and a reason for any need but required', () => {
-  expect(planInput({ e2e: 'Screenshots: a colour', norms: 'required: kept', review: 'none: a typo' })).toEqual({
-    e2e: { need: 'screenshots', reason: 'a colour' }, norms: { need: 'required', reason: '' }, review: { need: 'none', reason: 'a typo' },
+  expect(planInput({ e2e: 'Screenshots: a colour', norms: 'required: kept', review: 'one-pass: a typo' })).toEqual({
+    e2e: { need: 'screenshots', reason: 'a colour' }, norms: { need: 'required', reason: '' }, review: { need: 'required', reason: '', max: 1 },
   })
   expect(planInput({})).toEqual({ e2e: { need: 'none', reason: 'not in the plan' }, norms: { need: 'none', reason: 'not in the plan' }, review: { need: 'required', reason: '', max: 3 } })
-  expect(planInput({ review: 'none' })).toBe('review none gives its reason: "none: <why>"')
+  expect(planInput({ review: 'maybe' })).toBe('review is one of required, one-pass, got: maybe')
   expect(planInput({ e2e: 'none', norms: 'required' })).toBe('e2e none gives its reason: "none: <why>"')
   expect(planInput({ e2e: 'required', norms: 'screenshots: x' })).toContain('norms is one of required, none')
   expect(planInput({ e2e: 'none: ' + 'x'.repeat(501), norms: 'required' })).toContain('at most 500')
@@ -60,16 +60,24 @@ test('a required review carries its max rounds, from 1 to the cap, and a former 
   expect(planText(plan('required', 'required', 'required: max 3'))).toContain('- review: required: max 3\n')
 })
 
+test('a review given none is read as one pass, never as no review', () => {
+  for (const none of ['none', 'none: a typo', 'None']) {
+    expect(planInput({ review: none })).toMatchObject({ review: { need: 'required', reason: '', max: 1 } })
+  }
+})
+
 test('a plan file of either review shape parses back, a former one-pass as one round and a former full as the cap', () => {
   const written = plan('required', 'required', 'required: max 2')
   expect(parsePlan(JSON.parse(JSON.stringify(written)))).toEqual(written)
   expect(parsePlan({ ...written, review: { need: 'one-pass', reason: 'a typo' } })?.review).toEqual({ need: 'required', reason: '', max: 1 })
   expect(parsePlan({ ...written, review: { need: 'full', reason: '' } })?.review).toEqual({ need: 'required', reason: '', max: 3 })
+  expect(parsePlan({ ...written, review: { need: 'none', reason: 'a typo' } })?.review).toEqual({ need: 'required', reason: '', max: 1 })
   expect(parsePlan({ ...written, review: { need: 'required', reason: '', max: 7 } })).toBeUndefined()
 })
 
-test('the plan excuses the review it gives none, and never a required one', () => {
-  expect(planExcuses(plan('required', 'required', 'none: a typo')).review).toBe('check plan, 2026-11-14: a typo')
+test('the plan never excuses the review, whatever need it gives it', () => {
+  expect(planExcuses(plan('required', 'required', 'none: a typo')).review).toBeUndefined()
+  expect(planExcuses(plan('required', 'required', 'one-pass: a typo')).review).toBeUndefined()
   expect(planExcuses(plan('required', 'required', 'required: max 2')).review).toBeUndefined()
   expect(planExcuses(plan('required', 'required')).review).toBeUndefined()
 })

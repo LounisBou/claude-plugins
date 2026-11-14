@@ -2627,12 +2627,25 @@ test('a plan that needs no norms check and screenshots in place of E2E leaves th
     + ' one CSS line), no E2E needed (check plan, 2026-11-14: desktop and mobile screenshots in its place, a colour change) and green CI hold at its head.'])
 })
 
-test('a plan that gives the review none is Ready with no review record, its line naming the plan\'s reason', async ($, on) => {
+test('a plan that gives the review one pass is Not Ready with no review record', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 1 } }
+  const seen = await world($, on, { records: OTHERS_PASSED, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('a plan that gives the review one pass is Ready once the review record passes', async ($, on) => {
+  const plan = { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 1 } }
+  const seen = await world($, on, { records: { ...OTHERS_PASSED, ...ONLY_REVIEW }, plan })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a plan file that still gives the review none leaves it owed', async ($, on) => {
   const plan = { ...planOf({ need: 'required' }), review: { need: 'none', reason: 'a typo' } }
   const seen = await world($, on, { records: OTHERS_PASSED, plan })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-  expect(seen.logs).toEqual(['github: acme/thing#12 Ready at 0123456: no review needed (check plan, 2026-11-14: a typo), passed E2E and green CI hold at its head.'])
+  expect(readinessRuns(seen)).toEqual([])
 })
 
 test('a plan that requires a review of two rounds stays Not Ready with no review record', async ($, on) => {
@@ -2690,7 +2703,7 @@ test('pr-plan reads a former full plan file as a required review of the cap\'s r
 
 test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
-  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'none' }, []]) {
+  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'maybe' }, []]) {
     expect((await planned($, plan)).deny).toContain('github: a check plan is')
   }
   expect(seen.files[PLAN]).toBeUndefined()
