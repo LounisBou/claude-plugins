@@ -305,7 +305,8 @@ Both routes are `hooks/e2e-scope.ts`'s.
   head) holds runtime (`runtimeFiles`); the refusal names the files.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
   `required[: max <n>]|none` (its rounds and needs are core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
-  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR.
+  in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;
+  `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator's words typed in the session, or a consent record

@@ -2699,6 +2699,27 @@ test('the record tool writes the plan, posts it on the pull request, and the gat
   expect(recordRun(seen)).toBeUndefined()
 })
 
+test('pr-plan answers the pull request\'s check plan as it stands, its number with or without #, with no engine run', async ($, on) => {
+  const seen = await world($, on, { plan: { ...planOf({ need: 'required' }), review: { need: 'required', reason: '', max: 2 } } })
+  const out: any = await $.tool.call(gh('pr-plan', { pr: 12 }))
+  expect(JSON.parse(out.result)).toMatchObject({ repo: 'acme/thing', pr: 12, review: { need: 'required', max: 2 } })
+  const hashed: any = await $.tool.call(gh('pr-plan', { pr: '#12' }))
+  expect(JSON.parse(hashed.result).review.max).toBe(2)
+  expect(seen.runs).toEqual([])
+})
+
+test('pr-plan says when the pull request has no check plan, or one that does not parse', async ($, on) => {
+  await world($, on, { plan: planOf({ need: 'none', reason: '' }) })
+  expect(((await $.tool.call(gh('pr-plan', { pr: 12 }))) as any).result).toBe('no check plan for acme/thing#12')
+  expect(((await $.tool.call(gh('pr-plan', { pr: 13 }))) as any).result).toBe('no check plan for acme/thing#13')
+  expect(((await $.tool.call(gh('pr-plan', {}))) as any).isError).toBe(true)
+})
+
+test('pr-plan reads a former plan file as a required review of one round', async ($, on) => {
+  await world($, on, { plan: planOf({ need: 'required' }) })
+  expect(JSON.parse(((await $.tool.call(gh('pr-plan', { pr: 12 }))) as any).result).review).toEqual({ need: 'required', reason: '', max: 1 })
+})
+
 test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
   for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'none' }, []]) {

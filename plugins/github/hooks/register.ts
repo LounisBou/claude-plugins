@@ -42,12 +42,12 @@ export const COMMANDS = [
   'pr-ready', 'pr-draft', 'label-add', 'label-remove', 'reviewer-add', 'reviewer-remove',
   'assignee-add', 'assignee-remove', 'labels-ensure', 'pr-readiness', 'issue-view', 'issue-list',
   'issue-search', 'pr-linked-issues', 'image-upload', 'auth-check', 'auto-merge-set', 'auto-merge-list',
-  'auto-deploy-set', 'auto-deploy-list', 'protect-check', 'protect-apply',
+  'auto-deploy-set', 'auto-deploy-list', 'protect-check', 'protect-apply', 'pr-plan',
 ]
 
-// The subcommands this module answers without the engine: the lists of
-// repositories in auto-merge and in auto-deploy are files on this machine, not GitHub's.
-export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-deploy-set', 'auto-deploy-list'])
+// The subcommands this module answers without the engine: the lists of repositories in
+// auto-merge and in auto-deploy, and a pull request's check plan, are files on this machine, not GitHub's.
+export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-deploy-set', 'auto-deploy-list', 'pr-plan'])
 
 // The subcommands the session calls to read. Every other one writes to GitHub, and a
 // command missing here is treated as a write, so the safe side is the default. After
@@ -57,7 +57,7 @@ export const READS = new Set([
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
-  'auto-deploy-list', 'protect-check',
+  'auto-deploy-list', 'protect-check', 'pr-plan',
 ])
 
 export const TOOL = 'mcp__github__gh'
@@ -1887,6 +1887,16 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
 }
 
+// pr-plan {pr}: the pull request's check plan as the gate reads it, as JSON, or the line that says it has none.
+async function showPlan($: any, raw: any): Promise<{ result: string; isError?: boolean }> {
+  const pr = Number(String(raw.args?.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return { result: 'github: name the pull request: {"pr": <n>}', isError: true }
+  const repo = await targetRepo($, raw)
+  if (!repo || !isRepoName(repo)) return { result: 'github: name the repository: {"repo": "owner/name"}', isError: true }
+  const plan = await readPlan($, repo, pr)
+  return { result: plan ? JSON.stringify(plan, null, 2) : 'no check plan for ' + repo + '#' + pr }
+}
+
 /*
  * The record tool's {pr, plan: {e2e, norms}}: the proofs the pull request owes, decided when the work is
  * scoped, kept across its heads and posted on it. A new plan may require more; one that no longer requires
@@ -2279,6 +2289,7 @@ export function register(on: any): void {
         if (raw.command === 'auto-deploy-set') return await setAutoDeploy($, raw)
         const verdict = await $.tool.check({ tool: TOOL, input: { command: raw.command, args: raw.args, repo: raw.repo } })
         if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+        if (raw.command === 'pr-plan') return await showPlan($, raw)
         return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
       } catch (err: any) {
         return { result: String(err?.message ?? err), isError: true }
