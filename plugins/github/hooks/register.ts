@@ -691,7 +691,7 @@ async function headRecords($: any, gate: Gate, head = gate.head): Promise<Record
   const files: RecordFile[] = []
   for (const entry of entries) {
     const name = String(entry?.name ?? '')
-    if (entry?.kind === 'directory' || name.startsWith('.') || !name.endsWith('.json')) continue
+    if (entry?.kind === 'dir' || name.startsWith('.') || !name.endsWith('.json')) continue
     let text = ''
     try {
       text = String(await $.fs.read(dir + '/' + name))
@@ -778,7 +778,7 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
   let heads: string[]
   try {
     heads = (await $.fs.list(dir))
-      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .filter((x: any) => x?.kind === 'dir' && SHA.test(String(x.name)) && x.name !== gate.head)
       .map((x: any) => String(x.name))
   } catch {
     return { found }
@@ -1502,7 +1502,7 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject, c
     const dated: Array<{ path: string; mtime: number }> = []
     for (const entry of await $.fs.list(root)) {
       const name = String(entry?.name ?? '')
-      if (entry?.kind === 'directory' || name.startsWith('.') || !name.endsWith('.json')) continue
+      if (entry?.kind === 'dir' || name.startsWith('.') || !name.endsWith('.json')) continue
       try {
         dated.push({ path: root + '/' + name, mtime: Number((await $.fs.stat(root + '/' + name)).mtimeMs) })
       } catch {
@@ -1871,7 +1871,7 @@ async function pruneRecords($: any): Promise<void> {
   }
   const cut = Date.now() - PRUNE_DAYS * 24 * 3600 * 1000
   const dirs = async (path: string): Promise<string[]> =>
-    (await $.fs.list(path)).filter((x: any) => x?.kind === 'directory').map((x: any) => path + '/' + x.name)
+    (await $.fs.list(path)).filter((x: any) => x?.kind === 'dir').map((x: any) => path + '/' + x.name)
   const stale: string[] = []
   for (const owner of await dirs(root)) {
     for (const name of await dirs(owner)) {
