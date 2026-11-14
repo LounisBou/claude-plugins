@@ -47,7 +47,7 @@ type World = {
   // (a file past what one read copies): only an append keeps it.
   warnLog?: string
   // The files and directories $.fs sees beside the records, by path.
-  tree?: Record<string, { kind: 'file' | 'directory' | 'dir'; mtimeMs: number; text?: string }>
+  tree?: Record<string, { kind: 'file' | 'dir'; mtimeMs: number; text?: string }>
   // The move that puts a new auto-merge.json in place fails with this stderr.
   mvFails?: string
   // pr-readiness fails with this stderr.
@@ -1142,7 +1142,7 @@ test('a waiver with a dated reason but no consent record is refused', async ($, 
 const CONSENTS = '/cfg/consents/acme/thing'
 
 function consentWorld(records: Record<string, unknown>, dir = CONSENTS): World {
-  const tree: NonNullable<World['tree']> = { [dir]: { kind: 'directory', mtimeMs: 1 } }
+  const tree: NonNullable<World['tree']> = { [dir]: { kind: 'dir', mtimeMs: 1 } }
   for (const [id, body] of Object.entries(records)) tree[dir + '/' + id + '.json'] = { kind: 'file', mtimeMs: 2, text: JSON.stringify(body) }
   return { git: CLEAN, tree }
 }
@@ -1189,10 +1189,20 @@ for (const [label, over] of [
 test('an answer the orchestrator\'s round holds is no consent: github never reads round/', async ($, on) => {
   const round = '/cfg/claude-orchestrator/round'
   const entry = { question: 'E2E for thing#12: waive it?', blocks: null, status: 'answered', answer: { text: CONSENT_WORDS, by: 'pane', at: 'x' } }
-  const seen = await world($, on, { git: CLEAN, tree: { [round]: { kind: 'directory', mtimeMs: 1 }, [round + '/a.json']: { kind: 'file', mtimeMs: 2, text: JSON.stringify(entry) } } })
+  const seen = await world($, on, { git: CLEAN, tree: { [round]: { kind: 'dir', mtimeMs: 1 }, [round + '/a.json']: { kind: 'file', mtimeMs: 2, text: JSON.stringify(entry) } } })
   const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
   expect(out.deny).toContain('an E2E waiver quotes the operator')
   expect(recordRun(seen)).toBeUndefined()
+})
+
+test('directories named like record files take none of the newest slots: the consent record is still read', async ($, on) => {
+  const crowded = consentWorld({ a: consent() })
+  // More newer directories named *.json than the 200 newest entries a read keeps.
+  for (let i = 0; i < 201; i++) crowded.tree![CONSENTS + '/d' + i + '.json'] = { kind: 'dir', mtimeMs: 5 }
+  const seen = await world($, on, crowded)
+  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
 })
 
 test('a waiver that quotes no consent is refused, and says both ways to give one', async ($, on) => {
@@ -1325,12 +1335,12 @@ const DAY = 24 * 3600 * 1000
 test('at session start the head directories untouched for 90 days are pruned, once a day', async ($, on) => {
   const now = Date.now()
   const tree: World['tree'] = {
-    [RECORDS]: { kind: 'directory', mtimeMs: now },
-    [RECORDS + '/o']: { kind: 'directory', mtimeMs: now },
-    [RECORDS + '/o/r']: { kind: 'directory', mtimeMs: now },
-    [RECORDS + '/o/r/' + MOVED]: { kind: 'directory', mtimeMs: now - 200 * DAY },
+    [RECORDS]: { kind: 'dir', mtimeMs: now },
+    [RECORDS + '/o']: { kind: 'dir', mtimeMs: now },
+    [RECORDS + '/o/r']: { kind: 'dir', mtimeMs: now },
+    [RECORDS + '/o/r/' + MOVED]: { kind: 'dir', mtimeMs: now - 200 * DAY },
     [RECORDS + '/o/r/' + MOVED + '/e2e.x.json']: { kind: 'file', mtimeMs: now - 100 * DAY },
-    [RECORDS + '/o/r/' + HEAD]: { kind: 'directory', mtimeMs: now - 200 * DAY },
+    [RECORDS + '/o/r/' + HEAD]: { kind: 'dir', mtimeMs: now - 200 * DAY },
     [RECORDS + '/o/r/' + HEAD + '/review.x.json']: { kind: 'file', mtimeMs: now - 10 * DAY },
   }
   const seen = await world($, on, { tree })
@@ -1341,11 +1351,11 @@ test('at session start the head directories untouched for 90 days are pruned, on
 test('a stamp from today prunes nothing', async ($, on) => {
   const now = Date.now()
   const tree: World['tree'] = {
-    [RECORDS]: { kind: 'directory', mtimeMs: now },
+    [RECORDS]: { kind: 'dir', mtimeMs: now },
     [RECORDS + '/.pruned']: { kind: 'file', mtimeMs: now - 3600 * 1000 },
-    [RECORDS + '/o']: { kind: 'directory', mtimeMs: now },
-    [RECORDS + '/o/r']: { kind: 'directory', mtimeMs: now },
-    [RECORDS + '/o/r/' + MOVED]: { kind: 'directory', mtimeMs: now - 200 * DAY },
+    [RECORDS + '/o']: { kind: 'dir', mtimeMs: now },
+    [RECORDS + '/o/r']: { kind: 'dir', mtimeMs: now },
+    [RECORDS + '/o/r/' + MOVED]: { kind: 'dir', mtimeMs: now - 200 * DAY },
   }
   const seen = await world($, on, { tree })
   expect(seen.runs).toEqual([])
@@ -2619,8 +2629,8 @@ const fingerprintFile = (head: string) => '/data/fingerprint.acme%2Fthing.12.' +
 // commit count a gate read found at that head (none when null).
 function earlier(records: Array<[string, string]>, dir = OLD_DIR, commits: number | null = 2): World['tree'] {
   const tree: NonNullable<World['tree']> = {
-    [RECORDS + '/acme/thing']: { kind: 'directory', mtimeMs: 0 },
-    [dir]: { kind: 'directory', mtimeMs: ++earlierMtime },
+    [RECORDS + '/acme/thing']: { kind: 'dir', mtimeMs: 0 },
+    [dir]: { kind: 'dir', mtimeMs: ++earlierMtime },
   }
   if (commits !== null) {
     const head = dir.slice(dir.lastIndexOf('/') + 1)
@@ -2642,6 +2652,13 @@ test('a rebase that leaves the diff unchanged carries the review, the norms chec
   // Each head is fingerprinted once, the earlier one over the head's commit count: the second read takes both from the data directory.
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('a directory named like a record file, in an earlier head, is no unreadable record: the rebase still carries', async ($, on) => {
+  const tree = { ...earlier(CLEAN_OLD), [OLD_DIR + '/nested.json']: { kind: 'dir' as const, mtimeMs: 0 } }
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
 })
 
 test('a rebase that leaves the diff unchanged carries the orchestrator\'s acceptance of the review', async ($, on) => {
@@ -2832,7 +2849,7 @@ test('an earlier head whose records name only other pull requests is read once, 
   expect(fingerprintRuns(seen)).toEqual([])
   const [name, text] = at('norms', 'pass')
   tree![OLD_DIR + '/' + name] = { kind: 'file', mtimeMs: 0, text }
-  tree![OLD_DIR] = { kind: 'directory', mtimeMs: ++earlierMtime }
+  tree![OLD_DIR] = { kind: 'dir', mtimeMs: ++earlierMtime }
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   // Read again once it changed: the new record names the pull request, so it is fingerprinted.
   expect(oldReads()).toBe(3)
@@ -2842,8 +2859,8 @@ test('an earlier head whose records name only other pull requests is read once, 
 test('the daily pruning removes the fingerprints kept past 90 days with the old records', async ($, on) => {
   const now = Date.now()
   const tree: World['tree'] = {
-    [RECORDS]: { kind: 'directory', mtimeMs: now },
-    '/data': { kind: 'directory', mtimeMs: now },
+    [RECORDS]: { kind: 'dir', mtimeMs: now },
+    '/data': { kind: 'dir', mtimeMs: now },
     [fingerprintFile(OLD)]: { kind: 'file', mtimeMs: now - 100 * DAY },
     [fingerprintFile(HEAD)]: { kind: 'file', mtimeMs: now - 10 * DAY },
     '/data/auto-merge.json': { kind: 'file', mtimeMs: now - 100 * DAY },
