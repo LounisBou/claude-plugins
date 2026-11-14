@@ -40,14 +40,31 @@ export async function readTodos($: Held, name: string): Promise<TodoItem[]> {
   return todoItems(String(await $.fs.read(todoPath(await stateDir($), name)).catch(() => '')))
 }
 
-// One change of a holder's list, under the store's lock: the item it made, or why it made none.
+// One change of a holder's list, under the store's lock: the item it made, or why it made none. An
+// absent list (ENOENT) starts empty; a list that cannot be read for any other reason is changed in
+// nothing, since the write that follows would replace what the operator's requests were recorded in.
+// The store's own read answers undefined for both, so the read is made here, beside it.
 async function writeTodos($: Held, name: string, change: (text: string) => { text: string; item: TodoItem } | { error: string }): Promise<{ item: TodoItem } | { error: string }> {
   let made: { item: TodoItem } | { error: string } = { error: 'nothing was written' }
-  await updateOver(storeIo($), todoPath(await stateDir($), name), current => {
+  let unreadable: string | null = null
+  const io = {
+    ...storeIo($),
+    read: (path: string) => $.fs.read(path).then(text => String(text), err => {
+      if (!/ENOENT|no such/i.test(messageOf(err))) unreadable = messageOf(err)
+      return undefined
+    }),
+  }
+  const path = todoPath(await stateDir($), name)
+  await updateOver(io, path, current => {
+    if (unreadable !== null) {
+      made = { error: `the list of ${holderOf(name)} could not be read (${unreadable}); nothing was written, so no request of his is lost.` }
+      return undefined
+    }
     const next = change(current ?? '')
     made = 'error' in next ? next : { item: next.item }
     return 'error' in next ? undefined : next.text
   })
+  if (unreadable !== null) await logLine($, 'todo', `list of ${holderOf(name)} not read, left as it is: ${unreadable}`)
   return made
 }
 

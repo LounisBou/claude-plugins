@@ -20,7 +20,7 @@ const SAID = '2026-11-14T14:58:00Z'
 const row = (role: string, name: string) =>
   JSON.stringify({ role, name, repo: null, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() })
 
-type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string> }
+type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string>; unreadable?: string[] }
 
 function world(options: Options = {}) {
   const [role, name] = options.me ?? ['orchestrator', 'Orch: billing [ref-1]']
@@ -44,7 +44,10 @@ function world(options: Options = {}) {
     },
     clock: { sleep: async () => undefined },
     fs: {
-      read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
+      read: async (p: string) => {
+        if (options.unreadable?.includes(p)) throw new Error('EIO: i/o error, read')
+        if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)!
+      },
       write: async (p: string, text: string) => { files.set(p, text) },
       stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file', size: 1, mtimeMs: NOW.getTime() } },
       exists: async (p: string) => files.has(p),
@@ -110,6 +113,30 @@ test('a send that fails leaves the item written, and the answer says so', async 
   expect(answered.result).toContain('not sent')
   expect(answered.result).toContain('no such session')
   expect(listOf(files, 'Coord: general')).toHaveLength(1)
+})
+
+test('a list that cannot be read is left byte for byte as it is: no add writes over it', async () => {
+  const path = `${LISTS}/Orch: billing.jsonl`
+  const before = '{"v":1,"id":1,"opened":"2026-11-14T14:00:00Z","label":"keep","state":"open","verdict":"","words":"keep","said_at":"2026-11-14T13:59:00Z","from":"Orch: billing"}\n'
+  const { dollar, files, writes, logs } = world({ files: { [path]: before }, unreadable: [path] })
+  const answered = await call(dollar, { action: 'add', words: 'a new request' })
+  expect(answered.isError).toBe(true)
+  expect(answered.result).toContain('EIO')
+  expect(files.get(path)).toBe(before)
+  expect(writes).toEqual([])
+  expect([...files.keys()].filter(file => file.endsWith('.lock'))).toEqual([])
+  expect(logs.some(line => line.includes('EIO'))).toBe(true)
+  for (const input of [{ action: 'done', id: 1, outcome: 'x' }, { action: 'defer', id: 1, words: 'later' }]) {
+    expect((await call(dollar, input)).isError).toBe(true)
+    expect(files.get(path)).toBe(before)
+  }
+})
+
+test('an absent list is an empty one: the first add starts it', async () => {
+  const { dollar, files } = world()
+  expect(files.has(`${LISTS}/Orch: billing.jsonl`)).toBe(false)
+  expect((await call(dollar, { action: 'add', words: 'first' })).isError).toBe(undefined)
+  expect(listOf(files, 'Orch: billing')).toHaveLength(1)
 })
 
 test('add to the caller\'s own name records once and sends nothing', async () => {
