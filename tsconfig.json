@@ -30,6 +30,7 @@
     "plugins/orchestrator/hooks/gauge.ts",
     "plugins/orchestrator/hooks/host.ts",
     "plugins/orchestrator/hooks/audit-events.ts",
+    "plugins/orchestrator/hooks/settle.ts",
     "plugins/telemetry/skills/*/scripts/**/*.ts",
     "plugins/telemetry/hooks/collect.ts",
     "plugins/telemetry/hooks/register.ts",

@@ -1830,13 +1830,13 @@ test('turns that wait on a tool, one per monitor event, leave the open question 
   expect(fx.sent.length).toBe(0)
 })
 
-test('after a round-close, the same question asked again is entered again', async () => {
+test('after the coordinator settles it, the same question asked again is entered again', async () => {
   const chains = mounted()
   const fx = fake()
   const ask = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
   await drive(chains, 'turn.complete', fx.dollar, ask)
   const [first] = entries(fx)
-  // The coordinator's round-close, as the script writes it: the entry closed, the wait file untouched.
+  // The coordinator's close, as its settle writes it: the entry closed (the wait file left to the relay).
   const path = `${ROUND}/${first.id}.json`
   fx.files.set(path, JSON.stringify({ ...first, status: 'closed', answer: { text: 'A', by: 'coordinator', at: first.at } }) + '\n')
   await drive(chains, 'turn.start', fx.dollar, { text: 'the coordinator answered' })
@@ -2274,7 +2274,7 @@ test('an ask sent again, of the same start, never reopens its entry settled mean
   const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
   const path = `${ROUND}/${entry.id}.json`
   const again = () => drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
-  // Closed by a round-close while the ask's first acknowledgment was lost.
+  // Closed by the coordinator's settle while the ask's first acknowledgment was lost.
   const closed = { ...stored(), status: 'closed', answer: { text: 'A', by: 'coordinator', at: entry.at } }
   coordinator.files.set(path, JSON.stringify(closed) + '\n')
   await again()
@@ -2376,17 +2376,17 @@ test('a peer message that is not an answer leaves the question open through the 
   expect(fx.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
 })
 
-test('the orchestrator withdraws its own open question when it acts on an answer by message: answered, by message, with its author', async () => {
+test('the orchestrator settles its own open question when it acts on an answer by message: answered, by message, with its author', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   const [asked] = entries(fx)
-  const call = await toolHandler()(fx.dollar, { author: 'Coord: ops [abc]' })
+  const call = await toolHandler()(fx.dollar, byMessage(asked.id, 'Coord: ops [abc]'))
   expect(call.isError).toBeUndefined()
   const [now] = entries(fx)
   expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord: ops [abc]'])
-  expect((await toolHandler()(fx.dollar, { author: '' })).isError).toBe(true)
-  expect((await toolHandler()(fx.dollar, { author: 'x', agentId: 'a' })).isError).toBe(true)
+  expect((await toolHandler()(fx.dollar, byMessage(asked.id, ''))).isError).toBe(true)
+  expect((await toolHandler()(fx.dollar, { ...byMessage(asked.id, 'x'), agentId: 'a' })).isError).toBe(true)
 })
 
 // A coordinator's and an auditor's question is closed by the tool as an orchestrator's is (row 161-bis).
@@ -2396,26 +2396,29 @@ for (const [name, role] of [['Coord: ops [abc]', 'coordinator'], ['Audit: method
     const fx = fake({ name, role })
     await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
     const [asked] = entries(fx)
-    const call = await toolHandler()(fx.dollar, { author: 'Coord: other [def]' })
+    const call = await toolHandler()(fx.dollar, byMessage(asked.id, 'Coord: other [def]'))
     expect(call.isError).toBeUndefined()
     const [now] = entries(fx)
     expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord: other [def]'])
   })
 }
 
-test('a tool call from a session that is no orchestrator, coordinator or auditor withdraws nothing', async () => {
+test('a tool call from a session that is no orchestrator, coordinator or auditor settles nothing', async () => {
   const fx = fake({ name: 'Agent: belt-p3', role: 'agent' })
   const asked = { ...roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, 'T', 'T') }
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
-  expect((await toolHandler()(fx.dollar, { author: 'x' })).isError).toBe(true)
+  expect((await toolHandler()(fx.dollar, byMessage(asked.id, 'x'))).isError).toBe(true)
   expect(entries(fx).map(e => e.status)).toEqual(['open'])
 })
 
-// The handler registered for the answered-by-message tool, its matcher read.
+// The settle call of an answer that reached the asker by a message.
+const byMessage = (id: string, author: string) => ({ id, outcome: 'answered-by-message', answer: 'A, ship it', author })
+
+// The handler registered for the settle tool, its matcher read.
 function toolHandler(): (dollar: any, e: object) => Promise<any> {
   let found: Function | null = null
   register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'tool.call' && args.length === 3 && (args[1] as { tool?: string }).tool === 'mcp__orchestrator__answered-by-message') found = args[2]
+    if (args[0] === 'tool.call' && args.length === 3 && (args[1] as { tool?: string }).tool === 'mcp__orchestrator__settle') found = args[2]
     return { catch: () => undefined }
   })
   return (dollar, e) => found!(dollar, e)

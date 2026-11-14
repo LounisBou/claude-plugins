@@ -9,7 +9,8 @@
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
-import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay, runsRoundClose, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { settle } from '../question.ts'
 import { paneQuestions, waitsInTab, roundEntry, entryFingerprint, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
@@ -1361,7 +1362,7 @@ test('an entry whose session has no live row on this machine is answered by its 
 })
 
 // The race the round's writers run on one entry (another process: the sender withdrawing it, the
-// coordinator's round-close): it starts the moment the pane reads the entry, and keeps core's
+// coordinator's settle): it starts the moment the pane reads the entry, and keeps core's
 // convention, writing under the entry's lock what it read open. Without the pane's lock it wrote
 // « withdrawn » between the pane's read and its write, and the pane's « answered » erased it.
 test('a withdrawal racing the pane\'s answer on one entry is never written over: one of them wins whole', async () => {
@@ -2842,9 +2843,9 @@ test('the answers given to a multi-question entry survive a reload', async () =>
   expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
 })
 
-// --- an answer closed by the coordinator's round-close, delivered by its module ----------------
+// --- an answer closed by the coordinator's settle, delivered by its module ----------------
 
-// An open entry as `coordinator.sh round-close` leaves it: closed with the coordinator's answer,
+// An open entry as the coordinator's settle leaves it: closed with the coordinator's answer,
 // its delivery pending for the module, stamped as the answer.
 function closedByCoordinator(asked: RoundEntry, text = 'A, ship it'): RoundEntry {
   const at = new Date().toISOString()
@@ -2873,7 +2874,7 @@ async function reloadedPane(fx: Fx) {
   return texts(await reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
 }
 
-test('an answer round-close wrote reaches its sender once, at the round\'s reading, its delivery written delivered', async () => {
+test('an answer the coordinator\'s settle left pending reaches its sender once, at the round\'s reading, its delivery written delivered', async () => {
   const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
@@ -2898,7 +2899,7 @@ function withdrawnByCoordinator(asked: RoundEntry, evidence: string): RoundEntry
   return { ...closed, answer: { ...closed.answer!, evidence } } as RoundEntry
 }
 
-test('a question round-close --withdraw closed tells its sender it was withdrawn, with the evidence, never that it was answered', async () => {
+test('a question the coordinator withdrew with settle tells its sender it was withdrawn, with the evidence, never that it was answered', async () => {
   const asked = withdrawnByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }), '#12 merged at 10:04Z')
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
@@ -2910,7 +2911,7 @@ test('a question round-close --withdraw closed tells its sender it was withdrawn
   expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
 })
 
-test('a question round-close --withdraw closed from another machine carries the withdrawal in its marked line', async () => {
+test('a question the coordinator withdrew with settle from another machine carries the withdrawal in its marked line', async () => {
   const asked = withdrawnByCoordinator(remoteEntry({ since: minutesAgo(1) }), '#12 merged at 10:04Z')
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
@@ -2921,62 +2922,66 @@ test('a question round-close --withdraw closed from another machine carries the 
 })
 
 // The operator's ruling 6.3 of 2026-10-31: each ruling relayed at once by the module, nothing
-// shown between questions — the answer a round-close wrote is sent once the command has run in
-// the coordinator's tab, not at the round's next reading up to 30 seconds later.
-const roundClose = (id: string) => ({ command: `bash "/plugins/orchestrator/skills/coordinator/scripts/coordinator.sh" round-close ${id} --answer 'A, ship it'` })
-const ranBash = async () => ({ result: 'closed' })
+// shown between questions — the coordinator's settle sends the answer in the same call, not at the
+// round's next reading up to 30 seconds later.
+const settleHere = (id: string, answer = 'A, ship it') => ({ id, outcome: 'answered-here' as const, text: answer, author: null, work: null })
 
-test('an answer round-close wrote reaches its sender as soon as the command has run, before the round\'s next reading, and once', async () => {
-  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
-  const { fx, tick } = await wakingCoordinator([asked])
+test('the coordinator\'s settle closes an open entry with his answer and sends it to its sender in the same call, once', async () => {
+  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([open])
   const sent = sends(fx)
-  const call = mounted(registerCloseRelay).handlers['tool.call']
-  expect(await call(fx.dollar, roundClose(asked.id), ranBash)).toEqual({ result: 'closed' })
-  expect(sent.map(s => s.text)).toEqual([`[module] The operator answered through the coordinator at ${asked.answer!.at} — A, ship it (question since ${asked.since}, blocks: phase 3)`])
-  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
+  expect((await settle(fx.dollar, settleHere(open.id))).isError).toBeUndefined()
+  const stored = storedIn(fx, open.id)
+  expect([stored.status, stored.answer!.text, stored.answer!.by]).toEqual(['closed', 'A, ship it', 'coordinator'])
+  expect(sent.map(s => s.text)).toEqual([`[module] The operator answered through the coordinator at ${stored.answer!.at} — A, ship it (question since ${open.since}, blocks: phase 3)`])
+  expect(stored.delivery).toEqual({ state: 'delivered', at: stored.delivery!.at, attempts: 1, answerAt: stored.answer!.at })
   await tick()
   expect(sent.length).toBe(1)
 })
 
-test('a Bash command that runs no round-close, one refused, or one in a session that is no coordinator, delivers nothing until the reading', async () => {
-  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
-  const { fx, tick } = await wakingCoordinator([asked])
+test('a settle refused, or one from a session that is no coordinator, sends nothing and closes nothing', async () => {
+  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx } = await wakingCoordinator([open])
   const sent = sends(fx)
-  const call = mounted(registerCloseRelay).handlers['tool.call']
-  await call(fx.dollar, { command: 'bash coordinator.sh round' }, ranBash)
-  await call(fx.dollar, roundClose(asked.id), async () => ({ deny: 'refused' }))
+  expect((await settle(fx.dollar, { ...settleHere(open.id), outcome: 'answered-by-message', author: 'Orch: z' })).isError).toBe(true)
+  expect((await settle(fx.dollar, settleHere('absent'))).isError).toBe(true)
   const orch = fakeDollar({ launchName: 'Orch: belt' })
-  orch.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
+  orch.files.set(`${ROUND}/${open.id}.json`, JSON.stringify(open) + '\n')
   const elsewhere: unknown[] = []
   orch.dollar.session.send = async (args: unknown) => { elsewhere.push(args); return { isDelivered: true } }
-  await call(orch.dollar, roundClose(asked.id), ranBash)
-  expect([sent.length, elsewhere.length]).toEqual([0, 0])
-  await tick()
-  expect(sent.length).toBe(1)
+  expect((await settle(orch.dollar, settleHere(open.id))).isError).toBe(true)
+  expect([sent.length, elsewhere.length, storedIn(fx, open.id).status, storedIn(orch, open.id).status]).toEqual([0, 0, 'open', 'open'])
 })
 
-test('a round-close relayed while the round\'s reading runs sends its answer once', async () => {
-  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
-  const { fx, tick } = await wakingCoordinator([asked])
+test('a settle made while the round\'s reading runs sends its answer once', async () => {
+  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([open])
   const sent = sends(fx)
-  const call = mounted(registerCloseRelay).handlers['tool.call']
-  await Promise.all([tick(), call(fx.dollar, roundClose(asked.id), ranBash)])
+  await Promise.all([tick(), settle(fx.dollar, settleHere(open.id))])
   expect(sent.length).toBe(1)
-  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
+  expect(storedIn(fx, open.id).delivery!.state).toBe('delivered')
 })
 
-test('the relay watches Bash calls and reads a round-close however the script is named', () => {
-  expect(mounted(registerCloseRelay).matchers['tool.call']).toEqual({ tool: 'Bash' })
-  for (const command of [
-    'bash "${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh" round-close a-1 --withdraw "#12 merged"',
-    "/p/skills/coordinator/scripts/coordinator.sh round-close a-1 --answer 'B'",
-    'coordinator.sh round 2>&1; coordinator.sh round-close a-1 --answer A',
-  ]) expect(runsRoundClose(command)).toBe(true)
-  for (const command of ['coordinator.sh round', 'coordinator.sh round-archive', 'echo round-close', 'grep -n round-close coordinator.sh'])
-    expect(runsRoundClose(command)).toBe(false)
+test('a settle withdrawn by the coordinator tells its sender it was withdrawn, with the evidence, and records no consent', async () => {
+  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx } = await wakingCoordinator([open])
+  const sent = sends(fx)
+  await settle(fx.dollar, { id: open.id, outcome: 'withdrawn', text: '#12 merged at 10:04Z', author: null, work: null })
+  expect(storedIn(fx, open.id).answer).toEqual({ text: 'withdrawn: settled meanwhile — #12 merged at 10:04Z', by: 'coordinator', at: storedIn(fx, open.id).answer!.at, evidence: '#12 merged at 10:04Z' })
+  expect(sent.map(s => s.text)).toEqual([`[module] The coordinator withdrew your question since ${open.since}, settled meanwhile: #12 merged at 10:04Z (blocks: phase 3)`])
 })
 
-test('an answer round-close wrote that the host refuses is written failed on disk, sent once, and a fresh module\'s pane says it', async () => {
+test('the coordinator closes an entry answered from the pane with settle, sending nothing again', async () => {
+  const answered = entry('Orch: a', minutesAgo(5), { session: 'sa', status: 'answered', answer: { text: 'A', by: 'pane', at: minutesAgo(4) } })
+  const { fx } = await wakingCoordinator([answered])
+  const sent = sends(fx)
+  await settle(fx.dollar, settleHere(answered.id, 'answered from the pane: A'))
+  expect([storedIn(fx, answered.id).status, storedIn(fx, answered.id).delivery, sent.length]).toEqual(['closed', undefined, 0])
+  expect((await settle(fx.dollar, settleHere(answered.id))).result).toContain('closed already')
+})
+
+test('an answer the coordinator\'s settle left pending that the host refuses is written failed on disk, sent once, and a fresh module\'s pane says it', async () => {
   const asked = closedByCoordinator(entry('Orch: low', minutesAgo(1), { session: 'low' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx, 'nobody by that name')
@@ -2989,7 +2994,7 @@ test('an answer round-close wrote that the host refuses is written failed on dis
   expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch: low (blocks: phase 3)')
 })
 
-test('an answer round-close wrote to an entry from another machine goes as a marked line at the round\'s reading', async () => {
+test('an answer the coordinator\'s settle left pending to an entry from another machine goes as a marked line at the round\'s reading', async () => {
   const asked = closedByCoordinator(remoteEntry({ since: minutesAgo(1) }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
@@ -3003,7 +3008,7 @@ test('an answer round-close wrote to an entry from another machine goes as a mar
   expect(sent.length).toBe(1)
 })
 
-test('an entry closed with no delivery pending — before round-close carried one, or from the pane — is sent nothing at the round\'s reading', async () => {
+test('an entry closed with no delivery pending — before the close carried one, or from the pane — is sent nothing at the round\'s reading', async () => {
   const old = entry('Orch: a', minutesAgo(5), { session: 'sa', status: 'closed', answer: { text: 'A', by: 'coordinator', at: minutesAgo(4) } })
   const pane = entry('Orch: b', minutesAgo(5), { session: 'sb', status: 'closed', answer: { text: 'answered from the pane: A', by: 'pane', at: minutesAgo(4) } })
   const { fx, tick } = await wakingCoordinator([old, pane])
