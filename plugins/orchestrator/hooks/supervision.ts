@@ -30,7 +30,7 @@ import { entryQuestions, machineLine, questionBody, questionShape, type Choice }
 import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
-import { declaredAsked, declaredConsent } from './wait.ts'
+import { DECLARATIONS } from './wait.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -1620,8 +1620,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // read before the first await: a message queued for the session starts its next turn as this one
   // ends, and that start makes the declaration stale while the relay still reads its files.
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
-    const consent = e.agentId ? null : declaredConsent()
-    const onAsked = e.agentId ? false : declaredAsked()
+    const declared = e.agentId ? null : DECLARATIONS.current()
+    const consent = declared?.kind === 'operator' ? declared.consent ?? null : null
+    const onAsked = declared?.kind === 'operator'
     try {
       if (!e.agentId && e.reason === 'answer') {
         const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, consent, onAsked), RELAY_BOUND_MS)
@@ -2744,7 +2745,8 @@ async function readRecords($: any): Promise<RoundEntry[]> {
 export async function withdrawOnTyped($: any, kind: string, text: string): Promise<void> {
   if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return
   // Read before the first await: the turn this prompt starts makes the declaration stale.
-  const consent = declaredConsent()
+  const declared = DECLARATIONS.current()
+  const consent = declared?.kind === 'operator' ? declared.consent ?? null : null
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
