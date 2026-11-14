@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { deckOpen, FIELDS, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
+import { parseJournalEvent } from '../../../core/learning.ts'
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
 
@@ -215,4 +216,29 @@ test('live prunes nothing the brief does not name, and says a supersession it ke
   writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings))
   assert.equal(w.run('live', '--next', 'x'), 0)
   assert.ok(w.err.includes(`succession: ${rulings}: ruling 2026-11-12T16:00:00Z kept: superseded by 2026-12-01T00:00:00Z, which no ruling of the file or its archive opens on\n`))
+})
+
+test('a check that finds the brief lost part of the state is a method failure in the journal: how much was lost, the pull requests among it', () => {
+  const w = world()
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  const deck = JSON.parse(readFileSync(join(w.state, 'deck.json'), 'utf8'))
+  deck.orchestrators[0].prs.push('acme/app#15')
+  writeFileSync(join(w.state, 'deck.json'), JSON.stringify(deck))
+  writeFileSync(join(w.state, 'round', 'q-9.json'), JSON.stringify({ id: 'q-9', session: SESSION, kind: 'operator', status: 'open', question: 'New?' }))
+  const events: Record<string, unknown>[] = []
+  const named = ['--name', NAME, '--session', SESSION, '--record', w.record]
+  const journal = (event: object) => { events.push(event as Record<string, unknown>) }
+  const io = { out: (t: string) => { w.out.push(t) }, err: (t: string) => { w.err.push(t) } }
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CODE_SESSION_ID: 'orch-2' }
+  assert.equal(main(['check', w.brief, ...named], env, io, () => new Date('2026-11-14T10:00:00.250Z'), journal), 1)
+  assert.equal(events.length, 1)
+  assert.deepEqual([events[0]?.['kind'], events[0]?.['at'], events[0]?.['fact'], events[0]?.['evidence']], [
+    'failure', '2026-11-14T10:00:00Z', { failure: 'succession-lost-state', count: 2, prs: ['acme/app#15'] }, [{ type: 'record', path: 'brief.md' }],
+  ])
+  assert.ok(parseJournalEvent(events[0]))
+  assert.ok(!JSON.stringify(events).includes('New?'))
+  events.length = 0
+  assert.equal(main(['live', w.brief, ...named, '--next', 'x'], env, io, () => new Date(), journal), 0)
+  assert.equal(main(['check', w.brief, ...named], env, io, () => new Date(), journal), 0)
+  assert.deepEqual(events, [])
 })
