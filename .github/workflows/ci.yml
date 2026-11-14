@@ -54,7 +54,7 @@ jobs:
         run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || '' }}
 
   plugin:
-    name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
+    name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ matrix.shard && format(' (part {0})', matrix.shard) || '' }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
     strategy:
       fail-fast: false
@@ -129,6 +129,8 @@ jobs:
           CLAUDE_GITHUB_ROOT: ${{ github.workspace }}/plugins/github
           LC_ALL: en_US.UTF-8
           BLOCKING: ${{ matrix.blocking }}
+          # The part of a suite split in parts; empty runs the whole suite.
+          SUITE_SHARD: ${{ matrix.shard }}
         # A suite not yet green here reports its failure as a warning, so the pull request is red
         # only when a blocking check fails. The warning quotes the suite's last line: a count of
         # failed cases reads apart from a suite that died before its summary.

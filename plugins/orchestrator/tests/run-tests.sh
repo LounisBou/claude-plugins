@@ -148,6 +148,128 @@ check_status() {
 spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
 
+# Defined here, outside every part, because a section of a later part reads them: its helpers,
+# the paths it names and the fixtures it builds from them.
+# plugin did not open, the predecessor is asked to end its own session through the module.
+# That end is proved on the tty, never on `list`, which keeps the row of a tab left holding a
+# shell.
+SUCC="$ROOT/templates/orchestrator-succession-brief.md"
+SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+SUCC3=$(awk '/^3\. /{f=1} /^4\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+succ3_has() { printf '%s' "$SUCC3" | grep -oF -- "$1" | wc -l | tr -d ' '; }
+succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
+# used to mean « immediately right of my tab », which put every new agent BETWEEN the
+# orchestrator and the previous one. The chain file names the last agent; `self` resolves
+# to it. A dry run reads the chain and never writes it: there is no tab to record.
+AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
+# The hand-over itself, on the module: the predecessor's own entries move under the
+# successor's tty and owner, its foreign entries stay, and a stale file on the successor's
+# recycled tty is replaced, not appended to. Nothing to hand over hands over an empty chain.
+py=$(command -v python3 || echo python3)
+transfer() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.chain_transfer('/dev/ttys900', 'S-ME', '/dev/ttys950', 'S-NEW'))" 2>&1; }
+append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.chain_append('/dev/ttys900', sys.argv[1], sys.argv[2], 'S-ME', resident=sys.argv[3] == 'yes')
+print('|'.join(str(m.is_resident(e)) for e in m.chain_read('/dev/ttys900')))" "$@" 2>&1; }
+# A commit made through an empty `-C` path would land in the repository the suite runs from.
+gc() { [ "${1:-}" = -C ] && [ -z "${2:-}" ] && return 1; git -c user.email=t@local -c user.name=t "$@"; }
+exists() { [ -e "$1" ] && echo 1 || echo 0; }
+# A process whose working directory is a given directory, until `release`.
+LIVE=""
+hold() {
+  ( cd "$1" && exec sleep 60 ) & LIVE="$LIVE $!"
+  local i=0 want; want=$(rp "$1")
+  while [ $i -lt 50 ]; do
+    lsof -a -p "${LIVE##* }" -d cwd -Fn 2>/dev/null | grep -qxF "n$want" && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+}
+release() { local p; for p in $LIVE; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; LIVE=""; }
+# checked the file: a path built from a host variable the agent's shell does not set, and
+# a second session reference sitting beside the real one. Both are mechanical; both are
+# caught here, before the dispatch rather than after the round.
+LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
+B="$WORK/briefs"; mkdir -p "$B"
+ok_brief() {  # a brief with nothing wrong in it
+  cat > "$1" <<BRIEF
+# scratch — Phase 1: thing
+
+You are the implementer for this phase.
+
+## 1. Required reading
+
+1. Spec: \`$WORK/briefs\`
+
+## 3. Scope
+
+Non-goals:
+
+- Nothing outside this list.
+- If you believe something outside this list is needed, STOP and ask the orchestrator first.
+
+## 6. Communication
+
+- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
+- Every report ends with your measured context, from the hooks module's measure file.
+BRIEF
+}
+ok_brief "$B/good.md"
+ok_brief "$B/placeholder.md"; printf 'Branch: {{BRANCH}}\n' >> "$B/placeholder.md"
+ISTATE="$WORK/istate"
+shaped() {
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
+}
+# and run dry through the launcher, and the successor's brief, filled, lints clean — and that
+# the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
+# only by title, the predecessor's, before the successor registers.
+COORDSKILL="$ROOT/skills/coordination/SKILL.md"
+COORDCMD="$ROOT/commands/coordinator.md"
+COORDEND="$ROOT/commands/coordinator-end.md"
+COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
+# handshake stays in each succession template, and the copies may not drift apart. The auditor's
+# and the coordinator's step 3 are one text, read with their line breaks folded; the
+# orchestrator's, longer, carries the same core.
+handshake() { sed -n '/^3\. \*\*Take over\.\*\*/,/nothing in flight\./p' "$1" | tr '\n' ' ' | tr -s ' '; }
+UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
+# to a stranger's tab must not make that tab movable. The owner is the session sitting on
+# the caller's tty RIGHT NOW, read from the app; the match is on the TAB id. The dry run
+# has no app and keeps ORCHESTRATOR_SELF_ID and the tty, which is what its checks seed.
+MSTUB='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+class T:
+    def __init__(s, tid, sess): s.tab_id=tid; s.sessions=[sess]; s.all_sessions=[sess]
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+app=App([W([T("1",S("S-LIVE","/dev/ttys801")), T("2",S("S-AGENT","/dev/ttys802"))])])
+'
+# --pid narrows verify to one process, and counts EVERY host CLI on the tty: a session that
+# runs a nested host CLI shows two, and the recorded one is not always the first.
+printf '/dev/ttys901 5100 a-host --name outer\n/dev/ttys901 5101 a-host --nested\n' > "$WORK/ps-two.txt"
+field() { printf '%s\n' "$1" | sed -n "s/^$2://p"; }
+
+# The suite runs in four parts that CI runs in parallel. SUITE_SHARD=<1-4> runs the
+# sections of that part and nothing else; unset, the whole suite runs. Each section sits in exactly one
+# part, between its `if shard_has` and its `fi`. What a section of a later part reads from an earlier
+# one (a helper, a path, a fixture) is defined above, outside every part.
+case "${SUITE_SHARD:-1}" in 1|2|3|4) ;; *) echo "SUITE_SHARD is 1, 2, 3 or 4, not ${SUITE_SHARD}" >&2; exit 1 ;; esac
+shard_has() { [ -z "${SUITE_SHARD:-}" ] || [ "$SUITE_SHARD" = "$1" ]; }
+
+if shard_has 1; then
 echo "== suite environment =="
 
 # The suite started from inside a role reads the same as one started outside it: every role
@@ -343,14 +465,6 @@ check "the comments brief keeps the subject-only commit and reads a backgrounded
   "$(spells "$ROOT/templates/agent-comments-brief.md" 'The message is the subject line only when the repository forbids attribution trailers')|$(spells "$ROOT/templates/agent-comments-brief.md" 'never call a run « going » when its process is gone')"
 # The successor always closes its predecessor, one started by hand included (the operator's
 # standing order): nothing is asked of him, and where the host refuses the close of a tab the
-# plugin did not open, the predecessor is asked to end its own session through the module.
-# That end is proved on the tty, never on `list`, which keeps the row of a tab left holding a
-# shell.
-SUCC="$ROOT/templates/orchestrator-succession-brief.md"
-SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-SUCC3=$(awk '/^3\. /{f=1} /^4\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-succ3_has() { printf '%s' "$SUCC3" | grep -oF -- "$1" | wc -l | tr -d ' '; }
-succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "the succession brief closes every predecessor and asks nothing" "1|1|yes|0" \
   "$(succ4_has 'you ALWAYS close your predecessor')|$(succ4_has 'one the launcher did not open included, and ask him nothing')|$(spells "$ORCH_REFS/lifecycle.md" 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
 check "the end_session fallback is proved on the tty, not on list" "yes|yes|no|1" \
@@ -502,10 +616,6 @@ check "and the recording covers the forms: successor, auditor, coordinator, wake
 
 echo "== agent chain (dry run) =="
 # The operator's rule: orchestrator, agent 1, agent 2, … in launch order. `--right-of self`
-# used to mean « immediately right of my tab », which put every new agent BETWEEN the
-# orchestrator and the previous one. The chain file names the last agent; `self` resolves
-# to it. A dry run reads the chain and never writes it: there is no tab to record.
-AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
 chain_spawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent: chain" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 out=$(chain_spawn --right-of self)
@@ -557,14 +667,6 @@ check "a successor anchors on self, whatever the chain says" "1|1" \
 check "a dry successor spawn leaves the chain as it was" "$before" "$(cat "$CHAINS/ttys900.jsonl")"
 check "a successor names its own anchor" "1|1" \
   "$(chain_spawn --successor --right-of self >/dev/null 2>&1; echo $?)|$(chain_spawn --successor --left-of /dev/ttys555 >/dev/null 2>&1; echo $?)"
-# The hand-over itself, on the module: the predecessor's own entries move under the
-# successor's tty and owner, its foreign entries stay, and a stale file on the successor's
-# recycled tty is replaced, not appended to. Nothing to hand over hands over an empty chain.
-py=$(command -v python3 || echo python3)
-transfer() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
-import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
-import iterm_agent as m
-print(m.chain_transfer('/dev/ttys900', 'S-ME', '/dev/ttys950', 'S-NEW'))" 2>&1; }
 printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-OTHER"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n{"tab_id":"9","tty":"/dev/ttys909","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
 printf '{"tab_id":"1","tty":"/dev/ttys901","owner":"S-DEAD"}\n' > "$CHAINS/ttys950.jsonl"
 check "the hand-over moves the predecessor's own entries" "2" "$(transfer)"
@@ -581,11 +683,6 @@ check "--resident is said by the dry run, and its absence too" "1|1" \
   "$(chain_spawn --resident | grep -c '^resident=yes$')|$(chain_spawn | grep -c '^resident=no$')"
 check "--resident is an agent's only: a successor or an auditor joins no chain to mark" "1|1" \
   "$(chain_spawn --resident --successor | grep -c 'spawn: refused: --resident marks an agent of your chain')|$(chain_spawn --resident --auditor --title 'Audit: x' | grep -c 'spawn: refused: --resident marks an agent of your chain')"
-append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
-import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
-import iterm_agent as m
-m.chain_append('/dev/ttys900', sys.argv[1], sys.argv[2], 'S-ME', resident=sys.argv[3] == 'yes')
-print('|'.join(str(m.is_resident(e)) for e in m.chain_read('/dev/ttys900')))" "$@" 2>&1; }
 printf '{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
 check "a resident agent's entry carries the mark, a plain one's and an older one's do not" "False|True|False" \
   "$(append 9 /dev/ttys909 yes >/dev/null; append 10 /dev/ttys910 no)"
@@ -1754,9 +1851,6 @@ mkdir -p "$WORK/wcroot"
 WCR=$(rp "$WORK/wcroot")
 # The host's name of a directory: every character that is not a letter or a digit turned into `-`.
 enc() { local p; p=$(rp "$1"); printf '%s' "$p" | tr -c 'A-Za-z0-9' '-'; }
-# A commit made through an empty `-C` path would land in the repository the suite runs from.
-gc() { [ "${1:-}" = -C ] && [ -z "${2:-}" ] && return 1; git -c user.email=t@local -c user.name=t "$@"; }
-exists() { [ -e "$1" ] && echo 1 || echo 0; }
 
 for n in 1 2 3; do
   suffix=""; [ "$n" -gt 1 ] && suffix=$n
@@ -1781,17 +1875,6 @@ printf '#!/bin/bash\nexit 1\n' > "$WC/bin-nolsof/lsof"
 chmod +x "$WC/bin/gh" "$WC/bin-nolsof/lsof"
 wcgh() { env PATH="$WC/bin:$PATH" "$@"; }
 
-# A process whose working directory is a given directory, until `release`.
-LIVE=""
-hold() {
-  ( cd "$1" && exec sleep 60 ) & LIVE="$LIVE $!"
-  local i=0 want; want=$(rp "$1")
-  while [ $i -lt 50 ]; do
-    lsof -a -p "${LIVE##* }" -d cwd -Fn 2>/dev/null | grep -qxF "n$want" && return 0
-    sleep 0.1; i=$((i + 1))
-  done
-}
-release() { local p; for p in $LIVE; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; LIVE=""; }
 
 # mkclone <source> <name> <branch> [dirty|unpushed]: a checkout on a pushed branch.
 mkclone() {
@@ -2083,45 +2166,15 @@ echo "== brief lint =="
 
 # The largest category of multi-agent failure is specification, and a brief is this
 # plugin's whole specification act. Two defects reached a live agent before anything
-# checked the file: a path built from a host variable the agent's shell does not set, and
-# a second session reference sitting beside the real one. Both are mechanical; both are
-# caught here, before the dispatch rather than after the round.
-LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
 # Rule 88 of the rules review: the lint's header says what it is for and leaves each check's
 # rule to the comment above its code; the retired check 8 keeps one line.
 check "the lint's header tells no incident and repeats no check" "no|no|no|1" \
   "$(spells "$LINT" 'Two defects reached a live agent')|$(spells "$LINT" '# Check 13 refuses a pull request title')|$(spells "$LINT" 'demanded an absolute path to context-gauge.sh')|$(grep -c '^# 8\. ' "$LINT")"
-B="$WORK/briefs"; mkdir -p "$B"
 
-ok_brief() {  # a brief with nothing wrong in it
-  cat > "$1" <<BRIEF
-# scratch — Phase 1: thing
 
-You are the implementer for this phase.
-
-## 1. Required reading
-
-1. Spec: \`$WORK/briefs\`
-
-## 3. Scope
-
-Non-goals:
-
-- Nothing outside this list.
-- If you believe something outside this list is needed, STOP and ask the orchestrator first.
-
-## 6. Communication
-
-- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
-- Every report ends with your measured context, from the hooks module's measure file.
-BRIEF
-}
-
-ok_brief "$B/good.md"
 check_status "a complete brief passes" 0 bash "$LINT" "$B/good.md"
 check "a complete brief says so" "brief-lint: $B/good.md: 0 findings" "$(bash "$LINT" "$B/good.md" 2>&1)"
 
-ok_brief "$B/placeholder.md"; printf 'Branch: {{BRANCH}}\n' >> "$B/placeholder.md"
 check_status "an unfilled placeholder is a finding" 1 bash "$LINT" "$B/placeholder.md"
 check "the unfilled placeholder is named" "1" "$(bash "$LINT" "$B/placeholder.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
 
@@ -2777,6 +2830,9 @@ check "a release under the old prefix is not invisible" "0.1.2" \
 newest=$(cd "$ROOT" && git tag --list '*orchestrator--v*' 2>/dev/null | sed 's/^.*--v//' | sort -V | tail -1)
 check "the version is not behind any published tag" "yes" "$(version_not_behind "$pv" "$newest")"
 
+fi
+
+if shard_has 2; then
 echo "== iterm-agents spawn (dry run) =="
 # The prompt is never typed into the shell: a 3 000-character prompt with non-ASCII
 # bytes, quotes and a backslash goes to a file byte for byte, the typed command stays
@@ -2784,7 +2840,6 @@ echo "== iterm-agents spawn (dry run) =="
 # with an inline prompt was truncated by AppleScript and never ran, and a `sed`
 # under LC_ALL=C died on an em dash.
 AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
-ISTATE="$WORK/istate"
 long=$(printf 'x%.0s' $(seq 1 3000))
 prompt="Read « this » — é \"quoted\" back\\slash $long"
 out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: B-1 — é" --prompt "$prompt" 2>&1)
@@ -2841,13 +2896,6 @@ check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" |
 ORCHVPS="$WORK/ps-orch-vehicle.txt"
 printf '/dev/ttys900 claude --name Orch: f\n' > "$ORCHVPS"
 orchv() { ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$ORCHVPS" "$@"; }
-shaped() {
-  case " $* " in
-    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
-    *) set -- --prompt p "$@" ;;
-  esac
-  CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
-}
 check "a shaped title names the session" "1" \
   "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")"
 check "and so does an orchestrator's" "1" \
@@ -3726,13 +3774,6 @@ check "the entry point's header lists both new forms" "yes|yes" \
 # The coordinator's own rulebook and its two commands. The judgment is prose, so what is
 # checked here is that every command line the prose hands the session is one the tooling
 # runs — the succession's spawn line and the start's leftmost move are taken out of the text
-# and run dry through the launcher, and the successor's brief, filled, lints clean — and that
-# the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
-# only by title, the predecessor's, before the successor registers.
-COORDSKILL="$ROOT/skills/coordination/SKILL.md"
-COORDCMD="$ROOT/commands/coordinator.md"
-COORDEND="$ROOT/commands/coordinator-end.md"
-COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
 # A skill and a command of one plugin share one address, `orchestrator:<name>`, and the host
 # resolves it to the command: a skill named like a command is never loaded by its name, and a
 # command that says « load that skill first » loads itself. The coordinator's skill was first
@@ -4037,10 +4078,6 @@ AUDSUCCFILLED="$WORK/audit-succession-filled.md"
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
 # Rule 82 of the rules review, the operator's ruling of 2026-11-04 (« A »): the successor's
-# handshake stays in each succession template, and the copies may not drift apart. The auditor's
-# and the coordinator's step 3 are one text, read with their line breaks folded; the
-# orchestrator's, longer, carries the same core.
-handshake() { sed -n '/^3\. \*\*Take over\.\*\*/,/nothing in flight\./p' "$1" | tr '\n' ' ' | tr -s ' '; }
 check "the succession templates carry one handshake" "yes|yes|yes|yes|yes" \
   "$([ -n "$(handshake "$AUDSUCCTPL")" ] && [ "$(handshake "$AUDSUCCTPL")" = "$(handshake "$COORDTPL")" ] && echo yes || echo no)|$(spells "$SUCC" 'Then message the predecessor "takeover confirmed"')|$(spells "$SUCC" 'and wait for its « handed over »')|$(spells "$SUCC" 'five minutes without it, read its screen with `screen --tty`')|$(spells "$SUCC" 'close on a prompt with nothing in flight')"
 # The code cites §52: the section it cites exists.
@@ -4082,7 +4119,6 @@ check "screen without a tty says which option is missing" "ERROR: screen: --tty 
 # tab exists, since afterwards it is found out from an agent that never answers.
 py=$(command -v python3 || echo python3)
 TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
-UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p
@@ -5908,24 +5944,6 @@ t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t
 
 # `move`'s guard, live, is the §26 reading: a tty is recycled minutes after a close and
 # the chain file named after it outlives its occupant, so an entry whose tty now belongs
-# to a stranger's tab must not make that tab movable. The owner is the session sitting on
-# the caller's tty RIGHT NOW, read from the app; the match is on the TAB id. The dry run
-# has no app and keeps ORCHESTRATOR_SELF_ID and the tty, which is what its checks seed.
-MSTUB='
-import asyncio, sys
-sys.path.insert(0, sys.argv[1])
-import iterm_agent as ia
-class S:
-    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
-    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
-class T:
-    def __init__(s, tid, sess): s.tab_id=tid; s.sessions=[sess]; s.all_sessions=[sess]
-class W:
-    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
-class App:
-    def __init__(s, wins): s.windows=wins
-app=App([W([T("1",S("S-LIVE","/dev/ttys801")), T("2",S("S-AGENT","/dev/ttys802"))])])
-'
 owned() { ORCHESTRATOR_STATE_DIR="$ISTATE" "$py" -c "$MSTUB
 print(asyncio.run(ia.move_is_owned(app, sys.argv[2], sys.argv[3])))" "$ROOT/skills/iterm-agents/scripts" "$1" "$2"; }
 mkdir -p "$ISTATE/chains"
@@ -5939,6 +5957,9 @@ check "a recycled tty in the chain does not make a stranger's tab movable" "Fals
 printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-GONE"}\n' > "$ISTATE/chains/ttys801.jsonl"
 check "an entry another session wrote is not the caller's to move" "False" "$(owned /dev/ttys802 /dev/ttys801)"
 
+fi
+
+if shard_has 3; then
 echo "== iterm-agents: iTerm2 answers, or it is said why (§46) =="
 # Every reading here is about the fault that made the launcher unkillable: the app stopped
 # dispatching AppleEvents, the library asked it for a cookie through an UNBOUNDED
@@ -6152,9 +6173,6 @@ check "a pid the host registered is the host, whatever its argv" "host" "$(hostp
 check "a shell on the tty is not the host" "none" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-shell.txt")"
 check "verify reads a bare host row under an absolute HOST_CLI" "0" \
   "$(ORCHESTRATOR_HOST_CLI=/opt/homebrew/bin/claude ORCHESTRATOR_PS_TABLE="$WORK/ps-bare.txt" bash "$AGENT" verify --tty /dev/ttys901 >/dev/null 2>&1; echo $?)"
-# --pid narrows verify to one process, and counts EVERY host CLI on the tty: a session that
-# runs a nested host CLI shows two, and the recorded one is not always the first.
-printf '/dev/ttys901 5100 a-host --name outer\n/dev/ttys901 5101 a-host --nested\n' > "$WORK/ps-two.txt"
 vpid() { ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$WORK/ps-two.txt" CLAUDE_CONFIG_DIR="$WORK/hostcfg" \
   bash "$AGENT" verify --tty /dev/ttys901 "$@"; }
 vpid_status() { vpid "$@" >/dev/null 2>&1; echo "exit $?"; }
@@ -6805,6 +6823,9 @@ live.close()
 ia.remove_exited_home_socket('suite-up')
 print('kept' if os.path.exists(path) else 'removed')" ) | paste -sd'|' -)"
 
+fi
+
+if shard_has 1; then
 echo "== iterm-agents: a close takes the stood-down session's checkout with it =="
 # The session's purpose is over once its close is proved on the process table, so the
 # checkout it worked in is deleted — through `workspace.sh delete`, never `--discard`, so a
@@ -6847,7 +6868,6 @@ print('OUT:' + out.getvalue().strip())
 print('ERR:' + err.getvalue().strip())
 PYEOF
 cprobe() { "$py" "$WORK/close_probe.py" "$ROOT/skills/iterm-agents/scripts" "$@"; }
-field() { printf '%s\n' "$1" | sed -n "s/^$2://p"; }
 
 CL=$(mkclone "$WCSRC" cl-a feat/cl-a); HCL=$(scratch "$CL"); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
 res=$(cprobe close)
@@ -6917,6 +6937,9 @@ rm -rf "$WC/hosttmp"/* 2>/dev/null
 # now, pinned in hooks/tests/gauge-core.test.ts (run by the host's
 # plugin test), and the one file that survives — the measure file — is pinned there too.
 
+fi
+
+if shard_has 3; then
 echo "== the mode a session came up in (§43) =="
 # Two agents stood on a permission prompt in tabs nobody watched. One carried
 # `--permission-mode auto` on its process line and `default` in every entry of its
@@ -9784,6 +9807,9 @@ check "a server that still answers and cannot be listed is not ended, and the cl
 rm -rf "$SHORTTMP"
 fi
 
+fi
+
+if shard_has 4; then
 echo "== install =="
 
 # The installer asks the host for its version before it touches anything, so every run
@@ -12600,6 +12626,9 @@ check "the routing skill no longer says no command does the calibration" "no" \
 check "the rulebook no longer orders a routine idle-notice subscription, and the succession brief re-announces the new address" "0|yes" \
   "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator')"
 
+fi
+
+if shard_has 2; then
 # §65: a launched session is given a lean tool set, by role, and the spawn can change it.
 # `--disallowedTools` takes several values like `--mcp-config`, so it sits before another
 # option; the roles read their title.
@@ -12765,6 +12794,9 @@ check "no session id and no --transcript is refused, naming both ways out" "1|1"
 check "a session with no transcript and a missing file are each refused" "1|1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none toolsx | grep -c 'tools: no transcript for session s-none')|$(toolsx --transcript "$WORK/absent.jsonl" | grep -c 'tools: transcript not found')"
 
+fi
+
+if shard_has 4; then
 # The agent's orchestrator may hand over: the agent admits the successor its orchestrator names,
 # and the predecessor names it to each agent before « handed over ».
 ADMIT='When it hands over, it first sends you its successor'"'"'s exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.'
@@ -12831,6 +12863,9 @@ check "the routing table has the screenshot-audit row at the standard tier" "1" 
   "$(grep -c 'orchestrator:screenshots`.*`screenshot-audit` | `standard` | you, on a capture in doubt' "$ROOT/skills/model-routing/SKILL.md")"
 check "the design says why the audit left the orchestrator's context" "yes|yes" \
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
+fi
+
+if shard_has 1; then
 # The record's messages are dispatch-record.ts's since its port.
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "${REC%.sh}.ts" 'the description of ${pr} carries ${shots}: audit every image')|$(spells "${REC%.sh}.ts" 'the screenshots agent audits each one')"
@@ -12897,6 +12932,8 @@ check "and it prints no label command" "0" \
 unset SURFACE_BODIES
 check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
 
+
+fi
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
