@@ -10,10 +10,12 @@ export const PLAN_DIR = 'check-plans'
 // The plan's one writer: the orchestrator's tool, from an orchestrator session, never an implementer.
 export const PLAN_WRITER = { plugin: 'orchestrator', tool: 'mcp__orchestrator__review' } as const
 
-// What each planned check may need, the strictest first: a check left out of a plan needs it. E2E may be
-// replaced by desktop and mobile screenshots; a review may be one review_only pass, a depth the gate does not read.
+// What each planned check may need, the strictest first. E2E may be replaced by desktop and mobile screenshots;
+// a review may be one review_only pass, a depth the gate does not read.
 const NEEDS = { e2e: ['required', 'none', 'screenshots'], norms: ['required', 'none'], review: ['full', 'one-pass'] } as const
 type Planned = keyof typeof NEEDS
+// What a check left out of a plan needs: norms is on demand.
+const DEFAULT: Record<Planned, string> = { e2e: 'required', norms: 'none', review: 'full' }
 const PLANNED = Object.keys(NEEDS) as Planned[]
 
 export type Check = { readonly need: string; readonly reason: string }
@@ -23,15 +25,15 @@ export type CheckPlan = Checks & { readonly v: number; readonly repo: string; re
 // The kinds that stand without a record at the head, each with the line naming why.
 export type Excused = Partial<Record<Kind, string>>
 
-// `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason.
+// `<need>` or `<need>: <reason>`; a need other than the strictest and the default carries its reason.
 function checkOf(kind: Planned, value: unknown): Check | string {
-  const text = value === undefined ? NEEDS[kind][0] : typeof value === 'string' ? value.trim() : ''
+  const text = value === undefined ? DEFAULT[kind] : typeof value === 'string' ? value.trim() : ''
   const at = text.indexOf(':')
   const need = (at === -1 ? text : text.slice(0, at)).trim().toLowerCase()
   const reason = at === -1 ? '' : text.slice(at + 1).trim()
   if (!(NEEDS[kind] as readonly string[]).includes(need)) return kind + ' is one of ' + NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
   const strictest = need === NEEDS[kind][0]
-  if (!strictest && reason === '') return kind + ' ' + need + ' gives its reason: "' + need + ': <why>"'
+  if (!strictest && need !== DEFAULT[kind] && reason === '') return kind + ' ' + need + ' gives its reason: "' + need + ': <why>"'
   if (reason.length > DETAIL_MAX) return kind + '\'s reason is at most ' + DETAIL_MAX + ' characters'
   return { need, reason: strictest ? '' : reason }
 }
@@ -66,9 +68,9 @@ export function planPath(dataDir: string, repo: string, pr: number): string {
   return dataDir + '/' + PLAN_DIR + '/' + repo.toLowerCase() + '/' + pr + '.json'
 }
 
-/** The checks a new plan makes less strict than the plan before it did: lifted only by the operator's waiver. */
+/** The required E2E a new plan lifts, which only the operator's waiver lifts: the gate reads no other planned check. */
 export function relaxed(before: CheckPlan | undefined, after: Checks): Planned[] {
-  return before ? PLANNED.filter((kind) => before[kind].need === NEEDS[kind][0] && after[kind].need !== NEEDS[kind][0]) : []
+  return before?.e2e.need === 'required' && after.e2e.need !== 'required' ? ['e2e'] : []
 }
 
 /** The kinds the plan excuses, each named with the plan's date and reason. */
@@ -78,12 +80,12 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
   const by = 'check plan, ' + plan.at.slice(0, 10) + ': '
   if (plan.e2e.need === 'none') excused.e2e = by + plan.e2e.reason
   if (plan.e2e.need === 'screenshots') excused.e2e = by + 'desktop and mobile screenshots in its place, ' + plan.e2e.reason
-  if (plan.norms.need === 'none') excused.norms = by + plan.norms.reason
+  if (plan.norms.need === 'none' && plan.norms.reason) excused.norms = by + plan.norms.reason
   return excused
 }
 
 /** The plan as the pull request shows it, in one comment. */
 export function planText(plan: Checks): string {
   const line = (kind: Planned) => '- ' + kind + ': ' + plan[kind].need + (plan[kind].reason ? ' — ' + plan[kind].reason : '')
-  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E and norms checks marked required; a waiver lifts only a required E2E.'
+  return '**Check plan**\n\n' + PLANNED.map(line).join('\n') + '\n\nThe ready gate requires the E2E marked required; the operator\'s waiver lifts it.'
 }

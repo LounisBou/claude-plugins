@@ -11,7 +11,7 @@ test('a plan gives each need, and a reason for any need but required', () => {
   expect(planInput({ e2e: 'Screenshots: a colour', norms: 'required: kept', review: 'one-pass: a typo' })).toEqual({
     e2e: { need: 'screenshots', reason: 'a colour' }, norms: { need: 'required', reason: '' }, review: { need: 'one-pass', reason: 'a typo' },
   })
-  expect(planInput({})).toEqual({ e2e: { need: 'required', reason: '' }, norms: { need: 'required', reason: '' }, review: { need: 'full', reason: '' } })
+  expect(planInput({})).toEqual({ e2e: { need: 'required', reason: '' }, norms: { need: 'none', reason: '' }, review: { need: 'full', reason: '' } })
   expect(planInput({ review: 'one-pass' })).toBe('review one-pass gives its reason: "one-pass: <why>"')
   expect(planInput({ e2e: 'none', norms: 'required' })).toBe('e2e none gives its reason: "none: <why>"')
   expect(planInput({ e2e: 'required', norms: 'screenshots: x' })).toContain('norms is one of required, none')
@@ -33,7 +33,7 @@ test('only a required check made not required is a relaxation', () => {
   expect(relaxed(undefined, plan('none: x', 'none: y'))).toEqual([])
   expect(relaxed(before, plan('screenshots: x', 'none: y'))).toEqual(['e2e'])
   expect(relaxed(before, plan('required', 'required'))).toEqual([])
-  expect(relaxed(before, plan('required', 'none: y', 'one-pass: small'))).toEqual(['review'])
+  expect(relaxed(before, plan('required', 'none: y', 'one-pass: small'))).toEqual([])
 })
 
 test('the plan excuses the kinds it does not require, with its date and reason', () => {
@@ -47,4 +47,16 @@ test('the plan file sits under the data directory by repository and number, and 
   expect(planPath('/data', 'Acme/Thing', 12)).toBe('/data/check-plans/acme/thing/12.json')
   expect(() => planPath('/data', '../x', 1)).toThrow()
   expect(planText(plan('none: docs', 'required'))).toContain('- e2e: none — docs\n- norms: required\n- review: full\n')
+})
+
+test('only the E2E made not required is a relaxation: norms and the review depth, unread by the gate, may relax', () => {
+  const before = plan('required', 'required: kept', 'full')
+  expect(relaxed(before, plan('required', 'none', 'one-pass: small'))).toEqual([])
+  expect(relaxed(before, plan('none: docs', 'none', 'one-pass: small'))).toEqual(['e2e'])
+})
+
+test('norms left out of a plan reads none, on demand, and the plan says the gate requires only the E2E marked required', () => {
+  expect(planInput({}).norms).toEqual({ need: 'none', reason: '' })
+  expect(planInput({ norms: 'none' }).norms).toEqual({ need: 'none', reason: '' })
+  expect(planText(plan('required', 'none')).endsWith('\n\nThe ready gate requires the E2E marked required; the operator\'s waiver lifts it.')).toBe(true)
 })
