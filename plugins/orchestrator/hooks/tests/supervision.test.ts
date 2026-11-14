@@ -616,7 +616,7 @@ test('an entry naming no session, or from another machine, stays open though a r
 })
 
 // The wait file's writers live in several processes: the session's relay, the coordinator's hooks
-// forgetting a fingerprint, round-close. A relay write computed from what it read before the
+// forgetting a fingerprint, the coordinator's settle. A relay write computed from what it read before the
 // coordinator forgot the fingerprint put the fingerprint back, and the same question was never
 // relayed again; a field the relay leaves as it read it keeps what the file holds now.
 test('a wait written from an older read keeps what another process changed since', () => {

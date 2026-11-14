@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,7 +63,7 @@ test('live writes every open item of the state into the brief, and nothing of an
   // The rest of the template stands.
   assert.ok(brief.includes('# Expected result'))
   assert.ok(brief.includes('## Standing context'))
-  assert.match(w.out.join(''), /^generation=1 chars=\d+ rows=2 prs=2 agents=1 questions=1 notes=0 pruned=rulings:0,state:0 takeover_chars=(\d+)->\1\n$/)
+  assert.match(w.out.join(''), /^generation=1 chars=\d+ rows=2 prs=2 agents=1 questions=1 notes=0 pruned=rulings:0,state:0,round:0 takeover_chars=(\d+)->\1\n$/)
   assert.equal(w.run('check'), 0)
 })
 
@@ -200,17 +200,32 @@ test('live prunes the rulings and state files the brief names, archives beside t
   assert.ok(kept.includes('[for: acme/app#14]'))
   const after = kept.length - '- 2026-11-11T09:00:00Z « C » → one correction of acme/app#14. [for: acme/app#14]\n'.length + readFileSync(state, 'utf8').length
   const brief = w.read().length
-  assert.match(w.out.at(-1) ?? '', new RegExp(`^generation=1 chars=${brief} .* pruned=rulings:2,state:1 takeover_chars=${brief + before}->${brief + after}\\n$`))
+  assert.match(w.out.at(-1) ?? '', new RegExp(`^generation=1 chars=${brief} .* pruned=rulings:2,state:1,round:0 takeover_chars=${brief + before}->${brief + after}\\n$`))
   assert.ok(!readFileSync(rulings, 'utf8').includes('Merge #12') && readFileSync(rulings, 'utf8').includes('[standing]'))
   assert.match(readFileSync(join(dir, 'rulings-archive.md'), 'utf8'), /Merge #12[\s\S]*port into next/)
   assert.match(readFileSync(join(dir, 'state-archive.md'), 'utf8'), /morning journal/)
   assert.ok(!readFileSync(state, 'utf8').includes('morning journal'))
 })
 
+test('live archives the round\'s entries settled over a day ago, and counts them in its pruned field', () => {
+  const old = '2026-11-01T10:00:00Z'
+  const settled = { from: NAME, session: SESSION, kind: 'operator', since: old, question: 'Q?' }
+  const w = world({ round: [
+    { id: 'q-open', ...settled, status: 'open', answer: null },
+    { id: 'q-answered', ...settled, status: 'answered', answer: { text: 'A', by: 'pane', at: old } },
+    { id: 'q-withdrawn', ...settled, status: 'withdrawn', answer: { text: 'moot', by: 'sender', at: old } },
+  ] })
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.at(-1) ?? '', / pruned=rulings:0,state:0,round:2 takeover_chars=/)
+  assert.ok(existsSync(join(w.state, 'round', 'archive', 'q-answered.json')))
+  assert.ok(existsSync(join(w.state, 'round', 'archive', 'withdrawn', 'q-withdrawn.json')))
+  assert.ok(existsSync(join(w.state, 'round', 'q-open.json')))
+})
+
 test('live prunes nothing the brief does not name, and says a supersession it keeps', () => {
   const w = world()
   assert.equal(w.run('live', '--next', 'x'), 0)
-  assert.match(w.out.at(-1) ?? '', / pruned=rulings:0,state:0 takeover_chars=\d+->\d+\n$/)
+  assert.match(w.out.at(-1) ?? '', / pruned=rulings:0,state:0,round:0 takeover_chars=\d+->\d+\n$/)
   const rulings = join(dir, 'r.md')
   writeFileSync(rulings, '- 2026-11-12T16:00:00Z « C » → x. [superseded: 2026-12-01T00:00:00Z]\n')
   writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings))
@@ -241,4 +256,33 @@ test('a check that finds the brief lost part of the state is a method failure in
   assert.equal(main(['live', w.brief, ...named, '--next', 'x'], env, io, () => new Date(), journal), 0)
   assert.equal(main(['check', w.brief, ...named], env, io, () => new Date(), journal), 0)
   assert.deepEqual(events, [])
+})
+
+test('live moves a ruling for rows the dispatch record closed, and keeps one for a row still open', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, [
+    '- 2026-11-12T10:00:00Z « A » → the schema. [for: row 1]',
+    '- 2026-11-12T11:00:00Z « B » → the api. [for: rows 1, 2]', '',
+  ].join('\n'))
+  writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings).replaceAll('{{STATE_FILE}}', 'none'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.at(-1) ?? '', / pruned=rulings:1,state:0,round:0 /)
+  assert.ok(readFileSync(rulings, 'utf8').includes('the api') && !readFileSync(rulings, 'utf8').includes('the schema'))
+})
+
+test('the brief carries the open questions asked with ask, their block made from their fields, and no settled one', () => {
+  const asked = (id: string, status: string, sender: object) => ({
+    v: 2, id, sender, status, subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which first?',
+    choices: [{ letter: 'A', text: 'acme/app#1' }, { letter: 'B', text: 'acme/app#2' }], recommended: 'A', why: 'no rebase',
+  })
+  const open = roundOpen([
+    asked('q-1', 'open', { session: SESSION, name: 'Orch: other' }), asked('q-2', 'open', { session: 'x', name: NAME }),
+    asked('q-3', 'answered', { session: SESSION, name: NAME }), asked('q-4', 'open', { session: 'x', name: 'Orch: other' }),
+  ], NAME, SESSION)
+  assert.deepEqual(open.map(q => q.id), ['q-1', 'q-2'])
+  assert.equal(open[0]?.text, [
+    '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
+    '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
+  ].join('\n'))
 })

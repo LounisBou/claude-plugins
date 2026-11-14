@@ -10,7 +10,9 @@
 //   [standing]                           binds every future action; stays, as an unmarked one does
 //   [for: <ref>]                         binds one open item (<ref>: its row or pull request); stays,
 //                                        and a takeover leaves it out (`readAtTakeover`), reading it
-//                                        by grep on <ref> when a task reaches that item
+//                                        by grep on <ref> when a task reaches that item; once every
+//                                        row <ref> numbers (`row N`, `rows N–M`, `rows N, M`) is
+//                                        closed in the dispatch record, it moves as a `done` one
 //
 // The state file's journal moves by its dates: in the section of its latest
 // `- <YYYY-MM-DDThh:mm:ssZ> LIVE SUMMARY` line, each dated line older than that summary, with the
@@ -62,8 +64,27 @@ function datesOf(text: string): Set<string> {
   return new Set(text.split('\n').map(line => DATED.exec(line)?.[1]).filter((d): d is string => d !== undefined))
 }
 
-/** The rulings file pruned: its `done` entries and those superseded by a ruling the file or the archive holds. */
-export function pruneRulings(text: string, archive: string): Pruned {
+const ROWS = /\brows?\s+([0-9]+(?:\s*(?:[–-]|,|and)\s*[0-9]+)*)/gi
+
+/** The row numbers a `for` reference names, a span `N–M` read whole; none when it names no row. */
+export function rowsOf(ref: string): number[] {
+  return [...ref.matchAll(ROWS)].flatMap(match => {
+    const rows: number[] = []
+    const parts = (match[1] ?? '').split(/\s*(?:,|and)\s*/)
+    for (const part of parts) {
+      const [from, to] = part.split(/\s*[–-]\s*/).map(Number)
+      if (from === undefined) continue
+      for (let row = from; row <= (to ?? from) && row - from < 1000; row++) rows.push(row)
+    }
+    return rows
+  })
+}
+
+/**
+ * The rulings file pruned: its `done` entries, those superseded by a ruling the file or the archive
+ * holds, and those `for` rows all closed in the dispatch record (`closed`, the rows' ids).
+ */
+export function pruneRulings(text: string, archive: string, closed: ReadonlySet<number> = new Set()): Pruned {
   const known = new Set([...datesOf(text), ...datesOf(archive)])
   const kept: string[] = []
   const moved: string[] = []
@@ -74,7 +95,9 @@ export function pruneRulings(text: string, archive: string): Pruned {
     if (marker?.kind === 'superseded' && !known.has(marker.by)) {
       warnings.push(`ruling ${DATED.exec(body)?.[1] ?? body.slice(0, 40)} kept: superseded by ${marker.by}, which no ruling of the file or its archive opens on`)
     }
-    if (marker?.kind === 'done' || (marker?.kind === 'superseded' && known.has(marker.by))) moved.push(body)
+    const rows = marker?.kind === 'for' ? rowsOf(marker.ref) : []
+    const carried = rows.length > 0 && rows.every(row => closed.has(row))
+    if (marker?.kind === 'done' || carried || (marker?.kind === 'superseded' && known.has(marker.by))) moved.push(body)
     else kept.push(...group.lines)
   }
   return { kept: kept.join('\n'), moved, warnings }

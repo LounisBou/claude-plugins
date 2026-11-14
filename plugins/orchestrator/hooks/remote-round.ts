@@ -8,7 +8,9 @@
 // entry as pending in its wait file and sends it again at its next turn's end. The operator's
 // answer from the coordinator's pane travels back the same way: one marked line the sender's
 // module takes out before its model reads it, the readable answer under it the only part passed
-// on, and an acknowledgment by the entry's id. Pure on purpose: the handlers hold the $
+// on, and an acknowledgment by the entry's id. This release writes both trips as one event line
+// (`[module-q]`, below) and its acknowledgment; the four old lines are still read, from a machine
+// of an older release, and answered in their own lines. Pure on purpose: the handlers hold the $
 // (supervision.ts) and pass their reads in here.
 import { cutQuestion, RELAY_CAP } from './relay.ts'
 import { parseChoices } from '../core/method.ts'
@@ -101,7 +103,10 @@ export function isAck(body: string): boolean {
 // the question, never taken from the line. Anything else is null.
 export function parseAsk(body: string): { entry: RoundEntry; machine: string } | null {
   const o = markedObject(body, ASK_MARKER, ASK_LINE_CAP)
-  if (!o) return null
+  return o ? askOf(o) : null
+}
+
+function askOf(o: Record<string, unknown>): { entry: RoundEntry; machine: string } | null {
   const keys = Object.keys(o)
   const urgent = keys.includes('urgent')
   const consent = keys.includes('consent') ? parseConsentSubject(o['consent']) : undefined
@@ -159,11 +164,127 @@ export function parseAnswer(body: string): { id: string; since: string; text: st
   const cut = text.indexOf('\n')
   if (cut < 0) return null
   const readable = text.slice(cut + 1)
-  if (readable.trim() === '' || readable.length > READABLE_CAP) return null
   const o = markedObject(text.slice(0, cut), ANSWER_MARKER, ANSWER_LINE_CAP)
-  if (!o || Object.keys(o).length !== 4 || !anId(o['id']) || !stamp(o['since']) || !stamp(o['at'])) return null
+  return o && Object.keys(o).length === 4 ? answerOf(o, readable) : null
+}
+
+function answerOf(o: Record<string, unknown>, readable: unknown): { id: string; since: string; text: string; at: string; readable: string } | null {
+  if (typeof readable !== 'string' || readable.trim() === '' || readable.length > READABLE_CAP) return null
+  if (!anId(o['id']) || !stamp(o['since']) || !stamp(o['at'])) return null
   if (typeof o['text'] !== 'string' || o['text'] === '' || o['text'].length > ANSWER_TEXT_CAP) return null
   return { id: o['id'] as string, since: o['since'] as string, text: o['text'], at: o['at'] as string, readable }
+}
+
+// The one line a question's events travel by between two machines, in place of the four above,
+// which are still read from a machine of an older release and still answer it in its own line.
+// The question's owner is its asker's machine; the coordinator's machine keeps a replica, its
+// round entry with an origin. `seq` orders a question's events: an entry of the relay carries no
+// counter, so its seq is its wait's start in milliseconds, a newer ask of the same id a newer
+// start. Two events: `ask`, the asker's entry with its machine (the old ask's object), sent to the replica; `answer`, the
+// operator's answer from the pane, sent to the owner, its readable rest the only part a model
+// reads. Each is acknowledged by `[module-q-ack]`, naming the event it takes; `already` says the
+// owner had settled the question first, in its own tab: the answer that crossed it is not applied.
+export const Q_MARKER = '[module-q] '
+export const Q_ACK_MARKER = '[module-q-ack] '
+//
+// A question asked with `ask` (question.ts) travels by the same line, as two more events and their
+// acknowledgments: `asked`, the owner's object whole at its `seq`, sent to the replica at its
+// creation and at each change its owner makes; `reply`, the operator's answer or the coordinator's
+// withdrawal given on the replica's machine, sent to the owner, its `seq` the replica's when given.
+export type QEvent =
+  | { kind: 'ask'; entry: RoundEntry; machine: string }
+  | { kind: 'answer'; since: string; text: string; at: string; readable: string }
+  | { kind: 'asked'; object: Record<string, unknown> }
+  | { kind: 'reply'; reply: QReply }
+export type QReply = { status: 'answered' | 'withdrawn'; text: string; by: 'pane' | 'coordinator'; at: string; settler: string }
+export type QAck = { id: string; seq: number; of: QEvent['kind']; already?: true }
+const Q_KINDS: readonly string[] = ['ask', 'answer', 'asked', 'reply']
+
+// An object `ask` made crosses whole: past this many characters its owner sends none and says so.
+export const ASKED_LINE_CAP = 32 * 1024
+// The id `ask` gives (question.ts askId): `q-`, the session's twelve characters, the instant and a random part, in base 36.
+const ASKED_ID_SHAPE = /^q-[A-Za-z0-9_-]{1,12}-[0-9a-z]{1,12}-[0-9a-z]{4}$/
+// A reply's own texts: the answer as the pane's field takes it, a name, a stamp.
+const REPLY_TEXT_CAP = 8000
+
+// The cap on the whole line: the marker, the id and seq around the event, and either event at its
+// old line's cap, the readable rest of an answer now inside the JSON, so six times over.
+const Q_LINE_CAP = Q_MARKER.length + JSON.stringify({ id: '', seq: Number.MAX_SAFE_INTEGER, event: { kind: 'answer', entry: '' } }).length + ID_CAP
+  + Math.max(ASK_LINE_CAP, ANSWER_LINE_CAP + JSON_ESCAPE * READABLE_CAP, ASKED_LINE_CAP, JSON_ESCAPE * (REPLY_TEXT_CAP + NAME_CAP + STAMP_CAP))
+const Q_ACK_LINE_CAP = Q_ACK_MARKER.length + JSON.stringify({ id: '', seq: Number.MAX_SAFE_INTEGER, of: 'answer', already: true }).length + ID_CAP
+
+export function seqOf(since: string): number {
+  return Date.parse(since)
+}
+
+export function qAskLine(entry: RoundEntry, machine: string): string {
+  const ask = JSON.parse(askLine(entry, machine).slice(ASK_MARKER.length)) as Record<string, unknown>
+  return Q_MARKER + JSON.stringify({ id: entry.id, seq: seqOf(entry.since), event: { kind: 'ask', entry: ask } })
+}
+
+export function qAnswerLine(id: string, since: string, text: string, at: string, readable: string): string {
+  return Q_MARKER + JSON.stringify({ id, seq: seqOf(since), event: { kind: 'answer', since, text, at, readable } })
+}
+
+/** The owner's object at its seq, sent to the replica; null when it is past the line's cap. */
+export function qAskedLine(object: { id: string; seq: number }): string | null {
+  const text = Q_MARKER + JSON.stringify({ id: object.id, seq: object.seq, event: { kind: 'asked', object } })
+  return text.length > ASKED_LINE_CAP ? null : text
+}
+
+/** The answer or withdrawal given on the replica's machine, sent to the owner, at the seq the replica held. */
+export function qReplyLine(id: string, seq: number, reply: QReply): string {
+  return Q_MARKER + JSON.stringify({ id, seq, event: { kind: 'reply', reply: { ...reply, text: reply.text.slice(0, REPLY_TEXT_CAP) } } })
+}
+
+export function isQ(body: string): boolean {
+  return body.trimStart().startsWith(Q_MARKER)
+}
+
+export function isQAck(body: string): boolean {
+  return body.trimStart().startsWith(Q_ACK_MARKER)
+}
+
+// The receiver's whole check: the marker, the cap, the three fields, an event of a known kind
+// passing its old line's own check, an ask's id the line's. Anything else is null.
+export function parseQ(body: string): { id: string; seq: number; event: QEvent } | null {
+  const o = markedObject(body, Q_MARKER, Q_LINE_CAP)
+  if (!o || Object.keys(o).length !== 3 || !(anId(o['id']) || askedId(o['id'])) || !Number.isSafeInteger(o['seq'])) return null
+  const raw = o['event']
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const { kind, ...fields } = raw as Record<string, unknown>
+  let event: QEvent | null = null
+  if (kind === 'ask' && Object.keys(fields).length === 1 && fields['entry'] && typeof fields['entry'] === 'object' && !Array.isArray(fields['entry'])) {
+    const asked = askOf(fields['entry'] as Record<string, unknown>)
+    event = asked && { kind, ...asked }
+    if (event && event.entry.id !== o['id']) return null
+  } else if (kind === 'answer' && Object.keys(fields).length === 4) {
+    const { readable, ...rest } = fields
+    const answer = answerOf({ id: o['id'], ...rest }, readable)
+    event = answer && { kind, since: answer.since, text: answer.text, at: answer.at, readable: answer.readable }
+  } else if (kind === 'asked' && askedId(o['id']) && Object.keys(fields).length === 1) {
+    // The object's own fields are checked by its reader (question.ts parseAsked): here its id and seq, the line's.
+    const object = fields['object']
+    if (object && typeof object === 'object' && !Array.isArray(object) && (object as Record<string, unknown>)['id'] === o['id'] && (object as Record<string, unknown>)['seq'] === o['seq']) {
+      event = { kind, object: object as Record<string, unknown> }
+    }
+  } else if (kind === 'reply' && askedId(o['id']) && Object.keys(fields).length === 1) {
+    const reply = replyOf(fields['reply'])
+    event = reply && { kind, reply }
+  }
+  return event ? { id: o['id'] as string, seq: o['seq'] as number, event } : null
+}
+
+export function qAckLine(ack: QAck): string {
+  return Q_ACK_MARKER + JSON.stringify(ack)
+}
+
+export function parseQAck(body: string): QAck | null {
+  const o = markedObject(body, Q_ACK_MARKER, Q_ACK_LINE_CAP)
+  if (!o || !(anId(o['id']) || askedId(o['id'])) || !Number.isSafeInteger(o['seq']) || !Q_KINDS.includes(String(o['of']))) return null
+  const already = Object.keys(o).length === 4 && o['already'] === true
+  if (Object.keys(o).length !== (already ? 4 : 3)) return null
+  return { id: o['id'] as string, seq: o['seq'] as number, of: o['of'] as QAck['of'], ...(already ? { already: true as const } : {}) }
 }
 
 // The answer's acknowledgment, by the entry's id and since: a late one of an older answer to the
@@ -176,6 +297,22 @@ export function parseAnswerAck(body: string): { id: string; since: string } | nu
   const o = markedObject(body, ANSWER_ACK_MARKER, ANSWER_ACK_LINE_CAP)
   if (!o || Object.keys(o).length !== 2 || !anId(o['id']) || !stamp(o['since'])) return null
   return { id: o['id'] as string, since: o['since'] as string }
+}
+
+function askedId(v: unknown): boolean {
+  return typeof v === 'string' && ASKED_ID_SHAPE.test(v)
+}
+
+// A reply's exact fields: its status, its text within its cap, who gave it, when, and its settler's name.
+function replyOf(v: unknown): QReply | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const o = v as Record<string, unknown>
+  if (Object.keys(o).length !== 5) return null
+  if (o['status'] !== 'answered' && o['status'] !== 'withdrawn') return null
+  if (o['by'] !== 'pane' && o['by'] !== 'coordinator') return null
+  if (typeof o['text'] !== 'string' || o['text'].trim() === '' || o['text'].length > REPLY_TEXT_CAP) return null
+  if (!stamp(o['at']) || !line(o['settler'], NAME_CAP)) return null
+  return { status: o['status'], text: o['text'], by: o['by'], at: o['at'] as string, settler: o['settler'] as string }
 }
 
 function anId(v: unknown): boolean {
