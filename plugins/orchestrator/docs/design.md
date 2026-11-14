@@ -174,7 +174,6 @@ hooks/tests/kill-guard.test.ts       the kill guard: the kills by name or patter
 hooks/tests/stop-gate.test.ts        the stop gate's decision shapes and refusal texts, the once-per-tell CI record, and the wiring over a faked $: the classic.Stop fields pinned, the quiet scope, the degraded read passing
 hooks/tests/one-question.test.ts     the question rule: an operator wait with no block refused, one block passed, fenced examples ignored
 hooks/tests/ledger.test.ts           the ledger line at creation: the two forms, an agent's pull request in its orchestrator's record, a session of no orchestration, a repeat, a record owned by another, a write that fails
-hooks/tests/question-by-message.test.ts  a question sent to the coordinator by message refused, registered or learnt; a plain message and a question to another peer passed
 hooks/tests/review.test.ts           the verdict written through github's record tool from an orchestrator session, refused from any other or with an input that lacks the pull request, the verdict or an acceptance's set-asides
 hooks/tests/audit.test.ts            each writer of the audit trail over a faked $: the refusals by code, the verdict and its decisions, the pull request opened and merged, the waits' two halves, and nothing free-text kept
 hooks/tests/todo-format.test.ts      the to-do list's format: the file name, the numbering, the closing, the deferring, the lines read and the lines refused
