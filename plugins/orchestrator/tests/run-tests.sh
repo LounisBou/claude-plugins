@@ -3293,7 +3293,7 @@ check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1
 check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
   "$(aud --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit: x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit: x' | grep -c "an audit title is an auditor's")"
 check "and that refusal exits 1" "1" "$(aud --title 'Audit: x' >/dev/null 2>&1; echo $?)"
-for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
+for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "an auditor refuses $AUDFLAG" "1|1" \
     "$(aud --auditor --title 'Audit: x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit: x' $AUDFLAG | grep -c "is not an auditor's")"
@@ -3302,6 +3302,14 @@ check "an auditor with no readable pair is refused, naming where its transcript 
   "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p 2>&1 | grep -cF "no transcript for session s-aud-none under $ORCHESTRATOR_PROJECTS_DIR")"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit: x' | grep -c -- '--model aud-model')"
+# An auditor given its pair runs on it (the caller's pair is read only when none is given).
+AUDPAIR=$(aud --auditor --model m-x --effort low --title 'Audit: tm')
+check "an auditor given --model and --effort runs on that pair, not its caller's" "1|0" \
+  "$(printf '%s' "$AUDPAIR" | grep -c -- '--model m-x --effort low')|$(printf '%s' "$AUDPAIR" | grep -c -- '--model aud-model')"
+check "an auditor given neither runs on its caller's model and effort" "1" \
+  "$(audl --auditor --title 'Audit: tm' | grep -c -- '--model aud-model --effort high')"
+check "an auditor given a model without an effort is refused" "1" \
+  "$(aud --auditor --model m-x --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
 
 # An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
 # a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
