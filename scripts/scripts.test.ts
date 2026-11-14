@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
-import { matrixOf, NO_SUITE, parseBlocking, parseShards, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
-import { breaches, isPromptPath, measure } from './prompts.ts'
+import { isRelease, mainCells, matrixOf, nightlyCells, NO_SUITE, parseBlocking, parseShards, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
+import { breaches, isPromptPath, loweredOutsideRelease, measure } from './prompts.ts'
 import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
@@ -131,6 +131,59 @@ describe('plugin matrix', () => {
     assert.throws(() => parseShards({ shards: { alpha: '2' } }, ['alpha']), /needs two parts or more/)
   })
 
+  it('runs a change of core on the plugins that carry a copy of it, and no other', () => {
+    const plugins = ['alpha', 'beta', 'gamma']
+    assert.deepEqual(touchedPlugins(['packages/core/src/a.ts'], plugins, ['alpha', 'gamma']), ['alpha', 'gamma'])
+    assert.deepEqual(touchedPlugins(['packages/core/src/a.ts', 'plugins/beta/x.sh'], plugins, ['alpha']), ['alpha', 'beta'])
+  })
+
+  it('runs no suite for a change of the repository tooling, its CI or its package files', () => {
+    const paths = ['scripts/plugin-matrix.ts', 'ci/plugins.json', '.github/workflows/ci.yml', 'package.json', 'package-lock.json']
+    for (const path of paths) assert.deepEqual(touchedPlugins([path], ['alpha', 'beta'], ['alpha']), [], path)
+  })
+
+  it('runs no suite for a plugin README, and the plugin for any other file of it', () => {
+    assert.deepEqual(touchedPlugins(['plugins/alpha/README.md'], ['alpha', 'beta']), [])
+    assert.deepEqual(touchedPlugins(['plugins/alpha/README.md', 'plugins/alpha/skill.md'], ['alpha', 'beta']), ['alpha'])
+    assert.deepEqual(touchedPlugins(['plugins/alpha/docs/README.md'], ['alpha', 'beta']), ['alpha'])
+  })
+
+  it('runs every plugin for a file no rule above names', () => {
+    assert.deepEqual(touchedPlugins(['evals/outcome/a.json'], ['alpha', 'beta'], ['alpha']), ['alpha', 'beta'])
+  })
+
+  it('takes a pull request that changes a plugin manifest for the release', () => {
+    assert.equal(isRelease(['plugins/alpha/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']), true)
+    assert.equal(isRelease(['plugins/alpha/skill.md', 'ci/prompts.json', '.claude-plugin/marketplace.json']), false)
+  })
+
+  it('runs the release on every plugin and both platforms, where a pull request runs Linux alone', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['ubuntu-latest'], beta: ['macos-latest'] } }, ['alpha', 'beta']))
+    assert.deepEqual(pullRequestCells(matrix, [], true), matrix)
+    assert.deepEqual(pullRequestCells(matrix, ['alpha'], true), matrix)
+  })
+
+  it('runs every plugin on Linux for a push to main, and on macOS for the night', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['ubuntu-latest'], beta: ['macos-latest'] } }, ['alpha', 'beta']), new Map([['alpha', 2]]))
+    assert.deepEqual(mainCells(matrix).map(cell => `${cell.plugin} ${cell.os} ${cell.shard ?? ''}`), ['alpha ubuntu-latest 1', 'alpha ubuntu-latest 2', 'beta ubuntu-latest '])
+    assert.deepEqual(nightlyCells(matrix).map(cell => `${cell.plugin} ${cell.os} ${cell.blocking}`), ['alpha macos-latest false', 'beta macos-latest true'])
+  })
+
+  it('leaves a release-only plugin out of a pull request unless the pull request changes it', () => {
+    const plugins = ['alpha', 'drift']
+    const only = ['drift']
+    assert.deepEqual(touchedPlugins(['packages/core/src/a.ts'], plugins, plugins, only), ['alpha'])
+    assert.deepEqual(touchedPlugins(['evals/outcome/a.json'], plugins, plugins, only), ['alpha'])
+    assert.deepEqual(touchedPlugins(['plugins/drift/x.sh'], plugins, plugins, only), ['drift'])
+    assert.deepEqual(touchedPlugins(['plugins/drift/x.sh', 'evals/outcome/a.json'], plugins, plugins, only), ['alpha', 'drift'])
+  })
+
+  it('leaves a release-only plugin out of a push to main, and keeps it in the night', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['ubuntu-latest'], drift: ['ubuntu-latest'] } }, ['alpha', 'drift']))
+    assert.deepEqual(mainCells(matrix, ['drift']).map(cell => cell.plugin), ['alpha'])
+    assert.deepEqual(nightlyCells(matrix).map(cell => cell.plugin), ['alpha', 'drift'])
+  })
+
   it('runs one cell without a suite for a pull request that touches no plugin, so that it passes', () => {
     const matrix = matrixOf(parseBlocking({ blocking: { alpha: [] } }, ['alpha']))
     assert.deepEqual(pullRequestCells(matrix, []), [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }])
@@ -188,5 +241,15 @@ describe('prompts', () => {
       '1 sentences said more than once, over the ceiling of 0',
     ])
     assert.deepEqual(breaches(measured, { budgets: { a: 10, b: 1 }, duplicates: 1 }), [])
+  })
+
+  it('refuses a budget or the duplicate ceiling lowered below its base, unless the change is a release', () => {
+    const base = { budgets: { a: 10, b: 5 }, duplicates: 4 }
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 9, b: 5 }, duplicates: 3 }, base, false), [
+      'a: budget lowered from 10 to 9, which only the release does',
+      'duplicates: ceiling lowered from 4 to 3, which only the release does',
+    ])
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 9, b: 4 }, duplicates: 3 }, base, true), [])
+    assert.deepEqual(loweredOutsideRelease({ budgets: { a: 10, b: 5, c: 1 }, duplicates: 4 }, base, false), [])
   })
 })

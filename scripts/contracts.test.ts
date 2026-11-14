@@ -2,12 +2,14 @@
 // writes, core's reader accepts (docs/contracts.md).
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
+import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
+import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
 
 describe('pull request records: github writes, core reads', () => {
   it('reads every record github engine writes', () => {
@@ -33,6 +35,27 @@ describe('pull request records: github writes, core reads', () => {
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'review', '--detail', 'documentation only'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'e2e'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'norms', '--result', 'accepted'], { stdio: 'pipe' }))
+  })
+})
+
+describe('the measure file: the orchestrator writes, bugs-bot reads', () => {
+  it('finds the file core names and reads its figures', () => {
+    const config = mkdtempSync(join(tmpdir(), 'measure-'))
+    const path = measureFilePath(config, 'abc')
+    const reading: MeasureReading = {
+      version: MEASURE_VERSION, context_tokens: 810_000, context_window: 1_000_000, context_percent: 81, model: 'm', updated_at: 't',
+      gate_tokens: gateTokensOf(1_000_000), start: { tokens: 1, at: 't', brief: null, brief_bytes: null },
+    }
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${JSON.stringify(reading)}\n`)
+    const read = execFileSync('python3', ['-c', [
+      'import json, sys',
+      "sys.path.insert(0, 'plugins/bugs-bot')",
+      'from bugs_bot.gate import measure, measure_path',
+      'env = {"CLAUDE_CONFIG_DIR": sys.argv[1], "CLAUDE_CODE_SESSION_ID": "abc"}',
+      'print(json.dumps({"path": str(measure_path(env)), "figures": measure(env)}))',
+    ].join('\n'), config], { encoding: 'utf8' })
+    assert.deepEqual(JSON.parse(read), { path, figures: [810_000, 1_000_000] })
   })
 })
 
@@ -78,5 +101,28 @@ describe('session names: core owns the shape, the launcher reads it', () => {
       ['orchestrator', true, 'Lead: abc'], ['agent', true, 'Hand: ab'], ['coordinator', false, 'Desk: abcd'], [null, false, 'Orch: abc'],
     ])
     rmSync(plugin, { recursive: true, force: true })
+  })
+})
+
+describe('learning events: the orchestrator\'s scripts write, core reads', () => {
+  it('reads every event the dispatch record writes through its own entry point, into the configuration directory\'s journal', () => {
+    const config = mkdtempSync(join(tmpdir(), 'journal-'))
+    const record = join(config, 'claude-orchestrator', 'briefs', 'p', 'dispatch.jsonl')
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: config, HOME: config, CLAUDE_CODE_SESSION_ID: 'orch-1' }
+    const run = (...args: string[]): string => execFileSync('plugins/orchestrator/skills/orchestrator/scripts/dispatch-record.sh', args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    run('goals', record, 'init', '--spec', 'none')
+    const id = run('open', record, '--class', 'feature', '--tier', 'deep').trim()
+    run('review', record, id, '--head', 'a'.repeat(40))
+    run('round', record, id)
+    run('fixed', record, id, '--head', 'b'.repeat(7))
+    run('surface', record, id, '--ui', 'acme/thing#12')
+    run('escaped', record, id)
+    run('close', record, id, '--verdict', 'thing#12 merged')
+    const dir = join(config, 'orchestrator', 'journal')
+    const events = readdirSync(dir).map(name => parseJournalEvent(JSON.parse(readFileSync(join(dir, name), 'utf8'))))
+    assert.equal(events.length, 7)
+    assert.ok(events.every(event => event !== undefined))
+    assert.deepEqual(events.map(event => event?.kind).sort(), ['escape', 'link', 'link', 'step', 'step', 'step', 'step'])
+    rmSync(config, { recursive: true, force: true })
   })
 })

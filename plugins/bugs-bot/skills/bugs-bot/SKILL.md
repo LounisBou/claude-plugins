@@ -62,7 +62,7 @@ Run by any session in the project's repository, which becomes the agent's **laun
 
 ### Succession
 
-The agent measures its own context (`gate --measure`) after every handled event and hands over to a fresh agent of the same title at the **gate** (`gate_tokens`, 300,000 by default; `gate --set N` changes it, the operator's to rule), at a quiet point. The successor restarts as usual (`pending`, then its wait): you hear nothing of a succession, the title is kept, so you keep addressing the agent by that title. The protocol is in `agent/AGENT.md`.
+The agent measures its own context (`gate --measure`) after every handled event and hands over to a fresh agent of the same title at the **gate** (`gate_tokens`, 300,000 by default, at most 80 % of the window; `gate --set N` changes it, the operator's to rule), at a quiet point. The successor restarts as usual (`pending`, then its wait): you hear nothing of a succession, the title is kept, so you keep addressing the agent by that title. The protocol is in `agent/AGENT.md`.
 
 ## Talking to a reporter — ask, fix, verify
 
