@@ -7,6 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP, heldReport } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
+import { agentStopNudge } from '../agent-stop.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -589,4 +590,72 @@ test("an orchestrator's long turn is never held to the agents' limit", async () 
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
   const said = fx.sent.map(s => s.text).join('\n') + [...fx.files.values()].join('\n')
   expect(said).toContain('o'.repeat(VERDICT_LIMIT * 2))
+})
+
+// --- an agent's stop is told what to end on ------------------------------------------------
+
+const RUNNING = [{ type: 'subagent', description: 'review lens 1', status: 'running' }, { type: 'bash', command: 'npm test', status: 'running' }]
+const stopOf = (message: string, extra: object = {}) => ({ session_id: 's-one', transcript_path: '', last_assistant_message: message, ...extra })
+
+test('a status line that fits lets the stop pass; a missing one is told what to end on', () => {
+  expect(agentStopNudge('Done.\nstatus: done — PR 12', [])).toBeNull()
+  expect(agentStopNudge('Asking.\nstatus: question — order', ['npm test'])).toBeNull()
+  expect(agentStopNudge('Waiting.\nstatus: waiting — lenses', ['review lens 1'])).toBeNull()
+  expect(agentStopNudge('Waiting on the lenses.', ['review lens 1'])).toContain('status: waiting — <what is watched>')
+  expect(agentStopNudge('Waiting on the suite.', [])).toContain('Nothing of yours runs in the background')
+  expect(agentStopNudge('Waiting.\nstatus: waiting — the suite', [])).toContain('status: waiting fits only while')
+  // A host that gives no task list is not told apart from one that says nothing runs: no nudge.
+  expect(agentStopNudge('Waiting on the lenses.', null)).toBeNull()
+})
+
+test('the nudge names the tasks, three at most, each cut', () => {
+  const text = agentStopNudge('Waiting.', ['a', 'b', 'c', 'd', 'x'.repeat(200)])!
+  expect(text).toContain('(a, b, c and 2 more)')
+  expect(agentStopNudge('Waiting.', ['x'.repeat(200)])).toContain(`(${'x'.repeat(80)}…)`)
+})
+
+test('an agent whose turn ends while its background work runs is refused once, with the line to end on', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const first = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the lens subagents.', { background_tasks: RUNNING }))
+  expect(first.block).toContain('review lens 1, npm test')
+  expect(first.block).toContain('status: waiting — <what is watched>')
+  // The re-fired stop passes, whatever it says.
+  const again = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the lens subagents.', { background_tasks: RUNNING, stop_hook_active: true }))
+  expect(again.block).toBeUndefined()
+})
+
+test('an agent with nothing running is told so, and one that ends on a fitting status is let through', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const idle = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: [] }))
+  expect(idle.block).toContain('Nothing of yours runs in the background')
+  const settled = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: [{ type: 'bash', command: 'npm test', status: 'completed' }] }))
+  expect(settled.block).toContain('Nothing of yours runs in the background')
+  const waits = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.\nstatus: waiting — npm test', { background_tasks: RUNNING }))
+  expect(waits.block).toBeUndefined()
+  const done = await drive(chains, 'classic.Stop', fx.dollar, stopOf('All green.\nstatus: done — PR 12', { background_tasks: [] }))
+  expect(done.block).toBeUndefined()
+  const unsaid = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.'))
+  expect(unsaid.block).toBeUndefined()
+})
+
+test('a session that is no agent is never told what to end on', async () => {
+  const chains = mounted()
+  const fx = fake({ name: 'Audit: belt', role: 'auditor' })
+  const out = await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting.', { background_tasks: RUNNING }))
+  expect(out.block).toBeUndefined()
+})
+
+test('a waiting status is reported once, however many turns repeat it, and again when it changes', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const waiting = (what: string, text = 'Lenses running.') => `${text}\nstatus: waiting — ${what}`
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('3 review lenses'), 'turn-1'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} waits on its background work — 3 review lenses\n${REPLY}\n\nLenses running.` }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('3 review lenses', 'Still running.'), 'turn-2'))
+  expect(fx.sent.length).toBe(1)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('the suite'), 'turn-3'))
+  expect(fx.sent.length).toBe(2)
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('waiting')
 })

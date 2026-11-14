@@ -21,7 +21,4 @@ host then runs this body as a prompt.
    sessions past the gate — the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 — with ⚠: that is the pre-dispatch and mid-work
    gate.
 
-Session ids are not agent names. If the user needs the mapping, ask each live
-agent for its `CLAUDE_CODE_SESSION_ID` through `SendMessage`.
-
 $ARGUMENTS

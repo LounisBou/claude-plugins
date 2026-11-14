@@ -34,6 +34,7 @@ import {
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
+import { agentStopNudge } from './agent-stop.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from './unanswered-question.ts'
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
@@ -551,12 +552,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return next(e)
       }
       const role = roleOf(name)
-      // An agent's report over the verdict limit that names no report file: refused once, the way said.
       if (role === 'agent') {
+        // An agent's report over the verdict limit that names no report file: refused once, the way said.
         const short = shorten(String(e.last_assistant_message ?? '').trim())
-        if (short.kind !== 'unnamed') return next(e)
-        await logLine($, `stop gate: an agent's report of ${short.length} characters names no report file`)
-        return refuse(unnamedReport(short.length))
+        if (short.kind === 'unnamed') {
+          await logLine($, `stop gate: an agent's report of ${short.length} characters names no report file`)
+          return refuse(unnamedReport(short.length))
+        }
+        const nudge = agentStopNudge(String(e.last_assistant_message ?? ''), hostTasks(e.background_tasks, e.session_crons))
+        if (nudge === null) return next(e)
+        await logLine($, 'stop gate: agent told what to end on')
+        return refuse(nudge)
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {

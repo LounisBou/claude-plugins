@@ -2,11 +2,11 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAcceptedOver, pushOf, toolAct, toolLabelling, touchesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords,
   recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
-import { acceptanceDetail, producerOf } from '../core/pr-record.ts'
+import { acceptanceDetail, producersOf } from '../core/pr-record.ts'
 
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const OTHER = 'fedcba9876543210fedcba9876543210fedcba98'
@@ -53,32 +53,27 @@ test('an e2e waiver is accepted, a waived review is not', () => {
   expect(missingItems(gate(), review)).toEqual(['review: waived at 0123456 by p-review'])
 })
 
-// A failed review, then the orchestrator's acceptance of it, with norms and E2E passed.
+// A failed review, then the orchestrator's acceptance with the points it set aside, with norms and E2E passed.
 const FAILED = record('review', 'fail', '2026-11-01T11:00:00Z', { producer: 'pr-review', detail: '2 Important' })
-const accepted = (over: string, at = '2026-11-01T12:00:00Z') =>
-  record('review', 'accepted', at, { producer: 'orchestrator', detail: acceptanceDetail(over, 'both findings are out of scope') })
+const SET_ASIDE = acceptanceDetail([{ point: 'a.ts:3', reason: 'out of scope' }])
+const accepted = (at = '2026-11-01T12:00:00Z') => record('review', 'accepted', at, { producer: 'orchestrator', detail: SET_ASIDE })
 const PASSED_OTHERS = [record('norms', 'pass'), record('e2e', 'pass')]
 
-test('the orchestrator\'s acceptance of the failed review at the head passes the review, and the gate names it', () => {
-  const files = [FAILED, accepted(FAILED.name), ...PASSED_OTHERS]
-  expect(missingItems(gate(), files)).toEqual([])
-  expect(reviewAcceptedOver(gate(), files)).toBe(FAILED.name)
-  expect(gateReadyLine('acme/thing', 12, HEAD, false, FAILED.name))
-    .toBe('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator over ' + FAILED.name
-      + ', a passed norms check, passed E2E and green CI hold at its head.')
-  expect(reviewAcceptedOver(gate(), ALL)).toBeUndefined()
+test('the orchestrator\'s acceptance passes the review over a failed one or on its own, and the gate names it', () => {
+  for (const files of [[FAILED, accepted(), ...PASSED_OTHERS], [accepted(), ...PASSED_OTHERS]]) {
+    expect(missingItems(gate(), files)).toEqual([])
+    expect(reviewAccepted(gate(), files)).toBe(SET_ASIDE)
+  }
+  expect(gateReadyLine('acme/thing', 12, HEAD, false, SET_ASIDE))
+    .toBe('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator (' + SET_ASIDE
+      + '), a passed norms check, passed E2E and green CI hold at its head.')
+  expect(reviewAccepted(gate(), ALL)).toBeUndefined()
 })
 
-test('an acceptance is never carried: without the failed review it names at the head, the review is missing', () => {
-  // The acceptance alone at a head, as a rebase would leave it if it were copied over.
-  const alone = [accepted(FAILED.name), ...PASSED_OTHERS]
-  expect(missingItems(gate(), alone)[0]).toContain('review: accepted at 0123456 by orchestrator over a record that is no failed review at this head')
-  expect(reviewAcceptedOver(gate(), alone)).toBeUndefined()
-  // Over a passed review, or a later review after it: it is no acceptance of the head's verdict.
-  const overPass = [record('review', 'pass'), accepted(record('review', 'pass').name), ...PASSED_OTHERS]
-  expect(missingItems(gate(), overPass)).toHaveLength(1)
-  const later = [FAILED, accepted(FAILED.name), record('review', 'fail', '2026-11-01T13:00:00Z'), ...PASSED_OTHERS]
+test('a later failed review overrides an acceptance', () => {
+  const later = [accepted(), record('review', 'fail', '2026-11-01T13:00:00Z'), ...PASSED_OTHERS]
   expect(missingItems(gate(), later)[0]).toContain('review: fail at 0123456')
+  expect(reviewAccepted(gate(), later)).toBeUndefined()
 })
 
 test('a record of another head, repository or pull request is skipped and named', () => {
@@ -146,7 +141,7 @@ test('a CI undraft is a Not Ready pull request none of whose checks has passed y
   expect(ciUndraft(gate({}, { result: 'PENDING', running: 1, total: 2 }))).toBe(false)
 })
 
-test('the Bash merges, undrafts and Ready labels are recognised with their repository and pull request', () => {
+test('the Bash merges and undrafts are recognised with their repository and pull request', () => {
   expect(bashActs('gh pr merge 12 -R o/r --squash')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r', pr: 12 }])
   expect(bashActs('gh pr merge https://github.com/o/r/pull/12')).toEqual([{ kind: 'merge', name: 'gh pr merge', repo: 'o/r', pr: 12 }])
   expect(bashActs('gh pr merge 12 --repo=o/r --auto --match-head-commit ' + HEAD))
@@ -155,17 +150,13 @@ test('the Bash merges, undrafts and Ready labels are recognised with their repos
   expect(bashActs('gh pr ready feat -R o/r')).toEqual([{ kind: 'undraft', name: 'gh pr ready', repo: 'o/r', branch: 'feat' }])
   expect(bashActs('gh pr ready')).toEqual([{ kind: 'undraft', name: 'gh pr ready' }])
   expect(bashActs('gh api -X PUT repos/o/r/pulls/12/merge')).toEqual([{ kind: 'merge', name: 'gh api', repo: 'o/r', pr: 12 }])
-  expect(bashActs('gh api --method POST repos/o/r/issues/12/labels -f \'labels[]=Ready\''))
-    .toEqual([{ kind: 'ready-label', name: 'gh api', repo: 'o/r', pr: 12 }])
   expect(bashActs('gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}\''))
     .toEqual([{ kind: 'merge', name: 'gh api graphql', unnamed: true }])
   expect(bashActs('gh api graphql -f query=\'mutation{markPullRequestReadyForReview(input:{}){clientMutationId}}\'')[0].kind).toBe('undraft')
   expect(bashActs('gh api graphql -f query=\'mutation{enablePullRequestAutoMerge(input:{}){clientMutationId}}\'')[0].kind).toBe('merge')
-  expect(bashActs('gh pr edit 12 -R o/r --add-label Ready')).toEqual([{ kind: 'ready-label', name: 'gh pr edit', repo: 'o/r', pr: 12 }])
-  expect(bashActs('gh issue edit 12 -R o/r --add-label bug,ready')).toEqual([{ kind: 'ready-label', name: 'gh issue edit', repo: 'o/r', pr: 12 }])
   expect(bashActs('gh pr create -t t -b b')).toEqual([{ kind: 'create', name: 'gh pr create' }])
   expect(bashActs('gh pr create -d -t t -R o/r')).toEqual([{ kind: 'create-draft', name: 'gh pr create', repo: 'o/r' }])
-  expect(bashActs('gh pr create --draft --label Ready')[0].kind).toBe('create')
+  expect(bashActs('gh pr create --draft --label Ready')[0].kind).toBe('create-draft')
   expect(bashActs('gh pr ready 3 -R o/r --undo')).toEqual([{ kind: 'redraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
 })
 
@@ -196,9 +187,13 @@ test('a GraphQL query the line does not show is an unread act, on every spelling
   expect(bashActs('gh api graphql -F id=x -f query=\'query($id: ID!){node(id: $id){id}}\'')).toEqual([])
 })
 
-test('a Ready label put through REST is read on the labels, the issue and the pull request, by any spelling', () => {
-  const act = [{ kind: 'ready-label', name: 'gh api', repo: 'o/r', pr: 12 }]
+test('a Ready label put by hand is no act, on any route: the gate alone decides readiness', () => {
   for (const line of [
+    'gh pr edit 12 -R o/r --add-label Ready',
+    'gh issue edit 12 -R o/r --add-label bug,ready',
+    'gh api --method POST repos/o/r/issues/12/labels -f \'labels[]=Ready\'',
+    'python3 /p/engine/gh.py --repo o/r label-add 12 Ready',
+    'python3 /p/engine/gh.py --repo o/r pr-readiness 12 ready',
     'gh api -X PATCH repos/o/r/issues/12 -f \'labels[]=Ready\'',
     'gh api --method PATCH repos/o/r/pulls/12 -f labels=\'["Ready"]\'',
     'gh api -X PATCH https://api.github.com/repos/o/r/issues/12 -f \'labels[]=Ready\'',
@@ -206,17 +201,16 @@ test('a Ready label put through REST is read on the labels, the issue and the pu
     'gh api https://api.github.com/repos/o/r/issues/12/labels -f labels=\'["bug","Ready"]\'',
     'gh api repos/o/r/issues/12/labels --input labels.json',
   ]) {
-    expect(bashActs(line), line).toEqual(act)
+    expect(bashActs(line), line).toEqual([])
   }
-  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f \'labels[]=Not Ready\'')).toEqual([])
-  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f title=Ready')).toEqual([])
-  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f labels=\'["Not Ready"]\'')).toEqual([])
+  expect(toolAct('pr-readiness', { pr: 3, state: 'ready' })).toBeUndefined()
+  expect(toolAct('label-add', { pr: 3, label: ['bug', 'READY'] })).toBeUndefined()
 })
 
 test('the engine fed on stdin from Bash is an act of its own, its request unread', () => {
   expect(bashActs('printf %s "$REQ" | python3 /p/engine/gh.py --stdin-json'))
     .toEqual([{ kind: 'merge', name: 'gh.py --stdin-json', stdin: true }])
-  expect(bashActs('python3 /p/engine/gh.py --repo o/r label-add 12 Ready -- --stdin-json')[0].kind).toBe('ready-label')
+  expect(bashActs('python3 /p/engine/gh.py --repo o/r pr-merge 12 -- --stdin-json')[0].kind).toBe('merge')
 })
 
 test('gh pr create --draft=false and --draft=0 open a pull request out of draft, --draft=true and a bare --draft a draft', () => {
@@ -263,9 +257,7 @@ test('an act inside bash -c is recognised', () => {
 test('the tool\'s acts are recognised', () => {
   expect(toolAct('pr-ready', { pr: 3 })).toEqual({ kind: 'undraft', name: 'pr-ready', pr: 3 })
   expect(toolAct('pr-merge', { pr: 3, sha: HEAD })).toEqual({ kind: 'merge', name: 'pr-merge', pr: 3, sha: HEAD })
-  expect(toolAct('pr-readiness', { pr: 3, state: 'ready' })?.kind).toBe('ready-label')
   expect(toolAct('pr-readiness', { pr: 3, state: 'not-ready' })).toBeUndefined()
-  expect(toolAct('label-add', { pr: 3, label: ['bug', 'READY'] })?.kind).toBe('ready-label')
   expect(toolAct('label-add', { pr: 3, label: ['bug'] })).toBeUndefined()
   expect(toolAct('pr-create', { title: 't', draft: false })?.kind).toBe('create')
   expect(toolAct('pr-create', { title: 't', draft: true })?.kind).toBe('create-draft')
@@ -304,18 +296,19 @@ test('a command naming the records or their writer is caught', () => {
 
 test('each producer plugin writes only its own kind, every other caller E2E', () => {
   expect(recordKindFor('pr-review')).toBe('review')
+  expect(recordKindFor('orchestrator')).toBe('review')
   expect(recordKindFor('norms')).toBe('norms')
   expect(recordKindFor('engine')).toBe('e2e')
-  expect(recordKindFor('orchestrator')).toBe('e2e')
   expect(producerSlug('engine')).toBe('session-e2e')
   expect(producerSlug('pr-review')).toBe('pr-review')
 })
 
 test('the records refusals name only the producers the record contract declares', () => {
   for (const kind of ['review', 'norms']) {
-    const producer = producerOf(kind)!
-    expect(RECORDS_REFUSAL).not.toContain(producer.plugin)
-    expect(kindRefusal(kind, 'engine', 'e2e')).toContain('(' + producer.plugin + ', ' + producer.tool + ')')
+    for (const producer of producersOf(kind)) {
+      expect(RECORDS_REFUSAL).not.toContain(producer.plugin)
+      expect(kindRefusal(kind, 'engine', 'e2e')).toContain(producer.plugin + ', ' + producer.tool)
+    }
   }
   expect(kindRefusal('e2e', 'pr-review', 'review')).toBe('github: e2e records are written by their producer: pr-review writes review only.')
 })

@@ -255,9 +255,6 @@ effort, is left out. A record row has no task: in a class measured on bench task
 one more cell of its pair's mean, and covers nothing. This is how an exploration's promotion
 reaches the table.
 
-A `floor` key left in `config.json` is read by nothing: neither the tables nor the bench use a
-floor any more.
-
 ## 6. Generalise to profiles and the global table
 
 `generalize` pools the trials of every project sharing a profile — the
