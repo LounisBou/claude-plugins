@@ -369,7 +369,11 @@ The E2E exemption and check plan files are refused alike (`github: an E2E exempt
 `record.py` when the `HEAD` of `dir`, the checkout the tests ran in (default: the session's
 directory), is the head `pr-gate` reads and its tracked files are clean; else it
 refuses, naming both shas. A session writes `e2e` only, each other kind its producer. `waived`
-needs the operator's waiver (above), his recorded answer its detail.
+needs the operator's waiver (above), his recorded answer its detail; an E2E `waived` with no
+« Accorder » recorded may instead quote his dated answer in `detail`, with its channel: `typed in the
+session`, `decision pane, round entry <id>`, or `relayed by <coordinator>, <relay date>` (the answer's
+own date beside it). No quote, no date or no channel is refused; a recorded « Refuser » stands unless
+the quote is of a later day.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

@@ -2946,6 +2946,51 @@ test('a waived record over an « Accorder » carries his answer, dated by the mo
   expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
 })
 
+// ---- the operator's waiver quoted in the record's detail, from a channel with no consent record ----
+
+const QUOTED_WAIVERS: Array<[string, string]> = [
+  ['typed in the session', 'typed in the session, 2026-11-14: « waive the E2E of this docs change »'],
+  ['the decision pane', 'decision pane, round entry a1b2c3, 2026-11-14: « waive the E2E of this docs change »'],
+  ['a relay by the coordinator', 'relayed by Coord: general [a1b2c3], 2026-11-14, answer of 2026-11-13: « waive the E2E of this docs change »'],
+]
+
+for (const [channel, detail] of QUOTED_WAIVERS) {
+  test('an E2E waiver quoting his dated answer ' + channel + ' is written as given', async ($, on) => {
+    const seen = await world($, on, { git: CLEAN })
+    const out: any = await $.tool.call(waiveCall(detail))
+    expect(out.deny).toBeUndefined()
+    const argv = recordRun(seen)!
+    expect(argv[argv.indexOf('--detail') + 1]).toBe(detail)
+  })
+}
+
+for (const [why, detail] of [
+  ['no quoted answer', 'typed in the session, 2026-11-14: he said to waive it'],
+  ['no date', 'typed in the session: « waive the E2E of this docs change »'],
+  ['no channel', '2026-11-14: « waive the E2E of this docs change »'],
+  ['a pane answer with no round entry', 'decision pane, 2026-11-14: « waive the E2E of this docs change »'],
+  ['a relay with no date of its own', 'relayed by Coord: general [a1b2c3], answer of 2026-11-13: « waive the E2E of this docs change »'],
+  ['a quote too short to be his words', 'typed in the session, 2026-11-14: « yes »'],
+  ['the channel and date only inside the quote', '« typed in the session, 2026-11-14 »'],
+] as const) {
+  test('an E2E waiver with ' + why + ' is refused', async ($, on) => {
+    const seen = await world($, on, { git: CLEAN })
+    const out: any = await $.tool.call(waiveCall(detail))
+    expect(out.deny).toContain('an E2E waiver is the operator\'s « Accorder »')
+    expect(out.deny).toContain('quote his dated answer in "detail"')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('a quoted waiver does not lift his « Refuser » of the same day, only of a later one', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser', at: '2026-11-14T10:00:00Z' }) }))
+  const same: any = await $.tool.call(waiveCall(QUOTED_WAIVERS[0]![1]))
+  expect(same.deny).toContain('an E2E waiver is the operator\'s « Accorder »')
+  expect(recordRun(seen)).toBeUndefined()
+  const later: any = await $.tool.call(waiveCall(QUOTED_WAIVERS[0]![1].replace('2026-11-14', '2026-11-15')))
+  expect(later.deny).toBeUndefined()
+})
+
 // ---- the operator's waiver of required norms: the same question, naming the check ----
 
 const NORMS_Q = 'Dispense de normes pour acme/thing#12 : the plan required the norms check, the repository has no CONTRIBUTING.md'
