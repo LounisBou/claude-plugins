@@ -3360,6 +3360,27 @@ test('a push arms its own resend: the timer sends it again 30 s on, with no turn
   expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
 })
 
+test('a push sent after the timer was armed is sent again 30 s on: the tick that finds it too young arms the timer again', async () => {
+  forgetResendTimer()
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', qAcks(coordinator, 'asked')[0].text))
+  expect(objectAt(sender, id).replica.state).toBe('acked')
+  // A second question, pushed while the first push's timer is still armed: no timer of its own.
+  const asked = await callAsk(sender.dollar as never, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS, subject: 'release order', blocks: 'acme/app#3' })
+  const second = /Asked as (q-\S+?):/.exec(asked.result)![1]
+  expect(sender.later.filter(t => t.ms > 30_000).length).toBe(1)
+  await sender.later.filter(t => t.ms > 30_000)[0].fn()
+  expect(pushes(sender).length).toBe(2)
+  const timers = sender.later.filter(t => t.ms > 30_000)
+  expect(timers.length).toBe(2)
+  const now = objectAt(sender, second)
+  sender.files.set(`${ROUND}/${second}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  await timers[1].fn()
+  expect(pushes(sender).length).toBe(3)
+  expect(objectAt(sender, second).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
+})
+
 test('a push meeting a question this machine owns is ignored, and a reply to a question never pushed answers nothing', async () => {
   const { chains, sender, id } = await askedRemotely()
   const before = objectAt(sender, id)
