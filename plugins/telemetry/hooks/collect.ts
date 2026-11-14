@@ -4,15 +4,12 @@
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { parseSessionName } from '../core/names.ts'
 import { simpleCommands } from '../core/shell.ts'
+import { EVENTS, type EventName } from './schema.ts'
 
 export const EVENT_VERSION = 1
 
-export const EVENTS = [
-  'session_start', 'first_turn', 'turn_end', 'tool_call', 'agent_spawned', 'agent_closed',
-  'question', 'dispatch', 'session_end', 'session_summary',
-] as const
-
-export type EventName = (typeof EVENTS)[number]
+// The kinds are declared once, in schema.ts, which also feeds the logs repository's index.
+export { EVENTS, type EventName }
 
 export type Event = { readonly v: 1; readonly ts: string; readonly event: EventName; readonly session: string } & Readonly<Record<string, unknown>>
 

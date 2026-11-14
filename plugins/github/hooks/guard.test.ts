@@ -6,6 +6,9 @@ import { register } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
+// The writing rules read this file of the plugin, which no scenario below is about.
+const NEGATIVE_FILE = ROOT + '/engine/negative-phrases.json'
+const NEGATIVE_TEXT = JSON.stringify({ phrases: ['unchanged'] })
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const MOVED = 'fedcba9876543210fedcba9876543210fedcba98'
 const RECORDS = '/cfg/pr-records'
@@ -175,6 +178,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { deny: 'ENOENT ' + e.path }
   })
   on('fs.read', (_$: any, e: any) => {
+    if (e.path === NEGATIVE_FILE) return { value: NEGATIVE_TEXT }
     seen.reads.push(e.path)
     if (e.path in seen.files) return { value: seen.files[e.path] }
     if (tree[e.path]?.text !== undefined) return { value: tree[e.path].text }

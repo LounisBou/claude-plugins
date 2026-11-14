@@ -73,7 +73,7 @@ prepared feature, and the only source of its title.
 
 ## Step 2 — The one question
 
-One question, asked once, carrying three proposed values: the **codename**
+One question (`method:lifecycle`, `references/questions.md`) carrying three proposed values: the **codename**
 (kebab-case, derived from the title), the **title**, and the **bump** type
 (`major`, `minor`, `patch` or `none`). **WAIT** for the confirmation or the
 corrections. The branch type is not asked here: it is chosen when the feature is

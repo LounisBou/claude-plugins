@@ -1,9 +1,10 @@
 # telemetry
 
 Records what every session of the machine does, as redacted JSON lines, one file per UTC day under
-`${CLAUDE_CONFIG_DIR:-~/.claude}/telemetry/events/`, and exports them on demand to a private
-repository named by the environment. The design, its events and its fields, and what is
-deliberately not recorded: `docs/specs/telemetry-design.md` in the repository.
+`${CLAUDE_CONFIG_DIR:-~/.claude}/telemetry/events/`, and exports them, on demand and by itself once
+a day, to a private repository named by the environment. The design, its events and its fields
+(`hooks/schema.ts`), and what is deliberately not recorded: `docs/specs/telemetry-design.md` in the
+repository.
 
 ## What it records
 
@@ -17,7 +18,11 @@ dispatch record's writes. No prompt, answer, message or tool output is kept.
 
 - `/telemetry:export`: scans every day file for secrets and refuses when one is found; otherwise
   commits the day files to `machines/<machine>/` of the repository `CLAUDE_LOGS_REPO` names (in the
-  environment or in `~/.env`) and pushes `main`. Unset, it pushes nothing and says so.
+  environment or in `~/.env`), with the generated `index/` (a schema page per event kind and a
+  manifest per day, pointing at the local transcripts, which are never pushed), and pushes `main`.
+  Unset, it pushes nothing and says so. The export also runs by itself: a session's end starts it,
+  detached, at most once a UTC day, one at a time per machine.
+- `telemetry.ts export --auto [--foreground] --config <dir>`: the automatic export.
 - `telemetry.ts check --config <dir>`: the same scan, alone.
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.

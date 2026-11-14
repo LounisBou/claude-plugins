@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
-import { lint, refusal, textFields } from './writing.ts'
+import { carriesText, lint, NEGATIVE_FILE, parsePhrases, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
@@ -141,7 +141,7 @@ async function permit(
   }
 
   // Refused once; the same text again is its author's call and goes as it is.
-  const found = lint(e.command, args, lastTyped)
+  const found = lint(e.command, args, lastTyped, await negativePhrases($, e.command))
   const print = fingerprint(e)
   if (found.length > 0 && !refusedOnce.has(print)) {
     refusedOnce.add(print)
@@ -203,13 +203,32 @@ async function bashLint($: any, line: string): Promise<string | undefined> {
           + String((err as any)?.message ?? err))
       }
     }
-    const found = lint(text.command, args, lastTyped)
+    const found = lint(text.command, args, lastTyped, await negativePhrases($, text.command))
     const print = JSON.stringify(['Bash', text.argv, args])
     if (found.length === 0 || refusedOnce.has(print)) continue
     refusedOnce.add(print)
     return refusal(text.name.startsWith('gh ') ? text.name.slice('gh '.length) : text.command, found)
   }
   return undefined
+}
+
+/*
+ * The negative phrasings a description's summary may not hold, read from the engine's file, which the
+ * engine's image titles read too. Read for a call that carries text only. A file that cannot be read
+ * leaves that one rule unchecked and is logged, as any other failure of the writing rules is.
+ */
+async function negativePhrases($: any, command: string): Promise<readonly string[]> {
+  if (!carriesText(command)) return []
+  const file = String($.plugin.root) + '/' + NEGATIVE_FILE
+  try {
+    const phrases = parsePhrases(String(await $.fs.read(file)))
+    if (phrases) return phrases
+    $.ui.log('github: the writing rules found no list of phrases in ' + file + ' and left that rule unchecked')
+  } catch (err) {
+    $.ui.log('github: the writing rules could not read ' + file + ' and left that rule unchecked: '
+      + String((err as any)?.message ?? err))
+  }
+  return []
 }
 
 // The file a --body-file names, as the shell reads it: `~` is HOME, a relative
@@ -2063,8 +2082,9 @@ export function register(on: any): void {
         'GitHub API: pull requests, review threads, comments, reviews, labels, '
         + 'issues, search, image uploads. Before first use, Read '
         + root + '/engine/REFERENCE.md for every subcommand. Before authoring any '
-        + 'PR title, body, comment, review or commit message, Read its rules in '
-        + root + '/engine/writing/ (commits.md, pull-requests.md or comments.md, and references.md). Pass positionals by their documented name '
+        + 'PR title, body, comment, review or commit message, Read its rules in ' + root + '/engine/writing/: '
+        + 'commits.md (commit), pull-requests.md (PR title or body, with security-updates.md for advisories), '
+        + 'comments.md (comment, review, reply), each with references.md. Pass positionals by their documented name '
         + '(pr-checks: {"pr": 12}); other keys become --flags; text bodies go in "body".',
       inputSchema: {
         type: 'object',

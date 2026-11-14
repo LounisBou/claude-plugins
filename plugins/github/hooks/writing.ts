@@ -141,8 +141,8 @@ function todoItems(lines: string[]): string[] {
   return out
 }
 
-const CVE_LINK_RULE = 'a CVE id is a markdown link to its advisory, `[CVE-YYYY-NNNNN](<advisory URL>)`, never bare and never in a code span (writing/pull-requests.md, « Security update pull requests »)'
-const CVE_TABLE_RULE = 'a description whose first line names CVE ids has one table per advisory, with the Package, Advisory, Affected and Reference rows, its Advisory row naming the CVE id (writing/pull-requests.md, « Security update pull requests »)'
+const CVE_LINK_RULE = 'a CVE id is a markdown link to its advisory, `[CVE-YYYY-NNNNN](<advisory URL>)`, never bare and never in a code span (writing/security-updates.md)'
+const CVE_TABLE_RULE = 'a description whose first line names CVE ids has one table per advisory, with the Package, Advisory, Affected and Reference rows, its Advisory row naming the CVE id (writing/security-updates.md)'
 const CVE = /\bCVE-\d{4}-\d{4,}\b/gi
 const CVE_ID = /\bCVE-\d{4}-\d{4,}\b/i
 // An inline link, a title after its URL included, or a reference link.
@@ -194,12 +194,23 @@ function missingCveTables(lines: string[]): boolean {
 // The four sections every pull request description ends with, in this order.
 export const SECTIONS = ['TODO Staging', 'TODO Prod', 'PRs Dependency', 'Related PRs']
 
-// The phrasings that state what a pull request does not do, read in its
-// summary: writing/pull-requests.md, « State what the PR does, never what it does not do ».
-export const NEGATIVE_PHRASES = [
-  'unchanged', 'no dependency', 'does not', "doesn't", 'is not changed', 'left untouched',
-  'no other pull request', 'without conflict',
-]
+// The phrasings that state what a pull request does not do are not held here: they are
+// engine/negative-phrases.json, read by the caller (a hooks module imports no JSON) and passed
+// to `lint`, which reads them in a summary: writing/pull-requests.md, « State what the PR does,
+// never what it does not do ». The engine reads the same file.
+export const NEGATIVE_FILE = 'engine/negative-phrases.json'
+
+// The phrases of the file's text, or null when it holds no list of strings.
+export function parsePhrases(raw: string): string[] | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  const list = value && typeof value === 'object' ? (value as { phrases?: unknown }).phrases : undefined
+  return Array.isArray(list) && list.every((p) => typeof p === 'string' && p !== '') ? (list as string[]) : null
+}
 
 const DESCRIPTIONS = ' (writing/pull-requests.md, « Pull request descriptions »)'
 const MISSING_RULE = 'a pull request description ends with the four sections, missing here: '
@@ -214,10 +225,15 @@ const REF_RULE = 'no pull request reference in the summary above the sections, `
 const AFTER_RULE = 'nothing after the four sections, a description ends with Related PRs' + DESCRIPTIONS
 const RULE_LINE_RULE = 'no horizontal rule, `---`, `***` or `___`, in a pull request description' + DESCRIPTIONS
   + ': a `---` is kept only between two screenshots, a blank line before it'
-const NEGATIVE_RULE = 'state what the PR does, never what it does not do' + DESCRIPTIONS
+const negativeRule = (phrases: readonly string[]) => 'state what the PR does, never what it does not do (the phrasings refused: '
+  + phrases.map((p) => '« ' + p + ' »').join(', ') + ')' + DESCRIPTIONS
 
 const HORIZONTAL_RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
-const NEGATIVE = new RegExp('(?<![\\w-])(' + NEGATIVE_PHRASES.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![\\w-])', 'i')
+// The phrases as one whole-word, case-insensitive pattern, or null for none.
+function negativePattern(phrases: readonly string[]): RegExp | null {
+  if (phrases.length === 0) return null
+  return new RegExp('(?<![\\w-])(' + phrases.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![\\w-])', 'i')
+}
 // A closing keyword links an issue, which GitHub reads only in the description.
 const CLOSING = /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+([\w.-]+(\/[\w.-]+)?)?#\d+\b/gi
 // A bare `#N` that is no 3- or 6-hex-digit colour, or a `repo#N` whose repository
@@ -322,12 +338,12 @@ function bareReference(line: string): boolean {
   return PR_URL.test(text) || BARE_REF.test(strip(text.replace(LINK_TARGET, ']')))
 }
 
-function negative(line: string): boolean {
-  return NEGATIVE.test(strip(withoutImages(line)).replace(/\u2019/g, "'"))
+function negative(pattern: RegExp, line: string): boolean {
+  return pattern.test(strip(withoutImages(line)).replace(/\u2019/g, "'"))
 }
 
 // Every rule one field breaks, each named once.
-function lintField(kind: 'pr' | 'comment', field: string, text: string): Violation[] {
+function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases: readonly string[]): Violation[] {
   const found: Violation[] = []
   const add = (rule: string) => found.push({ field, rule })
   if (field === 'title') {
@@ -353,15 +369,17 @@ function lintField(kind: 'pr' | 'comment', field: string, text: string): Violati
     const summary = summaryLines(lines)
     if (summary.some(bareReference)) add(REF_RULE)
     if (lines.some((l, i) => HORIZONTAL_RULE.test(l) && !shotSeparator(lines, i, summary.length))) add(RULE_LINE_RULE)
-    if (summary.some(negative)) add(NEGATIVE_RULE)
+    const pattern = negativePattern(phrases)
+    if (pattern && summary.some((l) => negative(pattern, l))) add(negativeRule(phrases))
   }
   return found
 }
 
 // Every rule the call's text breaks. A field whose text the user typed
 // verbatim in the prompt passed as `typed` is the user's own words and is
-// never refused.
-export function lint(command: string, args: Record<string, unknown>, typed = ''): Violation[] {
+// never refused. `phrases` are the negative phrasings a summary may not hold: with
+// none, that rule is not checked.
+export function lint(command: string, args: Record<string, unknown>, typed = '', phrases: readonly string[] = []): Violation[] {
   const kind = KIND[command]
   if (!kind) return []
   const said = squash(typed)
@@ -369,7 +387,7 @@ export function lint(command: string, args: Record<string, unknown>, typed = '')
   for (const { field, text } of textFields(command, args)) {
     const own = squash(text)
     if (own !== '' && said.includes(own)) continue
-    found.push(...lintField(kind, field, text))
+    found.push(...lintField(kind, field, text, phrases))
   }
   return found
 }

@@ -747,13 +747,23 @@ check "a title made only of asterisks says it is empty, not that it spans lines"
   "$(gh3 image-upload "$WORK/shot.png" --title "**" 2>&1 >/dev/null | head -1)"
 check "a title with no refused phrase near its words is kept" "Undo changed items, no dependency-free build" \
   "$(gh3 image-upload "$WORK/shot.png" --title "Undo changed items, no dependency-free build" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title"))')"
-check "the engine's refused phrases are the lint's" \
-  "$(python3 -c '
-import re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-body = re.search(r"NEGATIVE_PHRASES = \[(.*?)\]", text, re.S).group(1)
-print("\n".join(m[0] or m[1] for m in re.findall(r"\x27([^\x27]*)\x27|\"([^\"]*)\"", body)))
-' "$ROOT/hooks/writing.ts")" \
+# The phrases are engine/negative-phrases.json alone, which hooks/register.ts reads too (its mod tests
+# read a list of their own through the mod): a copy of the engine holding another list refuses that one.
+copy="$WORK/engine-phrases"
+rm -rf "$copy" && mkdir -p "$copy" && cp -R "$ROOT/engine/." "$copy/"
+printf '{"phrases": ["zzz-engine-phrase"]}\n' > "$copy/negative-phrases.json"
+check "the engine refuses a phrase the file holds and no other" "refused accepted" \
+  "$(PYTHONPATH="$copy" python3 -c '
+from ghlib import assets, errors
+def verdict(title):
+    try:
+        assets._clean_title(title)
+        return "accepted"
+    except errors.UsageError:
+        return "refused"
+print(verdict("Login zzz-engine-phrase screen"), verdict("Login screen unchanged"))
+')"
+check "the file's phrases are the engine's" "$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["phrases"]))' "$ROOT/engine/negative-phrases.json")" \
   "$(PYTHONPATH="$ROOT/engine" python3 -c 'from ghlib import assets; print("\n".join(assets.NEGATIVE_PHRASES))')"
 check_status "an empty title after trim exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "   "
 
@@ -775,14 +785,29 @@ print(json.dumps(out))
 PY
   check "a block written for each surviving title passes the description lint" "7 blocks, 0 refused" \
     "$(BLOCKS="$blocks" ROOT="$ROOT" bun -e '
-const { lint } = await import(process.env.ROOT + "/hooks/writing.ts")
+const { lint, parsePhrases } = await import(process.env.ROOT + "/hooks/writing.ts")
+const phrases = parsePhrases(await Bun.file(process.env.ROOT + "/engine/negative-phrases.json").text())
 const blocks = JSON.parse(await Bun.file(process.env.BLOCKS).text())
 const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
 let refused = 0
 for (const block of blocks) {
-  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + none }).length > 0) refused++
+  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + none }, "", phrases).length > 0) refused++
 }
 console.log(blocks.length + " blocks, " + refused + " refused")
+')"
+  # The lint refuses each phrase of the file in a summary, and the engine refuses it in a title: one list.
+  check "the lint and the engine refuse the same phrases, those of the file" "all refused by both" \
+    "$(ROOT="$ROOT" GHDIR="$GHDIR" bun -e '
+const { lint, parsePhrases } = await import(process.env.ROOT + "/hooks/writing.ts")
+const phrases = parsePhrases(await Bun.file(process.env.ROOT + "/engine/negative-phrases.json").text())
+const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
+let both = 0
+for (const phrase of phrases) {
+  const lintRefuses = lint("pr-create", { title: "fix: x", body: "Adds it. The rest " + phrase + " here.\n\n" + none }, "", phrases).length > 0
+  const run = Bun.spawnSync(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from ghlib import assets, errors\ntry:\n assets._clean_title(\"Screen \" + sys.argv[2])\nexcept errors.UsageError:\n sys.exit(0)\nsys.exit(1)", process.env.GHDIR, phrase])
+  if (lintRefuses && run.exitCode === 0) both++
+}
+console.log(both === phrases.length && phrases.length > 0 ? "all refused by both" : both + " of " + phrases.length)
 ')"
 fi
 
@@ -1272,9 +1297,32 @@ echo "== writing rules =="
 
 # One file per kind of text, and the references every kind follows: the
 # guard « writing rules read » names these paths (hooks/guards.ts).
-for name in commits.md pull-requests.md comments.md references.md; do
+for name in commits.md pull-requests.md security-updates.md comments.md references.md; do
   check "engine/writing/$name exists" "yes" "$([ -f "$ROOT/engine/writing/$name" ] && echo yes || echo no)"
 done
+# A refusal (the rule strings of hooks/writing.ts, its comments left out) that names a file and a section sends the model to a heading that exists there.
+dangling=$(python3 - "$ROOT" <<'PYCITE'
+import re, sys
+root = sys.argv[1]
+src = "".join(l for l in open(root + "/hooks/writing.ts", encoding="utf-8") if not l.lstrip().startswith("//"))
+missing = []
+for name, section in sorted(set(re.findall(r"writing/([\w-]+\.md), « ([^»]+) »", src))):
+    try:
+        text = open(root + "/engine/writing/" + name, encoding="utf-8").read()
+    except OSError:
+        missing.append(name)
+        continue
+    if not re.search(r"^#+ " + re.escape(section) + r"$", text, re.M):
+        missing.append(name + " « " + section + " »")
+for name in sorted(set(re.findall(r"writing/([\w-]+\.md)", src))):
+    try:
+        open(root + "/engine/writing/" + name, encoding="utf-8").close()
+    except OSError:
+        missing.append(name)
+print(",".join(sorted(set(missing))))
+PYCITE
+)
+check "every file and section a writing refusal cites exists" "" "$dangling"
 check "REFERENCE.md gives the image title bound" "1" \
   "$(grep -qF -- '100 characters or fewer' "$SKILLDOC" && echo 1 || echo 0)"
 
