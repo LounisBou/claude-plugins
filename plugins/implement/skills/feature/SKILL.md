@@ -73,8 +73,7 @@ already carries. Three things are skipped because their output is already on dis
 the brainstorm of Step 2, the design write of Step 3 and the plan generation of
 Step 5. What remains is the one question, the branch, the state file, the summary.
 
-Its line in `ROADMAP.md` goes too: the roadmap lists what is prepared and not yet
-started, and this feature is being started now.
+Its `ROADMAP.md` line goes too: the roadmap lists what is prepared and not started.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.

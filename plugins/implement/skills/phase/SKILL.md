@@ -99,7 +99,7 @@ git rev-parse --short HEAD   # this sub-phase's base, into "$DOCS/IMPLEMENTATION
    written and seen to fail before the code that makes it pass. A test that has
    never been red proves nothing.
 2. **The code.** Only what the sub-phase names. A file the sub-phase does not name
-   is drift: a decision, see Stops.
+   is scope drift, and drift is a decision, not an initiative: see Stops.
 3. **The gate.** The commands the repository names, in this order of discovery: the
    check and test commands of its `CLAUDE.md`, else those of its `CONTRIBUTING.md`,
    else the tests covering the files just touched. Run each one synchronously, in
