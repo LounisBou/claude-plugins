@@ -18,7 +18,6 @@ import { MODE_DIALOG_DENY } from './mode-dialog.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine, storeIo } from './module-io.ts'
 import { moduleDirOf } from './module-log.ts'
-import { QUESTION_BY_MESSAGE } from './one-question.ts'
 import { unnamedReport } from './relay.ts'
 import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL } from './review.ts'
 import { parseSessionRow, sessionKey } from './supervision.ts'
@@ -34,7 +33,6 @@ const UNREAD_MARK_PREFIX = (guardFallback(undefined, 'pkill x', '\u0000')?.deny 
 const REFUSALS: readonly (readonly [string, (deny: string) => boolean])[] = [
   ['orchestrator.kill.pattern', deny => KILL_PREFIX !== '' && deny.startsWith(KILL_PREFIX)],
   ['orchestrator.kill.unread-mark', deny => UNREAD_MARK_PREFIX !== '' && deny.startsWith(UNREAD_MARK_PREFIX)],
-  ['orchestrator.message.question-to-coordinator', deny => deny === QUESTION_BY_MESSAGE],
   ['orchestrator.message.report-unnamed', deny => deny === unnamedReport(Number(/ is (\d+) characters/.exec(deny)?.[1] ?? -1))],
   ['orchestrator.models.map-write', deny => deny === MODELS_DENY],
   ['orchestrator.mode.dialog', deny => deny === MODE_DIALOG_DENY],

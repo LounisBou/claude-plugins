@@ -10,7 +10,6 @@ import { PULL_URL } from '../audit-events.ts'
 import { guardFallback, killDecision } from '../guards.ts'
 import { MODE_DIALOG_DENY } from '../mode-dialog.ts'
 import { MODELS_DENY } from '../models-guard.ts'
-import { QUESTION_BY_MESSAGE } from '../one-question.ts'
 import { unnamedReport } from '../relay.ts'
 import { NOT_ORCHESTRATOR } from '../review.ts'
 import { Declarations } from '../wait.ts'
@@ -72,7 +71,6 @@ test('each refusal of the module\'s guards has its stable code; any other answer
   const cases: [unknown, string | null][] = [
     [killDecision('1', 'pkill -f agent'), 'orchestrator.kill.pattern'],
     [guardFallback(undefined, 'killall node', 'no environment'), 'orchestrator.kill.unread-mark'],
-    [{ deny: QUESTION_BY_MESSAGE }, 'orchestrator.message.question-to-coordinator'],
     [{ deny: unnamedReport(5123) }, 'orchestrator.message.report-unnamed'],
     [{ deny: MODELS_DENY }, 'orchestrator.models.map-write'],
     [{ deny: MODE_DIALOG_DENY }, 'orchestrator.mode.dialog'],
