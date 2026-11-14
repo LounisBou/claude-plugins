@@ -5,9 +5,6 @@ description: The development method every role follows - the lifecycle, definiti
 
 # The method
 
-One lifecycle, run by roles: implement in one session, the orchestrator with implementer
-sessions.
-
 ## The lifecycle
 
 1. **Spec.** What and why, with its `## Goals`, settled with the operator first.

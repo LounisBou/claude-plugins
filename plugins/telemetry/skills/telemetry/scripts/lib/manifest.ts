@@ -67,9 +67,9 @@ export const MANIFEST_FIELDS: readonly FieldSpec[] = [
 
 type Fields = Record<string, unknown>
 
-const record = (value: unknown): Fields => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Fields) : {})
-const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
-const num = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+export const record = (value: unknown): Fields => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Fields) : {})
+export const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+export const num = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 const bump = (counts: Record<string, number>, key: string): void => {
   counts[key] = (counts[key] ?? 0) + 1
 }
