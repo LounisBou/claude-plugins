@@ -278,7 +278,7 @@ test('a tool call that throws is caught by the hook\'s net: one log line, the ca
 // orchestrator and owns no orchestration.
 const COORD = 'Coord: all'
 const coordinated = (records: string, files: Record<string, string> = {}) => fake({
-  reportsTo: `${COORD} [c0c0c0]`,
+  reportsTo: `${COORD} [a1b2c3]`,
   rows: {
     [`${STATE}/store/sessions/s-coord`]: row('coordinator', COORD),
     [`${HOME}/.claude/sessions/401.json`]: JSON.stringify({ pid: 401, sessionId: 's-coord', name: COORD, startedAt: 2 }),
