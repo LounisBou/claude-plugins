@@ -567,7 +567,7 @@ export function recordPrs(files: RecordFile[]): number[] {
 }
 
 // A record of an earlier head of the pull request, counted at its head as their diffs are the same, or
-// the operator's E2E waiver (`waived`: who recorded his answer, and when).
+// the operator's waiver of its E2E or norms check (`waived`: who recorded his answer, and when).
 export type Carried = { kind: Kind; from: string; waived?: string }
 
 // The kinds with no record of the pull request at its head: the ones an earlier head may carry. A
@@ -589,29 +589,29 @@ export function carries(record: PrRecord): boolean {
   return accepts(record)
 }
 
-// The operator's E2E waiver of the pull request at an earlier head, whatever its diff: it stands for every
-// later head while it is the newest E2E record across them. A record file there that may be a later E2E
-// record but does not parse stands for none.
-export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>): Carried | undefined {
+// The operator's waiver of a kind of the pull request at an earlier head, whatever its diff: it stands for every
+// later head while it is the newest record of that kind across them. A record file there that may be a later
+// record of that kind but does not parse stands for none.
+export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>, kind: Kind): Carried | undefined {
   let newest: { record: PrRecord; from: string } | undefined
   for (const [head, files] of found) {
-    if (unreadableRecords(files).some((file) => file.kinds.includes('e2e'))) return undefined
-    const record = headLatest(gate, head, files).get('e2e')
+    if (unreadableRecords(files).some((file) => file.kinds.includes(kind))) return undefined
+    const record = headLatest(gate, head, files).get(kind)
     if (record && (!newest || record.at > newest.record.at)) newest = { record, from: head }
   }
-  return newest?.record.result === 'waived' ? { kind: 'e2e', from: newest.from } : undefined
+  return newest?.record.result === 'waived' ? { kind, from: newest.from } : undefined
 }
 
-// The operator's answer to the waiver question, granted at `at` (ISO) and recorded by `by`, standing for the
-// E2E of every head that has no E2E record, unless a run failed after it at an earlier head, or a record file
-// there that may be that failure does not parse.
-export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>, at: string, by: string): Carried | undefined {
+// The operator's answer to the waiver question of a kind, granted at `at` (ISO) and recorded by `by`, standing
+// for that kind at every head that has no record of it, unless a run failed after it at an earlier head, or a
+// record file there that may be that failure does not parse.
+export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>, at: string, by: string, kind: Kind): Carried | undefined {
   for (const [head, files] of found) {
-    if (unreadableRecords(files).some((file) => file.kinds.includes('e2e'))) return undefined
-    const failed = [...headRecordsRead(gate, files, head.toLowerCase()).read.values()].some((r) => r.kind === 'e2e' && r.result === 'fail' && r.at > at)
+    if (unreadableRecords(files).some((file) => file.kinds.includes(kind))) return undefined
+    const failed = [...headRecordsRead(gate, files, head.toLowerCase()).read.values()].some((r) => r.kind === kind && r.result === 'fail' && r.at > at)
     if (failed) return undefined
   }
-  return { kind: 'e2e', from: '', waived: by + ', ' + at }
+  return { kind, from: '', waived: by + ', ' + at }
 }
 
 // What a pull request misses to be ready at its head: the three conditions,

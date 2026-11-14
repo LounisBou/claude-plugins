@@ -2897,3 +2897,64 @@ test('a waived record over an « Accorder » carries his answer, dated by the mo
   const argv = recordRun(seen)!
   expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
 })
+
+// ---- the operator's waiver of required norms: the same question, naming the check ----
+
+const NORMS_Q = 'Dispense de normes pour acme/thing#12 : the plan required the norms check, the repository has no CONTRIBUTING.md'
+// A plan that requires norms and needs no E2E: the review alone is recorded at the head.
+const NORMS_REQUIRED = planOf({ need: 'none', reason: 'docs only' })
+const normsAnswer = (answer: string, over: Record<string, unknown> = {}) =>
+  consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer, ...over })
+const NORMS_MISSING = 'github: acme/thing#12 back to Not Ready at 0123456. Missing: norms: no record at 0123456'
+
+test('the operator\'s « Accorder » to the norms waiver dialog is recorded with the norms subject', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { records: ONLY_REVIEW, answer: 'Accorder' })
+  await askWaiver($, NORMS_Q)
+  const [written, ...more] = consentWrites(seen)
+  expect(more).toEqual([])
+  expect(written).toMatchObject({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer: 'Accorder', by: 'tab' })
+})
+
+test('norms required by the plan and waived by his « Accorder »: Ready with no norms record, and says the waiver', async ($, on) => {
+  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs[0]).toContain('norms waived by the operator (pane, 2026-11-03T10:00:00Z)')
+})
+
+for (const [label, records] of [
+  ['his « Refuser »', { a: normsAnswer('Refuser') }],
+  ['an « Accorder » of the E2E only', { a: granted() }],
+] as const) {
+  test('norms required by the plan with ' + label + ' stay missing', async ($, on) => {
+    const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], ...consentWorld(records) })
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    expect(seen.logs).toHaveLength(1)
+    expect(seen.logs[0]).toStartWith(NORMS_MISSING)
+    expect(seen.logs[0]).not.toContain('norms waived')
+  })
+}
+
+test('a norms check that failed at an earlier head after his « Accorder » voids the waiver', async ($, on) => {
+  const failedAfter = earlier([at('norms', 'fail', {}, '2026-11-04T10:00:00Z')])
+  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], tree: { ...failedAfter, ...consentWorld({ a: normsAnswer('Accorder') }).tree } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual([NORMS_MISSING])
+})
+
+test('a waived norms record with no « Accorder » to the norms question is refused', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: granted() }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toContain('github: a norms waiver is the operator\'s « Accorder » to one question, « Dispense de normes pour acme/thing#12 : <why> »')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('a waived norms record over his « Accorder » to the norms question is written', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--kind') + 1]).toBe('norms')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
+})

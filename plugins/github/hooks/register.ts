@@ -11,7 +11,7 @@ import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, WAIVER_GRANT, WAIVER_REFUSE, type CheckPlan, type Excused } from './check-plan.ts'
+import { grants, parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, waiverQuestion, waiverSubject, WAIVED, WAIVER_GRANT, WAIVER_REFUSE, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -278,8 +278,8 @@ const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DI
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
   + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
-export function waiverRefusal(repo: string, pr: number): string {
-  return 'github: an E2E waiver is the operator\'s « ' + WAIVER_GRANT + ' » to one question, « Dispense d\'E2E pour ' + repo + '#' + pr
+export function waiverRefusal(repo: string, pr: number, check: Waivable): string {
+  return 'github: ' + (check === 'e2e' ? 'an E2E' : 'a norms') + ' waiver is the operator\'s « ' + WAIVER_GRANT + ' » to one question, « Dispense ' + WAIVER_WORDS[check] + ' pour ' + repo + '#' + pr
     + ' : <why> », choices « ' + WAIVER_GRANT + ' » / « ' + WAIVER_REFUSE + ' », by AskUserQuestion or in the round: none is recorded.'
 }
 
@@ -829,15 +829,17 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
   const { found, unread } = await earlierRecords($, gate, root)
-  const granted = wanted.includes('e2e') && !unread ? await grantedWaiver($, gate.repo, Number(gate.pr)) : undefined
-  const waiver = wanted.includes('e2e') && !unread
-    ? durableWaiver(gate, found) ?? (granted ? consentWaiver(gate, found, granted.at, granted.by) : undefined)
-    : undefined
-  // The waiver stands beside what the same diff carries, or alone.
-  const withWaiver = (carried: Carried[]): Carried[] => (waiver && !carried.some((c) => c.kind === 'e2e') ? [...carried, waiver] : carried)
-  // A line on the kinds not carried leaves out the E2E the waiver stands for.
+  const waivers: Carried[] = []
+  for (const kind of unread ? [] : WAIVED.filter((k) => wanted.includes(k))) {
+    const granted = await grantedWaiver($, gate.repo, Number(gate.pr), kind)
+    const waiver = durableWaiver(gate, found, kind) ?? (granted ? consentWaiver(gate, found, granted.at, granted.by, kind) : undefined)
+    if (waiver) waivers.push(waiver)
+  }
+  // A waiver stands beside what the same diff carries, or alone.
+  const withWaiver = (carried: Carried[]): Carried[] => [...carried, ...waivers.filter((w) => !carried.some((c) => c.kind === w.kind))]
+  // A line on the kinds not carried leaves out the kinds a waiver stands for.
   const uncarried = (reason: string, kinds: PrRecord['kind'][] = wanted) => {
-    const left = waiver ? kinds.filter((kind) => kind !== 'e2e') : kinds
+    const left = kinds.filter((kind) => !waivers.some((w) => w.kind === kind))
     if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === KINDS.length ? undefined : left))
   }
   const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
@@ -1560,10 +1562,10 @@ async function consentAnswered($: any, quote: string, subject: ConsentSubject, c
   return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
 }
 
-// The operator's waiver of a pull request's E2E: his newest answer to the waiver question, from any
-// channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
-async function grantedWaiver($: any, repo: string, pr: number): Promise<ConsentRecord | undefined> {
-  const subject: ConsentSubject = { kind: 'e2e-waiver', repo, pr }
+// The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
+// question, from any channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
+async function grantedWaiver($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
+  const subject: ConsentSubject = { kind: waiverSubject(check), repo, pr }
   const answers = (await consentRecords($, repo)).filter((record) => sameSubject(record.subject, subject))
   const newest = answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
   return newest && grants(newest.answer) ? newest : undefined
@@ -1583,7 +1585,7 @@ async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
     const now = Number(await $.clock.now())
     const session = String(await $.session.id() ?? '').replace(/[^A-Za-z0-9._-]/g, '')
     const record: ConsentRecord = {
-      v: CONSENT_VERSION, subject: { kind: 'e2e-waiver', repo: asked.repo.toLowerCase(), pr: asked.pr },
+      v: CONSENT_VERSION, subject: { kind: waiverSubject(asked.check), repo: asked.repo.toLowerCase(), pr: asked.pr },
       entry: 'dialog-' + (session || 'session') + '-' + now, question: String(question.question), answer, by: 'tab',
       at: new Date(now).toISOString().replace(/\.\d+Z$/, 'Z'),
     }
@@ -1911,12 +1913,13 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
         : 'github: name the repository: {"repo": "owner/name"}',
     }
   }
-  const planned = result === 'waived' ? (await readPlan($, repo, pr))?.e2e : undefined
-  if (planned && planned.need !== 'required') {
-    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no E2E (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
+  const waived = result === 'waived' ? WAIVED.find((k) => k === kind) : undefined
+  const planned = waived ? (await readPlan($, repo, pr))?.[waived] : undefined
+  if (waived && planned && planned.need !== 'required') {
+    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
   }
-  const granted = result === 'waived' ? await grantedWaiver($, repo, pr) : undefined
-  if (result === 'waived' && !granted) return { deny: waiverRefusal(repo, pr) }
+  const granted = waived ? await grantedWaiver($, repo, pr, waived) : undefined
+  if (waived && !granted) return { deny: waiverRefusal(repo, pr, waived) }
   // The waiver's detail is the operator's answer as recorded, dated by the module that recorded it.
   const written = granted ? 'operator: ' + granted.answer + ' (' + granted.by + ', ' + granted.at + ')' : detail
   let gate: Gate

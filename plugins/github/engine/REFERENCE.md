@@ -266,7 +266,7 @@ Requires push access to the repository.
 `python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
-- It validates the sha shape, the kind, `waived` and `not-applicable` for `e2e` only (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
+- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (a waiver's `--detail` dated `YYYY-MM-DD`, a not applicable's giving its reason), `accepted` for `review` only, a detail of 500 characters at most.
 - It writes under a temporary name in the same directory, then renames; prints the path; exits 2 on a usage error. Standard library only.
 
 ### Fields (one JSON object per file)
@@ -281,8 +281,8 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, an `e2e` `waived` at an earlier head for later ones while newest, and the operator's waiver (method `lifecycle`; the newest consent record of subject `e2e-waiver`, a dialog's recorded here) at every head with no E2E record; named in the `Ready` line; a `fail` holds.
+- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass` or `waived`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` only if failed or planned.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in the `Ready` line; a `fail` holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
 - Pruning: at `session.start`, once a day at most (a stamp in the root), the `<head>` directories and fingerprints untouched for 90 days are removed.
