@@ -18,7 +18,7 @@ import { register as registerCommands } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
 import { register as registerShortCommands } from './short-commands.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { logLine } from './module-io.ts'
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
   // The scaffold's own passthrough, now under the every-handler law the four
@@ -26,7 +26,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // catch itself, the start is let through, and the state dir says why.
   on('session.start', async ($: unknown, e: unknown, next: (e: unknown) => unknown) => next(e))
     .catch(async ($: any, e: any, next: any) => {
-      await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+      await logLine($, 'register', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
     })
   // First: the audit trail reads what every later handler answered, after it decided.
@@ -45,14 +45,4 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerNaming(on)
   registerMoving(on)
   registerShortCommands(on)
-}
-
-// One line appended to the module's log (module-log.ts) — each file spells its
-// env resolution, $ never crossing an import, and the stamp names the half that
-// failed. Never throws, never blocks the mount it serves.
-async function logLine($: any, message: string): Promise<void> {
-  try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'register', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

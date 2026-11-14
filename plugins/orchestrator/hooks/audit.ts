@@ -16,7 +16,8 @@ import { guardFallback, killDecision } from './guards.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { MODE_DIALOG_DENY } from './mode-dialog.ts'
 import { MODELS_DENY } from './models-guard.ts'
-import { logArgv, LOG_TIMEOUT_MS, moduleDirOf } from './module-log.ts'
+import { configDir, logLine, storeIo } from './module-io.ts'
+import { moduleDirOf } from './module-log.ts'
 import { QUESTION_BY_MESSAGE } from './one-question.ts'
 import { unnamedReport } from './relay.ts'
 import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL } from './review.ts'
@@ -51,25 +52,9 @@ export const STOP_GATE_CODE = 'orchestrator.stop-gate.held'
 
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 
-async function configDir($: Held): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-}
-
-// The journal's I/O over the host's nouns (core's store-io): each read that fails answers nothing.
+// The journal's I/O over the host's nouns: the module's store I/O, and a listing that answers none when it fails.
 function ioOf($: Held): JournalIo {
-  return {
-    write: (path, text) => $.fs.write(path, text),
-    read: async path => { try { return await $.fs.read(path) } catch { return undefined } },
-    list: async dir => { try { return (await $.fs.list(dir)).map(entry => entry.name) } catch { return [] } },
-    run: async argv => {
-      const ran = await $.process.run(argv, { timeoutMs: LOG_TIMEOUT_MS })
-      return { exitCode: ran.exitCode, stderr: ran.stderr }
-    },
-    mtimeMs: async path => { try { return (await $.fs.stat(path)).mtimeMs } catch { return undefined } },
-    sleep: ms => $.clock.sleep(ms),
-    now: () => Date.now(),
-    tag: randomPart,
-  }
+  return { ...storeIo($), list: dir => $.fs.list(dir).then(entries => entries.map(entry => entry.name), () => []) }
 }
 
 // The role the session's name gives, from its row in the module's store; null when it has none yet.
@@ -105,7 +90,7 @@ async function write($: Held, memory: Memory, build: (stamp: Stamp) => Built[]):
     }
     return events
   } catch (err) {
-    await logLine($, `audit: the journal could not be written: ${messageOf(err)}`)
+    await logLine($, 'audit', `the journal could not be written: ${messageOf(err)}`)
     return []
   }
 }
@@ -126,7 +111,7 @@ async function observeTool($: Held, memory: Memory, e: Readonly<Record<string, u
     }
     if (answer !== null && tool === 'mcp__github__gh') await write($, memory, stamp => githubEvents(stamp, e, answer))
   } catch (err) {
-    await logLine($, `audit: a tool call not observed: ${messageOf(err)}`)
+    await logLine($, 'audit', `a tool call not observed: ${messageOf(err)}`)
   }
 }
 
@@ -181,14 +166,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
 // The net under every handler: what failed is logged, and the event goes on.
 async function net($: Held, e: unknown, next: ((e: unknown) => Promise<unknown>) & { error?: { kind?: string; message?: string } }): Promise<unknown> {
-  await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+  await logLine($, 'audit', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
   return next(e)
-}
-
-// One line appended to the module's log (module-log.ts). Never throws.
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'audit', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

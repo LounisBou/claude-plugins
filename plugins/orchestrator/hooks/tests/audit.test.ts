@@ -213,7 +213,7 @@ test('a journal that cannot be written is one line in the log, and the answer st
   const m = mounted()
   expect(await m.on('tool.call', fx.dollar, { tool: 'Bash' }, { deny: MODELS_DENY })).toEqual({ deny: MODELS_DENY })
   expect(fx.logged.length).toBe(1)
-  expect(fx.logged[0]).toContain('audit: the journal could not be written: disk full')
+  expect(fx.logged[0]).toContain('| audit | the journal could not be written: disk full')
 })
 
 test('a call nothing in the module watches writes nothing and is answered as the chain answered', async () => {

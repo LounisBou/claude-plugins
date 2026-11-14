@@ -9,7 +9,7 @@
 // /clear, or the skill's own closing line ends the rules at once (session.ts
 // holds those lifecycle hooks; this file holds the guard and the band).
 import { GH_TOOL, PUSH_REFUSAL, decide, needsToolList, pushQuestion, scratchDirOf } from './policy.ts'
-import { walkthrough, loop, MAX_PASSES } from './state.ts'
+import { walkthrough, loop } from './state.ts'
 
 async function isGhListed($: any): Promise<boolean> {
   try {
@@ -37,7 +37,7 @@ async function bandPieces($: any): Promise<Piece[] | null> {
     const fixes = loop.fixes.filter((f) => !f.reverted).length
     return [
       { text: 'pr-review · auto-fix-loop' },
-      { text: `pass ${loop.pass}/${MAX_PASSES}` },
+      { text: `pass ${loop.pass}/${loop.maxPasses}` },
       { text: `${fixes} fix${fixes === 1 ? '' : 'es'} committed` },
     ]
   }

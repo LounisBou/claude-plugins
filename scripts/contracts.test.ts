@@ -2,11 +2,12 @@
 // writes, core's reader accepts (docs/contracts.md).
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
+import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 
 describe('pull request records: github writes, core reads', () => {
@@ -33,6 +34,51 @@ describe('pull request records: github writes, core reads', () => {
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'review', '--detail', 'documentation only'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'e2e'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'norms', '--result', 'accepted'], { stdio: 'pipe' }))
+  })
+})
+
+describe('session names: core owns the shape, the launcher reads it', () => {
+  const LAUNCHER = 'plugins/orchestrator/skills/iterm-agents/scripts/iterm_agent.py'
+  // What the launcher answers of each name: the role its prefix names, whether the name has the
+  // whole shape once written the current way, and that current spelling.
+  const READ = [
+    'import json, sys',
+    'sys.path.insert(0, sys.argv[1])',
+    'import iterm_agent as ia',
+    'roles = ia.NAMES["roles"]',
+    'shape = ia.name_shape(*ia.ROLE_WORDS)',
+    'def read(name):',
+    '    found = ia.ROLE_PREFIX.match(name)',
+    '    return [roles[found.group(1)] if found else None, shape.match(ia.current_name(name)) is not None, ia.current_name(name)]',
+    'print(json.dumps([read(name) for name in json.loads(sys.argv[2])]))',
+  ].join('\n')
+  const launcher = (dir: string, names: readonly string[]): unknown =>
+    JSON.parse(execFileSync('python3', ['-I', '-c', READ, dir, JSON.stringify(names)], { encoding: 'utf8' }))
+
+  it('reads every name as core reads it', () => {
+    const names = [
+      'Orch: billing', 'Coord: main', 'Audit: 1712', 'Agent: P3 cache', 'Orch : billing', 'Agent : x',
+      `Orch: ${'a'.repeat(25)}`, `Orch: ${'a'.repeat(26)}`, `Agent: ${'é'.repeat(25)}`, 'Orch:x', 'Orch: ', 'Orch:  x',
+      'Orch: x ', 'Orch  : x', 'Orchestra : x', ' Orch: x', 'a plain session', '', 'Coord : ops [abc123]',
+    ]
+    const core = names.map(name => [roleOf(name), parseSessionName(currentSessionName(name)) !== null, currentSessionName(name)])
+    assert.deepEqual(launcher(LAUNCHER.replace(/\/[^/]+$/, ''), names), core)
+  })
+
+  it('takes the roles and the subject from core\'s data, not from a copy of its own', () => {
+    const plugin = mkdtempSync(join(tmpdir(), 'names-'))
+    const scripts = join(plugin, 'skills', 'iterm-agents', 'scripts')
+    mkdirSync(scripts, { recursive: true })
+    mkdirSync(join(plugin, 'core'))
+    copyFileSync(LAUNCHER, join(scripts, 'iterm_agent.py'))
+    copyFileSync('plugins/orchestrator/core/store.json', join(plugin, 'core', 'store.json'))
+    const roles = { Lead: 'orchestrator', Desk: 'coordinator', Check: 'auditor', Hand: 'agent' }
+    assert.deepEqual(Object.values(roles).sort(), Object.values(NAMES_CONTRACT.roles).sort())
+    writeFileSync(join(plugin, 'core', 'names.json'), JSON.stringify({ ...NAMES_CONTRACT, roles, subject: '\\S{1,3}' }))
+    assert.deepEqual(launcher(scripts, ['Lead: abc', 'Hand : ab', 'Desk: abcd', 'Orch: abc']), [
+      ['orchestrator', true, 'Lead: abc'], ['agent', true, 'Hand: ab'], ['coordinator', false, 'Desk: abcd'], [null, false, 'Orch: abc'],
+    ])
+    rmSync(plugin, { recursive: true, force: true })
   })
 })
 
