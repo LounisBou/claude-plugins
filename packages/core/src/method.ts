@@ -141,8 +141,18 @@ const CHOICE = /^\s*[-*]\s+\*\*([A-Z])\*\*\s*(?:[:.)]|—|–|-)\s*(.+?)\s*$/
 const RECOMMENDATION = /^\s*_[^_\n]*[^_\s]_\s*(?::\s*)?\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
 const LETTERS = 'ABCDE'
 
+/*
+ * Where a question's block starts: its numbering line (`**Question 1 of 1**`), or the top of the
+ * text when it has none. A turn end may restate the lettered choices in a prose summary above the
+ * block; only what the block holds is read as choices.
+ */
+function blockStart(lines: readonly string[]): number {
+  return Math.max(0, lines.findIndex(line => NUMBER.test(line)))
+}
+
 function readChoices(question: string): { choices: Choice[]; recommendation: string | null } {
-  const lines = question.split('\n')
+  const all = question.split('\n')
+  const lines = all.slice(blockStart(all))
   const found = lines.flatMap(line => {
     const matched = CHOICE.exec(line)
     return matched ? [{ letter: matched[1] ?? '', text: matched[2] ?? '' }] : []
@@ -169,7 +179,9 @@ export function parseChoices(question: string): { choices: Choice[]; recommendat
  */
 export function questionBody(entry: Pick<QuestionSource, 'question' | 'choices'>): string {
   if (entry.choices.length === 0) return entry.question.trim()
-  return entry.question.split('\n').filter(line => !CHOICE.test(line) && !RECOMMENDATION.test(line)).join('\n').trim()
+  const lines = entry.question.split('\n')
+  const start = blockStart(lines)
+  return lines.filter((line, i) => i < start || (!CHOICE.test(line) && !RECOMMENDATION.test(line))).join('\n').trim()
 }
 
 // A field of a question in the decide shape, `_<label>_ : <text>`, the label in the operator's
