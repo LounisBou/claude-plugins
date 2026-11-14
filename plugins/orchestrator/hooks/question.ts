@@ -322,6 +322,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
       const relayed = asked !== null || current === undefined ? null : parseRoundEntry(current)
       if (asked !== null) plan = planAsked(asked, request, me, at)
       else if (relayed !== null) plan = planRelayed(relayed, request, me, at, shown)
+      else if (current !== undefined) plan = { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
       return 'error' in plan ? undefined : `${JSON.stringify(plan.entry)}\n`
     })
   } catch (err) {
@@ -333,7 +334,8 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const said = [`Settled ${request.id}: ${String(done.entry['status'])}.`]
   if (done.consentBy !== null) {
     const question = typeof done.entry['ask'] === 'string' ? done.entry['ask'] : done.entry['question']
-    await writeConsent($, { ...done.entry, question }, request.text, done.consentBy, at)
+    const missed = await writeConsent($, { ...done.entry, question }, request.text, done.consentBy, at)
+    if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
   }
   if (done.relayed) await forgetRelayed($, done.entry)
   if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }])

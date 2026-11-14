@@ -73,7 +73,8 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     entry: { ...entry, status: answered ? 'answered' : 'withdrawn', answer, seq: Number(entry['seq'] ?? 0) + 1 },
     asker,
     deliver: own ? null : 'now',
-    consentBy: answered ? (own && request.outcome === 'answered-here' ? 'tab' : 'coordinator') : null,
+    // His consent is recorded from his answer only: one carried by a message is the model's word.
+    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own ? 'tab' : 'coordinator',
     relayed: false,
     told: false,
   }

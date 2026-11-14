@@ -194,6 +194,50 @@ test('a question that asks consent is recorded as that consent, by the tab or by
   expect(records.sort()).toEqual([[`${mine}.json`, 'tab'], [`${theirs}.json`, 'coordinator']].sort())
 })
 
+test('an answer by message on its asker\'s own question records no consent: the model\'s word is no answer of the operator', async () => {
+  const m = machine()
+  const id = await asked(m, { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' })
+  await settle(m.asker, request(id, { outcome: 'answered-by-message', text: 'A', author: COORD }), AT)
+  expect(entryOf(m, id).status).toBe('answered')
+  expect([...m.files.keys()].filter(p => p.includes('/consents/'))).toEqual([])
+})
+
+test('a consent that cannot be recorded leaves the question settled, and the reply says so', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
+  const m = machine()
+  const blocked = await asked(m, consent)
+  const run = m.coordinator.process.run
+  m.coordinator.process.run = async (argv: readonly string[]) => (argv[0] === 'mkdir' ? { exitCode: 1, stdout: '', stderr: 'read-only file system' } : run(argv))
+  const failed = await settle(m.coordinator, request(blocked, { text: 'A' }), AT)
+  expect(failed.isError).toBeUndefined()
+  expect(entryOf(m, blocked).status).toBe('answered')
+  expect(failed.result).toContain('The consent is not recorded')
+  expect(failed.result).toContain('read-only file system')
+  expect([...m.files.keys()].filter(p => p.includes('/consents/'))).toEqual([])
+})
+
+test('a half-written entry is refused, and stays as it was', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-half.json`, '{"id":"r-half","status":"op')
+  const answer = await settle(m.coordinator, request('r-half'), AT)
+  expect(answer.isError).toBe(true)
+  expect(answer.result).toContain('r-half')
+  expect(m.files.get(`${ROUND}/r-half.json`)).toBe('{"id":"r-half","status":"op')
+  expect(m.sent).toEqual([])
+})
+
+test('a store write that fails is refused, nothing changed, nothing sent', async () => {
+  const m = machine()
+  const id = await asked(m)
+  const before = m.files.get(`${ROUND}/${id}.json`)
+  const write = m.coordinator.fs.write
+  m.coordinator.fs.write = async (p: string, text: string) => { if (p.startsWith(`${ROUND}/`)) throw new Error('disk full'); return write(p, text) }
+  const answer = await settle(m.coordinator, request(id, { text: 'B' }), AT)
+  expect([answer.isError, answer.result]).toEqual([true, `${id} could not be written (disk full); nothing changed, settle it again.`])
+  expect(m.files.get(`${ROUND}/${id}.json`)).toBe(before)
+  expect(m.sent).toEqual([])
+})
+
 test('an answer that asks work records it as a to-do of the asker, in its list, sent to it when another session settles', async () => {
   const m = machine()
   const id = await asked(m)
@@ -246,4 +290,20 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
+})
+
+test('the coordinator closes a relay\'s entry from another machine: closed with its delivery pending and no answer stamp, as the remote answers are, then sent once', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-far.json`, JSON.stringify(relayed({ id: 'r-far', session: 's-far', from: 'Orch: far', origin: { machine: 'box-2' } })))
+  const closes: any[] = []
+  const write = m.coordinator.fs.write
+  m.coordinator.fs.write = async (p: string, text: string) => {
+    if (p.startsWith(`${ROUND}/r-far.json`)) closes.push(JSON.parse(text))
+    return write(p, text)
+  }
+  await settle(m.coordinator, request('r-far', { text: 'B' }), AT)
+  const close = closes[0]
+  expect([close.status, close.answer.text, close.answer.by]).toEqual(['closed', 'B', 'coordinator'])
+  expect([close.delivery.state, close.delivery.attempts, 'answerAt' in close.delivery]).toEqual(['pending', 0, false])
+  expect([entryOf(m, 'r-far').delivery.state, entryOf(m, 'r-far').delivery.attempts]).toEqual(['sent', 1])
 })
