@@ -99,7 +99,8 @@ changed by a pull request that edits this file and the code it governs together.
   name, an account, a time zone, a language, a stack) lives in configuration, never in a
   plugin.
 - Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
-  more than once, both held by CI (`ci/prompts.json`, `npm run prompts`); they only fall.
+  more than once, both held by CI (`ci/prompts.json`, `npm run prompts`); they only fall, and
+  only the release lowers them (`npm run release`): a pull request leaves the file alone.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
@@ -121,7 +122,7 @@ changed by a pull request that edits this file and the code it governs together.
   that breaks a consumer is MAJOR).
 - A generated file in a merge conflict (`.claude-plugin/marketplace.json`, a plugin's `core/`,
   `ci/prompts.json`) is taken from the base, then regenerated (`npm run marketplace`,
-  `npm run core`, `npm run prompts -- --lower`); a conflict of versions keeps the higher one, or
+  `npm run core`; the budgets only by the release); a conflict of versions keeps the higher one, or
   the next when the branch ships a change the base does not have.
 
 ## Ratchets

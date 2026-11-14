@@ -11,7 +11,8 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   (`plugins/<name>/tests/run-tests.sh`).
 - Shared code is edited in `packages/core/src` only, then `npm run core` rewrites each plugin's
   `core/` copy; never edit a copy. A plugin whose copy changed ships a change.
-- Prompt budgets (`ci/prompts.json`) only fall: after a cut, `npm run prompts -- --lower`.
+- Prompt budgets (`ci/prompts.json`) are lowered by the release (`npm run release`), never in a pull
+  request; CI still refuses a budget exceeded.
 - A pull request raises no version. One release pull request raises the version of every plugin
   changed since the last release, in `plugins/<name>/.claude-plugin/plugin.json`, then runs
   `npm run marketplace` (`npm run version-bump -- <last-release-ref>` checks it). Never edit the
