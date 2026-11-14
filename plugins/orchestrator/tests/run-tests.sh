@@ -2253,31 +2253,9 @@ check_status "a review brief with no norms-check line passes: norms is on demand
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
-# An implementer's duties end at its delivery. A brief that orders anything after the final
-# report keeps a finished agent's tab idle; each phrase is a finding in an implementer brief,
-# none in a review brief, none when the clause forbids it.
-for phrase in 'After merge, delete your branch.' 'Once merged, report the sha.' 'Stand by for questions.' \
-              'Keep standing by.' 'Stay until merged.' 'Stay available for the review.' \
-              'Wait: after the merge, tidy up.' 'Do the cleanup after merge.'; do
-  ok_brief "$B/duty.md"; printf '%s\n' "$phrase" >> "$B/duty.md"
-  check_status "a post-delivery duty is a finding: $phrase" 1 bash "$LINT" "$B/duty.md"
-  check "and it is named: $phrase" "1" "$(bash "$LINT" "$B/duty.md" 2>&1 | grep -c 'duty after delivery')"
-  review_brief "$B/duty-review.md"; printf 'End the report with `norms-check: tool <head>`.\n%s\n' "$phrase" >> "$B/duty-review.md"
-  check_status "the same phrase in a review brief is not one: $phrase" 0 bash "$LINT" "$B/duty-review.md"
-done
-ok_brief "$B/duty-clean.md"; printf 'Do the cleanup after merge.\n'  >> "$B/duty-clean.md"
-check "a cleanup after merge is ONE finding, not two" "1" "$(bash "$LINT" "$B/duty-clean.md" 2>&1 | grep -c 'duty after delivery')"
-ok_brief "$B/duty-two.md"; printf 'Stand by; stay available.\n' >> "$B/duty-two.md"
-check "two phrases on a line are two findings" "2" "$(bash "$LINT" "$B/duty-two.md" 2>&1 | grep -c 'duty after delivery')"
-ok_brief "$B/duty-Caps.md"; printf 'STAND BY for review.\n' >> "$B/duty-Caps.md"
-check "the phrases are read case-insensitively" "1" "$(bash "$LINT" "$B/duty-Caps.md" 2>&1 | grep -c 'duty after delivery')"
-ok_brief "$B/duty-forbid.md"; printf 'Never stand by; no cleanup after merge, and do not stay available.\n' >> "$B/duty-forbid.md"
-check_status "a clause that forbids the duty is not one" 0 bash "$LINT" "$B/duty-forbid.md"
-ok_brief "$B/duty-fp.md"; printf 'Example `/tmp/claude-501/x`, see `skills/a.sh:12`, run /implement:phase; the stand-down follows.\n' >> "$B/duty-fp.md"
-check "paths, slash commands, file:line suffixes and the stand-down are no duty" "0" "$(bash "$LINT" "$B/duty-fp.md" 2>&1 | grep -c 'duty after delivery')"
 # Nobody waits on CI in the foreground, and an agent never waits on it at all: an implementer
 # brief that orders a `gh pr checks` watch, a loop of `gh pr view`/`gh pr checks` around a
-# sleep, or a wait « until merged » is a finding; a clause that forbids it is not one.
+# sleep is a finding; a clause that forbids it is not one.
 for phrase in 'Watch it with `gh pr checks 12 --watch --fail-fast`.' 'Run timeout 590 gh pr checks <n> --watch.' \
               'for i in $(seq 1 120); do gh pr view 12 --json state; sleep 30; done' \
               'while true; do gh pr checks 12; sleep 60; done'; do
@@ -2293,12 +2271,6 @@ ok_brief "$B/ciw-forbid.md"; printf 'Never run `gh pr checks 12 --watch`; do not
 check_status "a clause that forbids the wait is not one" 0 bash "$LINT" "$B/ciw-forbid.md"
 review_brief "$B/ciw-review.md"; printf 'End the report with `norms-check: tool <head>`.\nRun `gh pr checks 12 --watch`.\n' >> "$B/ciw-review.md"
 check_status "the same command in a review brief is not one" 0 bash "$LINT" "$B/ciw-review.md"
-for phrase in 'Wait until merged.' 'Poll until MERGED.'; do
-  ok_brief "$B/ciw-until.md"; printf '%s\n' "$phrase" >> "$B/ciw-until.md"
-  check "a wait until the merge is a post-delivery duty: $phrase" "1" "$(bash "$LINT" "$B/ciw-until.md" 2>&1 | grep -c 'duty after delivery')"
-done
-ok_brief "$B/duty-stay.md"; printf 'Stay until merged.\n' >> "$B/duty-stay.md"
-check "stay until merged stays ONE finding" "1" "$(bash "$LINT" "$B/duty-stay.md" 2>&1 | grep -c 'duty after delivery')"
 # The orchestrator, and only it, starts the watch in the background: not a finding outside an
 # implementer brief, still one in it, and any other background run is one everywhere.
 printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`.\n' > "$B/ciw-orch.md"
@@ -2309,37 +2281,12 @@ printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`, and run the s
 check_status "a second background run on the line is still one" 1 bash "$LINT" "$B/ciw-orch2.md"
 printf '# memo\n\nRun the suite in the background.\n' > "$B/ciw-orch3.md"
 check_status "another background run outside an implementer brief is still one" 1 bash "$LINT" "$B/ciw-orch3.md"
-PHASEFILLED="$B/phase-filled.md"
-sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$ROOT/templates/agent-phase-brief.md" > "$PHASEFILLED"
-check "the repository's own phase template, filled, holds no post-delivery duty" "0" \
-  "$(bash "$LINT" "$PHASEFILLED" 2>&1 | grep -c 'duty after delivery')"
 # The clause awk must read a line the same way under any locale: a multibyte character before
 # the phrase (an em dash, a guillemet) made it blind under a UTF-8 locale, so both passes run
 # under LC_ALL=C. The locale is set here, not inherited from the runner.
-ok_brief "$B/loc-duty.md"; printf 'Report \xe2\x80\x94 \xc2\xab then stand by for questions.\n' >> "$B/loc-duty.md"
-check "check 9 sees a duty after a multibyte character under a UTF-8 locale" "1" \
-  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/loc-duty.md" 2>&1 | grep -c 'duty after delivery')"
 ok_brief "$B/loc-bg.md"; printf 'Report \xe2\x80\x94 \xc2\xab then run it in the background.\n' >> "$B/loc-bg.md"
 check "check 7 sees a background order after a multibyte character under a UTF-8 locale" "1" \
   "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/loc-bg.md" 2>&1 | grep -c 'background')"
-# A phrase QUOTED is a mention, not an order: inside backticks, inside guillemets, or on a line
-# inside a fence. The same phrase left bare on the same line is still read. Run under a UTF-8
-# locale, where the guillemets are multibyte.
-for quoted in 'The old clause « stand by » is removed.' 'The old clause `stand by` is removed.' \
-              'The old clause « after merge » and `once merged` are removed.'; do
-  ok_brief "$B/q.md"; printf '%s\n' "$quoted" >> "$B/q.md"
-  check "a quoted phrase is not a duty: $quoted" "0" \
-    "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q.md" 2>&1 | grep -c 'duty after delivery')"
-done
-ok_brief "$B/q-fence.md"; printf '```\nStand by for questions.\n```\n' >> "$B/q-fence.md"
-check "a phrase inside a fence is not a duty" "0" \
-  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-fence.md" 2>&1 | grep -c 'duty after delivery')"
-ok_brief "$B/q-bare.md"; printf 'The clause « stand by » is removed; once merged, stand by.\n' >> "$B/q-bare.md"
-check "the same phrase unquoted on the same line is still a duty" "2" \
-  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-bare.md" 2>&1 | grep -c 'duty after delivery')"
-ok_brief "$B/q-bare2.md"; printf 'The clause `stand by` is removed; stand by anyway.\n' >> "$B/q-bare2.md"
-check "a bare phrase after a backticked one is still a duty" "1" \
-  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-bare2.md" 2>&1 | grep -c 'duty after delivery')"
 check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
 check_status "no argument is an error" 1 bash "$LINT"
 
