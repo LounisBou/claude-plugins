@@ -46,7 +46,11 @@ export function tripGate(
 // handed in — the pure half stays testable, the impure half stays in one place.
 // `override` is ORCHESTRATOR_MODULE_DIR as the caller read it (module-log.ts, moduleDirOf).
 export function measureFilePath(config: string, sessionId: string, override?: string | null): string {
-  return `${moduleDirOf(config, override)}/measure/${sessionId}.json`
+  return `${measureDir(config, override)}/${sessionId}.json`
+}
+
+export function measureDir(config: string, override?: string | null): string {
+  return `${moduleDirOf(config, override)}/measure`
 }
 
 export function parseMeasure(line: string): MeasureReading | null {
