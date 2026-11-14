@@ -6,7 +6,7 @@
 // the coordinator draws the first open question whole, with its lettered choices the operator
 // answers from (the entry then `answered` by the pane, his choice sent); the coordinator
 // reads the round with `coordinator.sh round` when the operator speaks to it, and closes an
-// entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
+// entry with the coordinator's `settle`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
 import { fingerprint, type HeldQuestion, type Wait } from './relay.ts'
 import { answersChoice, CONSENT_GRANT, CONSENT_REFUSE, givenAnswer, type ConsentSubject } from '../core/consent-record.ts'
@@ -15,11 +15,11 @@ import { parseSessionName } from '../core/names.ts'
 
 export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
-// (`round-close`, `closed`), the operator in the sender's own tab or the sender itself — a later
+// (`settle`, `closed`), the operator in the sender's own tab or the sender itself — a later
 // turn waiting on something else, a newer question, its session's end or its hand-over
 // (`withdrawn`). An answer relayed by another session's message is `by: 'message'` (`answered`),
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
-// (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
+// (`settle`, withdrawn) is closed by it, with the evidence it read on the artifact in `evidence`.
 // What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
 // with the cut said (tabText in supervision.ts); `text` keeps the reason. An entry answered from
 // the record before it reached him (recordedAnswer) repeats that answer, `record` naming the entry
@@ -41,7 +41,7 @@ export type RoundEntry = {
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
   origin?: { machine: string; address: string; line?: 'q' } // a sender on another machine (remote-round.ts): its machine's label, the address its ask came from, and `q` when it came by the event line (none: an older machine's ask line, answered in that line), written by this machine's module on receipt; absent for a sender on this machine
-  delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by `coordinator.sh round-close`
+  delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by the coordinator's `settle`
   partial?: string[]            // the answers the pane gave so far to an entry that asks several questions, each with its question's number
   consent?: ConsentSubject      // the subject the question asks the operator's consent on, as its sender declared it (declare_wait): his answer is written as its consent record
 }
@@ -50,7 +50,7 @@ export type RoundEntry = {
 // took the line, `acked` once the sender's module acknowledged it, `failed` when the host refused it
 // or no acknowledgment came after the last send (`reason`). `at` is the last transition's time,
 // `attempts` the sends so far.
-// An answer to a sender on this machine: `pending` written by round-close with the coordinator's
+// An answer to a sender on this machine: `pending` written by settle with the coordinator's
 // answer, `delivered` once the host took the coordinator module's send, `failed` when it refused
 // it or the send threw (`reason`), the pane's own sends written only when they fail. `answerAt` is
 // the stamp of the answer it carries, so that a later answer is never said failed by it.
@@ -353,7 +353,7 @@ export const PANE_CLOSED = 'answered from the pane: '
 // The operator's own answer an entry holds, the record every later session of its project reads
 // before he is asked again (recordedAnswer): his choice, its letter and text, or his own words,
 // with its channel and the module's date. Given in the pane's picker, through the coordinator's
-// round-close, or typed in the sender's tab when it names one choice unambiguously
+// settle, or typed in the sender's tab when it names one choice unambiguously
 // (answersChoice). A withdrawal on evidence, a sender's own settling or an answer relayed by
 // message holds none.
 export type RecordedAnswer = { letter: string | null; text: string; by: RoundAnswer['by']; at: string }

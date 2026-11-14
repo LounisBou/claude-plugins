@@ -609,11 +609,12 @@ record "(a) after the answer"
 delay a "$gone" "$told"
 press Escape
 check "(a) answered once and closed by the module, gone from the pane, the coordinator told once with nothing to run, within seconds" "closed|answered from the pane: B : wait for the next review — a day lost|yes|1|0|yes" \
-  "$(jq -r .status "$SANDBOX/state/round/s-alpha-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-q1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: alpha')|$(tab_count 'round-close')|$(fluid "$told")"
+  "$(jq -r .status "$SANDBOX/state/round/s-alpha-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-q1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: alpha')|$(tab_count 'coordinator.sh')|$(fluid "$told")"
 stamp=$(ms)
-coordround round-close s-beta-q2 --answer 'A, the design (relayed in the tab)' >/dev/null
+# Closed as the coordinator's settle closes it in its tab: the entry written closed with his answer.
+jq --arg at "$(date -u +%FT%TZ)" '.status = "closed" | .answer = {text: "A, the design (relayed in the tab)", by: "coordinator", at: $at}' "$SANDBOX/state/round/s-beta-q2.json" > "$SANDBOX/c.json" && mv "$SANDBOX/c.json" "$SANDBOX/state/round/s-beta-q2.json"
 read -r gone told <<< "$(since_answer "$stamp" 25 'Which docs first?' '')"
-record "(c) after the round-close"
+record "(c) after the coordinator's close"
 delay c "$gone" "$told"
 check "(c) closed in the tab: gone from the pane within seconds, no notice sent back" "closed|yes|0" \
   "$(jq -r .status "$SANDBOX/state/round/s-beta-q2.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: beta')"
@@ -716,7 +717,7 @@ else
   echo "  (b) the sender's turn ended $(shown "$ended") after the answer; then pane $(shown "$(after "$gone")"), tab $(shown "$(after "$told")"); the entry $(jq -r .status "$SANDBOX/state/round/$tag.json") by $(jq -r .answer.by "$SANDBOX/state/round/$tag.json")"
   tm send-keys -t "$SESSION" Escape
   check "(b) closed once by the module as answered in the tab, gone from the pane and the coordinator told once within seconds of the turn's end, with nothing to run" "closed|withdrawn: answered in the sender's own tab|yes|1|0|yes" \
-    "$(jq -r .status "$SANDBOX/state/round/$tag.json")|$(jq -r .answer.text "$SANDBOX/state/round/$tag.json")|$(fluid "$(after "$gone")")|$(tab_count "Settled in Orch: flow's tab")|$(tab_count 'round-close')|$(fluid "$(after "$told")")"
+    "$(jq -r .status "$SANDBOX/state/round/$tag.json")|$(jq -r .answer.text "$SANDBOX/state/round/$tag.json")|$(fluid "$(after "$gone")")|$(tab_count "Settled in Orch: flow's tab")|$(tab_count 'coordinator.sh')|$(fluid "$(after "$told")")"
 fi
 echo "delays (from the answer; a figure ≤ ~${FLOOR_MS} ms sits on the poll's floor): $DELAYS"
 

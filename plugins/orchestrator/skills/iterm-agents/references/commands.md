@@ -67,7 +67,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings, and, for any
     # title but `Orch:` and `Coord:`, the three that move an orchestrator between machines
     # (mcp__orchestrator__move_send, move_probe, end_session); an `Agent:` title also loses the four
-    # only an orchestrator calls (mcp__orchestrator__review, supervision, answered-by-message,
+    # only an orchestrator calls (mcp__orchestrator__review, supervision, settle,
     # declare_wait); an `Orch:` title also loses the
     # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement). --keep-tool removes a name from
     # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or

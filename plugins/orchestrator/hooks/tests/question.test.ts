@@ -4,7 +4,7 @@
 // version that the relay's entries do not carry, its block written to the transcript by the module;
 // and the lines the pane draws from those objects, grouped by asker.
 import { expect, test } from 'claude-code/testing'
-import { ASK_TOOL, ASK_VERSION, askedGroups, askedLines, askId, callAsk, parseAsk, parseAsked, questionBlock, shownLines, register as registerQuestion, type Asked } from '../question.ts'
+import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, parseAsk, parseAsked, questionBlock, shownLines, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -33,6 +33,8 @@ const FULL = {
 type Options = { me?: [role: string, name: string] | null; logThrows?: string; files?: Record<string, string> }
 
 function world(options: Options = {}) {
+  // Each world is a fresh turn of the main thread: the questions it asks are numbered from one.
+  askTurnStarted()
   const files = new Map<string, string>(Object.entries(options.files ?? {}))
   const me = options.me === undefined ? ['coordinator', 'Coord: general [a1b2c3]'] : options.me
   if (me !== null) files.set(`${MODULE}/store/sessions/s-me`, row(me[0], me[1]))
@@ -215,13 +217,26 @@ for (const role of ['coordinator', 'auditor']) {
   })
 }
 
-test('an orchestrator is refused until declare_wait takes a question: nothing stored, nothing shown', async () => {
+test('an orchestrator asks as well, its question stored and shown', async () => {
   const { dollar, files, shown } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })
-  const answer = await ask(dollar, FULL)
-  expect(answer.isError).toBe(true)
-  expect(answer.result).toContain('declare_wait')
-  expect(stored(files)).toEqual([])
-  expect(shown).toEqual([])
+  expect((await ask(dollar, FULL)).isError).toBeUndefined()
+  expect(stored(files)[0].sender.role).toBe('orchestrator')
+  expect(shown[0]).toBe(`Question 1 of 1 (${stored(files)[0].id})`)
+})
+
+test('« Question i of N » counts this turn\'s questions only: one asked in a later turn reads 1 of 1, whatever stays open', async () => {
+  const { dollar, files, shown } = world()
+  await ask(dollar, FULL)
+  await mounted()['turn.start'](dollar, {}, async () => undefined)
+  await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1))
+  const [first, second] = stored(files).sort((a, b) => (a.at < b.at ? -1 : 1))
+  expect([first.status, second.status]).toEqual(['open', 'open'])
+  expect(shown.filter(line => /^Question \d+ of \d+/.test(line))).toEqual([`Question 1 of 1 (${first.id})`, `Question 1 of 1 (${second.id})`])
+  // A subagent's turn is not the main thread's: it starts no count.
+  await ask(dollar, { ...FULL, subject: 'a third matter' }, new Date(NOW.getTime() + 2))
+  await mounted()['turn.start'](dollar, { agentId: 'a-1' }, async () => undefined)
+  await ask(dollar, { ...FULL, subject: 'a fourth matter' }, new Date(NOW.getTime() + 3))
+  expect(shown.filter(line => /^Question \d+ of \d+/.test(line)).slice(2).map(line => line.slice(0, 14))).toEqual(['Question 2 of ', 'Question 3 of '])
 })
 
 test('a subagent\'s call is refused', async () => {

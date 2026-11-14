@@ -45,5 +45,4 @@ that does goes on too, on the recommended option, in its own small commit named 
 recommendation, pending <question> », undone if the answer differs. Only irreversible or outward
 acts wait for the answer: a production deploy, deleting data or branches, publishing under the
 operator's name, a spend above its cap, a consent he alone gives. A session others wait on asks
-in the pane, or as a text question that ends its turn, never in a dialog; an implementer asks its
-orchestrator.
+in the pane or at its turn's end, never in a dialog; an implementer asks its orchestrator.

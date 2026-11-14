@@ -80,7 +80,8 @@ export type WaitKind = typeof WAIT_KINDS[number]
 // consent: the subject an operator question asks his consent on (core's consent-record.ts); his
 // answer to it in the round is then written as that subject's consent record.
 // question: the full `**Question i of N**` block an operator wait puts him, carried by the call itself.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string }
+// asked: the ids of the questions asked with `ask` (question.ts) an operator wait waits on, in place of `question`.
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string; asked?: string[] }
 
 // The one machine line a declaration spells: the form the gate's checks read a declared wait in.
 // It is never taught: the model declares, and a line it writes itself decides nothing.
