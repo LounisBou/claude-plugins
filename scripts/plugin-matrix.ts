@@ -1,3 +1,7 @@
+// The principle: a pull request runs only the suites that guard what it changed; the full matrix
+// runs at the release; typecheck and the repository rules run on every pull request (the
+// `repository` job of .github/workflows/ci.yml).
+//
 // The CI matrix of plugin suites, from ci/plugins.json: every plugin runs its suite
 // (`plugins/<name>/tests/run-tests.sh`) on every platform, and fails the build only on the
 // platforms listed as blocking for it. A platform joins a plugin's list the day its suite is
@@ -13,8 +17,11 @@
 //                    of documentation (docs/, a README) one cell without a suite, which passes (a
 //                    skipped job proves nothing to the gate)
 //   the release      a pull request that changes a plugin manifest runs every plugin on both platforms
-//   a push to main   every plugin on Linux
+//   a push to main   every plugin on Linux, but the release-only ones
 //   the night        every plugin on macOS
+//
+// A release-only plugin (RELEASE_ONLY) leaves the default matrix: a pull request runs its suite only
+// when it changes `plugins/<name>/`, a push to main never, the release and the night as any plugin.
 //
 //   npm run plugin-matrix                        prints the whole matrix; appends it to $GITHUB_OUTPUT when set
 //   npm run plugin-matrix -- --pull-request <base>   the matrix of a pull request against <base>
@@ -93,23 +100,28 @@ const NO_SUITE_PATHS = [
   /^docs\//, /^[^/]+\.md$/, /^plugins\/[^/]+\/README\.md$/,
   /^scripts\//, /^ci\//, /^\.github\//, /^package(-lock)?\.json$/,
 ]
+
+/** Plugins not yet proven in the default matrix: they run at the release and the night, and for a change of their own files. */
+export const RELEASE_ONLY: readonly string[] = ['drift']
+
 const CORE_SOURCE = /^packages\/core\//
 const MANIFEST = /^plugins\/[^/]+\/\.claude-plugin\/plugin\.json$/
 
 /**
  * The plugins a change of `changed` (paths from the root) asks to test: the plugin a path sits in,
- * the `carriers` of core for a path of core, every plugin for a path no rule names.
+ * the `carriers` of core for a path of core, every plugin for a path no rule names. A `releaseOnly`
+ * plugin is asked only by a path of its own.
  */
-export function touchedPlugins(changed: readonly string[], plugins: readonly string[], carriers: readonly string[] = plugins): string[] {
+export function touchedPlugins(changed: readonly string[], plugins: readonly string[], carriers: readonly string[] = plugins, releaseOnly: readonly string[] = []): string[] {
   const touched = new Set<string>()
   for (const path of changed) {
     if (NO_SUITE_PATHS.some(pattern => pattern.test(path))) continue
     if (CORE_SOURCE.test(path)) {
-      for (const name of carriers) touched.add(name)
+      for (const name of carriers) if (!releaseOnly.includes(name)) touched.add(name)
       continue
     }
     const name = /^plugins\/([^/]+)\//.exec(path)?.[1]
-    if (name === undefined) return [...plugins]
+    if (name === undefined) return plugins.filter(plugin => touched.has(plugin) || !releaseOnly.includes(plugin))
     if (plugins.includes(name)) touched.add(name)
   }
   return plugins.filter(plugin => touched.has(plugin))
@@ -127,9 +139,9 @@ export function pullRequestCells(matrix: readonly Cell[], touched: readonly stri
   return cells.length > 0 ? cells : [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }]
 }
 
-/** The cells of a push to main: every plugin on Linux. */
-export function mainCells(matrix: readonly Cell[]): Cell[] {
-  return matrix.filter(cell => cell.os === 'ubuntu-latest')
+/** The cells of a push to main: every plugin on Linux, but the release-only ones. */
+export function mainCells(matrix: readonly Cell[], releaseOnly: readonly string[] = []): Cell[] {
+  return matrix.filter(cell => cell.os === 'ubuntu-latest' && !releaseOnly.includes(cell.plugin))
 }
 
 /** The cells of the night: every plugin on macOS. */
@@ -146,9 +158,9 @@ export function run(root: string, args: readonly string[], io: Io): number {
     if (base === undefined) throw new Error('--pull-request needs the base ref')
     const changed = execFileSync('git', ['diff', '--name-only', `${base}...HEAD`], { cwd: root, encoding: 'utf8' })
       .split('\n').filter(line => line !== '')
-    matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins, consumers(root)), isRelease(changed))
+    matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins, consumers(root), RELEASE_ONLY), isRelease(changed))
   } else if (mode === '--main') {
-    matrix = mainCells(matrix)
+    matrix = mainCells(matrix, RELEASE_ONLY)
   } else if (mode === '--nightly') {
     matrix = nightlyCells(matrix)
   } else if (mode !== undefined) {

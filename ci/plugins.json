@@ -13,8 +13,7 @@
       "macos-latest"
     ],
     "drift": [
-      "ubuntu-latest",
-      "macos-latest"
+      "ubuntu-latest"
     ],
     "github": [
       "ubuntu-latest",

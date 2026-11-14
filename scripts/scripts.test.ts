@@ -169,6 +169,21 @@ describe('plugin matrix', () => {
     assert.deepEqual(nightlyCells(matrix).map(cell => `${cell.plugin} ${cell.os} ${cell.blocking}`), ['alpha macos-latest false', 'beta macos-latest true'])
   })
 
+  it('leaves a release-only plugin out of a pull request unless the pull request changes it', () => {
+    const plugins = ['alpha', 'drift']
+    const only = ['drift']
+    assert.deepEqual(touchedPlugins(['packages/core/src/a.ts'], plugins, plugins, only), ['alpha'])
+    assert.deepEqual(touchedPlugins(['evals/outcome/a.json'], plugins, plugins, only), ['alpha'])
+    assert.deepEqual(touchedPlugins(['plugins/drift/x.sh'], plugins, plugins, only), ['drift'])
+    assert.deepEqual(touchedPlugins(['plugins/drift/x.sh', 'evals/outcome/a.json'], plugins, plugins, only), ['alpha', 'drift'])
+  })
+
+  it('leaves a release-only plugin out of a push to main, and keeps it in the night', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['ubuntu-latest'], drift: ['ubuntu-latest'] } }, ['alpha', 'drift']))
+    assert.deepEqual(mainCells(matrix, ['drift']).map(cell => cell.plugin), ['alpha'])
+    assert.deepEqual(nightlyCells(matrix).map(cell => cell.plugin), ['alpha', 'drift'])
+  })
+
   it('runs one cell without a suite for a pull request that touches no plugin, so that it passes', () => {
     const matrix = matrixOf(parseBlocking({ blocking: { alpha: [] } }, ['alpha']))
     assert.deepEqual(pullRequestCells(matrix, []), [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }])
