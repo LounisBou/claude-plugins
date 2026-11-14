@@ -4,7 +4,7 @@
 // prints `n/a` and says why, never an estimate. Days are Paris days (the operator's), the store's
 // are UTC. Time is injected.
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { MEASURE_DIR, moduleDirOf, parseMeasure } from '../../../../core/orchestration.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
@@ -78,6 +78,13 @@ interface Session {
   /** The highest cumulative cost seen before the window, and up to its end. */
   before: number
   upTo: number | undefined
+  /** The highest cumulative cost seen so far and when: a later event below it is a restart (a resumed session). */
+  peak: { cost: number; at: number } | undefined
+  restarted: boolean
+  /** The per-turn costs of the window's turns: their sum, how many carried one, and whether one carried none. */
+  turnCost: number
+  turnCosted: number
+  turnUncosted: boolean
   tokens: number
   life: number | undefined
   firstContext: number | undefined
@@ -110,7 +117,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       const id = text(e['session'])
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
-      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
+      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
       s.project = text(e['project']) ?? s.project
@@ -120,8 +127,20 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       if (kind === 'tool_call') s.live = true
       const cost = num(e['cost_usd'])
       if (cost !== undefined && day <= end) {
+        const at = Date.parse(text(e['ts']) ?? '')
+        // A later event under the highest cost so far is a restart of the host's cumulative figure, not a late line.
+        if (s.peak !== undefined && cost < s.peak.cost && at > s.peak.at) s.restarted = true
+        if (s.peak === undefined || cost >= s.peak.cost) s.peak = { cost, at }
         if (day < start) s.before = Math.max(s.before, cost)
         s.upTo = Math.max(s.upTo ?? 0, cost)
+        if (inWindow && kind === 'turn_end') {
+          const turn = num(e['turn_cost_usd'])
+          if (turn === undefined) s.turnUncosted = true
+          else {
+            s.turnCost += turn
+            s.turnCosted++
+          }
+        }
       }
       if (!inWindow) continue
       if (kind === 'session_start') s.began = true
@@ -220,19 +239,62 @@ export function report(input: ReportInput): string[] {
   const repositoryAt = (dir: string): string | undefined => (remotes.has(dir) ? remotes.get(dir) : remotes.set(dir, input.repositoryAt(dir)).get(dir))
   const out: string[] = [`weekly report ${start} → ${end} (Europe/Paris), tool: ${tools.join(', ') || NA('not run in a repository and no --tool')}`]
 
-  // Spend: a session's cost in the week is its cumulative cost at the week's end less before it.
+  // Spend: a session's cost in the week is its cumulative cost at the week's end less before it; a
+  // resumed session whose cumulative cost restarted lower is summed from its per-turn costs, else n/a.
+  const kept: { s: Session; cost: number | undefined }[] = []
+  let restartedSummed = 0
+  let restartedUnknown = 0
+  for (const s of sessions.values()) {
+    let cost: number | undefined
+    // A session whose cumulative cost restarted lower: its spend is real, only unknown, so it stays counted.
+    if (s.restarted) cost = s.turnCosted > 0 && !s.turnUncosted ? s.turnCost : undefined
+    // A session seen before the week with no cost before it has no baseline: its cost is unknown, not all of the week's.
+    else cost = s.upTo === undefined || (s.seenBefore && s.before === 0) ? undefined : s.upTo - s.before
+    if (s.tokens === 0 && (cost ?? 0) === 0 && !s.restarted) continue
+    if (s.restarted && cost === undefined) restartedUnknown++
+    else if (s.restarted) restartedSummed++
+    kept.push({ s, cost })
+  }
+  // The checkouts that exist: the directories of the kept sessions that name a repository through git.
+  const checkouts = new Map<string, string>()
+  for (const { s } of kept) {
+    const repo = s.project?.includes('/') || s.cwd === undefined ? undefined : repositoryAt(s.cwd)
+    if (s.cwd !== undefined && repo !== undefined) checkouts.set(s.cwd, repo)
+  }
+  const unattributed = { gone: 0, ambiguous: 0, none: 0 }
+  let byAncestry = 0
+  const attribute = (s: Session): string | undefined => {
+    if (s.project?.includes('/')) return s.project
+    if (s.cwd === undefined) {
+      unattributed.none++
+      return undefined
+    }
+    const direct = checkouts.get(s.cwd)
+    if (direct !== undefined) return direct
+    // A directory gone from the disk (a deleted worktree): the repository of the nearest known checkout
+    // above it, or of the checkouts below the nearest directory that holds some, when they all agree.
+    for (let dir = dirname(s.cwd); dir !== dirname(dir); dir = dirname(dir)) {
+      const above = checkouts.get(dir)
+      const below = new Set([...checkouts].filter(([path]) => path.startsWith(`${dir}/`)).map(([, repo]) => repo))
+      if (above === undefined && below.size === 0) continue
+      const repos = above === undefined ? below : new Set([above])
+      if (repos.size === 1) {
+        byAncestry++
+        return [...repos][0]
+      }
+      unattributed.ambiguous++
+      return undefined
+    }
+    unattributed.gone++
+    return undefined
+  }
   const groups = new Map<string, { cost: number; tokens: number }>()
   const prCost = new Map<string, number>()
   let known = 0
-  let active = 0
   let unnamed = 0
-  for (const s of sessions.values()) {
-    // A session seen before the week with no cost before it has no baseline: its cost is unknown, not all of the week's.
-    const cost = s.upTo === undefined || (s.seenBefore && s.before === 0) ? undefined : s.upTo - s.before
-    if (s.tokens === 0 && (cost ?? 0) === 0) continue
-    active++
+  for (const { s, cost } of kept) {
     if (cost !== undefined) known++
-    const project = s.project?.includes('/') ? s.project : s.cwd === undefined ? undefined : repositoryAt(s.cwd)
+    const project = attribute(s)
     const g = groups.get(project ?? 'unattributed') ?? { cost: 0, tokens: 0 }
     groups.set(project ?? 'unattributed', { cost: g.cost + (cost ?? 0), tokens: g.tokens + s.tokens })
     const [only, ...more] = s.targets
@@ -240,6 +302,7 @@ export function report(input: ReportInput): string[] {
     if (only !== undefined && more.length === 0) prCost.set(only, (prCost.get(only) ?? 0) + cost)
     else unnamed += cost
   }
+  const active = kept.length
   const share = (pick: (g: { cost: number; tokens: number }) => number): string => {
     const all = [...groups.values()].reduce((n, g) => n + pick(g), 0)
     if (all === 0) return NA('none known in the week')
@@ -251,7 +314,18 @@ export function report(input: ReportInput): string[] {
   out.push(`  cost    ${share(g => g.cost)}`, `  tokens  ${share(g => g.tokens)}`)
   const spent = [...groups.values()].reduce((n, g) => n + g.cost, 0)
   const toolShare = (100 * [...groups].reduce((n, [name, g]) => n + (isTool(name) ? g.cost : 0), 0)) / spent
-  out.push(spent === 0 || tools.length === 0 ? `  cap     ${NA(tools.length === 0 ? 'no tool repository' : 'no cost known in the week')}` : `  cap     tool ${Math.round(toolShare)} % of the week's spend, cap ${TARGETS.toolSpendPercent} %: ${toolShare > TARGETS.toolSpendPercent ? `OVER by ${Math.round(toolShare - TARGETS.toolSpendPercent)} points` : 'within'}`)
+  const unattributedShare = (100 * (groups.get('unattributed')?.cost ?? 0)) / spent
+  // The tool's real share lies between what is attributed to it and that plus everything unattributed. The cap is suspended: the line informs.
+  const [low, upper] = [Math.round(toolShare), Math.round(toolShare + unattributedShare)]
+  const cap = `${TARGETS.toolSpendPercent} % cap (suspended)`
+  const verdict = low > TARGETS.toolSpendPercent ? `above the ${cap}` : upper <= TARGETS.toolSpendPercent ? `within the ${cap}` : `the range straddles the ${cap}`
+  out.push(spent === 0 || tools.length === 0 ? `  cap     ${NA(tools.length === 0 ? 'no tool repository' : 'no cost known in the week')}` : `  cap     tool ${low} % of the week's spend (range ${low}–${upper} %: ${Math.round(unattributedShare)} % unattributed), cost known for ${known} of ${active} sessions: ${verdict}`)
+  const left = unattributed.gone + unattributed.ambiguous + unattributed.none
+  if (left > 0 || byAncestry > 0) {
+    const why = [[unattributed.gone, 'directory gone, no known checkout around it'], [unattributed.ambiguous, 'directory gone, the checkouts around it name several repositories'], [unattributed.none, 'no directory and no project']] as const
+    out.push(`  attribution: ${byAncestry} by the ancestry of a gone directory; ${left} left unattributed${left > 0 ? ` (${why.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join('; ')})` : ''}`)
+  }
+  if (restartedSummed + restartedUnknown > 0) out.push(`  restarted: ${restartedSummed + restartedUnknown} resumed sessions whose cumulative cost restarted lower: ${restartedSummed} summed from their per-turn costs, ${restartedUnknown} n/a`)
   for (const [name, g] of [...groups].sort(([, a], [, b]) => b.cost - a.cost || b.tokens - a.tokens)) {
     out.push(`  ${name.padEnd(36)} ${(isTool(name) ? 'tool' : name === 'unattributed' ? 'unattributed' : 'product').padEnd(12)} ${usd(g.cost).padStart(9)} ${tok(g.tokens).padStart(7)}`)
   }

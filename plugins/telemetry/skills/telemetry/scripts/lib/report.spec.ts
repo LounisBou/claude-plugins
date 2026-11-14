@@ -93,7 +93,7 @@ test('a session\'s cost in the week is its cumulative cost at the week\'s end le
     assert.match(find(out, 'spend'), /^spend \(cost known for 2 of 3 sessions;/)
     assert.equal(find(out, '  cost '), '  cost    tool 40 %, product 60 %, unattributed 0 %')
     assert.equal(find(out, '  tokens '), '  tokens  tool 50 %, product 50 %, unattributed 0 %')
-    assert.equal(find(out, '  cap '), "  cap     tool 40 % of the week's spend, cap 20 %: OVER by 20 points")
+    assert.equal(find(out, '  cap '), "  cap     tool 40 % of the week's spend (range 40–40 %: 0 % unattributed), cost known for 2 of 3 sessions: above the 20 % cap (suspended)")
     assert.match(find(out, '  acme/app '), /^ {2}acme\/app +product +\$3\.00 +0k$/)
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
   })
@@ -210,7 +210,7 @@ test('without --tool the tool is the repository of the working directory; with n
   })
 })
 
-test('the cap line says within at or under 20 %, over above it, n/a with no tool, and a tool match ignores case', () => {
+test('the cap line says within at or under 20 %, above it, n/a with no tool, never OVER, and a tool match ignores case', () => {
   const at = (tool: number, product: number): Record<string, unknown>[] => [
     ev('2026-11-10T11:00:00Z', 'session_end', S(1), { cost_usd: tool, project: 'acme/tool' }),
     ev('2026-11-10T11:00:00Z', 'session_end', S(2), { cost_usd: product, project: 'acme/app' }),
@@ -220,9 +220,10 @@ test('the cap line says within at or under 20 %, over above it, n/a with no tool
     scratch({ events }, config => { line = find(lines(config, over), '  cap ') })
     return line
   }
-  assert.equal(cap(at(1, 4)), "  cap     tool 20 % of the week's spend, cap 20 %: within")
-  assert.equal(cap(at(1, 3)), "  cap     tool 25 % of the week's spend, cap 20 %: OVER by 5 points")
-  assert.equal(cap(at(1, 3), { tools: ['Acme/Tool'] }), "  cap     tool 25 % of the week's spend, cap 20 %: OVER by 5 points")
+  assert.equal(cap(at(1, 4)), "  cap     tool 20 % of the week's spend (range 20–20 %: 0 % unattributed), cost known for 2 of 2 sessions: within the 20 % cap (suspended)")
+  assert.equal(cap(at(1, 3)), "  cap     tool 25 % of the week's spend (range 25–25 %: 0 % unattributed), cost known for 2 of 2 sessions: above the 20 % cap (suspended)")
+  assert.equal(cap(at(1, 3), { tools: ['Acme/Tool'] }), cap(at(1, 3)))
+  assert.doesNotMatch(cap(at(1, 3)), /OVER/i)
   assert.equal(cap(at(1, 3), { tools: [] }), '  cap     n/a — no tool repository')
 })
 
@@ -294,4 +295,74 @@ test('options: a week, tools, and what is refused', () => {
   assert.equal(parseOptions(['--week', 'monday']), '--week monday: expected --week <YYYY-MM-DD> or --tool <owner/name>')
   assert.equal(parseOptions(['--tool']), '--tool: expected --week <YYYY-MM-DD> or --tool <owner/name>')
   assert.equal(parseOptions(['--tool', 'nobody']), '--tool nobody: expected --week <YYYY-MM-DD> or --tool <owner/name>')
+})
+
+const ended = (day: string, session: string, cost: number, fields: Record<string, unknown> = {}): Record<string, unknown> =>
+  ev(`${day}T11:00:00Z`, 'session_end', session, { cost_usd: cost, totals: { in: 1, out: 0, cache_read: 0, cache_write: 0 }, ...fields })
+
+test('a session whose directory is gone is attributed by the checkouts around it, and the sessions left unattributed are counted with why', () => {
+  const events = [
+    ended('2026-11-10', S(1), 2, { cwd: '/w/tool/main' }),
+    ended('2026-11-10', S(2), 3, { cwd: '/w/tool/gone-worktree' }),
+    ended('2026-11-10', S(3), 4, { cwd: '/w/tool/main/deep/gone' }),
+    ended('2026-11-10', S(4), 1, { cwd: '/v/one' }),
+    ended('2026-11-10', S(5), 1, { cwd: '/v/two' }),
+    ended('2026-11-10', S(6), 5, { cwd: '/v/gone' }),
+    ended('2026-11-10', S(7), 6, { cwd: '/z/gone' }),
+    ended('2026-11-10', S(8), 7),
+  ]
+  const repositories: Record<string, string> = { '/w/tool/main': 'acme/tool', '/v/one': 'acme/app', '/v/two': 'acme/other' }
+  scratch({ events }, config => {
+    const out = lines(config, { repositoryAt: dir => repositories[dir] })
+    assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$9\.00 /)
+    assert.match(find(out, '  unattributed '), /^ {2}unattributed +unattributed +\$18\.00 /)
+    assert.equal(find(out, '  attribution:'), '  attribution: 2 by the ancestry of a gone directory; 3 left unattributed (1 directory gone, no known checkout around it; 1 directory gone, the checkouts around it name several repositories; 1 no directory and no project)')
+    assert.equal(find(out, '  cap '), "  cap     tool 31 % of the week's spend (range 31–93 %: 62 % unattributed), cost known for 8 of 8 sessions: above the 20 % cap (suspended)")
+  })
+})
+
+test('with every session attributed, no attribution line is printed', () => {
+  scratch({ events: [ended('2026-11-10', S(1), 2, { project: 'acme/tool' })] }, config => {
+    assert.equal(find(lines(config), '  attribution:'), 'missing   attribution:')
+  })
+})
+
+test('the cap line prints the range and the coverage, and is never a verdict of OVER', () => {
+  const events = [ended('2026-11-10', S(1), 5, { project: 'acme/tool' }), ended('2026-11-10', S(2), 4, { project: 'acme/app' }), ended('2026-11-10', S(3), 1, { cwd: '/z/gone' }), ended('2026-11-10', S(4), 0, { project: 'acme/app', cost_usd: undefined })]
+  scratch({ events }, config => {
+    const cap = find(lines(config), '  cap ')
+    assert.equal(cap, "  cap     tool 50 % of the week's spend (range 50–60 %: 10 % unattributed), cost known for 3 of 4 sessions: above the 20 % cap (suspended)")
+    assert.doesNotMatch(cap, /OVER/i)
+  })
+  const between = [ended('2026-11-10', S(1), 1, { project: 'acme/tool' }), ended('2026-11-10', S(2), 6, { project: 'acme/app' }), ended('2026-11-10', S(3), 3, { cwd: '/z/gone' })]
+  scratch({ events: between }, config => {
+    assert.equal(find(lines(config), '  cap '), "  cap     tool 10 % of the week's spend (range 10–40 %: 30 % unattributed), cost known for 3 of 3 sessions: the range straddles the 20 % cap (suspended)")
+  })
+  const under = [ended('2026-11-10', S(1), 1, { project: 'acme/tool' }), ended('2026-11-10', S(2), 8, { project: 'acme/app' }), ended('2026-11-10', S(3), 1, { cwd: '/z/gone' })]
+  scratch({ events: under }, config => {
+    assert.equal(find(lines(config), '  cap '), "  cap     tool 10 % of the week's spend (range 10–20 %: 10 % unattributed), cost known for 3 of 3 sessions: within the 20 % cap (suspended)")
+  })
+})
+
+test('a resumed session whose cumulative cost restarted lower is summed from its per-turn costs, or n/a when a turn has none', () => {
+  const turn = (ts: string, session: string, cost: number, turnCost?: number): Record<string, unknown> => ev(ts, 'turn_end', session, { cost_usd: cost, project: 'acme/app', ...(turnCost === undefined ? {} : { turn_cost_usd: turnCost }) })
+  const events = [
+    turn('2026-11-07T10:00:00Z', S(1), 10, 10),
+    turn('2026-11-09T10:00:00Z', S(1), 1, 1),
+    turn('2026-11-10T10:00:00Z', S(1), 3, 2),
+    turn('2026-11-07T10:00:00Z', S(2), 10),
+    turn('2026-11-09T10:00:00Z', S(2), 1),
+    // Written out of order within a day, not a restart: the later line holds the higher cost.
+    turn('2026-11-09T10:05:00Z', S(3), 5, 5),
+    turn('2026-11-09T10:00:00Z', S(3), 4, 4),
+    turn('2026-11-06T10:00:00Z', S(4), 2, 2),
+    turn('2026-11-09T10:00:00Z', S(4), 6, 4),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    assert.match(find(out, 'spend'), /cost known for 3 of 4 sessions/)
+    assert.equal(find(out, '  restarted:'), '  restarted: 2 resumed sessions whose cumulative cost restarted lower: 1 summed from their per-turn costs, 1 n/a')
+    // S(1) 3 (1 + 2, not 0 nor the excess), S(3) 5 (cumulative, no restart), S(4) 4: the three known; S(2) is n/a.
+    assert.match(find(out, '  acme/app '), /^ {2}acme\/app +product +\$12\.00 /)
+  })
 })
