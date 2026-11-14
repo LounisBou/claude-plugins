@@ -5,6 +5,8 @@
 // block is read here, and the loop counts the Critical and Important ones.
 // An agent that ends without a readable block makes the pass's count unknown.
 
+import { blocks } from '../core/readiness.ts'
+
 export type Severity = 'critical' | 'important' | 'suggestion'
 export type Finding = { severity: Severity; file: string; summary: string }
 
@@ -117,4 +119,5 @@ export function passFindings(reports: readonly (Finding[] | null)[]): Finding[] 
   return reports.flatMap((r) => r ?? [])
 }
 
-export const isBlocking = (finding: Finding): boolean => finding.severity !== 'suggestion'
+// The severities that block a review are core's readiness contract's.
+export const isBlocking = (finding: Finding): boolean => blocks(finding.severity)

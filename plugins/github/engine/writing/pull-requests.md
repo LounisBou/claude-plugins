@@ -129,14 +129,10 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 
 ## Ready pull requests
 
-A pull request is ready when a review came out clean at its head, CI is green, and the E2E
-passed or was waived unless its check plan needs none. Norms block when failed, or missing
-where planned. A plan requires only what it marks `required` (norms `none` with no
-CONTRIBUTING.md), and a required E2E or norms never goes laxer but by the operator's waiver:
+What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`).
+A required E2E or norms check goes laxer only by the operator's waiver:
 « Accorder » to « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> » / « Refuser ».
-A new commit voids readiness, a rebase keeping its commits keeps its records.
 
-The `Ready` and `Not Ready` labels carry that fact, and a draft opens `Not Ready`. The plugin
-puts `Ready` once they hold, `Not Ready` back on a push. When CI does not run on a draft,
-the plugin takes it out of draft, still `Not Ready`, and back once CI is green. Only the gate
-puts `Ready`, and it refuses an unready exit from draft or merge.
+The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. Leaving draft and a
+merge need `Ready`, which the gate puts just before them once every condition holds. When CI
+does not run on a draft, the plugin takes it out of draft, still `Not Ready`, and back once ready.

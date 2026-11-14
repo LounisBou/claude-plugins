@@ -4,6 +4,7 @@ import { AUDIT_CONTRACT, LEARNING_CONTRACT } from './learning.ts'
 import { NAMES_CONTRACT } from './names.ts'
 import { ORCHESTRATION_CONTRACT } from './orchestration.ts'
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
+import { READINESS_CONTRACT } from './readiness.ts'
 import { STORE_CONTRACT } from './store-io.ts'
 
 export const DATA_FILES: Readonly<Record<string, object>> = {
@@ -12,5 +13,6 @@ export const DATA_FILES: Readonly<Record<string, object>> = {
   'names.json': NAMES_CONTRACT,
   'orchestration.json': ORCHESTRATION_CONTRACT,
   'pr-record.json': PR_RECORD_CONTRACT,
+  'readiness.json': READINESS_CONTRACT,
   'store.json': STORE_CONTRACT,
 }

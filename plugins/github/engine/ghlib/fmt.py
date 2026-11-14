@@ -118,7 +118,8 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
-    at all is green."""
+    at all is not green either: CI has not started on that head, so the result
+    is PENDING."""
     commit_statuses = (statuses or {}).get("statuses") or []
     runs = _latest_runs(runs, workflows, suite_runs)
     passing = ("success",) if draft else ("success", "neutral")
@@ -133,7 +134,7 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None):
     skipped = [run.get("name", "?") for run in completed if run.get("conclusion") in unproven]
     if failed:
         result = "FAILURE"
-    elif running or skipped:
+    elif running or skipped or not (runs or commit_statuses):
         result = "PENDING"
     else:
         result = "SUCCESS"

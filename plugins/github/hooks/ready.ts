@@ -4,14 +4,11 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { ACCEPTANCE, accepts, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
-import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { ACCEPTANCE, isAcceptance, KINDS, kindFor, parsePrRecord, producersOf, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { carriesAcross, heldBy, missingEvidence, type Holder } from '../core/readiness.ts'
+import { gitSubcommand, innerLine, readCommands, simpleCommands } from '../core/shell.ts'
 import type { Excused } from './check-plan.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
-
-// warn: an act that is not ready goes ahead with one warn line. enforce: it is
-// refused with what it misses.
-export type Phase = 'warn' | 'enforce'
 
 // merge: a merge or an auto-merge armed. undraft: out of draft. create: a pull
 // request opened out of draft. create-draft: one opened as a draft. redraft: one
@@ -185,6 +182,9 @@ const API_VALUED = [
   '-t', '--template', '--cache', '-p', '--preview', '--hostname',
 ]
 const MERGE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/merge\/?$/
+// The shape of a merge path whose repository or number the line does not show (`$PR`, `${PR}`,
+// `$REPO`, which may stand for owner/name, a substitution): an opaque merge.
+const MERGE_SHAPE = /^\/?repos\/(?:[^/]*\/){1,2}pulls\/[^/]*\/merge\/?$/
 const LABELS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/labels\/?$/
 // An issue or a pull request itself, whose PATCH may set its labels.
 const ISSUE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)\/(\d+)\/?$/
@@ -253,7 +253,10 @@ function apiAct(argv: string[]): Act | undefined {
   const path = endpoint.replace(API_HOST, '')
   if (method !== 'PUT' && method !== 'POST') return undefined
   const merge = MERGE_PATH.exec(path)
-  return merge ? { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) } : undefined
+  if (merge) return { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) }
+  // A substitution splits the path into words: the words are joined as the shell would.
+  const joined = parsed.positionals.join('').replace(API_HOST, '')
+  return MERGE_SHAPE.test(joined) ? { kind: 'merge', name: 'gh api', unreadable: true } : undefined
 }
 
 // The act of one run of the plugin's engine, engine/gh.py, from Bash. A draft
@@ -271,12 +274,32 @@ function engineAct(call: EngineCall): Act | undefined {
   return undefined
 }
 
+// The simple commands of a line as simpleCommands reads them, each with whether a command
+// substitution stands among its words: the shell drops it from the argv, where it may have been the
+// pull request's number or branch.
+function commandsOf(line: string): Array<{ argv: string[]; substituted: boolean }> {
+  const read = (text: string) => readCommands(text).map((command) => ({ argv: [...command.argv], substituted: command.substitutions.length > 0 }))
+  const out = read(line)
+  for (const { argv } of [...out]) {
+    const inner = innerLine(argv)
+    if (inner !== undefined) out.push(...read(inner))
+  }
+  return out
+}
+
+// A merge or an undraft that names no pull request, in a command that holds a substitution
+// (`gh pr merge $(…) -R o/n`), names one the line does not show: it is no current-branch act.
+function unreadableTarget(act: Act): Act {
+  const names = act.pr !== undefined || (act.branch ?? '') !== '' || act.unreadable
+  return names || (act.kind !== 'merge' && act.kind !== 'undraft') || !act.name.startsWith('gh pr ') ? act : { ...act, unreadable: true }
+}
+
 // Every act of a Bash command line, read word by word: a message or a body
 // that only mentions one is an argument, not a command. A request the engine
 // reads from stdin (`gh.py --stdin-json`) shows no act: it is one of its own, refused.
 export function bashActs(line: string): Act[] {
   const found: Act[] = []
-  for (const argv of simpleCommands(line)) {
+  for (const { argv, substituted } of commandsOf(line)) {
     const start = engineStart(argv)
     if (start !== undefined && argv.length === start + 1 && argv[start] === '--stdin-json') {
       found.push({ kind: 'merge', name: 'gh.py --stdin-json', stdin: true })
@@ -284,7 +307,7 @@ export function bashActs(line: string): Act[] {
     }
     const engine = engineCall(argv)
     const act = engine ? engineAct(engine) : !GH.test(argv[0] ?? '') ? undefined : argv[1] === 'api' ? apiAct(argv) : prAct(argv)
-    if (act) found.push(act)
+    if (act) found.push(substituted ? unreadableTarget(act) : act)
   }
   return found
 }
@@ -584,10 +607,8 @@ export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<K
 }
 
 // A record an earlier head carries to a head of the same diff, when it is the latest of its kind
-// across the earlier heads of that diff: any record that lets its kind pass.
-export function carries(record: PrRecord): boolean {
-  return accepts(record)
-}
+// across the earlier heads of that diff (core's readiness contract).
+export const carries = carriesAcross
 
 // The operator's waiver of a kind of the pull request at an earlier head, whatever its diff: it stands for every
 // later head while it is the newest record of that kind across them. A record file there that may be a later
@@ -614,34 +635,34 @@ export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
   return { kind, from: '', waived: by + ', ' + at }
 }
 
-// What a pull request misses to be ready at its head: the three conditions,
-// and before them an act that cannot be ready at all (closed, moved head).
+// What a pull request misses to be ready at its head, as core's readiness contract defines it
+// (readiness.ts), and before that an act that cannot be ready at all (closed, moved head).
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
-export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = []): string[] {
+// holder: only the conditions that holder refuses a merge on; every condition, omitted.
+export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = [],
+  holder?: Holder): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
   const { read, skipped } = headRecordsRead(gate, files)
-  const latest = latestByKind(read)
-  let kindMissing = false
-  for (const kind of KINDS) {
-    const record = latest.get(kind)
-    if (record && accepts(record)) continue
-    if (excused[kind] && record?.result !== 'fail') continue
-    if (kind === 'norms' && !record && !excused.required?.includes('norms')) continue // on demand unless the plan requires it
-    if (!record && carried.some((c) => c.kind === kind)) continue
-    kindMissing = true
-    if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
-    else {
-      missing.push(kind + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer
-        + (record.detail ? ', ' + record.detail : ''))
-    }
+  const ci = gate.ci
+  const lacking = missingEvidence({
+    latest: latestByKind(read),
+    excused: new Set(KINDS.filter((kind) => excused[kind])),
+    required: new Set(excused.required ?? []),
+    carried: new Set(carried.map((c) => c.kind)),
+    ciGreen: ci.result === 'SUCCESS',
+  })
+  const kinds = (holder ? heldBy(lacking, holder) : lacking).flatMap((item) => item.condition === 'ci' ? [] : [item])
+  for (const { condition, record } of kinds) {
+    if (!record) missing.push(condition + ': no record at ' + head7(gate.head))
+    else missing.push(condition + ': ' + record.result + ' at ' + head7(gate.head) + ' by ' + record.producer + (record.detail ? ', ' + record.detail : ''))
   }
   // A file skipped is named only beside a kind it may have been meant for: with
-  // the three accepted it blocks nothing, as nobody may delete it.
-  if (kindMissing) for (const name of skipped) missing.push('unreadable record ' + name)
-  const ci = gate.ci
+  // the kinds accepted it blocks nothing, as nobody may delete it.
+  if (kinds.length > 0) for (const name of skipped) missing.push('unreadable record ' + name)
+  if (holder && holder !== 'github') return missing
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS') {
     const skippedChecks = ci.skipped ?? []
@@ -663,8 +684,8 @@ export function carriesReady(gate: Gate): boolean {
   return gate.labels.some((label) => label.toLowerCase() === READY)
 }
 
-// The label the gate puts on an open pull request, or undefined to leave it: Ready when the three
-// hold and it does not carry Ready alone, Not Ready when it carries Ready and they no longer hold.
+// The label the gate puts on an open pull request, or undefined to leave it: Ready when nothing is
+// missing and it does not carry Ready alone, Not Ready when it carries Ready and something is.
 // A closed or merged one keeps its labels.
 export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
   if (gate.state !== 'open') return undefined
@@ -685,12 +706,11 @@ const tail = (missing: string[], carried: Carried[] = []) =>
 
 // Why leaving draft is refused outside auto-merge, whatever the route.
 const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
-  + ' by the gate once the three conditions hold'
+  + ' by the gate once the pull request is ready'
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
-    + '. A pull request is ready when a clean review, passed E2E and'
-    + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
+    + '. What Ready needs is core\'s readiness contract (core/readiness.ts).'
 }
 
 // repo undefined: the call names no repository the guard could read.
@@ -794,10 +814,6 @@ export function gateMovedLine(repo: string, pr: number, read: string, now: strin
 
 export function gateUnwrittenLine(repo: string, pr: number, error: string): string {
   return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
-}
-
-export function warnLine(act: string, repo: string, pr: number | string, missing: string[]): string {
-  return 'github: ' + act + ' on ' + repo + '#' + pr + ' is not ready, let through while the guard only warns. ' + tail(missing)
 }
 
 export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'
