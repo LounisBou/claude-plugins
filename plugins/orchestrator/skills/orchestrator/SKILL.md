@@ -76,7 +76,7 @@ Each file is one moment's: read the file or files the moment names, and no other
 | Rotating an agent past its gate | `references/rotation.md` |
 | Handing over | `/orchestrator-succeed`, then `references/succession-predecessor.md` |
 | Taking over | `references/succession-successor.md` |
-| Pausing, opening, moving | `references/pause-opening-move.md` |
+| Pausing, opening | `references/pause-opening-move.md` |
 | Launching a review round (`build`) | `references/review-thresholds.md`, `references/review-round.md` |
 | Launching a comments round, publishing as the operator (`build`) | `references/review-comments.md`, `references/review-round.md` (« The cost of a round ») |
 | Judging a delivery, recording a verdict, telling it ready (`build`) | `references/review-thresholds.md`, `references/review-verdict.md`, `references/standing-rules.md` |
