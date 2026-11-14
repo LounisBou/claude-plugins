@@ -3901,9 +3901,7 @@ check "the round is mirrored in the successor's brief and the design, and the de
 # A report that asks nothing, ended on the operator's wait, was drawn in the pane as a question.
 check "the orchestrator rulebook no longer runs the lookup and the send itself" "no|no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
-# Rule 219: the module refuses a question sent to the coordinator by message on its own
-# (hooks/tests/question-by-message.test.ts, « a question sent to the coordinator … is refused »).
-check "a decision round goes through a running coordinator, carried by the module, and leaves the send to the guard" "yes|yes|no" \
+check "a decision round goes through a running coordinator, carried by the module, and does not send the questions itself" "yes|yes|no" \
   "$(spells "$ROOT/commands/decide.md" '**While a coordinator runs, the wave goes through it**, carried by the hooks module: each')|$(spells "$ROOT/commands/decide.md" 'question ends its turn as step 2 says, and the module forwards it.')|$(spells "$ROOT/commands/decide.md" 'never send it yourself')"
 # Rule 219: the paragraph on the coordinator, up to its 2026-11-03 sentence, lightened from 650.
 # 400 until the sender's account came back (the operator's ruling of 2026-11-04, « restore
