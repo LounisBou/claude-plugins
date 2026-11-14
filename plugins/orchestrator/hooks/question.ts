@@ -11,6 +11,7 @@
 import { updateOver } from '../core/store-io.ts'
 import { CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { machineLabel } from './remote-row.ts'
+import { plainText } from './round.ts'
 import { whoAmI } from './todo.ts'
 import { sessionRole } from './supervision.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
@@ -163,6 +164,14 @@ export function questionBlock(entry: Asked, number: { i: number; n: number }): s
   ].join('\n')
 }
 
+/**
+ * The block as the transcript shows it: one line per row, the host drawing a row's text as one line,
+ * its markup dropped, which a transcript row does not draw.
+ */
+export function shownLines(block: string): string[] {
+  return block.split('\n').map(line => plainText(line))
+}
+
 /** Every object `ask` stored in this machine's round, open or not; a file that is no such object is skipped. */
 export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
   const dir = `${await stateDir($)}/round`
@@ -253,7 +262,7 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   const at = own.findIndex(open => open.id === entry.id)
   const block = questionBlock(entry, { i: at < 0 ? own.length + 1 : at + 1, n: Math.max(own.length, 1) })
   try {
-    $.ui.log(block)
+    for (const line of shownLines(block)) $.ui.log(line)
   } catch (err) {
     await logLine($, 'question', `question ${entry.id} stored, its block not written to the transcript: ${messageOf(err)}`)
     return { result: `Asked as ${entry.id}, but its block could not be shown in this chat (${messageOf(err)}): write it in your message as it stands.\n\n${block}` }

@@ -4,7 +4,7 @@
 // version that the relay's entries do not carry, its block written to the transcript by the module;
 // and the lines the pane draws from those objects, grouped by asker.
 import { expect, test } from 'claude-code/testing'
-import { ASK_TOOL, ASK_VERSION, askedGroups, askedLines, askId, callAsk, parseAsk, parseAsked, questionBlock, register as registerQuestion, type Asked } from '../question.ts'
+import { ASK_TOOL, ASK_VERSION, askedGroups, askedLines, askId, callAsk, parseAsk, parseAsked, questionBlock, shownLines, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -152,7 +152,9 @@ test('a call stores one object in the round with every field it was given, its i
   expect(entry.id).toMatch(/^q-s-me-[a-z0-9]+-[a-z0-9]{4}$/)
   expect(answer.result).toContain(`Asked as ${entry.id}`)
   expect(answer.result).toContain('Do not write it again')
-  expect(shown).toEqual([questionBlock(entry, { i: 1, n: 1 })])
+  expect(shown).toEqual(shownLines(questionBlock(entry, { i: 1, n: 1 })))
+  expect(shown[0]).toBe(`Question 1 of 1 (${entry.id})`)
+  expect(shown).toContain('- A : acme/app#1 first — cost: none — gain: no rebase')
   expect([...files.keys()].some(p => p.includes('.tmp-') || p.endsWith('.lock'))).toBe(false)
 })
 
@@ -172,8 +174,7 @@ test('several calls in one turn make several objects, each its own id, numbered 
   expect(entries.length).toBe(2)
   expect(new Set(entries.map(entry => entry.id)).size).toBe(2)
   expect(entries.every(entry => entry.status === 'open' && entry.seq === 1)).toBe(true)
-  expect(shown[0]).toMatch(/^\*\*Question 1 of 1\*\*/)
-  expect(shown[1]).toMatch(/^\*\*Question 2 of 2\*\*/)
+  expect(shown.filter(line => /^Question \d+ of \d+/.test(line))).toEqual([`Question 1 of 1 (${entries[0].id})`, `Question 2 of 2 (${entries[1].id})`])
 })
 
 test('an object ask stored is no entry of the relay\'s, and an entry of the relay\'s is no object of ask\'s', async () => {
