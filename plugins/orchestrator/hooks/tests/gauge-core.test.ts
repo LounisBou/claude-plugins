@@ -373,3 +373,32 @@ test('a session start removes the module\'s own empty measure files older than a
   expect(await handlers['session.start']($, e, (x: unknown) => x)).toBe(e)
   expect([...d.files.keys()].sort()).toEqual([`${MEASURES}/new-empty.json`, `${MEASURES}/old-empty.json.tmp-1-abc`, `${MEASURES}/old-full.json`])
 })
+
+// The gate the session is held to, in tokens, is written beside its figures: the readers that
+// show it (statusbar) take the owner's figure instead of re-deriving it from the variables.
+test('the measure file carries its version and the session\'s gate in tokens on its window', async () => {
+  const handlers: Record<string, Function> = {}
+  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const d = disk()
+  const files = d.files
+  const $ = (id: string, window: number, env: Record<string, string>) => ({
+    ...d,
+    session: { id: async () => id, usage: async () => ({ context: { tokens: 1000, window, percent: 1 } }), model: async () => 'a-model' },
+    env: { get: async (name: string) => ({ HOME: '/tmp/h', ...env } as Record<string, string>)[name] },
+    ui: { toast: () => undefined, invalidate: () => undefined },
+  })
+  const gateOf = async (id: string, window: number, env: Record<string, string> = {}) => {
+    await handlers['session.measure']($(id, window, env), {}, (x: unknown) => x)
+    const file = JSON.parse(files.get(`/tmp/h/.claude/claude-orchestrator/measure/${id}.json`)!)
+    expect(file.version).toBe(1)
+    return file.gate_tokens
+  }
+  expect(await gateOf('g-large', 1000000)).toBe(300000)
+  expect(await gateOf('g-small', 200000)).toBe(160000)
+  expect(await gateOf('g-tokens', 1000000, { ORCHESTRATOR_CONTEXT_GATE_TOKENS: '250000' })).toBe(250000)
+  expect(await gateOf('g-percent', 200000, { ORCHESTRATOR_CONTEXT_GATE: '50' })).toBe(100000)
+  takeDrift()
+})

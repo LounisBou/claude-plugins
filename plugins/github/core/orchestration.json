@@ -1,0 +1,14 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "measure": {
+    "module_dir": "claude-orchestrator",
+    "dir": "measure",
+    "version": 1
+  },
+  "gate": {
+    "percent": 80,
+    "tokens": 300000
+  },
+  "launcher": "skills/iterm-agents/scripts/iterm-agent.sh"
+}

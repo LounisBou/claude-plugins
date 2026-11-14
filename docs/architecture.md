@@ -11,7 +11,8 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
                                   reader, shared environment names, the plugin locator, the pinned
                                   Playwright's install, and the typed contracts (the method's
-                                  formats, PR records, consent records)
+                                  formats, PR records, consent records, the orchestration's
+                                  measure file, gate, launcher line and ListAgents reading)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
@@ -35,7 +36,8 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── drift, github, implement, learning, norms, orchestrator, pr-review, telemetry (a copy in core/)
+        └───── bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review,
+               statusbar, telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
@@ -132,6 +134,5 @@ The release pull request also asks the operator whether to re-run the outcome me
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
-A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
-runs every plugin, a change of documentation alone (`docs/`, a Markdown file at the root) none.
-A push to `main` runs every plugin on Linux and macOS.
+What runs when (a pull request, the release, a push to `main`, the night) is the table at the head of
+`scripts/plugin-matrix.ts`.
