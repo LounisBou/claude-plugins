@@ -13,7 +13,7 @@
       "name": "bugs-bot",
       "source": "./plugins/bugs-bot",
       "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "author": {
         "name": "Lounis Bou"
       }
@@ -40,7 +40,7 @@
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",
-      "version": "0.22.2",
+      "version": "0.23.0",
       "author": {
         "name": "Lounis Bou"
       }
