@@ -3,7 +3,7 @@
 // or the duplicate count may fall, never rise (docs/conventions.md, « Prompts »).
 //
 //   npm run prompts              check against ci/prompts.json
-//   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured
+//   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured (the release runs it)
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'

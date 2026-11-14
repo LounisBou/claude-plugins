@@ -126,7 +126,7 @@ A release is its merge: the host installs the version the catalogue names, and n
 | prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
-| the release raises every changed plugin in one commit | `npm run release`, `scripts/release.ts` |
+| the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 
 A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
