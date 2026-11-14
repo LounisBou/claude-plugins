@@ -11,7 +11,8 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
                                   reader, shared environment names, the plugin locator, the pinned
                                   Playwright's install, and the typed contracts (the method's
-                                  formats, PR records, consent records)
+                                  formats, PR records, consent records, the orchestration's
+                                  measure file, gate, launcher line and ListAgents reading)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
@@ -35,7 +36,8 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
         │      plugins/orchestrator ◀── bugs-bot
-        └───── drift, github, implement, norms, orchestrator, pr-review, telemetry (a copy in core/)
+        └───── bugs-bot, drift, github, implement, norms, orchestrator, pr-review, statusbar,
+               telemetry (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
