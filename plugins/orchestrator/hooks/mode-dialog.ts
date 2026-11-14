@@ -1,5 +1,6 @@
 // hooks/mode-dialog.ts
-// The mode question, pure: whether a dialog call asks an orchestrator which mode it runs in.
+// The mode question, pure: whether a dialog call asks an orchestrator which mode it runs in; and
+// the refusal of any dialog from a session others wait on while a coordinator runs.
 // The rulebook says a session reads its mode from its argument or its brief and, with none,
 // asks it by the method's question format; a dialog in the session's own tab reaches neither the
 // coordinator's pane nor a `waiting:` line. guards.ts holds the $ that reads the session's role.
@@ -8,6 +9,10 @@ export const MODE_DIALOG_DENY = 'An orchestrator never asks its mode by dialog: 
   + '`Mode:` line of its brief, and a session with no mode anywhere asks it in the method\'s question format '
   + '(method:lifecycle, references/questions.md), as orchestrator:decide runs it, so the question reaches the '
   + 'coordinator\'s pane and the turn ends on its `waiting: operator — blocks: …` line.'
+
+export const WAITED_ON_DIALOG_DENY = 'A session others wait on never asks in a dialog (method:lifecycle, « Questions '
+  + 'to the operator »): a coordinator runs, so end your turn on the question in the method\'s format and its '
+  + '`waiting: operator — blocks: …` line; the round carries it to the pane, which records his choice.'
 
 // A dialog whose questions offer both modes: `build` and `investigate` in the options, the
 // question or the header naming a mode.
