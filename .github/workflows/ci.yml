@@ -4,13 +4,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # The night, 03:17 in Paris in winter, 04:17 in summer: every plugin on macOS.
+    - cron: '17 2 * * *'
 
 permissions:
   contents: read
 
+# A new push to a pull request replaces its run; a run of main or of the night is never cancelled.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   repository:
@@ -50,15 +54,20 @@ jobs:
         run: npm run marketplace -- --check
       - id: matrix
         name: plugin matrix
-        # A pull request runs Linux, for the plugins it changes; main runs every cell.
-        run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || '' }}
+        # What runs when is scripts/plugin-matrix.ts's: the pull request by its changes, main on
+        # Linux, the night on macOS.
+        run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || github.event_name == 'schedule' && '--nightly' || '--main' }}
 
   plugin:
     name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ matrix.shard && format(' (part {0})', matrix.shard) || '' }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
+    # Without the repository job's matrix (that job failed) the job would be skipped and the checks
+    # list would show its name unevaluated, as its raw expression. It runs
+    # instead, as the one cell without a suite, which is not a name the gate waits for.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.repository.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.repository.outputs.matrix || '{"include":[{"plugin":"no plugin suite","os":"ubuntu-latest","blocking":false}]}') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

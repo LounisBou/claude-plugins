@@ -11,15 +11,12 @@ from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
 from bugs_bot.project import PROJECT_FILE, Project, dump_project
 
-# The agent hands over at the project's gate_tokens on a window of GATE_FULL_WINDOW or more;
-# on a smaller one, at GATE_SMALL_WINDOW_SHARE of the window.
-GATE_FULL_WINDOW = 1_000_000
-GATE_SMALL_WINDOW_SHARE = 0.8
-# The orchestrator plugin's hooks module writes one JSON line per session at
-# <config dir>/claude-orchestrator/measure/<session id>.json; `gate --measure` reads it.
-# The config dir, never ORCHESTRATOR_STATE_DIR: that override governs only the roots the
-# module shares with surviving shell writers, and the measure file is the module's own
-# artifact — its readers resolve the config dir as its writer does.
+# The orchestration's contract, core's orchestration.ts, as the JSON `npm run core` writes it:
+# where the orchestrator module's measure file lies, and the gate's percentage of the window.
+# The measure file lies under the config dir, never ORCHESTRATOR_STATE_DIR: that override
+# governs only the roots the module shares with surviving shell writers.
+with open(Path(__file__).resolve().parent.parent / "core" / "orchestration.json", encoding="utf-8") as _fh:
+    CONTRACT = json.load(_fh)
 
 
 def _config_dir(env: Mapping[str, str]) -> Path:
@@ -37,7 +34,8 @@ def measure_path(env: Mapping[str, str]) -> Path | None:
     session = env.get("CLAUDE_CODE_SESSION_ID", "")
     if not session:
         return None
-    return _config_dir(env) / "claude-orchestrator" / "measure" / f"{session}.json"
+    measure_dir = CONTRACT["measure"]
+    return _config_dir(env) / measure_dir["module_dir"] / measure_dir["dir"] / f"{session}.json"
 
 
 def read_measure(path: Path) -> dict | None:
@@ -116,8 +114,9 @@ def cmd_gate(
         gate = set_to
     if measure_now:
         tokens, window = measure(env)
-    if window is not None and window < GATE_FULL_WINDOW:
-        gate = min(gate, int(window * GATE_SMALL_WINDOW_SHARE))
+    if window is not None:
+        # The orchestrator's rule: the smaller of the gate in tokens and its percentage of the window.
+        gate = min(gate, window * CONTRACT["gate"]["percent"] // 100)
     print(f"gate_tokens={gate}")
     if tokens is not None:
         print(f"context_tokens={tokens}")

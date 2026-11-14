@@ -172,13 +172,28 @@ esac
 
 echo "== context tokens against the gate =="
 
-# ctx_payload <session_name> <window size> <input> <cache creation> <cache read> <pct>
-# An empty session name leaves the field out of the payload.
+# The gate is the orchestrator's: its module writes it in the session's measure file, under the
+# config dir, and the bar reads it there. Each window size below has its session, whose measure
+# file holds the gate the orchestrator computes on that window.
+saved_config_dir=${CLAUDE_CONFIG_DIR-}
+export CLAUDE_CONFIG_DIR="$WORK/measured"
+# measure_file <session id> <gate tokens>
+measure_file() {
+  mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure"
+  printf '{"version":1,"context_tokens":1,"context_window":1,"context_percent":1,"model":"m","updated_at":"t","gate_tokens":%s}\n' "$2" \
+    > "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure/$1.json"
+}
+measure_file w1000000 300000
+measure_file w200000 160000
+
+# ctx_payload <session_name> <window size> <input> <cache creation> <cache read> <pct> [<session id>]
+# An empty session name leaves the field out of the payload. The session id is w<window size>
+# unless given.
 ctx_payload() {
   local name=""
   [ -n "$1" ] && name="\"session_name\":\"$1\","
-  printf '{%s"workspace":{"current_dir":"%s"},"context_window":{"used_percentage":%s,"context_window_size":%s,"current_usage":{"input_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}}' \
-    "$name" "$EMPTY_DIR" "$6" "$2" "$3" "$4" "$5"
+  printf '{%s"session_id":"%s","workspace":{"current_dir":"%s"},"context_window":{"used_percentage":%s,"context_window_size":%s,"current_usage":{"input_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}}' \
+    "$name" "${7:-w$2}" "$EMPTY_DIR" "$6" "$2" "$3" "$4" "$5"
 }
 CTX_ONLY=$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=0 SHOW_CONTEXT=1 SHOW_CONTEXT_TOKENS=1 \
   SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0)
@@ -222,27 +237,24 @@ check "200k window: the gate is 80% of the window" "$CTX_ONLY" \
   "$(ctx_payload 'Orch: small' 200000 1000 0 99000 50)" \
 "ctx: 50% · 100k/160k"
 
+measure_file tuned 250000
+check "the measure file's gate is shown as the orchestrator wrote it" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch: tuned' 1000000 1000 0 99000 10 tuned)" \
+"ctx: 10% · 100k/250k"
+measure_file halved 100000
+check "a gate of half a small window is shown as written" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch: small' 200000 1000 0 99000 50 halved)" \
+"ctx: 50% · 100k/100k"
 actual=$(ctx_payload 'Orch: tuned' 1000000 1000 0 99000 10 \
   | ORCHESTRATOR_CONTEXT_GATE_TOKENS=250000 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
-if [ "$actual" = "ctx: 10% · 100k/250k" ]; then
-  echo "  ok   ORCHESTRATOR_CONTEXT_GATE_TOKENS overrides the token gate"; pass=$((pass + 1))
+if [ "$actual" = "ctx: 10% · 100k/300k" ]; then
+  echo "  ok   the variables never move the gate the measure file holds"; pass=$((pass + 1))
 else
-  echo "  FAIL ORCHESTRATOR_CONTEXT_GATE_TOKENS overrides the token gate: got « $actual »"; fail=$((fail + 1))
+  echo "  FAIL the variables never move the gate the measure file holds: got « $actual »"; fail=$((fail + 1))
 fi
-actual=$(ctx_payload 'Orch: small' 200000 1000 0 99000 50 \
-  | ORCHESTRATOR_CONTEXT_GATE=50 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
-if [ "$actual" = "ctx: 50% · 100k/100k" ]; then
-  echo "  ok   ORCHESTRATOR_CONTEXT_GATE overrides the percentage gate"; pass=$((pass + 1))
-else
-  echo "  FAIL ORCHESTRATOR_CONTEXT_GATE overrides the percentage gate: got « $actual »"; fail=$((fail + 1))
-fi
-actual=$(ctx_payload 'Orch: big' 2000000 1000 0 99000 5 \
-  | ORCHESTRATOR_LARGE_WINDOW=3000000 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
-if [ "$actual" = "ctx: 5% · 100k/1600k" ]; then
-  echo "  ok   ORCHESTRATOR_LARGE_WINDOW moves the large-window threshold"; pass=$((pass + 1))
-else
-  echo "  FAIL ORCHESTRATOR_LARGE_WINDOW moves the large-window threshold: got « $actual »"; fail=$((fail + 1))
-fi
+check "an orchestration session with no measure file shows the tokens alone" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch: new' 1000000 4000 2603 290000 30 unmeasured)" \
+"ctx: 30% · 296k"
 
 check "under 1,000 tokens printed as is" "$CTX_ONLY" \
   "$(ctx_payload '' 200000 400 100 99 1)" \
@@ -271,6 +283,8 @@ ctx: 30%"
 check "the warning keeps its mark with the tokens" "$CTX_ONLY" \
   "$(ctx_payload 'Orch: full' 200000 1000 0 169000 85)" \
 "⚠ ctx: 85% · 170k/160k"
+
+if [ -n "$saved_config_dir" ]; then export CLAUDE_CONFIG_DIR="$saved_config_dir"; else unset CLAUDE_CONFIG_DIR; fi
 
 echo "== regression: consecutive empty fields =="
 
