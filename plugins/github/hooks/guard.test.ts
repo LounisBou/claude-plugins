@@ -2701,7 +2701,7 @@ test('a head whose commits cannot be fingerprinted (a merge in the pull request)
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual([
-    'github: acme/thing#12: no record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
+    'github: acme/thing#12: no review, norms record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
       + ' norms: no record at 0123456; e2e carried from abcdef0',
   ])
@@ -2728,7 +2728,7 @@ test('an earlier head whose commits cannot be fingerprinted carries nothing, and
     fingerprintFails: 'error: abcdef0 has fewer than 2 commits along its first parents',
   })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
     + ' error: abcdef0 has fewer than 2 commits along its first parents')
   expect(seen.logs[1]).toContain('Missing: review: no record at 0123456')
 })
@@ -2761,7 +2761,7 @@ test('the commit count a gate read finds at its head is kept for when it is an e
 test('an earlier head whose commit count was never read carries nothing of the kinds it holds, and says so', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD, OLD_DIR, null), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms, e2e record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms record carried to 0123456: abcdef0\'s commits cannot be fingerprinted:'
     + ' the pull request was never read at that head, its commit count is not known')
   expect(fingerprintRuns(seen)).toEqual([HEAD])
 })
@@ -2859,6 +2859,9 @@ const planOf = (e2e: Record<string, string>, norms: Record<string, string> = { n
 })
 const planCall = (plan: Record<string, unknown>, over: Record<string, unknown> = {}) =>
   ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', plan, ...over }) as any
+// The plan as the orchestrator's review tool sends it: a call from that plugin, its answer as text.
+const planned = async ($: any, plan: unknown) =>
+  JSON.parse(String((await $.command.run({ command: 'emit-verdict', args: JSON.stringify({ pr: 12, repo: 'acme/thing', plan }) })).text))
 const ONLY_REVIEW = Object.fromEntries([record('review', 'pass')])
 
 test('a pull request whose plan needs no E2E is Ready with no E2E record, its line naming the plan\'s reason', async ($, on) => {
@@ -2889,9 +2892,9 @@ for (const [label, w] of [
   })
 }
 
-test('the record tool writes the plan, posts it on the pull request, and the gate reads it at once', async ($, on) => {
+test('the record tool writes the plan, posts it on the pull request, and the gate reads it at once', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on, { records: TWO })
-  const out: any = await $.tool.call(planCall({ e2e: 'none: docs only', norms: 'required' }))
+  const out: any = await planned($, { e2e: 'none: docs only', norms: 'required' })
   expect(out.deny).toBeUndefined()
   expect(out.result).toContain('github: check plan of acme/thing#12: e2e none, norms required, review full')
   expect(out.result).toContain('Ready at 0123456')
@@ -2902,19 +2905,19 @@ test('the record tool writes the plan, posts it on the pull request, and the gat
   expect(recordRun(seen)).toBeUndefined()
 })
 
-test('a plan is refused when a need other than required gives no reason, or a need is unknown', async ($, on) => {
+test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
   for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'one-pass' }, []]) {
-    expect(((await $.tool.call(planCall(plan))) as any).deny).toContain('github: a check plan is')
+    expect((await planned($, plan)).deny).toContain('github: a check plan is')
   }
   expect(seen.files[PLAN]).toBeUndefined()
 })
 
-test('a new plan may require more, never lift a check the plan required', async ($, on) => {
+test('a new plan may require more, never lift a check the plan required', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on, { plan: planOf({ need: 'none', reason: 'docs only' }) })
-  const stricter: any = await $.tool.call(planCall({ e2e: 'required', norms: 'required' }))
+  const stricter: any = await planned($, { e2e: 'required', norms: 'required' })
   expect(stricter.deny).toBeUndefined()
-  const lifted: any = await $.tool.call(planCall({ e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' }))
+  const lifted: any = await planned($, { e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' })
   expect(lifted.deny).toContain('requires e2e and norms and review: only the operator\'s waiver lifts a required check')
   expect(JSON.parse(seen.files[PLAN]).e2e.need).toBe('required')
 })
@@ -2947,3 +2950,20 @@ test('the plan files are refused to Write and Bash', async ($, on) => {
   expect(((await $.tool.call({ tool: 'Write', file_path: PLAN, content: '{}' } as any)) as any).deny).toContain('a check plan through')
   expect(((await $.tool.call(bash('rm -rf "$CLAUDE_PLUGIN_DATA/check-plans/acme"'))) as any).deny).toContain('a check plan through')
 })
+
+// ---- who writes the plan ----
+
+test('a plan from the model itself, as an implementer would send it, is refused and writes nothing', async ($, on) => {
+  const seen = await world($, on)
+  const out: any = await $.tool.call(planCall({ e2e: 'none: docs only' }))
+  expect(out.deny).toBe('github: a check plan is written by mcp__orchestrator__review, from an orchestrator session.')
+  expect(seen.files[PLAN]).toBeUndefined()
+})
+
+for (const plugin of ['pr-review', 'norms', 'implement']) {
+  test('a plan from the ' + plugin + ' plugin is refused', reviewing(plugin), async ($, on) => {
+    const seen = await world($, on)
+    expect((await planned($, { e2e: 'none: docs only' })).deny).toContain('mcp__orchestrator__review')
+    expect(seen.files[PLAN]).toBeUndefined()
+  })
+}

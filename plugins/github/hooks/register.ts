@@ -11,7 +11,7 @@ import { ACCEPTANCE, DETAIL_MAX, KINDS, type PrRecord } from '../core/pr-record.
 import {
   covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, planExcuses, planInput, planPath, planText, relaxed, type CheckPlan, type Excused } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, planInput, planPath, planText, relaxed, type CheckPlan, type Excused } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -276,7 +276,8 @@ const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
 const EXEMPT_PATH = new RegExp('/' + GUARDED_DIRS + '(/|$)')
 const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
-  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}, and a check plan through {"pr": <n>, "plan": {…}}.'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words, dated>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
+export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 
 // What a guard's net refuses when the guard itself failed: only what the guard protects, judged
 // from the call alone (no state can be read once the hook has thrown); the rest goes through.
@@ -827,6 +828,11 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   const waiver = wanted.includes('e2e') && !unread ? durableWaiver(gate, found) : undefined
   // The waiver stands beside what the same diff carries, or alone.
   const withWaiver = (carried: Carried[]): Carried[] => (waiver && !carried.some((c) => c.kind === 'e2e') ? [...carried, waiver] : carried)
+  // A line on the kinds not carried leaves out the E2E the waiver stands for.
+  const uncarried = (reason: string, kinds: PrRecord['kind'][] = wanted) => {
+    const left = waiver ? kinds.filter((kind) => kind !== 'e2e') : kinds
+    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === KINDS.length ? undefined : left))
+  }
   const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
   for (const [head, records] of found) {
     const at = headLatest(gate, head, records)
@@ -838,14 +844,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   }
   if (!candidates.some((c) => c.latest.some(carries))) return withWaiver([])
   if (unread) {
-    note($, uncarriedLine(gate.repo, gate.pr, gate.head, unread))
+    uncarried(unread)
     return withWaiver([])
   }
   let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
   } catch (err: any) {
-    note($, uncarriedLine(gate.repo, gate.pr, gate.head, gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim()))
+    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim())
     return withWaiver([])
   }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
@@ -861,14 +867,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
     } catch (err: any) {
       const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
-      note($, uncarriedLine(gate.repo, gate.pr, gate.head, head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds))
+      uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds)
       continue
     }
     if (earlier.fingerprint !== current.fingerprint) continue
     if (unreadKinds.length > 0) {
       for (const kind of unreadKinds) blocked.add(kind)
       const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
-      note($, uncarriedLine(gate.repo, gate.pr, gate.head, files, unreadKinds))
+      uncarried(files, unreadKinds)
     }
     for (const record of latest) {
       const before = newest.get(record.kind)?.record
@@ -1841,7 +1847,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   }
   const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
   if (e.exempt !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
-  if (e.plan !== undefined) return owned === 'e2e' ? await setPlan($, e) : { deny: kindRefusal('e2e', origin, owned) }
+  if (e.plan !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
   const result = String(e.result ?? '')
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
@@ -2011,7 +2017,7 @@ export function register(on: any): void {
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
             plan: {
               type: 'object',
-              description: 'the check plan, in place of result: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first',
               properties: {
                 e2e: { type: 'string', description: 'required, none or screenshots' }, norms: { type: 'string', description: 'required or none' },
                 review: { type: 'string', description: 'full or one-pass (one review_only pass)' },

@@ -1,12 +1,14 @@
-// The check plan of a pull request: which proofs it owes, decided once when the work is scoped,
-// each one it does not owe with its reason. One file per pull request under the plugin's data
-// directory, kept across its heads. A pull request with no plan owes every proof, as before.
+// The check plan of a pull request: which proofs it owes, decided once when the work is scoped by
+// its orchestrator, each one it does not owe with its reason. One file per pull request under the
+// plugin's data directory, kept across its heads. A pull request with no plan owes every proof.
 // Pure functions only: register.ts reads and writes the file, and posts the plan on the pull request.
 
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
 import { isRepoName } from './e2e-scope.ts'
 
 export const PLAN_DIR = 'check-plans'
+// The plan's one writer: the orchestrator's tool, from an orchestrator session, never an implementer.
+export const PLAN_WRITER = { plugin: 'orchestrator', tool: 'mcp__orchestrator__review' } as const
 
 // What each planned check may need, the strictest first: a check left out of a plan needs it. E2E may be
 // replaced by desktop and mobile screenshots; a review may be one review_only pass, a depth the gate does not read.

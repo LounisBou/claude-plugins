@@ -133,13 +133,13 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 A pull request is ready when, at its current head commit, a review came out clean, CI is
 green, and each proof its check plan requires holds (REFERENCE.md « Records », all of them with no plan):
 the norms check with every finding fixed or passed, the E2E passed or waived by the
-operator in their dated words. A new commit makes it not ready until these hold again.
-A rebase that keeps its own commits keeps its records, a passed E2E apart.
+operator (method `lifecycle`). A new commit makes it not ready until these hold again,
+and a rebase that keeps its own commits keeps its records.
 
 The `Ready` and `Not Ready` labels carry that fact, and a draft opens `Not Ready`. The plugin
 puts `Ready` once they hold, `Not Ready` back on a push. When CI does not run on a draft,
-the plugin takes it out of draft, still `Not Ready`, and back once CI is green. It refuses
-`Ready`, leaving draft and a merge that are not ready, through its tool and the shell alike.
+the plugin takes it out of draft, still `Not Ready`, and back once CI is green. Only the gate
+puts `Ready`, and it refuses leaving draft and a merge that are not ready.
 
 ## Security update pull requests
 
