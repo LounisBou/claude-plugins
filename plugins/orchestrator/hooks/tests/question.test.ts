@@ -209,7 +209,7 @@ for (const [who, me] of [['an agent', ['agent', 'Agent: a1']], ['a session whose
 
 for (const role of ['orchestrator', 'auditor']) {
   test(`an ${role} asks as well, named as its row names it`, async () => {
-    const { dollar, files } = world({ me: [role, `${role === 'auditor' ? 'Audit' : 'Orch'}: acme [d4e5f6]`] })
+    const { dollar, files } = world({ me: [role, `${role === 'auditor' ? 'Audit' : 'Orch'}: acme [a1b2c3]`] })
     expect((await ask(dollar, FULL)).isError).toBeUndefined()
     expect(stored(files)[0].sender.role).toBe(role)
   })

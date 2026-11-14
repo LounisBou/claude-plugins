@@ -1,6 +1,6 @@
 // hooks/question.ts
-// The `ask` tool: a question to the operator made by one call, its fields flat (the host dropped a
-// nested one, claude-plugins#218), validated against the method's question format
+// The `ask` tool: a question to the operator made by one call, its fields flat (the host once dropped a
+// nested field), validated against the method's question format
 // (plugins/method/skills/lifecycle/references/questions.md) and stored as its own object in the
 // round, `round/<id>.json`, with a format version that tells it from the entries the relay writes
 // out of a turn's text (round.ts). The id is the module's, given at creation; each call is one
