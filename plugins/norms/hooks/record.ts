@@ -9,6 +9,7 @@
 import type { NormsScopeMark } from '../types/index.d.ts'
 import { endSkillCheck, spawned } from './guards.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
+import { agentText, noteReport, reportOf, reported, resetReports } from './findings.ts'
 
 export const CHECK_DONE_TOOL = 'mcp__norms__check_done'
 const GH_TOOL = 'mcp__github__gh'
@@ -19,7 +20,7 @@ export const CHECK_DONE_DESCRIPTION =
   '/norms:check\'s last act: record its outcome at the pull request\'s head commit, for the github '
   + 'plugin\'s ready guard. open = findings neither fixed nor passed, fixed = findings fixed, passed = '
   + 'findings passed; setAside = findings set aside, with their reason (they no longer count as open); auto = true in automatic mode. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
-  + 'Refused unless /norms:check computed its scope in this session.'
+  + 'Refused unless /norms:check computed its scope in this session and its agents reported their findings, which the figures must account for once each.'
 
 export const CHECK_DONE_SCHEMA = {
   type: 'object',
@@ -70,6 +71,8 @@ function warn($: any, line: string): void {
 // taken for the reviewed one.
 export async function markScope($: any, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
   const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
+  // A new check starts from no findings: the agents it runs report them again.
+  resetReports()
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, mark)
     fallback = undefined
@@ -83,6 +86,7 @@ export async function markScope($: any, head: string, files: readonly string[] =
 // session.end hook without a matcher.
 export async function clearMark($: any): Promise<void> {
   fallback = undefined
+  resetReports()
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, null)
   } catch {
@@ -216,6 +220,19 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
   // A point set aside keeps its reason in the record, in one line.
   const reason = typeof input?.reason === 'string' ? input.reason.replace(/\s+/g, ' ').trim() : ''
   if (setAside > 0 && reason === '') return { result: 'norms: findings set aside need their reason', isError: true }
+  // The pass is computed from what the agents reported: every finding is open, fixed, passed or set
+  // aside, once. Figures that leave one out, or invent one, are not the check's.
+  const known = reported()
+  if ('why' in known) return { result: `norms: ${known.why}`, isError: true }
+  const total = known.findings.length
+  if (open + fixed + passed + setAside !== total) {
+    return { result: `norms: the agents reported ${total} finding(s) and open + fixed + passed + setAside add up to ${open + fixed + passed + setAside}: every finding is open, fixed, passed or set aside, once`, isError: true }
+  }
+  // An automatic check has nobody to pass an ERROR: only WARNING and INFO findings are passed.
+  const blocking = known.findings.filter(f => f.severity === 'error').length
+  if (input?.auto === true && passed > total - blocking) {
+    return { result: `norms: an automatic check passes only WARNING and INFO findings: ${total - blocking} reported, ${passed} passed`, isError: true }
+  }
   try {
     // The repository the check read, not the one a later shell `cd` landed in.
     const dir = checked.dir ?? await repositoryDir($)
@@ -283,6 +300,27 @@ export function register(on: any): void {
       warn($, `norms: mcp__norms__check_done could not be registered, the report goes without a record line: ${String(err?.message ?? err).trim()}`)
     }
     return next(e)
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
+  // The findings of each norms agent, read from its answer. The hook never changes the call's input.
+  // An agent that fails, is launched in the background or answers without a readable block leaves
+  // its findings unknown; its answer reaches the session as it came, and it runs once.
+  on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
+    const type = String(e.subagent_type ?? '')
+    if (!type.startsWith('norms:')) return next(e)
+    let answer: any
+    try {
+      answer = await next(e)
+    } catch (err: any) {
+      noteReport(type, null)
+      return { result: String(err?.message ?? err), isError: true }
+    }
+    try {
+      noteReport(type, answer?.isError || answer?.deny ? null : reportOf(agentText(answer)))
+    } catch {
+      noteReport(type, null)
+    }
+    return answer
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: CHECK_DONE_TOOL }, async ($: any, e: any) => {

@@ -87,35 +87,18 @@ check "no reference to the retired shell tool" "" \
 check "no project-local skill path" "" \
   "$(grep -rl '\.claude/skills/github-curl' "$ROOT/commands" 2>/dev/null)"
 
-echo "== github resolver =="
-
-RESOLVE="$ROOT/scripts/resolve_github.py"
-
-mkdir -p "$WORK/override"
-check "CLAUDE_GITHUB_ROOT wins" "$WORK/override" \
-  "$(CLAUDE_GITHUB_ROOT="$WORK/override" python3 "$RESOLVE" 2>&1)"
-
-# A non-empty override that names nothing on disk is a misconfiguration, not a
-# resolution. Returned as-is it satisfies the caller's `|| exit 1`, and the run
-# fails later, somewhere further from the cause.
-bad_override=$(CLAUDE_GITHUB_ROOT=/nonexistent/garbage python3 "$RESOLVE" 2>&1)
-bad_code=$?
-check "a nonexistent override exits 1 naming the path" "1 named" \
-  "$bad_code $(printf '%s' "$bad_override" | grep -q '^error:.*/nonexistent/garbage' && echo named || echo unnamed)"
-
-printf '{"version":2,"plugins":{}}' > "$WORK/none.json"
-# -u CLAUDE_GITHUB_ROOT: the suite is run with that override set, and the
-# override outranks the state file. Left in place it would mask the very
-# absence this asserts, and the check would pass without testing anything.
-check_status "missing dependency exits 1" 1 \
-  env -u CLAUDE_GITHUB_ROOT CLAUDE_PLUGIN_STATE="$WORK/none.json" python3 "$RESOLVE"
+# The github plugin owns locating itself: a second copy of its locator here is the defect.
+check "no copy of the github locator" "absent" \
+  "$([ -e "$ROOT/scripts/resolve_github.py" ] && echo present || echo absent)"
 
 echo "== learn calls only what exists =="
 
-GHDIR="$(CLAUDE_GITHUB_ROOT="${CLAUDE_GITHUB_ROOT:-}" python3 "$RESOLVE" 2>/dev/null)/engine"
+# The github plugin this suite checks the commands against: CLAUDE_GITHUB_ROOT, else its sibling
+# directory in the repository.
+GHDIR="${CLAUDE_GITHUB_ROOT:-$ROOT/../github}/engine"
 if [ ! -f "$GHDIR/gh.py" ]; then
-  printf '  FAIL contract test cannot run: github plugin not resolved\n'
-  printf '       fix: /plugin install github@lounisbou, or set CLAUDE_GITHUB_ROOT\n'
+  printf '  FAIL contract test cannot run: github plugin not found at %s\n' "$GHDIR"
+  printf '       fix: set CLAUDE_GITHUB_ROOT to a checkout of the github plugin\n'
   fail=$((fail + 1))
 else
   phantom=$(python3 - "$GHDIR" "$ROOT" <<'PYREV'
@@ -135,7 +118,11 @@ for name in ("check", "learn"):
         m = re.search(r'python3\s+(?:"\$GH"|\$GH|"\$\{GH\}"|\$\{GH\})\s+([a-z][a-z0-9-]+)', line)
         if m and m.group(1) not in subs:
             bad.append("%s:%d subcommand %s" % (name, i, m.group(1)))
-        for f in re.finditer(r'--format\s+([a-z][a-z0-9-]+)', line):
+        # The tool's own spelling: command `pr-threads`.
+        for t in re.finditer(r'command `([a-z][a-z0-9-]+)`', line):
+            if t.group(1) not in subs:
+                bad.append("%s:%d subcommand %s" % (name, i, t.group(1)))
+        for f in re.finditer(r'(?:--format\s+|`format` `)([a-z][a-z0-9-]+)', line):
             if f.group(1) not in fmts:
                 bad.append("%s:%d format %s" % (name, i, f.group(1)))
 print(" ".join(bad))
