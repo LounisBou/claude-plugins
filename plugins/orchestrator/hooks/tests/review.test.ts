@@ -61,7 +61,7 @@ test('an orchestrator\'s acceptance is written through github\'s record tool, ea
     detail: 'set aside: a.ts:3 — naming only; b.ts — out of the phase\'s scope',
   }])
   // The verdict is a review round: the answer also says that no dispatch-record row named the pull request.
-  expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/thing#128, none raised` })
+  expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128` })
 })
 
 for (const verdict of ['pass', 'fail']) {

@@ -108,7 +108,7 @@ test('no row naming the pull request: the verdict stands, nothing is raised, and
   const fx = fake({ rows: [line({ id: 1, label: 'acme/app#13' }), line({ id: 2, label: 'a label naming none' })].join('\n') + '\n' })
   const before = fx.files.get(RECORD)
   const out = await handler()(fx.dollar, VERDICT)
-  expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/app#12, none raised` })
+  expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/app#12, none raised: open its row with a label naming acme/app#12` })
   expect(out.isError).toBeUndefined()
   expect(fx.files.get(RECORD)).toBe(before)
   expect(fx.calls.length).toBe(1)
@@ -117,7 +117,7 @@ test('no row naming the pull request: the verdict stands, nothing is raised, and
 test('no record at all: the same line, and the verdict stands', async () => {
   const fx = fake()
   fx.files.delete(`${STATE}/records/s-orch`)
-  expect(await handler()(fx.dollar, VERDICT)).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/app#12, none raised` })
+  expect(await handler()(fx.dollar, VERDICT)).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/app#12, none raised: open its row with a label naming acme/app#12` })
 })
 
 test('a closed row whose verdict names the pull request is counted when no open row does', async () => {

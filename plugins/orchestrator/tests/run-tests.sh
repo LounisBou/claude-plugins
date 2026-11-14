@@ -621,6 +621,10 @@ check "the phase brief template reads « under load » as emulated throttling" "
 # The orchestrator writes no guard, not even over its own directives (the freeze of 2026-11-14).
 check "the directives rule lives in the briefs reference, and the orchestrator writes no guard" "yes|no" \
   "$(spells "$ORCH_REFS/directives.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/directives.md" 'the one instrument you may write yourself')"
+# The review verdict counts its round on the row whose label names the pull request: both open lines
+# ask for the reference, and `round` is for a manual round, never beside a verdict.
+check "the record's open lines ask for the pull request in the label, and round is manual only" "yes|yes|yes|yes" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" '--explore] --label "<what> <repo>#<n>"')|$(spells "$ROOT/skills/model-routing/SKILL.md" '--tier <t> --label "<what> <repo>#<n>"')|$(spells "$ROOT/skills/model-routing/SKILL.md" '# a manual round only, never beside a verdict')|$(spells "$ORCH_REFS/review-verdict.md" '`round`: manual only, never with a verdict;')"
 check "the rounds rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review-thresholds.md" '**The check plan'"'"'s `review` max sets the rounds (github `check-plan.ts`), each a review round then a correction round, and you close it.**')|$(spells "$ORCH_REFS/review-thresholds.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review-comments.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in

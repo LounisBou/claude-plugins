@@ -77,7 +77,7 @@ export async function countRound($: any, input: { pr: number; repo: string; dir?
     }
     const open = found.filter(row => row.open)
     const matched = open.length > 0 ? open : found
-    if (matched.length === 0) return `rounds: no dispatch-record row names ${ref}, none raised`
+    if (matched.length === 0) return `rounds: no dispatch-record row names ${ref}, none raised: open its row with a label naming ${ref}`
     const [row, ...others] = matched
     if (row === undefined || others.length > 0) return `rounds: none raised, rows ${matched.map(m => m.id).join(', ')} all name ${ref}`
     let raised = 0
