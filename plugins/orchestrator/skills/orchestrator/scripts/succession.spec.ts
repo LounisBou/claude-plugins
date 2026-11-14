@@ -257,3 +257,16 @@ test('a check that finds the brief lost part of the state is a method failure in
   assert.equal(main(['check', w.brief, ...named], env, io, () => new Date(), journal), 0)
   assert.deepEqual(events, [])
 })
+
+test('live moves a ruling for rows the dispatch record closed, and keeps one for a row still open', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, [
+    '- 2026-11-12T10:00:00Z « A » → the schema. [for: row 1]',
+    '- 2026-11-12T11:00:00Z « B » → the api. [for: rows 1, 2]', '',
+  ].join('\n'))
+  writeFileSync(w.brief, w.read().replaceAll('{{RULINGS_FILE}}', rulings).replaceAll('{{STATE_FILE}}', 'none'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.at(-1) ?? '', / pruned=rulings:1,state:0,round:0 /)
+  assert.ok(readFileSync(rulings, 'utf8').includes('the api') && !readFileSync(rulings, 'utf8').includes('the schema'))
+})

@@ -332,7 +332,9 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
   }
   writeAtomic(request.brief, written)
   const files = prunedFilesOf(written, env['HOME'] ?? '')
-  const rulings = prune(files.rulings, pruneRulings, now(), io)
+  // A ruling for rows all closed in the dispatch record is carried out: it moves as a `done` one.
+  const closed = new Set(parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'closed').map(row => Number(row['id'])))
+  const rulings = prune(files.rulings, (text, archive) => pruneRulings(text, archive, closed), now(), io)
   const state = prune(files.state, pruneState, now(), io)
   const round = archiveRound(stateRoot(env), now(), io)
   // Before: the rulings file read whole. After: the part a takeover reads, its entries for one open item left out.

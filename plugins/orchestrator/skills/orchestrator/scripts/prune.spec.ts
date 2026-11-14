@@ -144,3 +144,20 @@ test('a ruling for one open item stays in the file and is left out of what a tak
   assert.equal(readAtTakeover(text), text.replace('- 2026-11-09T10:00:00Z « A » → a last correction of acme/app#12, then its review. [for: acme/app#12]\n', ''))
   assert.equal(readAtTakeover(text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, '')), text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, ''))
 })
+
+test('a ruling for rows all closed in the dispatch record moves as a carried-out one; one with a row open or no row number stays', () => {
+  const text = [
+    '- 2026-11-14T10:00:00Z « A » → one row. [for: QREDESIGN (row 172)]',
+    '- 2026-11-14T10:01:00Z « B » → a span. [for: rows 38–40]',
+    '- 2026-11-14T10:02:00Z « C » → a list. [for: rows 98, 121 and 135]',
+    '- 2026-11-14T10:03:00Z « D » → one still open. [for: rows 143, 144]',
+    '- 2026-11-14T10:04:00Z « E » → no number. [for: release 3]',
+    '- 2026-11-14T10:05:00Z « F » → a pull request. [for: acme/app#14]',
+    '- 2026-11-14T10:06:00Z « G » → a row the record lacks. [for: row 999]',
+    '',
+  ].join('\n')
+  const closed = new Set([172, 38, 39, 40, 98, 121, 135, 143])
+  assert.deepEqual(pruneRulings(text, '', closed).moved.map(entry => entry.slice(23, 26)), ['« A', '« B', '« C'])
+  assert.deepEqual(pruneRulings(text, '').moved, [])
+  assert.deepEqual(pruneRulings(text, '', new Set([38, 40])).moved.map(entry => entry.slice(23, 26)), [])
+})
