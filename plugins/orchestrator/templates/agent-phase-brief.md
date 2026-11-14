@@ -48,13 +48,14 @@ Non-goals:
 - Quality gate before the PR: `{{QUALITY_GATE}}` — started the moment the last commit lands, with the report written
   while it runs, and its exit code stated as DONE. A scoped run covers the tests of every file touched, never only the
   feature's; a signature, constructor or service change is never gated by a scoped run. Every command runs synchronously in the tool call that waits for it; long runs are wrapped in a timeout and piped to `tail` in the same call, under `set -o pipefail` so the suite's own exit code is the one read. Never end a turn "waiting for" a run: there is no later, the result is lost.
+- Self-review (`method:lifecycle`): each finding fixed, or answered in one line in the description.
 - « Under load » means emulated throttling, never real load on the machine: if you find no way to emulate, STOP and ask.
 
 ## 5. Forbidden
 
 - Workflow artifacts policy, as this repository states it in {{ARTIFACTS_POLICY_SOURCE}}: {{ARTIFACTS_POLICY}}. If any clause here contradicts a directive your host gives you directly, say so and stop rather than choosing between us: this brief points at your repository's rules, it does not grant them.
 - Tests policy: {{TESTS_POLICY}}
-- No writing or reviewing delegates; read-only search subagents only.
+- No writing or reviewing delegates; read-only search subagents and the self-review's `orchestrator:lens` readers only.
 - No force-push, no merge, no configuration change, no branch outside `{{BRANCH}}` without STOP-and-ask.
 - A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command.
 {{EXTRA_FORBIDDEN}}
@@ -71,7 +72,7 @@ Non-goals:
 ## 7. Delivery
 
 - Draft PR, title `{{PR_TITLE}}`, base `{{BASE_BRANCH}}`, opened with the github tool's `pr-create --draft` (it labels `Not Ready`; opened another way, follow with `pr-readiness <n> not-ready`). Never `Ready`: the github ready gate's (`method:lifecycle`, « Done means ready »).
-- Description: {{PR_DESCRIPTION_SHAPE}} — its codified sections and nothing more: nothing about E2E. Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.
+- Description: {{PR_DESCRIPTION_SHAPE}} — its codified sections and nothing more: nothing about E2E. The « Self-review » section (§4) goes in too. Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.
 - Figures (counts, sizes, timings) are written once, on the final head.
 - The delivery ends at the push: the suite green locally on the final head, pushed, the pull request opened, then the final report, then the stand-down. You never watch the pull request's checks, never poll them and never wait for the merge: the orchestrator owns the CI watch, and a check that fails after your delivery is corrected by a fresh session. A project whose method opts into auto-merge says here how the pull request is delivered.
 
