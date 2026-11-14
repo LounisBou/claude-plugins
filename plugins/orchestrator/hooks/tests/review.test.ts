@@ -5,7 +5,7 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR, register as registerReview } from '../review.ts'
+import { NOT_ORCHESTRATOR, findingsOf, register as registerReview } from '../review.ts'
 import { PLAN_NEEDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 
@@ -151,3 +151,41 @@ test('the plan\'s schema names the needs core\'s readiness contract gives each c
   const plan = registered.find((t) => t.name === 'review').inputSchema.properties.plan.properties
   for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
 })
+
+// ---- each finding's decision: kept for the correction round, or set aside with its reason ----
+
+test('a fail keeps the findings the correction round fixes, and may set others aside with their reasons, written in its line', async () => {
+  const fx = fake('Orch: belt')
+  const out = await handler()(fx.dollar, {
+    pr: 128, verdict: 'fail', detail: 'two to fix',
+    kept: [{ point: 'a.ts:3 the guard fails open', file: 'a.ts', line: 3, severity: 'critical' }, { point: 'b.ts: no test' }],
+    set_asides: [{ point: 'c.ts naming', reason: 'naming only', severity: 'minor' }],
+  })
+  expect(out).toEqual({ result: 'written' })
+  expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 128, kind: 'review', result: 'fail', detail: 'two to fix; set aside: c.ts naming — naming only' }])
+})
+
+test('the findings of a verdict, each with the orchestrator\'s decision, its file, line and severity when given', () => {
+  expect(findingsOf({ verdict: 'accepted', set_asides: [{ point: 'x', reason: 'y', file: 'src/x.ts', line: 4, severity: 'important' }] }))
+    .toEqual([{ decision: 'set-aside', file: 'src/x.ts', line: 4, severity: 'important' }])
+  expect(findingsOf({ verdict: 'fail', kept: [{ point: 'x' }] })).toEqual([{ decision: 'kept', file: null, line: null, severity: null }])
+  expect(findingsOf({ verdict: 'pass' })).toEqual([])
+})
+
+for (const [label, change] of [
+  ['kept findings on a pass', { verdict: 'pass', kept: [{ point: 'a.ts' }] }],
+  ['kept findings on an acceptance', { kept: [{ point: 'a.ts' }] }],
+  ['a kept finding without its point', { verdict: 'fail', kept: [{ point: ' ' }] }],
+  ['kept findings that are no list', { verdict: 'fail', kept: 'a.ts' }],
+  ['a severity of no scale', { verdict: 'fail', kept: [{ point: 'a.ts', severity: 'blocker' }] }],
+  ['a line that is no line', { verdict: 'fail', kept: [{ point: 'a.ts', line: 0 }] }],
+  ['a file that is no string', { verdict: 'fail', kept: [{ point: 'a.ts', file: 3 }] }],
+  ['a fail\'s point set aside without its reason', { verdict: 'fail', set_asides: [{ point: 'a.ts', reason: '' }] }],
+] as const) {
+  test(`a verdict with ${label} is refused and calls nothing`, async () => {
+    const fx = fake('Orch: belt')
+    const out = await handler()(fx.dollar, { ...ACCEPTED, ...change })
+    expect(out.isError).toBe(true)
+    expect(fx.calls).toEqual([])
+  })
+}

@@ -3250,6 +3250,21 @@ check "no Caddyfile or copy of it holds the envfile's token" "" \
   "$(grep -lF "$CADDY_TOKEN" "$CADDYFILE" "$CADDYFILE".bak-* 2>/dev/null)"
 check "the engine prints no traceback" "0" "$(grep -c 'Traceback' "$CAPTURED")"
 
+echo "== the documented sudoers rule =="
+
+# SETENV is sticky in a sudoers line: it covers every command after it. The engine keeps the
+# envfile's variables (--preserve-env) on caddy calls only; cat and tee run without any.
+setenv_scope=$(python3 - "$ROOT/README.md" <<'PYSUDO'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+rule = re.search(r"^deploy ALL=.*?(?=^" + chr(96) * 3 + ")", text, re.S | re.M).group(0).replace("\\\n", " ")
+rule = re.sub(r"\s+", " ", rule)
+head, tail = rule.split("SETENV:", 1)
+print("before:" + " ".join(re.findall(r"/usr/bin/(\w+)", head)) + " after:" + " ".join(sorted(set(re.findall(r"/usr/bin/(\w+)", tail)))))
+PYSUDO
+)
+check "the README's sudoers rule gives SETENV to caddy alone, never to cat or tee" "before:cat tee after:caddy" "$setenv_scope"
+
 echo "== the mod and the engine agree =="
 
 # The mod's lists are static; they must name exactly the engine's commands,

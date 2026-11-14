@@ -1,0 +1,96 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 2,
+  "kinds": [
+    "link",
+    "step",
+    "review",
+    "decision",
+    "wait",
+    "failure"
+  ],
+  "steps": [
+    "implement",
+    "review",
+    "correction",
+    "ci-wait",
+    "merge"
+  ],
+  "edges": [
+    "start",
+    "end"
+  ],
+  "verdicts": [
+    "pass",
+    "fail",
+    "accepted"
+  ],
+  "decisions": [
+    "kept",
+    "set-aside"
+  ],
+  "finding_severities": [
+    "critical",
+    "important",
+    "minor"
+  ],
+  "waits": [
+    "operator",
+    "tool",
+    "done",
+    "deferred"
+  ],
+  "wait_on": [
+    "operator",
+    "tool"
+  ],
+  "failures": [
+    "fix-after-merge",
+    "verdict-overridden",
+    "succession-lost-state"
+  ],
+  "prs_max": 8,
+  "facts": {
+    "link": [
+      "record",
+      "row",
+      "session",
+      "goal",
+      "prs"
+    ],
+    "step": [
+      "step",
+      "edge",
+      "record",
+      "row",
+      "result"
+    ],
+    "review": [
+      "verdict",
+      "kept",
+      "set_aside"
+    ],
+    "decision": [
+      "decision",
+      "severity",
+      "file",
+      "line"
+    ],
+    "wait": [
+      "wait",
+      "edge",
+      "span",
+      "on"
+    ],
+    "failure": [
+      "failure",
+      "count",
+      "prs"
+    ]
+  },
+  "patterns": {
+    "goal": "^G[0-9]{1,4}$",
+    "result": "^[a-z][a-z-]{0,31}$",
+    "pr_ref": "^(?:[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+#[1-9][0-9]*$"
+  }
+}

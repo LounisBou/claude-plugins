@@ -1,10 +1,12 @@
 import { strict as assert } from 'node:assert'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { countShots, groupBy, keyOf, main, nextId, openLine, orchForm, order, parseId, parseRecord, sessionOrchestration, stateRoot, summaryLines, text, withoutCode, type Deps } from './dispatch-record.ts'
 import type { Ran } from './lib/process.ts'
+import { scriptJournal } from './lib/audit.ts'
+import { parseJournalEvent } from '../../../core/learning.ts'
 
 let dir = ''
 // The real path: the script resolves its record's, and macOS's temporary directory is a link.
@@ -382,4 +384,94 @@ test('the owner: claimed by the first write, refused to another orchestration, g
   writeFileSync(join(dir, 'state', 'records', 's1.lock'), '')
   writeFileSync(join(dir, 'blocked'), '')
   assert.equal(await cli(['round', r, '1'], deps({ CLAUDE_CODE_SESSION_ID: 's1', ORCHESTRATOR_STATE_DIR: join(dir, 'blocked') })), '0||')
+})
+
+// ----- the audit trail: each write leaves its fact in the journal, never its words -----
+
+function journaled(env: Record<string, string> = {}, answers: Answers = {}): Deps & World & { events: Record<string, unknown>[] } {
+  const events: Record<string, unknown>[] = []
+  return { ...deps({ CLAUDE_CODE_SESSION_ID: 'orch-1', ...env }, answers), journal: event => { events.push(event as unknown as Record<string, unknown>) }, events }
+}
+
+const factsOf = (events: readonly Record<string, unknown>[]) =>
+  events.map(e => [e['kind'], (e['source'] as { code: string }).code, e['fact'] ?? e['evidence'], e['subject']])
+
+test('a row\'s life is written to the journal: each step with its time, its record and its row', async () => {
+  await withGoals()
+  const d = journaled()
+  const head = 'b'.repeat(40)
+  assert.equal(await cli(['open', rec(), '--class', 'feature', '--tier', 'deep', '--label', 'A: the secret label (G1)'], d), '0|1\n|')
+  await cli(['review', rec(), '1', '--head', head], d)
+  await cli(['round', rec(), '1'], d)
+  await cli(['fixed', rec(), '1', '--head', 'c'.repeat(7)], d)
+  const record = 'p/r.jsonl'
+  const none = { repo: null, pr: null, head: null }
+  assert.deepEqual(factsOf(d.events), [
+    ['step', 'orchestrator.dispatch.open', { step: 'implement', edge: 'start', record, row: 1, result: null }, none],
+    ['step', 'orchestrator.dispatch.review', { step: 'review', edge: 'end', record, row: 1, result: null }, { ...none, head }],
+    ['step', 'orchestrator.dispatch.round', { step: 'correction', edge: 'start', record, row: 1, result: null }, none],
+    ['step', 'orchestrator.dispatch.fixed', { step: 'correction', edge: 'end', record, row: 1, result: null }, none],
+  ])
+  for (const event of d.events) {
+    assert.equal(event['at'], '2026-11-08T10:11:12Z')
+    assert.equal((event['context'] as { session: string }).session, 'orch-1')
+    assert.ok(parseJournalEvent(event), JSON.stringify(event))
+  }
+  assert.ok(!JSON.stringify(d.events).includes('secret'))
+})
+
+test('a row is linked to the sessions that worked it, its pull request and the goals it met, by names alone', async () => {
+  await withGoals()
+  const d = journaled({}, { body: '![shot](https://x/y.png)' })
+  await cli(['open', rec(), '--class', 'feature', '--tier', 'deep'], d)
+  d.events.length = 0
+  await cli(['cost', rec(), '1', '--session', 'agent-7'], d)
+  await cli(['surface', rec(), '1', '--ui', 'acme/thing#12'], d)
+  await cli(['close', rec(), '1', '--verdict', 'thing#12 merged 87586ec, the operator said « fine »'], d)
+  await cli(['goals', rec(), 'met', 'G2', '--evidence', 'commit:abc1234', '--evidence', 'acme/thing#12'], d)
+  const record = 'p/r.jsonl'
+  const link = (fact: Record<string, unknown>) => ({ record, row: 1, session: null, goal: null, prs: [], ...fact })
+  const none = { repo: null, pr: null, head: null }
+  assert.deepEqual(factsOf(d.events), [
+    ['link', 'orchestrator.dispatch.cost', link({ session: 'agent-7' }), none],
+    ['link', 'orchestrator.dispatch.surface', link({}), { ...none, repo: 'acme/thing', pr: 12 }],
+    ['link', 'orchestrator.dispatch.close', link({ prs: ['thing#12'] }), none],
+    ['link', 'orchestrator.goals.met', link({ row: null, goal: 'G2', prs: ['acme/thing#12'] }), none],
+  ])
+  assert.ok(!JSON.stringify(d.events).includes('fine'))
+})
+
+test('an escape is the version 1 event the record points at; a refused write and a read leave nothing', async () => {
+  await withGoals()
+  const d = journaled()
+  await cli(['open', rec(), '--class', 'feature', '--tier', 'deep'], d)
+  d.events.length = 0
+  await cli(['escaped', rec(), '1'], d)
+  assert.deepEqual(factsOf(d.events), [['escape', 'orchestrator.dispatch.escaped', [{ type: 'record', path: 'p/r.jsonl' }], { repo: null, pr: null, head: null }]])
+  assert.equal(d.events[0]?.['v'], 1)
+  d.events.length = 0
+  assert.match(await cli(['review', rec(), '9', '--head', 'abc1234'], d), /^1\|/)
+  await cli(['summary', rec()], d)
+  await cli(['goals', rec(), 'met', 'G1', '--evidence', 'x#1'], journaled({}, { goals: 1 }))
+  assert.deepEqual(d.events, [])
+})
+
+test('the record is named under the configuration directory when it lies there', async () => {
+  const d = journaled()
+  const inCfg = join(dir, 'cfg', 'claude-orchestrator', 'briefs', 'proj', 'dispatch.jsonl')
+  mkdirSync(dirname(inCfg), { recursive: true })
+  writeFileSync(join(dirname(inCfg), 'goals.md'), '# Goals\n')
+  await cli(['open', inCfg, '--class', 'feature', '--tier', 'deep'], d)
+  assert.equal((d.events[0]?.['fact'] as { record: string }).record, 'claude-orchestrator/briefs/proj/dispatch.jsonl')
+})
+
+test('a journal that cannot be written is said, and the command stands', async () => {
+  await withGoals()
+  writeFileSync(join(dir, 'cfg-file'), 'not a directory')
+  const d = deps({ CLAUDE_CONFIG_DIR: join(dir, 'cfg-file') })
+  const journal = scriptJournal({ CLAUDE_CONFIG_DIR: join(dir, 'cfg-file') }, d.now, line => d.err.push(`${line}\n`))
+  const out = await main(['open', rec(), '--class', 'feature', '--tier', 'deep'], { ...d, journal })
+  assert.equal(out, 0)
+  assert.equal(rows().length, 1)
+  assert.match(d.err.join(''), /audit: the journal could not be written/)
 })

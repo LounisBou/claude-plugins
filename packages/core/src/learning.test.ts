@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DATA_FILES } from './data.ts'
 import {
-  eventId, journalDir, JOURNAL_MAX_AGE_DAYS, JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION,
-  LEARNING_WINDOW_DAYS, parseLearningEvent, prunable,
+  AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, eventId, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
+  JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
+  parseJournalEvent, parseLearningEvent, prRefsOf, prunable,
 } from './learning.ts'
 
 const AT = '2026-11-14T10:15:00Z'
@@ -178,5 +179,131 @@ describe('the contract for the other languages', () => {
   it('is written as learning.json, whole, for a writer in Python', () => {
     assert.equal(DATA_FILES['learning.json'], LEARNING_CONTRACT)
     assert.deepEqual(JSON.parse(JSON.stringify(LEARNING_CONTRACT)), LEARNING_CONTRACT)
+  })
+})
+
+describe('the audit event, version 2 of the contract', () => {
+  const STEP = {
+    v: 2,
+    id: '20261114T101500Z-0a1b2c3d',
+    at: AT,
+    kind: 'step',
+    source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.open' },
+    subject: { repo: null, pr: null, head: null },
+    context: { role: 'orchestrator', mode: null, paths: [], languages: [], session: 'abc-123' },
+    evidence: [],
+    trust: 'computed',
+    fact: { step: 'implement', edge: 'start', record: 'claude-orchestrator/briefs/p/dispatch.jsonl', row: 3, result: null },
+  }
+  const audit = (change: Record<string, unknown>) => parseAuditEvent({ ...STEP, ...change })
+
+  it('reads an event of each kind with its fact, whole', () => {
+    assert.deepEqual(parseAuditEvent(STEP), STEP)
+    const facts: Record<string, unknown> = {
+      link: { record: null, row: 3, session: 'agent-9', goal: 'G2', prs: ['claude-plugins#182', 'owner/name#7'] },
+      step: { step: 'ci-wait', edge: 'end', record: null, row: null, result: 'green' },
+      review: { verdict: 'accepted', kept: 0, set_aside: 2 },
+      decision: { decision: 'set-aside', severity: 'minor', file: 'plugins/a/hooks/b.ts', line: 12 },
+      wait: { wait: 'operator', edge: 'end', span: '20261114T101400Z-00000000', on: 'operator' },
+      failure: { failure: 'fix-after-merge', count: null, prs: ['claude-plugins#180'] },
+    }
+    for (const kind of AUDIT_KINDS) {
+      const event = { ...STEP, kind, fact: facts[kind] }
+      assert.deepEqual(parseAuditEvent(event), event, kind)
+    }
+    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure'])
+    assert.equal(AUDIT_VERSION, 2)
+  })
+
+  it('reads a fact whose every field is unknown, as null', () => {
+    assert.ok(audit({ kind: 'link', fact: { record: null, row: null, session: null, goal: null, prs: [] } }))
+    assert.ok(audit({ kind: 'decision', fact: { decision: 'kept', severity: null, file: null, line: null } }))
+    assert.ok(audit({ kind: 'wait', fact: { wait: 'done', edge: 'start', span: null, on: null } }))
+  })
+
+  it('refuses a fact that is not its kind\'s, or breaks a field of it', () => {
+    const broken: Record<string, unknown>[] = [
+      { v: 1 }, { kind: 'refusal' }, { kind: 'success' }, { fact: null }, { fact: undefined },
+      { kind: 'review', fact: STEP.fact },
+      { fact: { ...STEP.fact, step: 'deploy' } }, { fact: { ...STEP.fact, edge: 'middle' } }, { fact: { ...STEP.fact, row: 0 } },
+      { fact: { ...STEP.fact, record: '/abs/path.jsonl' } }, { fact: { ...STEP.fact, result: 'Green light' } },
+      { kind: 'review', fact: { verdict: 'waived', kept: 0, set_aside: 0 } }, { kind: 'review', fact: { verdict: 'pass', kept: -1, set_aside: 0 } },
+      { kind: 'decision', fact: { decision: 'ignored', severity: null, file: null, line: null } },
+      { kind: 'decision', fact: { decision: 'kept', severity: 'nit', file: null, line: null } },
+      { kind: 'link', fact: { record: null, row: null, session: 'two words', goal: null, prs: [] } },
+      { kind: 'link', fact: { record: null, row: null, session: null, goal: 'goal two', prs: [] } },
+      { kind: 'link', fact: { record: null, row: null, session: null, goal: null, prs: ['#12'] } },
+      { kind: 'link', fact: { record: null, row: null, session: null, goal: null, prs: Array.from({ length: 9 }, (_, i) => `r#${i + 1}`) } },
+      { kind: 'wait', fact: { wait: 'operator', edge: 'end', span: 'x', on: 'operator' } },
+      { kind: 'wait', fact: { wait: 'operator', edge: 'end', span: null, on: 'agent' } },
+      { kind: 'failure', fact: { failure: 'flaky', count: null, prs: [] } }, { kind: 'failure', fact: { failure: 'succession-lost-state', count: 1.5, prs: [] } },
+    ]
+    for (const change of broken) assert.equal(audit(change), undefined, JSON.stringify(change))
+  })
+
+  it('refuses words in a fact: a summary, a reason, a command line', () => {
+    const extra: Record<string, unknown>[] = [
+      { fact: { ...STEP.fact, summary: 'a finding\'s words' } },
+      { kind: 'decision', fact: { decision: 'set-aside', severity: null, file: null, line: null, reason: 'naming only' } },
+      { kind: 'decision', fact: { decision: 'set-aside', severity: null, file: 'a.ts — naming only', line: null } },
+      { kind: 'wait', fact: { wait: 'tool', edge: 'start', span: null, on: 'tool', blocks: 'ci-watch.sh 7' } },
+      { command: 'git push' },
+    ]
+    for (const change of extra) assert.equal(audit(change), undefined, JSON.stringify(change))
+  })
+
+  it('is read beside version 1, each by its own version', () => {
+    assert.deepEqual(parseJournalEvent(EVENT), EVENT)
+    assert.deepEqual(parseJournalEvent(STEP), STEP)
+    assert.equal(parseLearningEvent(STEP), undefined)
+    assert.equal(parseAuditEvent(EVENT), undefined)
+    assert.equal(parseJournalEvent({ ...STEP, v: 3 }), undefined)
+  })
+
+  it('is written as learning-audit.json, beside version 1', () => {
+    assert.equal(DATA_FILES['learning-audit.json'], AUDIT_CONTRACT)
+    assert.deepEqual(JSON.parse(JSON.stringify(AUDIT_CONTRACT)), AUDIT_CONTRACT)
+  })
+})
+
+describe('an event built by a writer', () => {
+  const base = { at: AT, random: '0a1b2c3d', source: { plugin: 'orchestrator', code: 'orchestrator.kill.refused' }, trust: 'computed' as const }
+
+  it('gets its identifier from its time, its languages from its paths, and null for what it does not know', () => {
+    const event = learningEvent({ ...base, kind: 'refusal', context: { paths: ['a/b.py'] }, evidence: [{ type: 'refusal', code: 'orchestrator.kill.refused' }] })
+    assert.deepEqual(event, {
+      v: 1, id: '20261114T101500Z-0a1b2c3d', at: AT, kind: 'refusal', source: base.source,
+      subject: { repo: null, pr: null, head: null },
+      context: { role: null, mode: null, paths: ['a/b.py'], languages: ['python'], session: null },
+      evidence: [{ type: 'refusal', code: 'orchestrator.kill.refused' }], trust: 'computed',
+    })
+    const step = auditEvent({ ...base, kind: 'review', subject: { repo: 'o/n', pr: 3 }, fact: { verdict: 'fail', kept: 2, set_aside: 1 } })
+    assert.equal(step?.v, 2)
+    assert.deepEqual(step?.subject, { repo: 'o/n', pr: 3, head: null })
+    assert.deepEqual(step?.fact, { verdict: 'fail', kept: 2, set_aside: 1 })
+  })
+
+  it('is none when a field breaks the contract', () => {
+    assert.equal(learningEvent({ ...base, kind: 'refusal', random: 'xyz' }), undefined)
+    assert.equal(learningEvent({ ...base, kind: 'refusal', context: { session: 'two words' } }), undefined)
+    assert.equal(auditEvent({ ...base, kind: 'review', fact: { verdict: 'fail', kept: -1, set_aside: 0 } }), undefined)
+  })
+})
+
+describe('the entries of a journal', () => {
+  it('are named by the event\'s identifier, the time read back from the name', () => {
+    assert.equal(journalFileOf('20261114T101500Z-0a1b2c3d'), '20261114T101500Z-0a1b2c3d.json')
+    assert.deepEqual(journalEntryOf('20261114T101500Z-0a1b2c3d.json'), { id: '20261114T101500Z-0a1b2c3d', at: AT })
+    for (const name of ['x.json', '20261114T101500Z-0a1b2c3d.json.tmp-1', '20261114T101500Z-0a1b2c3d', '20261399T101500Z-0a1b2c3d.json']) {
+      assert.equal(journalEntryOf(name), undefined, name)
+    }
+  })
+})
+
+describe('the pull requests a text names', () => {
+  it('are its references with a repository, each once, at most eight', () => {
+    assert.deepEqual(prRefsOf('claude-plugins#95 merged 87586ec; see LounisBou/claude-plugins#96 and claude-plugins#95'), ['claude-plugins#95', 'LounisBou/claude-plugins#96'])
+    assert.deepEqual(prRefsOf('fix (#12), issue #4, a#0, x/y/z#3, mail@host#5'), [])
+    assert.equal(prRefsOf(Array.from({ length: 12 }, (_, i) => `r#${i + 1}`).join(' ')).length, 8)
   })
 })
