@@ -1,5 +1,6 @@
-// The export: the day files committed to a local clone of the logs repository and pushed, after
-// the scan of every file finds no secret. The repository is named only by the environment; its
+// The export: the day files, and the transcripts of the sessions they name, committed to a local
+// clone of the logs repository and pushed, after the scan of every day file finds no secret and
+// every transcript is passed through the redaction. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -7,7 +8,7 @@ import { withLock } from '../../../../core/store.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
 import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
-import { redactText, type EnvSecrets } from './redact.ts'
+import { redactText, redactValue, type EnvSecrets } from './redact.ts'
 import { INDEX_DIR, schemaFiles, type IndexFile } from './schema-docs.ts'
 
 /** The variable that names the logs repository, in the environment or in ~/.env. */
@@ -30,7 +31,7 @@ export interface ExportOptions {
   readonly git: Git
   /** The kinds the index documents: the declared list unless a caller passes another. */
   readonly kinds?: Readonly<Record<string, KindSpec>>
-  /** Where a session's transcript is on this machine; the manifest points to it. */
+  /** The file of a session's transcript on this machine; undefined when it is gone. Its redacted copy goes to the repository. */
   readonly transcript?: (session: string) => string | undefined
 }
 
@@ -78,17 +79,50 @@ function unpushed(git: Git, clone: string): boolean {
   return remote.status !== 0 || remote.stdout.trim() !== head.stdout.trim()
 }
 
-/** The index of the repository: the schema pages, and the manifest of each day file of the store. */
-function indexFiles(options: ExportOptions, events: string, days: readonly string[]): IndexFile[] {
-  const transcript = options.transcript ?? (() => undefined)
-  return [
+/** Where a session's transcript is in the repository, relative to its root. */
+const transcriptPath = (machine: string, session: string): string => `machines/${machine}/transcripts/${session}.jsonl`
+
+/**
+ * A transcript's text with every secret masked: each line parsed and each of its strings redacted
+ * at any depth (the same redaction as an event, so a value of ~/.env or a token inside a message
+ * is masked wherever it sits), a line that is no JSON redacted as text. Wrapped, so no field of
+ * the line is held to the shape of an event's identifier.
+ */
+export function redactTranscript(text: string, secrets: EnvSecrets): string {
+  return text.split('\n').map(line => {
+    if (line.trim() === '') return line
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      return redactText(line, secrets).text
+    }
+    return JSON.stringify((redactValue({ line: parsed }, secrets).value as { line: unknown }).line)
+  }).join('\n')
+}
+
+/** The index of the repository: the schema pages, the manifest of each day file of the store, and the sessions those name. */
+function indexFiles(options: ExportOptions, events: string, days: readonly string[]): { files: IndexFile[]; sessions: Set<string> } {
+  const transcript = options.transcript
+  const sessions = new Set<string>()
+  const files = [
     ...schemaFiles(options.kinds ?? EVENT_SCHEMA),
     ...days.map((name): IndexFile => {
       const day = name.slice(0, 10)
-      const manifest = buildManifest({ day, machine: options.machine, text: readFileSync(join(events, name), 'utf8'), transcript })
+      const manifest = buildManifest({
+        day,
+        machine: options.machine,
+        text: readFileSync(join(events, name), 'utf8'),
+        // The manifest points at the copy the export makes, for a session whose transcript is here.
+        transcript: session => {
+          sessions.add(session)
+          return transcript?.(session) === undefined ? undefined : transcriptPath(options.machine, session)
+        },
+      })
       return { path: `${INDEX_DIR}/${options.machine}/${day}.json`, text: `${JSON.stringify(manifest, null, 2)}\n` }
     }),
   ]
+  return { files, sessions }
 }
 
 /** Replaces the generated index of `machine` in the clone: schema pages and the machine's manifests, nothing stale left. */
@@ -100,6 +134,26 @@ function writeIndex(clone: string, machine: string, files: readonly IndexFile[])
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, file.text)
   }
+}
+
+/** Copies the redacted transcript of each session whose file is here into the clone; answers how many, or the line of the failure. */
+function copyTranscripts(options: ExportOptions, clone: string, sessions: ReadonlySet<string>): number | string {
+  let copied = 0
+  for (const session of [...sessions].sort()) {
+    const source = options.transcript?.(session)
+    if (source === undefined) continue
+    let text: string
+    try {
+      text = readFileSync(source, 'utf8')
+    } catch (error) {
+      return `export failed at transcript ${session} (${(error as NodeJS.ErrnoException).code ?? 'unreadable'})`
+    }
+    const path = join(clone, transcriptPath(options.machine, session))
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, redactTranscript(text, options.secrets))
+    copied++
+  }
+  return copied
 }
 
 /** Exports the store; answers the lines to print and the exit code. */
@@ -117,7 +171,7 @@ export function exportStore(options: ExportOptions): ExportResult {
   const days = dayFiles(events)
   if (days.length === 0) return { lines: ['export: no event recorded yet, nothing pushed'], code: 0 }
   // The index is generated from the same events, and held to the same scan before anything is cloned.
-  const index = indexFiles(options, events, days)
+  const { files: index, sessions } = indexFiles(options, events, days)
   const leaks = index.flatMap(file => [...new Set(redactText(file.text, secrets).hits)].map(pattern => `  ${file.path}: ${pattern}`))
   if (leaks.length > 0) return { lines: [`export refused: the index would carry ${leaks.length} secret(s), nothing pushed`, ...leaks], code: 1 }
   const clone = join(stateDir, 'export')
@@ -144,12 +198,15 @@ export function exportStore(options: ExportOptions): ExportResult {
   const target = join(clone, 'machines', machine)
   mkdirSync(target, { recursive: true })
   for (const day of days) copyFileSync(join(events, day), join(target, day))
+  const copied = copyTranscripts(options, clone, sessions)
+  if (typeof copied === 'string') return { lines: [copied], code: 1 }
+  const counted = `${days.length} day file(s)${copied > 0 ? ` and ${copied} transcript(s)` : ''}`
   writeIndex(clone, machine, index)
   // Forced: an ignore rule of the clone or the machine matching a day file would leave it out unsaid.
   const added = git(['add', '--force', '--', join('machines', machine), INDEX_DIR], clone)
   if (added.status !== 0) return fail('add', added)
   if (git(['diff', '--cached', '--quiet'], clone).status !== 0) {
-    const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${days.length} day file(s) up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
+    const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${counted} up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
     if (committed.status !== 0) return fail('commit', committed)
   } else if (!unpushed(git, clone)) {
     return { lines: ['export: the logs repository already holds every event, nothing pushed'], code: 0 }
@@ -157,7 +214,7 @@ export function exportStore(options: ExportOptions): ExportResult {
   // HEAD now holds a commit main lacks: the new files, or a former export's commit whose push was refused.
   const pushed = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
   if (pushed.status !== 0) return fail('push', pushed)
-  return { lines: [`export: ${days.length} day file(s) of ${machine} pushed to the logs repository`], code: 0 }
+  return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`], code: 0 }
 }
 
 /**

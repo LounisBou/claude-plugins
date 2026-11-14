@@ -1,6 +1,6 @@
 // A day's manifest, written beside the day file in the logs repository: what the day holds, so a
 // reader can query it without reading every line. Built from the day's events alone, plus the
-// local path of each session's transcript; the transcripts themselves stay on the machine.
+// path of each session's redacted transcript in the repository (the export copies it there).
 import { simpleCommands } from '../../../../core/shell.ts'
 import type { FieldSpec } from '../../../../hooks/schema.ts'
 
@@ -57,7 +57,7 @@ export const MANIFEST_FIELDS: readonly FieldSpec[] = [
   {
     name: 'sessions',
     type: 'object[]',
-    description: 'One entry per session with an event that day: `session`, `role` (null when neither the end nor the spawn says it), `title`, `project`, `models`, `effort`, `spawned`, `first` and `last` (ISO 8601 UTC), `events`, `turns`, `cost_usd` (the latest cumulative figure), `ended`, and `transcript`: the path of the session\'s transcript under the recording machine\'s Claude configuration directory (`${CLAUDE_CONFIG_DIR:-~/.claude}`), null when it is gone. The transcript is not in this repository.',
+    description: 'One entry per session with an event that day: `session`, `role` (null when neither the end nor the spawn says it), `title`, `project`, `models`, `effort`, `spawned`, `first` and `last` (ISO 8601 UTC), `events`, `turns`, `cost_usd` (the latest cumulative figure), `ended`, and `transcript`: the path of the session\'s redacted transcript in this repository (`machines/<machine>/transcripts/<session>.jsonl`), null when the recording machine no longer had the file.',
   },
   { name: 'pull_requests', type: 'object[]', description: '`{repo, number}` read from `gh pr <sub> <number>` command lines (`repo` from `-R` or `--repo`, else null) and pull request URLs. Calls of the github tool do not name theirs.' },
   { name: 'branches', type: 'string[]', description: 'Branches created, switched to or pushed by Bash command lines (`git checkout -b`, `git switch -c`, `git push`), `main` and `master` excluded.' },

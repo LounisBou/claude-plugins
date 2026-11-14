@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { withLock } from '../../../../core/store.ts'
@@ -180,30 +180,113 @@ test('the export pushes the index with the day files: the schema pages and the d
   scratch((root, remote) => {
     const state = join(root, 'state')
     append(eventsDir(state), `${event('2026-11-13T10:00:00Z')}\n${JSON.stringify({ v: 1, ts: '2026-11-13T10:00:01Z', event: 'session_end', session: S, role: 'reviewer', models: ['claude-opus-5-5'] })}`, new Map())
-    const transcript = (session: string): string | undefined => (session === S ? `projects/-w/${S}.jsonl` : undefined)
+    const file = join(root, `${S}.jsonl`)
+    writeFileSync(file, '{"type":"user","message":"hello"}\n')
+    const transcript = (session: string): string | undefined => (session === S ? file : undefined)
     assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript }).code, 0)
     const files = git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.trim().split('\n')
     for (const kind of Object.keys(EVENT_SCHEMA)) assert.ok(files.includes(`index/schema/${kind}.md`), kind)
     for (const file of ['index/README.md', 'index/schema.json', 'index/schema/manifest.md', 'machines/box/2026-11-13.jsonl', 'index/box/2026-11-13.json']) assert.ok(files.includes(file), file)
     const manifest = JSON.parse(git(['show', 'main:index/box/2026-11-13.json'], remote).stdout) as { sessions: { session: string; role: string; models: string[]; transcript: string }[] }
     assert.deepEqual(manifest.sessions.map(({ session, role, models, transcript: path }) => ({ session, role, models, path })), [
-      { session: S, role: 'reviewer', models: ['claude-opus-5-5'], path: `projects/-w/${S}.jsonl` },
+      { session: S, role: 'reviewer', models: ['claude-opus-5-5'], path: `machines/box/transcripts/${S}.jsonl` },
     ])
   })
 })
 
-test('a transcript never reaches the repository: only the day files and the generated index', () => {
+const ENV_VALUE = 'a-long-enough-value'
+const OTHER = '70ed5626-9879-4041-892a-5db0ff0bad69'
+
+/** A transcript file in `root` holding a prompt, a value of ~/.env, a token and a line that is no JSON. */
+function plantTranscript(root: string, session: string): string {
+  const file = join(root, `${session}.jsonl`)
+  writeFileSync(file, [
+    JSON.stringify({ type: 'user', message: { content: 'a prompt that is kept' } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `the password is ${ENV_VALUE} and the key ${SECRET}` }] } }),
+    `not json, but ${ENV_VALUE} all the same`,
+  ].join('\n') + '\n')
+  return file
+}
+
+// The operator's order of 2026-11-14 turns around the former « a transcript never reaches the
+// repository »: raw transcripts are in the logs repository, redacted, and indexed.
+test('a transcript is pushed beside the day files, redacted: no value of ~/.env, no token, the prompt kept', () => {
   scratch((root, remote) => {
     const state = join(root, 'state')
-    const projects = join(root, 'projects')
-    mkdirSync(projects, { recursive: true })
-    const transcript = join(projects, `${S}.jsonl`)
-    writeFileSync(transcript, '{"type":"user","message":"a prompt that stays on the machine"}\n')
-    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
-    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: () => `projects/-w/${S}.jsonl` }).code, 0)
+    const secrets = new Map([['SERVICE_PASS', ENV_VALUE]])
+    const file = plantTranscript(root, S)
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), secrets)
+    const result = exportStore({ stateDir: state, secrets, repo: remote, machine: 'box', git, transcript: session => (session === S ? file : undefined) })
+    assert.deepEqual(result, { lines: ['export: 1 day file(s) and 1 transcript(s) of box pushed to the logs repository'], code: 0 })
+    const pushed = git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout
+    const lines = pushed.trim().split('\n')
+    assert.equal(lines.length, 3)
+    assert.match(lines[0] ?? '', /a prompt that is kept/)
+    assert.match(lines[1] ?? '', /\[REDACTED:env\]/)
+    assert.match(lines[1] ?? '', /\[REDACTED:anthropic-key\]/)
+    assert.match(lines[2] ?? '', /^not json, but \[REDACTED:env\] all the same$/)
+    assert.doesNotThrow(() => JSON.parse(lines[1] ?? ''))
+    for (const value of [ENV_VALUE, SECRET]) assert.equal(git(['grep', '-c', value, 'main'], remote).status, 1, value)
+  })
+})
+
+test('the manifest points at the copy in the repository; a session with no transcript here points at none', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const file = plantTranscript(root, S)
+    append(eventsDir(state), `${event('2026-11-13T10:00:00Z')}\n${event('2026-11-13T10:00:01Z', { session: OTHER })}`, new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: session => (session === S ? file : undefined) }).code, 0)
+    const manifest = JSON.parse(git(['show', 'main:index/box/2026-11-13.json'], remote).stdout) as { sessions: { session: string; transcript: string | null }[] }
+    assert.deepEqual(manifest.sessions.map(({ session, transcript }) => ({ session, transcript })).sort((a, b) => a.session.localeCompare(b.session)), [
+      { session: S, transcript: `machines/box/transcripts/${S}.jsonl` },
+      { session: OTHER, transcript: null },
+    ])
     const files = git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.trim().split('\n')
-    assert.deepEqual(files.filter(f => f.endsWith('.jsonl')), ['machines/box/2026-11-13.jsonl'])
-    assert.equal(git(['grep', '-c', 'a prompt that stays', 'main'], remote).status, 1)
+    assert.deepEqual(files.filter(f => f.includes('/transcripts/')), [`machines/box/transcripts/${S}.jsonl`])
+  })
+})
+
+test('only the transcripts of the sessions the day files name are asked for and pushed', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const asked: string[] = []
+    const stranger = plantTranscript(root, OTHER)
+    const transcript = (session: string): string | undefined => {
+      asked.push(session)
+      return session === OTHER ? stranger : undefined
+    }
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript }).code, 0)
+    assert.deepEqual([...new Set(asked)], [S])
+    assert.equal(git(['ls-tree', '-r', '--name-only', 'main'], remote).stdout.includes('/transcripts/'), false)
+  })
+})
+
+test('a transcript that grew is pushed again; one unchanged is not', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    const file = join(root, `${S}.jsonl`)
+    writeFileSync(file, '{"type":"user","message":"first"}\n')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const run = () => exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: () => file })
+    assert.equal(run().code, 0)
+    assert.deepEqual(run().lines, ['export: the logs repository already holds every event, nothing pushed'])
+    appendFileSync(file, '{"type":"user","message":"second"}\n')
+    assert.equal(run().code, 0)
+    assert.equal(git(['show', `main:machines/box/transcripts/${S}.jsonl`], remote).stdout, '{"type":"user","message":"first"}\n{"type":"user","message":"second"}\n')
+    assert.equal(git(['rev-list', '--count', 'main'], remote).stdout.trim(), '2')
+  })
+})
+
+test('a transcript that cannot be read fails the export at that step, nothing pushed', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: () => join(root, 'gone.jsonl') })
+    assert.equal(result.code, 1)
+    assert.equal(result.lines.length, 1)
+    assert.match(result.lines[0] ?? '', new RegExp(`^export failed at transcript ${S} \\(ENOENT\\)$`))
+    assert.notEqual(git(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], remote).status, 0)
   })
 })
 
@@ -211,9 +294,11 @@ test('the index is held to the same scan: a secret it would carry refuses the ex
   scratch((root, remote) => {
     const state = join(root, 'state')
     append(eventsDir(state), event('2026-11-13T10:00:00Z'), new Map())
-    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, transcript: () => `/home/me/${SECRET}/${S}.jsonl` })
+    const leaky: KindSpec = { summary: `A kind whose page holds ${SECRET}.`, writers: ['nobody'], fields: [] }
+    const result = exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git, kinds: { ...EVENT_SCHEMA, leaky } })
     assert.equal(result.code, 1)
-    assert.deepEqual(result.lines, ['export refused: the index would carry 1 secret(s), nothing pushed', '  index/box/2026-11-13.json: anthropic-key'])
+    assert.match(result.lines[0] ?? '', /^export refused: the index would carry \d+ secret\(s\), nothing pushed$/)
+    assert.ok(result.lines.includes('  index/schema/leaky.md: anthropic-key'))
     assert.ok(!result.lines.join('\n').includes(SECRET))
     assert.notEqual(git(['rev-parse', '--verify', '--quiet', 'refs/heads/main'], remote).status, 0)
   })

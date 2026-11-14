@@ -29,7 +29,7 @@ export const COMMON_FIELDS: readonly FieldSpec[] = [
   { name: 'v', type: 'number', description: 'The event format version, 1.' },
   { name: 'ts', type: 'string', unit: 'ISO 8601 UTC', description: 'When the event was written; its first ten characters name the day file.' },
   { name: 'event', type: 'string', description: 'The kind, one of the pages of this schema.' },
-  { name: 'session', type: 'string', description: 'The host\'s session id; the name of the session\'s transcript file, which stays on the machine.' },
+  { name: 'session', type: 'string', description: 'The host\'s session id; the name of the session\'s transcript file, whose redacted copy is in the logs repository.' },
   { name: 'agent', type: 'string', description: 'The subagent whose loop the fact happened in; absent for the session\'s own loop.' },
 ]
 

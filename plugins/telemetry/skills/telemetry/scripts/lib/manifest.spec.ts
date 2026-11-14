@@ -1,5 +1,5 @@
 // A day's manifest: its sessions with role and model, the pull requests, branches and dispatch rows
-// the events carry, and a pointer to each transcript (never its content).
+// the events carry, and the path of each transcript's copy in the repository (never its content).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildManifest, MANIFEST_FIELDS, type Manifest } from './manifest.ts'

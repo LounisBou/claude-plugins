@@ -57,3 +57,14 @@ test('the entry point names where the days\' manifests and the day files are', (
   assert.ok(readme.includes('index/<machine>/<day>.json'))
   assert.ok(readme.includes('machines/<machine>/<day>.jsonl'))
 })
+
+test('the entry point and the manifest page say transcripts are in the repository, redacted, and where', () => {
+  const files = byPath(schemaFiles())
+  const readme = files.get(`${INDEX_DIR}/README.md`) ?? ''
+  assert.ok(readme.includes('machines/<machine>/transcripts/<session>.jsonl'))
+  assert.match(readme, /Raw transcripts are in this repository, redacted/)
+  assert.ok(!/transcripts are not in this repository/i.test(readme))
+  const page = files.get(`${INDEX_DIR}/schema/manifest.md`) ?? ''
+  assert.match(page, /`transcript`: the path of the session's redacted transcript in this repository/)
+  assert.ok(!page.includes('The transcript is not in this repository'))
+})
