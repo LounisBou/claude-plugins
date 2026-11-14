@@ -5,6 +5,7 @@
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
 import { forgeArgv, parseOpenPrs, readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
+import { readOr, safe } from '../unattended.ts'
 import { register as registerWait, Declarations, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
@@ -213,4 +214,11 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   const { dollar: unread } = world({ forge: { 'acme/app': null } })
   expect((await declare(unread, { kind: 'done' })).isError).toBe(undefined)
   expect(unattendedRefusal('PR délaissées : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
+})
+
+test('the helpers every reader of a registered record shares: a session id made a file name, a read that gives "" for a file that is not there', async () => {
+  expect(safe('a b/c:d.e-f_g')).toBe('a_b_c_d.e-f_g')
+  const $ = { fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } }
+  expect(await readOr($, '/there')).toBe('text')
+  expect(await readOr($, '/gone')).toBe('')
 })

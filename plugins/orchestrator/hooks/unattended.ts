@@ -50,9 +50,9 @@ export function unattendedRefusal(line: string): string {
     + 'record what it waits on (--waiting "<what>"), or the operator\'s ruling that parks it (--parked "<his words, dated>").'
 }
 
-const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
+export const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
 
-async function readOr($: any, path: string): Promise<string> {
+export async function readOr($: any, path: string): Promise<string> {
   return String(await $.fs.read(path).catch(() => ''))
 }
 
