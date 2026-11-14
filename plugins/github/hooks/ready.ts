@@ -50,7 +50,7 @@ export type Gate = {
   labels: string[]
   // The pull request's commit count at this head.
   commits?: number
-  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; total: number }
+  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; unverified?: string[]; total: number }
 }
 
 // One file of a head's records directory.
@@ -666,8 +666,11 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS') {
     const skippedChecks = ci.skipped ?? []
+    // A read of the checks the base requires that failed: green cannot be told, and the failure is named.
+    const unverified = ci.unverified ?? []
+    if (unverified.length > 0) missing.push('CI unverified: ' + unverified.join('; '))
     if (skippedChecks.length > 0 && !ci.running) missing.push('CI did not run: ' + skippedChecks.join(', ') + ' skipped')
-    else missing.push('CI still running')
+    else if (unverified.length === 0 || ci.running) missing.push('CI still running')
   }
   return missing
 }
@@ -711,6 +714,25 @@ const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on Gi
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing, carried)
     + '. What Ready needs is core\'s readiness contract (core/readiness.ts).'
+}
+
+// The readiness label a pull request carries, as pr-readiness's answer names it.
+function carriedLabel(labels: string[]): string {
+  if (labels.some((label) => label.toLowerCase() === READY)) return 'Ready'
+  return labels.some((label) => label.toLowerCase() === NOT_READY) ? 'Not Ready' : 'no readiness label'
+}
+
+// pr-readiness ready on a pull request the gate reads not ready: the state it carries now and what
+// is missing, an answer and no refusal.
+export function notReadyAnswer(repo: string, pr: number, head: string, labels: string[], missing: string[], carried: Carried[] = []): string {
+  return 'github: ' + repo + '#' + pr + ' carries ' + carriedLabel(labels) + ' at ' + head7(head) + ', Ready not put: not ready. '
+    + tail(missing, carried) + '.'
+}
+
+// pr-readiness ready whose readiness could not be read: the state it carries, when read, and why.
+export function unverifiedAnswer(repo: string | undefined, pr: number | string | undefined, error: string, labels?: string[]): string {
+  return 'github: ' + (repo ?? 'the origin repository') + '#' + (pr ?? '?') + (labels ? ' carries ' + carriedLabel(labels) : '')
+    + ', Ready not put: readiness unverified: ' + error
 }
 
 // repo undefined: the call names no repository the guard could read.

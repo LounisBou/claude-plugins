@@ -116,6 +116,14 @@ test('no check at all is not green: CI has not started', () => {
   expect(missingItems(gate({}, { result: 'PENDING', total: 0, running: 0 }), ALL)).toEqual(['CI still running'])
 })
 
+test('a read of the required checks that failed is named, not read as green or as running', () => {
+  const unverified = ['rulesets of main: boom (HTTP 500)']
+  expect(missingItems(gate({}, { result: 'PENDING', total: 1, running: 0, unverified }), ALL))
+    .toEqual(['CI unverified: rulesets of main: boom (HTTP 500)'])
+  expect(missingItems(gate({}, { result: 'PENDING', total: 2, running: 1, unverified }), ALL))
+    .toEqual(['CI unverified: rulesets of main: boom (HTTP 500)', 'CI still running'])
+})
+
 test('a skipped check is not green, and says so', () => {
   expect(missingItems(gate({}, { result: 'PENDING', skipped: ['test'], running: 0 }), ALL)).toEqual(['CI did not run: test skipped'])
 })

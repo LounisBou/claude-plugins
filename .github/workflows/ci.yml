@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  # Read the pull request run a push to main may skip (scripts/tested-tree.ts); nothing is written.
+  actions: read
 
 # A new push to a pull request replaces its run; a run of main or of the night is never cancelled.
 concurrency:
@@ -30,32 +32,55 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # A push to main skips what the pull request run of its tree already passed: the repository
+      # rules here, and below the plugin cells it ran. A lookup that fails or finds nothing skips
+      # nothing: the step never fails the job, and without its outputs everything runs.
+      - id: tested
+        name: what this tree already passed
+        if: github.event_name == 'push'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types --no-warnings scripts/tested-tree.ts "$GITHUB_SHA"
       - run: npm ci
+        if: steps.tested.outputs.repository != 'true'
       - name: strict types
+        if: steps.tested.outputs.repository != 'true'
         run: npm run typecheck
       - name: tooling tests, with the coverage floor
+        if: steps.tested.outputs.repository != 'true'
         run: npm test
       - name: prompt budgets and duplicates within their ceilings
+        if: steps.tested.outputs.repository != 'true'
         run: npm run -s prompts > /dev/null
       - name: context by scenario, and this pull request's difference
+        if: steps.tested.outputs.repository != 'true'
         run: |
           base="origin/${{ github.base_ref || 'main' }}"
           { echo '### Context by scenario'; echo; npm run -s context -- --base "$base"; } >> "$GITHUB_STEP_SUMMARY"
       - name: the rules a prompt states that nothing holds (a report)
+        if: steps.tested.outputs.repository != 'true'
         run: |
           { echo '### Rules held by prose alone'; echo; npm run -s rules | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
       - name: dependencies declared with a range, no cycle, no import outside its plugin
+        if: steps.tested.outputs.repository != 'true'
         run: npm run deps
       - name: no committed permission grant, every installer rule listed
+        if: steps.tested.outputs.repository != 'true'
         run: npm run permissions
       - name: every plugin's copy of core matches the source
+        if: steps.tested.outputs.repository != 'true'
         run: npm run core -- --check
       - name: catalogue matches the manifests
+        if: steps.tested.outputs.repository != 'true'
         run: npm run marketplace -- --check
       - id: matrix
         name: plugin matrix
         # What runs when is scripts/plugin-matrix.ts's: the pull request by its changes, main on
-        # Linux, the night on macOS.
+        # Linux less the cells its tree already passed, the night on macOS.
+        env:
+          TESTED_CELLS: ${{ steps.tested.outputs.covered }}
         run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || github.event_name == 'schedule' && '--nightly' || '--main' }}
 
   plugin:
