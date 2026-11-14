@@ -466,14 +466,15 @@ export function questionKey(entry: RoundEntry): string | null {
   ])
 }
 
-// The record that answers an entry before it reaches the operator: of the other entries of the
-// round and its archive asking the same (questionKey), the newest answer of his own.
+// The record that answers an entry before it reaches the operator: of the entries of the round
+// and its archive asking the same (questionKey), the newest answer of his own. The file of the
+// entry's own id counts: the same session asking the same wait again lands on it.
 export function recordedAnswer(entries: readonly RoundEntry[], entry: RoundEntry): { entry: RoundEntry; answer: RecordedAnswer } | null {
   const key = questionKey(entry)
   if (key === null) return null
   let found: { entry: RoundEntry; answer: RecordedAnswer } | null = null
   for (const other of entries) {
-    if (other.id === entry.id || questionKey(other) !== key) continue
+    if (questionKey(other) !== key) continue
     const answer = operatorAnswer(other)
     if (answer && (!found || answer.at > found.answer.at)) found = { entry: other, answer }
   }
