@@ -211,6 +211,49 @@ describe('the lettered choices and the recommendation', () => {
   })
 })
 
+// A turn end that restates the lettered choices in a prose summary above its question block: the
+// real case of the succession brief, claude-code#46's question.
+const RESTATED = [
+  '**Question pour vous (claude-code#46, activation de la télémétrie).** La PR porte maintenant `Ready`. Je vous ai envoyé la question dans le volet de supervision :',
+  '- **A, ma recommandation** : vous la sortez du brouillon et la squash-mergez sur GitHub maintenant.',
+  '- **B** : je le fais après la prochaine release, sur votre « Accorder ».',
+  '',
+  '**Question 1 of 1**',
+  '_Subject_ : sortie de brouillon et merge de claude-code#46',
+  '_Question_ : Qui sort claude-code#46 de brouillon et la merge ?',
+  '_Choices_ :',
+  '- **A** : vous, sur GitHub, maintenant — cost: deux clics — gain: télémétrie active tout de suite',
+  '- **B** : moi, après la release — cost: attendre — gain: aucun geste de votre part',
+  '_Free answer_ : ou répondez avec vos mots',
+  '_Recommendation_ : A — la PR est prête maintenant.',
+].join('\n')
+
+describe('a question whose choices a prose summary restates above it', () => {
+  it('reads the choices of the question block only, each letter once, with its recommendation', () => {
+    const read = parseChoices(RESTATED)
+    assert.deepEqual(read.choices.map(c => [c.letter, c.text.split(' — ')[0]]), [
+      ['A', 'vous, sur GitHub, maintenant'],
+      ['B', 'moi, après la release'],
+    ])
+    assert.equal(read.recommendation, 'A')
+  })
+
+  it('draws the picker of an entry that recorded them', () => {
+    const { choices, recommendation } = parseChoices(RESTATED)
+    const [part] = entryQuestions({ question: RESTATED, choices, recommendation })
+    assert.equal(part!.number, 'Question 1 of 1')
+    assert.deepEqual(part!.choices.map(c => c.letter), ['A', 'B'])
+    assert.equal(part!.recommendation, 'A')
+  })
+
+  it('keeps the prose above the block in the body, restated lines included', () => {
+    const { choices } = parseChoices(RESTATED)
+    const body = questionBody({ question: RESTATED, choices })
+    assert.match(body, /- \*\*B\*\* : je le fais après la prochaine release/)
+    assert.doesNotMatch(body, /- \*\*B\*\* : moi, après la release/)
+  })
+})
+
 describe('the question block', () => {
   it('reads the sender\'s numbering of a wholly bold line holding two numbers', () => {
     assert.equal(numberOfLine('**Question 2 of 3**'), 'Question 2 of 3')
