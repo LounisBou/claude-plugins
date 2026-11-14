@@ -1240,6 +1240,48 @@ test('a message without lettered choices shows its text and the Other answer fie
   expect(JSON.stringify(tree)).not.toContain('no lettered choices')
 })
 
+// A question asked with `ask` (question.ts), as the tool stores it.
+const askedObject = (session: string, name: string, at: string, over: Record<string, unknown> = {}) => ({
+  v: 2, id: `q-${session}-${at.replace(/\D/g, '')}`, sender: { session, name, role: 'orchestrator', machine: 'box-1' },
+  subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which merges first?',
+  choices: [{ letter: 'A', text: 'acme/app#1 first' }, { letter: 'B', text: 'acme/app#2 first' }], recommended: 'A', why: 'no rebase',
+  blocks: 'acme/app#1', status: 'open', at, answer: null, seq: 1, ...over,
+})
+
+test('a question asked with ask is drawn from its fields under the round\'s card, its asker once, and counted', async () => {
+  const old = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { fx, render } = await askingPane([old])
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const second = askedObject('low', 'Orch: low', '2026-10-18T10:05:00.000Z', { subject: 'tag order', choices: [], recommended: null, why: null })
+  for (const asked of [first, second]) fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  const tree = await render()
+  const drawn = texts(tree)
+  expect(drawn).toContain('Questions for you — 3 pending')
+  // The entry the relay wrote keeps its card, answered from the pane as before.
+  expect(drawn).toContain('Merge it?')
+  expect(picker(tree).props.options.map((o: any) => o.value)).toEqual(['A', 'B', 'C', 'other'])
+  expect(drawn.filter(t => t === 'Orch: low · orchestrator · box-1')).toEqual(['Orch: low · orchestrator · box-1'])
+  const lines = shown(tree)
+  const at = (text: string) => lines.findIndex(line => line.includes(text))
+  expect(at('Orch: low · orchestrator · box-1')).toBeGreaterThan(at('Merge it?'))
+  expect(['Question 1 of 2: merge order', 'Two pull requests touch one file.', 'Which merges first?', '[A] acme/app#1 first  ★', '[B] acme/app#2 first', '★ Recommendation: A — no rebase', 'Blocks: acme/app#1', 'Question 2 of 2: tag order']
+    .map(at).every((index, i, all) => index > 0 && (i === 0 || index > all[i - 1]))).toBe(true)
+})
+
+test('a question asked with ask alone takes the place of the none line, and one whose asker has no live row is not drawn', async () => {
+  const { fx, render } = await askingPane([])
+  fx.files.set(`${ROUND}/q-low.json`, JSON.stringify(askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')) + '\n')
+  fx.files.set(`${ROUND}/q-gone.json`, JSON.stringify(askedObject('gone', 'Orch: gone', '2026-10-18T10:03:00.000Z')) + '\n')
+  fx.files.set(`${ROUND}/q-done.json`, JSON.stringify(askedObject('low', 'Orch: low', '2026-10-18T10:02:00.000Z', { status: 'answered', subject: 'settled' })) + '\n')
+  const drawn = texts(await render())
+  expect(drawn).toContain('Questions for you — 1 pending')
+  expect(drawn).toContain('Orch: low · orchestrator · box-1')
+  expect(drawn.some(t => t.includes('Orch: gone') || t.includes('settled'))).toBe(false)
+  expect(drawn).not.toContain('none')
+  // The rows the pane counts for its window are the rows it draws.
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
+})
+
 test('a pick of a choice answers the entry from the pane, sends the asking orchestrator the choice once, and draws the next question', async () => {
   const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const next = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })

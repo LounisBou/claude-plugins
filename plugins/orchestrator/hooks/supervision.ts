@@ -37,6 +37,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
+import { askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -1862,6 +1863,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: RoundEntry[] = []
       let pending = 0
+      // The open questions asked with `ask` (question.ts), drawn from their fields under the round's card.
+      let asked: Asked[] = []
       // The sessions whose open wait asks nothing, each with the line its row carries.
       const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
@@ -1902,6 +1905,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // Each question counts, those of an entry that asks several one by one, less those
         // already answered.
         pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
+        // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
+        asked = askedGroups((await readAsked($)).filter(entry => sessionKey(entry.sender.session) in local)).flat()
+        pending += asked.length
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = questions[0]
         speaker = first ? rowKeyOf(first) : null
@@ -2279,10 +2285,19 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         node: el.Box({ marginTop: 1, children: [el.Text({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width > 0 ? width : RULE_FALLBACK) })] }),
         rows: 2,
       }
+      // The questions asked with `ask`, grouped by asker, each line from a field of the object.
+      const askedPieces = askedLines(asked).map(line => ({
+        node: el.Box({ paddingLeft: line.indent, children: [rich(line.text, askedLook(line.look))] }),
+        rows: rowsOf(takesRows(line.text), width - line.indent),
+      }))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
-        ...(asking === null ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : [card(asking)]),
+        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
         ...(nextLine ? [nextLine] : []),
+        ...(askedPieces.length === 0 ? [] : [{
+          node: el.Box({ flexDirection: 'column', ...(asking !== null ? { marginTop: 1 } : {}), children: askedPieces.map(piece => piece.node) }),
+          rows: (asking !== null ? 1 : 0) + askedPieces.reduce((sum, piece) => sum + piece.rows, 0),
+        }]),
         ...notices,
         rule,
       ]
@@ -2302,7 +2317,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
