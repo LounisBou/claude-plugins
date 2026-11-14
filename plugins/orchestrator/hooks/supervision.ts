@@ -50,6 +50,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeas
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -83,7 +84,12 @@ export type SessionRow = {
   // by the measure's merge: the deck takes every session's from here. Absent until the first
   // read completes; null when its transcript is not found.
   usage?: DeckUsage | null
+  // An orchestrator's pull requests nobody attends, read at its last turn end (unattended.ts): the
+  // line its context and the coordinator's facts say, and the list the pane draws in local time.
+  unattended?: UnattendedView | null
 }
+
+export type UnattendedView = { at: string; line: string | null; prs: readonly Unattended[]; unread: readonly string[] }
 
 // A row lives while its session's host process does: a session idle for hours —
 // waiting on a long agent phase, on a CI watch — is still there, and one that
@@ -325,7 +331,7 @@ export function wrapWords(text: string, width: number): string[] {
 }
 
 // The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
-async function storeOf($: any): Promise<string> {
+export async function storeOf($: any): Promise<string> {
   return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
 }
 
@@ -502,6 +508,16 @@ async function publishUsage($: any, id: string, usage: DeckUsage | null): Promis
     const path = `${await storeOf($)}/${sessionKey(id)}`
     const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
     if (row && (usage || row.usage)) await writeAtomic($, path, JSON.stringify({ ...row, usage }) + '\n')
+  })
+}
+
+// The turn end's reading of the pull requests nobody attends, into the session's own row: the
+// row's stamp is the measure's and stays; a row gone meanwhile (the session ended) is not written again.
+export async function publishUnattended($: any, id: string, view: UnattendedView): Promise<void> {
+  await onOwnRow(async () => {
+    const path = `${await storeOf($)}/${sessionKey(id)}`
+    const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
+    if (row) await writeAtomic($, path, JSON.stringify({ ...row, unattended: view }) + '\n')
   })
 }
 

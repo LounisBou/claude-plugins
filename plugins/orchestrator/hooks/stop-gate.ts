@@ -254,6 +254,12 @@ function labelOf(row: Row): string {
   return row.name && !row.name.startsWith('(') ? row.name : (row.title || row.tty)
 }
 
+// The names of the sessions the listing shows running, each by its label: a tab whose title carries
+// no host activity glyph runs none. What a ledger line's agent is matched against (core's pr-ledger.ts).
+export function liveNames(rows: readonly Row[]): Set<string> {
+  return new Set(rows.filter(row => activity(row.title) !== null).map(labelOf))
+}
+
 // --- the orchestrator's own agents (stop_gate.py:224-247) --------------------------------
 
 // The host's status of the session a tty runs, from the host's own per-process record
