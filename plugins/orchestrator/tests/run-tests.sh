@@ -12690,16 +12690,22 @@ leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+# The tools only an orchestrator calls: an implementer agent is never given them.
+LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
-check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
+check "an agent loses the five unused tools, the three that move an orchestrator and the four only an orchestrator calls" "$LEANBASE $LEANMOVE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
-check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
+check "a title of no role is read as an agent's: it loses all twelve" "$LEANBASE $LEANMOVE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
-check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
+check "an auditor loses the five and the three, and keeps the four only an orchestrator calls" "$LEANBASE $LEANMOVE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
+check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
+check "--keep-tool brings one of the four back to an agent" "$LEANBASE $LEANMOVE mcp__orchestrator__supervision mcp__orchestrator__answered-by-message mcp__orchestrator__declare_wait" \
+  "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
 check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
@@ -12716,13 +12722,13 @@ check "with the account's connectors the removed set is followed by the mode" "1
   "$(mcpd --account-connectors --mcp none | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* ReportFindings .* --permission-mode ')"
 
 # The two options.
-check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact | leanset)"
-check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE 'Bash(git push:*)'" \
+check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE $LEANAGENT 'Bash(git push:*)'" \
   "$(leanl --title 'Agent: x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
-check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE WebSearch|1" \
+check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE $LEANAGENT WebSearch|1" \
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
-check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
+check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
 check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
@@ -12734,7 +12740,7 @@ check "an empty name is refused for either option, before any tab exists" "1|1|1
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
-check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE|$LEANBASE $LEANMOVE WebSearch|$LEANBASE $LEANMOVE WebSearch" \
+check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT|$LEANBASE $LEANMOVE $LEANAGENT WebSearch|$LEANBASE $LEANMOVE $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent: x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent: x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
@@ -12748,7 +12754,7 @@ check "rotate passes both options to the replacement it launches" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent: rotated.')"
 check "rotate refuses an empty name and the same name on both, before it spawns anything" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool '' >/dev/null 2>&1; echo $?)|$(leanrot --old-tty /dev/ttys901 --keep-tool X --drop-tool X >/dev/null 2>&1; echo $?)"
-check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool 'Artifact ' | sed -n 's/^launch=//p' | leanset)"
 
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
@@ -12821,6 +12827,8 @@ check "the heaviest loaded tool comes first, with every role that loses it" "loa
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded' | head -1)"
 check "a move tool names the two roles whose default removes it" "1" \
   "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__move_send | [0-9]* | [0-9]* | Audit,Agent$')"
+check "a tool only an orchestrator calls names the one role whose default removes it" "1" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__declare_wait | [0-9?]* | [0-9?]* | Agent$')"
 check "a removed name the transcript lacks is listed with ? for what it cannot say" "loaded | SendFeedback | ? | ? | Orch,Coord,Audit,Agent|loaded | mcp__orchestrator__end_session | ? | ? | Audit,Agent" \
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | SendFeedback ')|$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | mcp__orchestrator__end_session ')"
 check "a removed name that is deferred stays a deferred row, with its roles, and is not listed twice" "deferred | Workflow | 8 | 2 | Orch,Coord,Audit,Agent|0" \
