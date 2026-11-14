@@ -7,7 +7,7 @@
 // reads it, keeps it under the store, writes each file that arrived whole and checked, and
 // answers; the sending half reads the answers. Only two texts ever reach a model: the arrival
 // notice, on the receiver, and the notice of the outcome, on the sender.
-import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { moduleDirOf } from './module-log.ts'
 import { roleOf, walkName, hostBasenames, blockArgv, bytesOfBase64, type ReadRecord, type HostNames } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { machineLabel, deliveryOf, isPeerOrigin, type Delivery } from './remote-row.ts'
@@ -18,7 +18,8 @@ import {
 } from './move.ts'
 import { messageOf, type Events, type Host, type On } from './host.ts'
 import { recordFiles, recordNamedIn } from '../skills/orchestrator/scripts/lib/record-paths.ts'
-import { removeArgv, staleTemporaries, temporaryOf, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
+import { removeArgv, staleTemporaries, temporaryOf, withLockOver, writeAtomicOver } from '../core/store-io.ts'
+import { configDir, logLine, storeIo, uniqueTag, writeAtomic } from './module-io.ts'
 
 export const SEND_TOOL = 'move_send'
 export const PROBE_TOOL = 'move_probe'
@@ -104,11 +105,11 @@ export function register(on: On<Dollar>): void {
       })
     } catch (err) {
       // A start never fails on a tool: the session runs without the move.
-      await logLine($, `move tools not registered: ${messageOf(err)}`)
+      await logLine($, 'moving', `move tools not registered: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'moving', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -122,11 +123,11 @@ export function register(on: On<Dollar>): void {
     try {
       await take($, receiving, delivery)
     } catch (err) {
-      await logLine($, `move: ${messageOf(err)}`)
+      await logLine($, 'moving', `move: ${messageOf(err)}`)
     }
     return { consumed: 'orchestrator: a move message, handled by the module' }
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'moving', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     // Only a move message is the module's to consume; a delivery it never looked at goes on.
     if (typeof e.text === 'string' && isMoveMarked(deliveryOf(e.text).body)) return { consumed: 'orchestrator: a move message, refused' }
     return next(e)
@@ -138,7 +139,7 @@ export function register(on: On<Dollar>): void {
     if (refused) return { result: refused, isError: true }
     return sendMove($, e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'moving', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the move could not be sent', isError: true }
   })
 
@@ -148,16 +149,12 @@ export function register(on: On<Dollar>): void {
     if (refused) return { result: refused, isError: true }
     return sendProbes($, e, receiving)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'moving', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the probes could not be sent', isError: true }
   })
 }
 
 // --- paths -------------------------------------------------------------------------------
-
-async function configDir($: Dollar): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-}
 
 async function movesDir($: Dollar): Promise<string> {
   return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/moves`
@@ -560,13 +557,13 @@ const cleanText = (v: string | null) => String(v ?? 'unknown').replace(/[\u0000-
 
 // One line of the log for a message dropped, never the message itself.
 async function drop($: Dollar, why: string, delivery: Delivery): Promise<void> {
-  await logLine($, `move: a marked message was dropped (${why}) from ${cleanText(delivery.from)} ${cleanText(delivery.fromName)}, ${delivery.body.length} characters`)
+  await logLine($, 'moving', `move: a marked message was dropped (${why}) from ${cleanText(delivery.from)} ${cleanText(delivery.fromName)}, ${delivery.body.length} characters`)
 }
 
 // A refusal the sender can be told: the sender has no timer, so « done » not ok is the answer
 // that ends its wait. The log keeps one line, as for a drop.
 async function refuse($: Dollar, why: string, move: string, delivery: Delivery): Promise<void> {
-  await logLine($, `move: a marked message was refused and answered (${why}) from ${cleanText(delivery.from)} ${cleanText(delivery.fromName)}, ${delivery.body.length} characters`)
+  await logLine($, 'moving', `move: a marked message was refused and answered (${why}) from ${cleanText(delivery.from)} ${cleanText(delivery.fromName)}, ${delivery.body.length} characters`)
   await reply($, delivery.from!, { kind: 'done', move, ok: false, brief: null, reason: reasonText(why) })
 }
 
@@ -620,7 +617,7 @@ async function route($: Dollar, receiving: Receiving, message: MoveMessage, from
         // The first reply matched by name gives the address every later one must come from.
         s.peer = from
         await changeSent($, s.move, now => (now.peer ? null : { ...now, peer: from }))
-          .catch(err => logLine($, `move ${s.move}: the receiver's address could not be kept: ${messageOf(err)}`))
+          .catch(err => logLine($, 'moving', `move ${s.move}: the receiver's address could not be kept: ${messageOf(err)}`))
       }
       if (message.kind === 'missing') return answerMissing($, s, message)
       if (message.kind === 'done') return answerDone($, s, message)
@@ -645,7 +642,7 @@ function isPeer(to: string, pinned: string | undefined, delivery: Delivery): boo
 
 async function reply($: Dollar, to: string, message: MoveMessage): Promise<void> {
   const sent = await $.session.send({ to, text: moveText(message) })
-  if (!sent?.isDelivered) await logLine($, `move: ${message.kind} not delivered to ${to.slice(0, 120)}: ${String(sent?.reason ?? 'no answer').slice(0, 200)}`)
+  if (!sent?.isDelivered) await logLine($, 'moving', `move: ${message.kind} not delivered to ${to.slice(0, 120)}: ${String(sent?.reason ?? 'no answer').slice(0, 200)}`)
 }
 
 // A reason as the protocol carries one: one line, never empty, bounded.
@@ -745,7 +742,7 @@ async function heldOf($: Dollar, receiving: Receiving, move: string): Promise<He
 
 async function receiveChunk($: Dollar, h: Held, chunk: Extract<MoveMessage, { kind: 'chunk' }>): Promise<void> {
   const f = h.manifest.files[chunk.file]
-  if (!f || chunk.index >= f.chunks) return logLine($, `move: a chunk out of the manifest's range (${chunk.file}:${chunk.index})`)
+  if (!f || chunk.index >= f.chunks) return logLine($, 'moving', `move: a chunk out of the manifest's range (${chunk.file}:${chunk.index})`)
   if (h.acks[chunk.file]) {
     // Held and answered already: nothing is written; the last chunk of the file asks for its acknowledgment again.
     if (chunk.index === f.chunks - 1) await sendAck($, h, chunk.file)
@@ -754,7 +751,7 @@ async function receiveChunk($: Dollar, h: Held, chunk: Extract<MoveMessage, { ki
   const key = `${chunk.file}:${chunk.index}`
   if (!h.have.has(key)) {
     if ((h.size[chunk.file] ?? 0) + chunk.data.length > f.bytes) {
-      return logLine($, `move: a chunk would pass the announced size of its file (${chunk.file}:${chunk.index}, ${f.bytes} bytes announced), dropped`)
+      return logLine($, 'moving', `move: a chunk would pass the announced size of its file (${chunk.file}:${chunk.index}, ${f.bytes} bytes announced), dropped`)
     }
     await writeAtomic($, `${await movesDir($)}/${h.manifest.move}/c-${chunk.file}-${chunk.index}`, chunk.data)
     remember(h, chunk.file, chunk.index, chunk.data.length)
@@ -856,7 +853,7 @@ async function finish($: Dollar, h: Held): Promise<void> {
   await writeAtomic($, `${await movesDir($)}/${h.manifest.move}/notified`, '1\n')
   const launcher = `${$.plugin.root}/skills/iterm-agents/scripts/iterm-agent.sh`
   $.prompt.submit({ text: arrivedNotice(h.manifest, h.arrival, h.fromName || 'a session with no name', launcher) })
-    .catch((err: unknown) => logLine($, `move: the arrival notice was not submitted: ${String((err as Error)?.message ?? err)}`))
+    .catch((err: unknown) => logLine($, 'moving', `move: the arrival notice was not submitted: ${String((err as Error)?.message ?? err)}`))
 }
 
 // « Sent »: what is still missing is asked for, chunk by chunk; with nothing missing the move
@@ -923,7 +920,7 @@ async function answerDone($: Dollar, s: SentMove, message: Extract<MoveMessage, 
   const wakeDone = await sleepsHere($, s.record.name)
     ? `${$.plugin.root}/skills/coordinator/scripts/coordinator.sh wake-done --name "${s.record.name}"` : null
   $.prompt.submit({ text: acknowledgedNotice(s.record, s.to, message.brief ?? '', cleaned, wakeDone) })
-    .catch((err: unknown) => logLine($, `move ${s.move}: the notice was not submitted: ${String((err as Error)?.message ?? err)}`))
+    .catch((err: unknown) => logLine($, 'moving', `move ${s.move}: the notice was not submitted: ${String((err as Error)?.message ?? err)}`))
 }
 
 // The source cleaned once the receiver acknowledged every file: each file sent is removed while it
@@ -964,14 +961,14 @@ async function sleepsHere($: Dollar, name: string): Promise<boolean> {
 // is logged.
 async function keepKnown($: Dollar, s: SentMove): Promise<void> {
   await changeSent($, s.move, now => ({ ...now, done: s.done! }))
-    .catch(err => logLine($, `move ${s.move}: the record could not be kept: ${messageOf(err)}`))
+    .catch(err => logLine($, 'moving', `move ${s.move}: the record could not be kept: ${messageOf(err)}`))
 }
 
 async function conclude($: Dollar, s: SentMove, reason: string): Promise<void> {
   s.done = { ok: false }
   await keepKnown($, s)
   $.prompt.submit({ text: failedNotice(s.record, s.to, reason) })
-    .catch((err: unknown) => logLine($, `move ${s.move}: the notice was not submitted: ${String((err as Error)?.message ?? err)}`))
+    .catch((err: unknown) => logLine($, 'moving', `move ${s.move}: the notice was not submitted: ${String((err as Error)?.message ?? err)}`))
 }
 
 // One probe answer, one JSON line: when, which probe, the size sent, the length received, and
@@ -981,44 +978,14 @@ async function appendProbe($: Dollar, message: Extract<MoveMessage, { kind: 'pro
   const line = JSON.stringify({ at: new Date().toISOString(), move: message.move, size: message.size, received: message.received, from })
   await run($, ['mkdir', '-p', dir], 5000)
   const out = await run($, ['sh', '-c', 'printf "%s\\n" "$1" >> "$2"', 'sh', line, `${dir}/probes.jsonl`], 5000)
-  if (!out || out.exitCode !== 0) await logLine($, `move: a probe answer could not be appended to ${dir}/probes.jsonl`)
+  if (!out || out.exitCode !== 0) await logLine($, 'moving', `move: a probe answer could not be appended to ${dir}/probes.jsonl`)
 }
 
 // --- the store ---------------------------------------------------------------------------
-
-// Core's store over this file's $ (store-io.ts): $.fs writes but cannot rename, remove or create
-// a file exclusively, so those run as processes; the lock is `<path>.lock`, every writer's.
-function storeIo($: Dollar): StoreIo {
-  return {
-    write: (path, text) => $.fs.write(path, text),
-    read: path => $.fs.read(path).then(text => String(text), () => undefined),
-    run: argv => $.process.run(argv, { timeoutMs: 5000 }),
-    mtimeMs: path => $.fs.stat(path).then(stat => stat.mtimeMs, () => undefined),
-    sleep: ms => $.clock.sleep(ms),
-    now: Date.now,
-    tag: uniqueTag,
-  }
-}
-
-function uniqueTag(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-// Written in one rename through a temporary file of a unique name beside it: $.fs.write is not atomic.
-async function writeAtomic($: Dollar, path: string, text: string): Promise<void> {
-  await writeAtomicOver(storeIo($), path, text)
-}
 
 // The temporary files a writer killed between its write and its rename left in `dir`.
 async function sweep($: Dollar, dir: string): Promise<void> {
   const entries = await $.fs.list(dir).catch(() => [])
   const stale = staleTemporaries(dir, entries, Date.now())
   if (stale.length > 0) await run($, removeArgv(...stale), 5000)
-}
-
-// The module's log: the config dir resolved here, the stamp names this half. Never throws.
-async function logLine($: Dollar, message: string): Promise<void> {
-  try {
-    await $.process.run(logArgv($.plugin.root, await configDir($), 'moving', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

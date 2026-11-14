@@ -9,11 +9,11 @@
 // the declaration spells (waitLine), written last in the message every later reader of the
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { openFence, outsideFences } from './one-question.ts'
 import { entryQuestions, parseChoices, questionShape, type QuestionField } from './round.ts'
+import { logLine } from './module-io.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
@@ -186,11 +186,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       })
     } catch (err) {
       // A start never fails on the tool: the last line still declares the wait.
-      await logLine($, `${WAIT_TOOL} not registered: ${messageOf(err)}`)
+      await logLine($, 'wait', `${WAIT_TOOL} not registered: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -198,7 +198,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (e.agentId === undefined) declarations.turnStarted()
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -210,7 +210,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: `the wait could not be declared; the module's log says why`, isError: true }
   })
 
@@ -219,7 +219,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (wait === null) return next(e)
     return next({ ...e, last_assistant_message: withDeclaredWait(String(e.last_assistant_message ?? ''), wait) })
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -232,15 +232,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // The question the call carried stays in what is shown: it is what the operator is asked.
     return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: withDeclaredQuestion(String(e.answer ?? ''), wait) } : result
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
-}
-
-// One line appended to the module's log (module-log.ts). Never throws.
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'wait', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }

@@ -8,10 +8,10 @@
 // later event (turn.complete) »), so the call only records the name and the
 // turn's completion runs the rename — the same transcript entry a typed /rename
 // writes, the one every name walk reads.
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { endsAfterMove } from './moving.ts'
 import { messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
+import { logLine } from './module-io.ts'
 
 // The nouns naming holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt'>
@@ -135,11 +135,11 @@ export function register(on: On<Held>): void {
       })
     } catch (err) {
       // A start never fails on the tool: the session runs, unnamed by itself.
-      await logLine($, `rename tool not registered: ${messageOf(err)}`)
+      await logLine($, 'naming', `rename tool not registered: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
@@ -153,7 +153,7 @@ export function register(on: On<Held>): void {
     pending = checked.name
     return { result: `This session is renamed "${checked.name}" when this turn ends.` }
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the rename could not be recorded; hand the operator the /rename line instead', isError: true }
   })
 
@@ -166,7 +166,7 @@ export function register(on: On<Held>): void {
       }
       return next(e)
     }).catch(async ($, e, next) => {
-      await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+      await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
     })
   }
@@ -180,7 +180,7 @@ export function register(on: On<Held>): void {
     endAsked = true
     return { result: 'This session ends when this turn ends.' }
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the end could not be recorded', isError: true }
   })
 
@@ -190,7 +190,7 @@ export function register(on: On<Held>): void {
     if (e.agentId) return next(e)
     if (e.isAborted) {
       // The operator stopped the turn that asked: neither the rename nor the end runs.
-      if (pending !== null || ending) await logLine($, 'the turn was interrupted: the rename or end it asked is dropped')
+      if (pending !== null || ending) await logLine($, 'naming', 'the turn was interrupted: the rename or end it asked is dropped')
       pending = null
       ending = false
       endAsked = false
@@ -202,14 +202,14 @@ export function register(on: On<Held>): void {
       // Not awaited: the run is queued until the session is idle, which this
       // very completion is still holding. Its failure is said in the log.
       $.command.run({ command: 'rename', args: name })
-        .catch((err: unknown) => logLine($, `rename to "${name}" failed: ${reasonOf(err)}`))
+        .catch((err: unknown) => logLine($, 'naming', `rename to "${name}" failed: ${reasonOf(err)}`))
       // An orchestrator moves into its home session here, where it is resumed anyway:
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
       if (!ending && name.startsWith('Orch: ') && await movedHome($, name)) {
         $.command.run({ command: 'exit' })
-          .catch((err: unknown) => logLine($, `exit after the move into the home session failed: ${reasonOf(err)}`))
+          .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)
       }
       // Then the turn that resumes it, queued behind the rename: a session started
@@ -217,18 +217,18 @@ export function register(on: On<Held>): void {
       // a session that also asked to end — it leaves.
       if (!ending) {
         $.prompt.submit({ text: resumeText(name) })
-          .catch((err: unknown) => logLine($, `the resume under "${name}" failed: ${reasonOf(err)}`))
+          .catch((err: unknown) => logLine($, 'naming', `the resume under "${name}" failed: ${reasonOf(err)}`))
       }
     }
     if (ending) {
       ending = false
       // Queued after any rename, run once the session is idle.
       $.command.run({ command: 'exit' })
-        .catch((err: unknown) => logLine($, `exit failed: ${reasonOf(err)}`))
+        .catch((err: unknown) => logLine($, 'naming', `exit failed: ${reasonOf(err)}`))
     }
     return next(e)
   }).catch(async ($, e, next) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
@@ -249,23 +249,14 @@ async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name
     const done = await $.process.run(homeArgv($.plugin.root, sessionId, name), { timeoutMs: HOME_MOVE_MS })
     const first = String(done?.stdout ?? '').split('\n')[0] ?? ''
     if (done?.exitCode === 0 && first.startsWith('moved: ')) {
-      await logLine($, `moved into its home session: ${first.slice('moved: '.length)}`)
+      await logLine($, 'naming', `moved into its home session: ${first.slice('moved: '.length)}`)
       return true
     }
     if (done?.exitCode !== 0) {
-      await logLine($, `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
+      await logLine($, 'naming', `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
     }
   } catch (err) {
-    await logLine($, `the move into a home session could not run, the session stays where it is: ${reasonOf(err)}`)
+    await logLine($, 'naming', `the move into a home session could not run, the session stays where it is: ${reasonOf(err)}`)
   }
   return false
-}
-
-// The domains' log shape: the config dir resolved here ($ never crosses an
-// import), the stamp names this half. Never throws.
-async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
-  try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'naming', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
-  } catch { /* the log itself never blocks the handler that failed */ }
 }
