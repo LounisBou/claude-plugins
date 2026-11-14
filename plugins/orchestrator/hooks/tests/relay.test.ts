@@ -3417,6 +3417,24 @@ test('his « Accorder » in the pane on a replica asking consent is the consent 
   expect(records.map(r => [r.subject, r.entry, r.answer, r.by])).toEqual([[DEPLOY, id, 'Accorder', 'pane']])
 })
 
+test('the resend timer is armed again by no tick that finds every push acked, nor while its coordinator is on this machine', async () => {
+  forgetResendTimer()
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  const timers = () => sender.later.filter(t => t.ms > 30_000)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', qAcks(coordinator, 'asked')[0].text))
+  await timers()[0].fn()
+  expect(timers().length).toBe(1)
+  // A push still waiting, its coordinator now on this machine: nothing to send it again to.
+  const now = objectAt(sender, id)
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, state: 'sent' } }) + '\n')
+  sender.files.set(RECORD, JSON.stringify({ name: 'Coord: ops [abc]', tty: '/dev/ttys9' }))
+  forgetResendTimer()
+  const armed = timers().length
+  await timers()[0].fn()
+  expect(timers().length).toBe(armed)
+})
+
 test('a reply from another address than the coordinator\'s is refused: no answer, no consent, no acknowledgment', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))

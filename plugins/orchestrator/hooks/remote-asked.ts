@@ -79,12 +79,14 @@ export function forgetResendTimer(): void {
 }
 
 // A push sent after the timer was armed is younger than ANSWER_RESEND_MS at its tick: armed again
-// while any push still waits for its acknowledgment.
+// while any push still waits for its acknowledgment from a coordinator still on another machine.
 async function resendTick($: any): Promise<void> {
   resendArmed = false
   try {
     await resendReplicas($)
-    if ((await readAsked($)).some(entry => entry.origin === undefined && entry.replica?.state === 'sent')) armResend($)
+    const coordinator = await coordinatorAddress($)
+    const waiting = (await readAsked($)).some(entry => entry.origin === undefined && entry.replica?.state === 'sent')
+    if (waiting && coordinator !== null && !coordinator.local) armResend($)
   } catch (err) {
     await logLine($, 'question', `pushes: ${messageOf(err)}`)
   }
