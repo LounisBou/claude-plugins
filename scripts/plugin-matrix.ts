@@ -7,16 +7,24 @@
 // names the plugin and its number of parts, each a Linux cell that carries its `shard` (read by the
 // suite as SUITE_SHARD); macOS runs the whole suite in one cell.
 //
-// A pull request runs the Linux cells of the plugins it changes: a change outside plugins/ runs
-// every plugin, a change of documentation alone one cell without a suite, which passes (a skipped
-// job proves nothing to the gate). macOS runs after the merge, on main.
+// What runs when:
+//   a pull request   Linux, for the plugins it changes: core's change reaches the plugins that carry
+//                    a copy of it; a change of the tooling (scripts/, ci/, .github/, package files) or
+//                    of documentation (docs/, a README) one cell without a suite, which passes (a
+//                    skipped job proves nothing to the gate)
+//   the release      a pull request that changes a plugin manifest runs every plugin on both platforms
+//   a push to main   every plugin on Linux
+//   the night        every plugin on macOS
 //
-//   npm run plugin-matrix                        prints the matrix; appends it to $GITHUB_OUTPUT when set
+//   npm run plugin-matrix                        prints the whole matrix; appends it to $GITHUB_OUTPUT when set
 //   npm run plugin-matrix -- --pull-request <base>   the matrix of a pull request against <base>
+//   npm run plugin-matrix -- --main              the matrix of a push to main
+//   npm run plugin-matrix -- --nightly           the matrix of the night
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
+import { consumers } from './core.ts'
 import { isEntry, isRecord, readPlugins } from './lib/plugins.ts'
 
 export const PLATFORMS = ['ubuntu-latest', 'macos-latest'] as const
@@ -80,14 +88,26 @@ export function matrixOf(blocking: ReadonlyMap<string, ReadonlySet<Platform>>, s
   }))
 }
 
-// Files no plugin reads: their change runs no suite.
-const DOCUMENTATION = [/^docs\//, /^[^/]+\.md$/]
+// Files no plugin suite reads: their change runs none.
+const NO_SUITE_PATHS = [
+  /^docs\//, /^[^/]+\.md$/, /^plugins\/[^/]+\/README\.md$/,
+  /^scripts\//, /^ci\//, /^\.github\//, /^package(-lock)?\.json$/,
+]
+const CORE_SOURCE = /^packages\/core\//
+const MANIFEST = /^plugins\/[^/]+\/\.claude-plugin\/plugin\.json$/
 
-/** The plugins a change of `changed` (paths from the root) asks to test. */
-export function touchedPlugins(changed: readonly string[], plugins: readonly string[]): string[] {
+/**
+ * The plugins a change of `changed` (paths from the root) asks to test: the plugin a path sits in,
+ * the `carriers` of core for a path of core, every plugin for a path no rule names.
+ */
+export function touchedPlugins(changed: readonly string[], plugins: readonly string[], carriers: readonly string[] = plugins): string[] {
   const touched = new Set<string>()
   for (const path of changed) {
-    if (DOCUMENTATION.some(pattern => pattern.test(path))) continue
+    if (NO_SUITE_PATHS.some(pattern => pattern.test(path))) continue
+    if (CORE_SOURCE.test(path)) {
+      for (const name of carriers) touched.add(name)
+      continue
+    }
     const name = /^plugins\/([^/]+)\//.exec(path)?.[1]
     if (name === undefined) return [...plugins]
     if (plugins.includes(name)) touched.add(name)
@@ -95,21 +115,44 @@ export function touchedPlugins(changed: readonly string[], plugins: readonly str
   return plugins.filter(plugin => touched.has(plugin))
 }
 
-/** The cells a pull request runs: Linux, for the plugins it touches, else the cell without a suite. */
-export function pullRequestCells(matrix: readonly Cell[], touched: readonly string[]): Cell[] {
+/** A release is the pull request that changes a plugin manifest: the one place a version is raised. */
+export function isRelease(changed: readonly string[]): boolean {
+  return changed.some(path => MANIFEST.test(path))
+}
+
+/** The cells a pull request runs: Linux for the plugins it touches, every cell for a release, else the cell without a suite. */
+export function pullRequestCells(matrix: readonly Cell[], touched: readonly string[], release = false): Cell[] {
+  if (release) return [...matrix]
   const cells = matrix.filter(cell => cell.os === 'ubuntu-latest' && touched.includes(cell.plugin))
   return cells.length > 0 ? cells : [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }]
+}
+
+/** The cells of a push to main: every plugin on Linux. */
+export function mainCells(matrix: readonly Cell[]): Cell[] {
+  return matrix.filter(cell => cell.os === 'ubuntu-latest')
+}
+
+/** The cells of the night: every plugin on macOS. */
+export function nightlyCells(matrix: readonly Cell[]): Cell[] {
+  return matrix.filter(cell => cell.os === 'macos-latest')
 }
 
 export function run(root: string, args: readonly string[], io: Io): number {
   const plugins = readPlugins(root).map(plugin => plugin.dir)
   const table: unknown = JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8'))
   let matrix = matrixOf(parseBlocking(table, plugins), parseShards(table, plugins))
-  if (args[0] === '--pull-request') {
-    if (args[1] === undefined) throw new Error('--pull-request needs the base ref')
-    const changed = execFileSync('git', ['diff', '--name-only', `${args[1]}...HEAD`], { cwd: root, encoding: 'utf8' })
+  const [mode, base] = args
+  if (mode === '--pull-request') {
+    if (base === undefined) throw new Error('--pull-request needs the base ref')
+    const changed = execFileSync('git', ['diff', '--name-only', `${base}...HEAD`], { cwd: root, encoding: 'utf8' })
       .split('\n').filter(line => line !== '')
-    matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins))
+    matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins, consumers(root)), isRelease(changed))
+  } else if (mode === '--main') {
+    matrix = mainCells(matrix)
+  } else if (mode === '--nightly') {
+    matrix = nightlyCells(matrix)
+  } else if (mode !== undefined) {
+    throw new Error(`unknown argument "${mode}"`)
   }
   const line = JSON.stringify({ include: matrix })
   io.out(line)
