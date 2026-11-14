@@ -2,7 +2,7 @@
 // clone of the logs repository and pushed, after the scan of every day file finds no secret and
 // every transcript is passed through the redaction. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readText, withLock, writeAtomic } from '../../../../core/store.ts'
 import { lockOf } from '../../../../core/store-io.ts'
@@ -10,7 +10,7 @@ import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
 import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
 import { redactText, redactValue, type EnvSecrets } from './redact.ts'
-import { INDEX_DIR, schemaFiles, type IndexFile } from './schema-docs.ts'
+import { INDEX_DIR, PROJECTS_DIR, schemaFiles, type IndexFile } from './schema-docs.ts'
 
 /** The variable that names the logs repository, in the environment or in ~/.env. */
 export const REPO_VARIABLE = 'CLAUDE_LOGS_REPO'
@@ -140,6 +140,7 @@ export function redactTranscript(text: string, secrets: EnvSecrets): string {
  */
 function indexFiles(options: ExportOptions, events: string, days: readonly string[], has: (session: string) => boolean): { files: IndexFile[]; sessions: Set<string> } {
   const sessions = new Set<string>()
+  const projects = projectsOfSessions(days.map(name => readFileSync(join(events, name), 'utf8')))
   const files = [
     ...schemaFiles(options.kinds ?? EVENT_SCHEMA),
     ...days.map((name): IndexFile => {
@@ -155,8 +156,57 @@ function indexFiles(options: ExportOptions, events: string, days: readonly strin
       })
       return { path: `${INDEX_DIR}/${options.machine}/${day}.json`, text: `${JSON.stringify(manifest, null, 2)}\n` }
     }),
+    ...days.flatMap(name => projectViews(options, name.slice(0, 10), readFileSync(join(events, name), 'utf8'), projects, has)),
   ]
   return { files, sessions }
+}
+
+/** A project's name as a directory name: `owner/name` becomes `owner-name`, in lower case (one repository written in two cases is one directory), and nothing else escapes the directory. */
+export function projectDir(project: string): string {
+  const name = project.replace(/[^A-Za-z0-9._-]/g, '-').toLowerCase()
+  return /^\.+$/.test(name) ? '_' : name
+}
+
+/** The project each session names, over every day file: only its `session_start` carries it, and a session outlives a UTC day. */
+function projectsOfSessions(texts: readonly string[]): Map<string, string> {
+  const projects = new Map<string, string>()
+  for (const line of texts.flatMap(text => text.split('\n'))) {
+    try {
+      const e = JSON.parse(line) as { session?: unknown; project?: unknown }
+      if (typeof e.session === 'string' && typeof e.project === 'string') projects.set(e.session, e.project)
+    } catch {
+      // A line that is no JSON names no project.
+    }
+  }
+  return projects
+}
+
+/**
+ * A day's manifest once per project: the same manifest as the day's, built from the events of the
+ * sessions that name that project (`projects`, read over every day), at `index/projects/<owner-name>/<machine>/<day>.json`.
+ * A session naming none is in no project's view.
+ */
+function projectViews(options: ExportOptions, day: string, text: string, projects: ReadonlyMap<string, string>, has: (session: string) => boolean): IndexFile[] {
+  const lines = text.split('\n').filter(line => line.trim() !== '')
+  const parsed = lines.map(line => {
+    try {
+      const e = JSON.parse(line) as { session?: unknown }
+      return typeof e.session === 'string' ? e.session : undefined
+    } catch {
+      return undefined
+    }
+  })
+  const byDirectory = new Map<string, string[]>()
+  parsed.forEach((session, i) => {
+    const project = session === undefined ? undefined : projects.get(session)
+    if (project === undefined) return
+    const directory = projectDir(project)
+    byDirectory.set(directory, [...(byDirectory.get(directory) ?? []), lines[i] ?? ''])
+  })
+  return [...byDirectory].sort(([a], [b]) => a.localeCompare(b, 'en')).map(([directory, own]): IndexFile => ({
+    path: `${PROJECTS_DIR}/${directory}/${options.machine}/${day}.json`,
+    text: `${JSON.stringify(buildManifest({ day, machine: options.machine, text: own.join('\n'), transcript: session => (has(session) ? transcriptPath(options.machine, session) : undefined) }), null, 2)}\n`,
+  }))
 }
 
 /** The secrets an index would carry, one line each; none when it is clean. */
@@ -165,10 +215,12 @@ const leaksOf = (index: readonly IndexFile[], secrets: EnvSecrets): string[] =>
 
 const refusal = (leaks: readonly string[]): ExportResult => ({ lines: [`export refused: the index would carry ${leaks.length} secret(s), nothing pushed`, ...leaks], code: 1 })
 
-/** Replaces the generated index of `machine` in the clone: schema pages and the machine's manifests, nothing stale left. */
+/** Replaces the generated index of `machine` in the clone: schema pages, the machine's manifests and its slice of each project's view, nothing stale left. */
 function writeIndex(clone: string, machine: string, files: readonly IndexFile[]): void {
   rmSync(join(clone, INDEX_DIR, 'schema'), { recursive: true, force: true })
   rmSync(join(clone, INDEX_DIR, machine), { recursive: true, force: true })
+  const projects = join(clone, PROJECTS_DIR)
+  if (existsSync(projects)) for (const project of readdirSync(projects)) rmSync(join(projects, project, machine), { recursive: true, force: true })
   for (const file of files) {
     const path = join(clone, file.path)
     mkdirSync(dirname(path), { recursive: true })
