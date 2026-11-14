@@ -14,12 +14,15 @@ import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
 import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
+import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
-  'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)'
+  'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const WRITES = new Set(['open', 'round', 'review', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'escaped', 'cost'])
+// The writes of the pull request ledger (core's pr-ledger.ts): lines of the record that are no rows.
+const LEDGER_WRITES = new Set(['pr', 'pr-archive'])
 const GOAL_WRITES = new Set(['init', 'plan', 'met', 'rule-out', 'defer', 'reopen'])
 const GOAL_SUBS = ['init', 'status', 'plan', 'met', 'rule-out', 'defer', 'reopen', 'check']
 
@@ -358,9 +361,10 @@ function noteLink(ctx: Context, code: string, id: string | null, link: Partial<F
     { ...rowFact(ctx, id), session: null, goal: null, prs: [], ...link }, { subject })
 }
 
+/** The record's dispatch rows: its ledger lines are no rows. */
 function readRows(ctx: Context): Row[] {
   try {
-    return parseRecord(readText(ctx.record) ?? '')
+    return parseRecord(readText(ctx.record) ?? '').filter(row => !isLedgerMarked(row))
   } catch {
     return die(ctx, `could not read ${ctx.record}`)
   }
@@ -853,14 +857,63 @@ const STEPS: Readonly<Record<string, (row: Row) => void>> = {
   escaped: row => { row['escaped'] = true },
 }
 
+/** The pull request a ledger command names, or the command dies saying what it takes. */
+function prOf(ctx: Context, sub: string, ref: string): { repo: string; pr: number } {
+  if (ref === '') die(ctx, `${sub}: a pull request <owner/name>#<n> is required`)
+  return parsePrRef(ref) ?? die(ctx, `${sub}: a pull request <owner/name>#<n> is required, got: ${ref}`)
+}
+
+/** `pr`: sets the pull request's one line in the ledger, its start kept while its status holds. */
+function setPr(ctx: Context, args: readonly string[]): void {
+  const { repo, pr } = prOf(ctx, 'pr', args[0] ?? '')
+  const found = options(ctx, 'pr', args.slice(1), ['--working', '--waiting', '--parked'])
+  const only = found.length === 1 ? found[0] : undefined
+  if (only === undefined) die(ctx, 'pr: give one of --working "<agent>", --waiting "<what>" or --parked "<the operator\'s words, dated>"')
+  const [flag, value] = only
+  if (value.trim() === '') die(ctx, `pr: ${flag} needs its text`)
+  const detail = value.trim()
+  const set: LedgerSet = flag === '--working' ? { repo, pr, status: 'working', agent: detail }
+    : flag === '--waiting' ? { repo, pr, status: 'waiting', on: detail } : { repo, pr, status: 'parked', ruling: detail }
+  let written = ''
+  try {
+    update(ctx.record, current => {
+      const previous = ledgerLines(current ?? '').find(line => line.repo === repo && line.pr === pr)
+      const line = ledgerLineOf(set, ctx.deps.now(), previous)
+      written = `${prKey(repo, pr)} ${statusText(line)}`
+      return withLine(current ?? '', line)
+    })
+  } catch {
+    die(ctx, `could not update ${ctx.record}`)
+  }
+  say(ctx, written)
+}
+
+/** `pr-archive`: moves the pull request's line to the archive beside the record, the archive written first. */
+function archivePr(ctx: Context, args: readonly string[]): void {
+  const { repo, pr } = prOf(ctx, 'pr-archive', args[0] ?? '')
+  if (args.length > 1) die(ctx, `pr-archive: unexpected argument ${args[1]}`)
+  const key = prKey(repo, pr)
+  const line = ledgerLines(isFile(ctx.record) ? readText(ctx.record) ?? '' : '').find(l => l.repo === repo && l.pr === pr)
+  if (line === undefined) die(ctx, `pr-archive: ${key} has no line in ${ctx.record}`)
+  try {
+    update(archiveOf(ctx.record), current => withArchived(current ?? '', [line], ctx.deps.now()))
+    update(ctx.record, current => withoutLines(current ?? '', [key]))
+  } catch {
+    die(ctx, `could not move ${key} to ${archiveOf(ctx.record)}`)
+  }
+  say(ctx, `archived ${key}`)
+}
+
 async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   const { cmd } = ctx
-  if (WRITES.has(cmd) || (cmd === 'goals' && GOAL_WRITES.has(argv[2] ?? ''))) guardOwner(ctx)
+  if (WRITES.has(cmd) || LEDGER_WRITES.has(cmd) || (cmd === 'goals' && GOAL_WRITES.has(argv[2] ?? ''))) guardOwner(ctx)
   const rest = argv.slice(2)
+  if (cmd === 'pr') return setPr(ctx, rest)
+  if (cmd === 'pr-archive') return archivePr(ctx, rest)
   if (cmd === 'open') return open(ctx, rest)
   if (cmd === 'summary') return summary(ctx, rest)
   if (cmd === 'goals') return goals(ctx, rest)
-  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary or goals)`)
+  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)`)
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)

@@ -12,7 +12,9 @@ Session start and end (role from the title, model, effort, launch latency, time 
 turn, duration, cost, context), each turn's end (duration, tokens, context, cost), each tool call
 (tool, MCP server, outcome, who refused it, duration, a redacted Bash line), subagents and
 launched sessions spawned and closed, questions put to the operator and the letters chosen, and the
-dispatch record's writes. No prompt, answer, message or tool output is kept in the events; the
+dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
+module has learned them) and each GitHub act the repository, pull request and head it names
+(`target`). No prompt, answer, message or tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
 
 ## Commands
