@@ -300,9 +300,6 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
-# The cap leaves the machine line where the orchestrator's gate reads it: last.
-check "the review report still ends with the norms-check line" "yes" \
-  "$(sed -n '/^## 4\. Report shape/,/^## 5\./p' "$ROOT/templates/agent-review-brief.md" | grep -v '^## 5\.' | grep -v '^$' | tail -1 | grep -qF 'End the report with one machine line and nothing after it: `norms-check:' && echo yes || echo no)"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
 # would cut the reviewer's words out of them.
 check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
@@ -1163,7 +1160,6 @@ check_status "a norms value that is neither tool nor none is refused" 1 bash "$R
 check "a refused review leaves the row as it was" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
-check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
 check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
 check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
@@ -2188,21 +2184,14 @@ check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1
 check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
-# and holding it to one would make the check noise nobody reads. What it IS held to is the
-# line its report must end on: a round that never reports its norms check leaves the
-# orchestrator nothing to record, and the readiness gate then refuses a head whose round did
-# read it. The rule lived in prose on both sides of the round and was skipped twice in one
-# day, so the brief is read for it before the dispatch rather than after.
+# and holding it to one would make the check noise nobody reads.
 review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"
-printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
 check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
 
 review_brief "$B/review-nogate.md"
-check_status "a review brief with no norms-check line is a finding" 1 bash "$LINT" "$B/review-nogate.md"
-check "the missing report line is named" "1" "$(bash "$LINT" "$B/review-nogate.md" 2>&1 | grep -c 'norms-check:')"
-check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 2>&1 | grep -c 'norms-check')"
+check_status "a review brief with no norms-check line passes: norms is on demand" 0 bash "$LINT" "$B/review-nogate.md"
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
