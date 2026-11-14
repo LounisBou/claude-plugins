@@ -343,7 +343,7 @@ from ghlib import fmt
 for draft in (False, True):
     ci = fmt.gate_ci({"statuses": []}, [], draft, {})
     assert ci["result"] == "PENDING", ci
-ci = fmt.gate_ci(None, None, False)
+ci = fmt.gate_ci(None, [], False)
 print(ci["result"], ci["total"], ci["running"])
 ' "$GHDIR")"
 check "gate_ci keeps a commit status alone green" "SUCCESS 1" \
