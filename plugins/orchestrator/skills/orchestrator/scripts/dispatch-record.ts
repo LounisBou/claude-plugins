@@ -768,7 +768,7 @@ export function openLine(row: Row): string {
     ? `deferred=${text(row['id'])} label=${text(row['label'])} ruling=${text(row['deferred'])}`
     : `open=${text(row['id'])} label=${text(row['label'])}`
   const v = field(row['review'], 'verdict')
-  return truthy(v) ? `${line} verdict=${text(field(v, 'result'))} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : line
+  return truthy(v) ? `${line} verdict=${text(field(v, 'result'))}@${text(field(v, 'head')).slice(0, 7)} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : line
 }
 
 const isOpen = (row: Row): boolean => row['state'] === 'open'

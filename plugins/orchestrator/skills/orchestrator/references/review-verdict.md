@@ -7,11 +7,11 @@
 For each delivery, the review session runs 1 to 11 and 13 (its brief points here); you read its line. 12 and 14 are yours, on agents' lines:
 1. Git layout: branches, bases, commit messages; diffs disjoint between stacked PRs.
 2. Diff stats: no forbidden files, no scope creep.
-3. Domain artifacts field-by-field against the spec, including checking house patterns the spec may have missed (spec omissions are YOUR findings to fix in the spec).
+3. Domain artifacts field-by-field against the spec, including checking house patterns the spec may have missed (spec omissions are findings against the spec).
 4. Grep the diff and commit log for what the workflow artifacts policy forbids (`references/standing-rules.md`, standing rules).
 5. Norms: read one core file and one test file for them only where the plan requires `norms` (github's `check-plan.ts` says what a plan requires); otherwise no norms reading.
 6. Re-derive the agent's proofs: a verification procedure the agent invented may have a hole (e.g. a schema diff that also captures pre-existing drift, so demand differential baselines).
-7. **Treat claimed command output as a claim — cleanup claims included.** Re-run the one command whose result decides your verdict, or check the artifact directly. Internal consistency of a report proves nothing.
+7. **Treat claimed command output as a claim — cleanup claims included.** Re-run the one command whose result decides the verdict, or check the artifact directly. Internal consistency of a report proves nothing.
 8. **Verify literal domain values the plan supplied.** Field names, numeric bounds, enumerated catalogues: check them against the authoritative source, not against the plan.
 9. **A norms file can be aspirational.** Before accepting a norms finding, check whether existing code contradicts it: a rule the codebase widely violates is a convention question for the user, not a defect in the new diff. Enforce it on new code, do not manufacture findings from it.
 10. **Ask of every test and every guard: what does it NOT read, and what would it still read if the behaviour were gone?** A gate green over what it does not read is the most common shape of false proof. When the verdict rests on a test you have not seen fall, mutate it on purpose: break the behaviour, watch the test fall and name the right defect, restore.
@@ -22,7 +22,7 @@ For each delivery, the review session runs 1 to 11 and 13 (its brief points here
 
 ### The record
 
-**And the round ends on the record, not on memory.** `dispatch-record.sh <review|fixed|ready> <record> <id> --head <sha>`: `review` records the review round, `fixed` the verified correction, `ready` your pre-check, never the ready (`orchestrator:model-routing`, « The record »). The gate's review record is yours: at the head the rule above names (« Thresholds a verdict never crosses »), write it from a clean checkout at that head with `mcp__orchestrator__review`, its schema naming the fields: `verdict` is `pass`, `fail` while a critical item is left, or `accepted`; `kept` lists the findings a `fail`'s correction round fixes, `set_asides` each point set aside with its one-line reason, which `accepted` requires. With `record`, `row` and the review's index as `findings`, the same call writes the row's level 1: verdict, few words, rounds, index. A failed record of another reviewer at that head is answered the same way.
+**And the round ends on the record, not on memory.** `dispatch-record.sh <review|fixed|ready> <record> <id> --head <sha>`: `review` records the review round, `fixed` the verified correction, `ready` your pre-check, never the ready (`orchestrator:model-routing`, « The record »). The gate's review record is yours: at the head the rule above names (« Thresholds a verdict never crosses »), write it from a clean checkout at that head with `mcp__orchestrator__review`, its schema naming the fields: `verdict` is `pass`, `fail` while a critical item is left, or `accepted`; `kept` lists the findings a `fail`'s correction round fixes, `set_asides` each point set aside with its one-line reason, which `accepted` requires. With `record`, `row` and the review's index as `findings`, the same call writes the row's level 1: verdict, few words, rounds, index; run `review` before it, which voids level 1. `accepted` sets the index aside as one point: « no critical finding, per the review ». A failed record of another reviewer at that head is answered the same way.
 
 ### The verdict message
 

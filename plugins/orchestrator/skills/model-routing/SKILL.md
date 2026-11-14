@@ -71,7 +71,7 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | A behaviour phase with the contract already fixed | `behaviour-phase` | `standard` | the test suite, then the review round |
 | A conversion phase (move, rename, extract) | `conversion-phase` | `standard` | « nothing observable changed »: the suite judges |
 | A corrective phase on a findings list | `corrective` | `standard` | the gate and a reader at its head: the diff, the decisive tests |
-| A review collector, a comments agent | `review-collector`, `comments` | `standard` | its own verification; you read its line |
+| A review collector, a comments agent | `review-collector`, `comments` | `standard` | its line, by you; a comments agent's tree too |
 | The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector |
 | The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | `ready`, on the recorded audit |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |

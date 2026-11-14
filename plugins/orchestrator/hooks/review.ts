@@ -58,7 +58,7 @@ export function rowTarget(input: Record<string, unknown>): RowTarget | null | st
   return { record, row, findings }
 }
 
-// A verdict's few words: its line's first, or what it decided counted, never a finding's words.
+// A verdict's few words: its line's first, or what it decided counted.
 export function wordsOf(input: Record<string, unknown>): string {
   const count = (raw: unknown): number => (Array.isArray(raw) ? raw.length : 0)
   const verdict = text(input['verdict'])
@@ -89,7 +89,9 @@ async function writeRow($: Held, input: Record<string, unknown>, target: RowTarg
     '--head', sha, '--result', text(input['verdict']), '--words', wordsOf(input), ...(target.findings ? ['--findings', target.findings] : []),
   ]
   const run = await $.process.run(argv, { env, timeoutMs: ROW_RUN_MS })
-  return run.exitCode === 0 ? { line: run.stdout.trim(), ok: true } : { line: run.stderr.trim() || run.stdout.trim(), ok: false }
+  // A warning of a write that succeeded (a row no review touched) rides the line.
+  const said = [run.stdout.trim(), run.stderr.trim()].filter(Boolean).join('\n')
+  return run.exitCode === 0 ? { line: said, ok: true } : { line: said || `dispatch-record.sh exited ${run.exitCode}`, ok: false }
 }
 
 // The record tool's call for a verdict, or the line that says what the input lacks.
@@ -218,8 +220,9 @@ export function register(on: On<Held>): void {
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
     const answer = answerOf(await $.tool.call(call))
     if (answer.isError || target === null) return answer
-    const row = await writeRow($, e, target)
-    return row.ok ? { result: `${answer.result}\n${row.line}` } : { result: `${answer.result}\nthe gate's record is written; the row is not: ${row.line}`, isError: true }
+    // The gate's record is written: a run that throws is the row's failure, never the record's.
+    const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
+    return row.ok ? { result: `${answer.result}\n${row.line}` } : { result: `${answer.result}\nthe gate's record is written, never call this tool again for it; write the row with dispatch-record.sh verdict: ${row.line}`, isError: true }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }

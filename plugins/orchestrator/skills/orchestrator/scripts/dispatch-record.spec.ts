@@ -205,7 +205,7 @@ test('verdict: the row carries the verdict, its few words and the findings index
     verdict: { head: 'def5678', result: 'accepted', words: '2 set aside', findings: null, rounds: 2, at: '2026-11-08T10:11:12Z' },
   })
   assert.equal(rows()[0]?.['rounds'], 2)
-  assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted — 2 set aside — findings=none')
+  assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted@def5678 — 2 set aside — findings=none')
   await cli(['review', r, '1', '--head', 'aaa1111'])
   assert.equal((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], undefined)
 })

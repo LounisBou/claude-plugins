@@ -11,5 +11,5 @@ Rotation = you write a **resume prompt** (`agent-rotation-brief.md`) for a fresh
 ## Your own context (the orchestrator is not exempt)
 
 - **Staying compaction-ready** is SKILL.md's principle 10, **refreshing the state from the artifacts** its principle 4, and **measuring your own context** its principle 7.
-- **Keep your turn light**: a repository measurement, or a large file you need only a conclusion from, goes to a read-only subagent that returns it. A CI wait is one background `ci-watch.sh` per pull request, reporting its terminal state, never polled output; a long list, diff or log is filtered to what the decision needs or read by that subagent.
+- **Keep your turn light**: a repository measurement, or a large file you need only a conclusion from, goes to a read-only subagent that returns it. A CI wait is one background `ci-watch.sh` per pull request, reporting its terminal state, never polled output; a long list or log is filtered to what the decision needs or read by that subagent.
 - **When your own session lacks what the role needs** — a PATH, a credential, a tool the launch did not carry — the repair is a successor spawned with it, never a favour asked of a peer or the operator.

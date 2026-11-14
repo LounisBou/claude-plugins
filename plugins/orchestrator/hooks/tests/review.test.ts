@@ -5,7 +5,7 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR, findingsOf, register as registerReview } from '../review.ts'
+import { NOT_ORCHESTRATOR, findingsOf, register as registerReview, wordsOf } from '../review.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 
@@ -248,7 +248,7 @@ test('an acceptance\'s few words count its set-asides, never their words', async
 test('a row the record refuses comes back as an error that says the gate\'s record is written', async () => {
   const fx = rowFake({ exitCode: 1, stdout: '', stderr: 'ERROR: verdict: no row with id 4 in /b/record.jsonl\n' })
   const out = await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 })
-  expect(out).toEqual({ result: `${WRITTEN}\nthe gate's record is written; the row is not: ERROR: verdict: no row with id 4 in /b/record.jsonl`, isError: true })
+  expect(out).toEqual({ result: `${WRITTEN}\nthe gate's record is written, never call this tool again for it; write the row with dispatch-record.sh verdict: ERROR: verdict: no row with id 4 in /b/record.jsonl`, isError: true })
 })
 
 test('without a record, the verdict touches no row', async () => {
@@ -283,4 +283,38 @@ test('a check plan names no row', async () => {
   const fx = rowFake()
   expect((await handler()(fx.dollar, { ...PLANNED, record: '/b/record.jsonl', row: 4 })).isError).toBe(true)
   expect(fx.calls).toEqual([])
+})
+
+test('a verdict\'s few words: its line\'s first, cut to 120, or what it decided counted', () => {
+  expect(wordsOf({ verdict: 'pass' })).toBe('clean')
+  expect(wordsOf({ verdict: 'fail', kept: [{ point: 'a' }, { point: 'b' }] })).toBe('2 kept')
+  expect(wordsOf({ verdict: 'pass', detail: 'read at 0123456\nmore' })).toBe('read at 0123456')
+  expect(wordsOf({ verdict: 'accepted', detail: 'ignored', set_asides: [{ point: 'a', reason: 'r' }] })).toBe('1 point(s) set aside')
+  expect(wordsOf({ verdict: 'fail', detail: 'x'.repeat(200) })).toBe('x'.repeat(120))
+})
+
+test('a head that cannot be read writes no row, and says the gate\'s record is written', async () => {
+  const fx = rowFake()
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: Record<string, unknown>) =>
+    argv[0] === 'git' ? { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' } : run(argv, init)
+  const out = await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 })
+  expect(out).toEqual({ result: `${WRITTEN}\nthe gate's record is written, never call this tool again for it; write the row with dispatch-record.sh verdict: no head read in /work/thing: fatal: not a git repository`, isError: true })
+  expect(fx.runs.filter((r) => r.argv[2] === 'verdict')).toEqual([])
+})
+
+test('a row run that throws is the row\'s failure, the gate\'s record still said written', async () => {
+  const fx = rowFake()
+  fx.dollar.process.run = async (argv: readonly string[]) => {
+    if (argv[0] === 'git') return { exitCode: 0, stdout: '0123456\n', stderr: '' }
+    throw new Error('timed out after 10000 ms')
+  }
+  expect(await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 }))
+    .toEqual({ result: `${WRITTEN}\nthe gate's record is written, never call this tool again for it; write the row with dispatch-record.sh verdict: timed out after 10000 ms`, isError: true })
+})
+
+test('a warning of a row written comes back with its line', async () => {
+  const fx = rowFake({ exitCode: 0, stdout: 'row 4: fail — two to fix — findings: none\n', stderr: 'WARNING: verdict: row 4 has no review recorded: recording the verdict anyway\n' })
+  expect(await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 }))
+    .toEqual({ result: `${WRITTEN}\nrow 4: fail — two to fix — findings: none\nWARNING: verdict: row 4 has no review recorded: recording the verdict anyway` })
 })
