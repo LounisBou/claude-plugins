@@ -207,7 +207,7 @@ export function register(on: On<Held>): void {
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
-      if (!ending && name.startsWith('Orch: ') && await movedHome($, name)) {
+      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await movedHome($, name)) {
         $.command.run({ command: 'exit' })
           .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)

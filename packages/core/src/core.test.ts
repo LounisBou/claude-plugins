@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
-import { configDir, currentSessionName, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
+import { configDir, currentSessionName, DeadlineExceeded, NAMES_CONTRACT, roleOf, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'core-'))
 
@@ -140,6 +140,22 @@ describe('names', () => {
   it('builds a name, or refuses a subject that does not fit', () => {
     assert.equal(sessionName('Orch', 'billing'), 'Orch: billing')
     assert.throws(() => sessionName('Agent', ' x'), /not a session subject/)
+  })
+
+  it('reads the role from the prefix alone, whatever the subject, a blank before the colon or not', () => {
+    assert.equal(roleOf('Orch: payments'), 'orchestrator')
+    assert.equal(roleOf('Coord : main'), 'coordinator')
+    assert.equal(roleOf('Audit:x'), 'auditor')
+    assert.equal(roleOf(`Agent: ${'a'.repeat(40)}`), 'agent')
+    for (const name of ['Orchestra : x', 'a plain session', ' Orch: x', '', null]) assert.equal(roleOf(name), null, String(name))
+  })
+
+  it('publishes the shape as data: the roles in a listing\'s order and the subject\'s pattern', () => {
+    assert.equal(NAMES_CONTRACT.version, 1)
+    assert.deepEqual(Object.keys(NAMES_CONTRACT.roles), ['Orch', 'Coord', 'Audit', 'Agent'])
+    const subject = new RegExp(`^${NAMES_CONTRACT.subject}$`, 'u')
+    assert.ok(subject.test('a'.repeat(25)))
+    for (const text of ['', ' x', 'x ', 'a'.repeat(26)]) assert.equal(subject.test(text), false, text)
   })
 
   it('writes a name of the former shape the current way, its reference kept, any other name as given', () => {
