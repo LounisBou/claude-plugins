@@ -8,6 +8,9 @@
 //   [superseded: <YYYY-MM-DDThh:mm:ssZ>] replaced by the ruling that opens on that date, in the
 //                                        file or its archive; a date no ruling opens on keeps it
 //   [standing]                           binds every future action; stays, as an unmarked one does
+//   [for: <ref>]                         binds one open item (<ref>: its row or pull request); stays,
+//                                        and a takeover leaves it out (`readAtTakeover`), reading it
+//                                        by grep on <ref> when a task reaches that item
 //
 // The state file's journal moves by its dates: in the section of its latest
 // `- <YYYY-MM-DDThh:mm:ssZ> LIVE SUMMARY` line, each dated line older than that summary, with the
@@ -19,6 +22,7 @@ export type Marker =
   | { readonly kind: 'standing' }
   | { readonly kind: 'done'; readonly ref: string }
   | { readonly kind: 'superseded'; readonly by: string }
+  | { readonly kind: 'for'; readonly ref: string }
 
 /** A file split into what stays and what moves, each moved entry or block whole. */
 export interface Pruned {
@@ -28,7 +32,7 @@ export interface Pruned {
 }
 
 const ISO = '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
-const MARKER = new RegExp(`\\[(standing|done: ([^\\]]*[^\\]\\s][^\\]]*)|superseded: (${ISO}))\\]\\s*$`)
+const MARKER = new RegExp(`\\[(standing|(done|for): ([^\\]]*[^\\]\\s][^\\]]*)|superseded: (${ISO}))\\]\\s*$`)
 const DATED = new RegExp(`^- (${ISO}) `)
 const SUMMARY = new RegExp(`^- (${ISO}) LIVE SUMMARY\\b`)
 
@@ -37,8 +41,8 @@ export function markerOf(entry: string): Marker | undefined {
   const match = MARKER.exec(entry)
   if (!match) return undefined
   if (match[1] === 'standing') return { kind: 'standing' }
-  if (match[2] !== undefined) return { kind: 'done', ref: match[2].trim() }
-  return { kind: 'superseded', by: match[3] ?? '' }
+  if (match[3] !== undefined) return { kind: match[2] === 'for' ? 'for' : 'done', ref: match[3].trim() }
+  return { kind: 'superseded', by: match[4] ?? '' }
 }
 
 /** The file's lines grouped: each `- ` entry with its indented lines, every other line alone. */
@@ -74,6 +78,11 @@ export function pruneRulings(text: string, archive: string): Pruned {
     else kept.push(...group.lines)
   }
   return { kept: kept.join('\n'), moved, warnings }
+}
+
+/** What a takeover reads of the rulings file: every line but the entries marked `[for: <ref>]`. */
+export function readAtTakeover(text: string): string {
+  return entries(text).filter(group => !(group.entry && markerOf(group.lines.join('\n'))?.kind === 'for')).flatMap(group => group.lines).join('\n')
 }
 
 /** The state file pruned: the journal of its live summary's section older than that summary. */

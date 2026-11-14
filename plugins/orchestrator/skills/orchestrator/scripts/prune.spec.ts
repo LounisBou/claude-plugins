@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { archiveOf, markerOf, pruneFile, pruneRulings, pruneState } from './prune.ts'
+import { archiveOf, markerOf, pruneFile, pruneRulings, pruneState, readAtTakeover } from './prune.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'prune-')) })
@@ -57,6 +57,7 @@ test('the markers are read at the end of an entry only', () => {
   assert.deepEqual(markerOf('- x « y » [standing]'), { kind: 'standing' })
   assert.deepEqual(markerOf('- x « y » [done: acme/app#12, row 4]  '), { kind: 'done', ref: 'acme/app#12, row 4' })
   assert.deepEqual(markerOf('- x « y » [superseded: 2026-11-10T06:55:24Z]'), { kind: 'superseded', by: '2026-11-10T06:55:24Z' })
+  assert.deepEqual(markerOf('- x « y » [for: acme/app#12]'), { kind: 'for', ref: 'acme/app#12' })
   assert.equal(markerOf('- x « [done: a] » the words quote a marker'), undefined)
   assert.equal(markerOf('- x « y » [superseded: yesterday]'), undefined)
   assert.equal(markerOf('- x « y » [done: ]'), undefined)
@@ -129,4 +130,17 @@ test('pruneFile creates the archive when there is none, and leaves an absent fil
   assert.equal(pruneFile(state, pruneState, NOW).moved, 2)
   assert.match(readFileSync(join(dir, 'state-archive.md'), 'utf8'), /^## Moved 2026-11-13T22:30:00Z from state\.md\n\n- 2026-11-13T09:00:00Z/)
   assert.deepEqual(pruneFile(join(dir, 'none.md'), pruneState, NOW), { moved: 0, before: 0, after: 0, warnings: [] })
+})
+
+test('a ruling for one open item stays in the file and is left out of what a takeover reads; the rest is read', () => {
+  const text = [
+    '# Standing rulings — Orch: belt', '',
+    '- 2026-11-08T00:00:00Z « Réponds-moi en français. » — the operator in French. [standing]',
+    '- 2026-11-09T10:00:00Z « A » → a last correction of acme/app#12, then its review. [for: acme/app#12]',
+    '- 2026-11-10T06:55:24Z « B » → unmarked: read, since nothing says it waits on one item.',
+    '',
+  ].join('\n')
+  assert.equal(pruneRulings(text, '').kept, text)
+  assert.equal(readAtTakeover(text), text.replace('- 2026-11-09T10:00:00Z « A » → a last correction of acme/app#12, then its review. [for: acme/app#12]\n', ''))
+  assert.equal(readAtTakeover(text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, '')), text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, ''))
 })
