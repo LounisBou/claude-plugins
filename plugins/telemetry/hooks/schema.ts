@@ -45,7 +45,7 @@ export const EVENT_SCHEMA = {
     writers: ['hook `session.start`; `$.session.usage().startedAt`'],
     fields: [
       field('cwd', 'string', 'The working directory.'),
-      field('project', 'string', 'The last segment of `cwd`.'),
+      field('project', 'string', 'The `owner/name` of the session\'s git remote (`origin`, else the first), the same from any worktree; the last segment of `cwd` when it has no remote.'),
       field('model', 'string', 'The model the session starts on.'),
       field('interactive', 'boolean', 'Whether a person drives the session.'),
       field('surface', 'string', 'The host surface (terminal, desktop, …).'),
