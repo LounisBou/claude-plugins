@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, todoItems, todoLabel, todoName, todoPath, TODO_VERSION,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, todoItems, todoFile, todoLabel, todoName, todoPath, TODO_VERSION,
 } from './todo.ts'
 
 const NOW = new Date('2026-11-14T15:00:00Z')
@@ -19,6 +19,7 @@ describe('the to-do list of a session', () => {
     assert.equal(todoPath('/state', 'Orch: Claude plugins [08eb0d]'), '/state/todo/Orch: Claude plugins.jsonl')
     assert.equal(todoPath('/state', 'Audit: a/b..c'), '/state/todo/Audit: a_b..c.jsonl')
     assert.equal(todoPath('/state', 'Orch: x [1]'), todoPath('/state', 'Orch: x [2]'))
+    assert.equal(todoFile('Orch: x [1]'), 'Orch: x.jsonl')
   })
 
   it('adds an item with his words as given, dated, numbered after the last, open', () => {

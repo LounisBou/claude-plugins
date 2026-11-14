@@ -50,10 +50,14 @@ export function holderOf(name: string): string {
   return name.trim().replace(REFERENCE, '').trim().replace(ROLE_COLON, '$1: ')
 }
 
+/** The file name of a holder's list, in the directory of the lists. */
+export function todoFile(name: string): string {
+  return `${holderOf(name).replace(/[^\p{L}\p{N} :._-]/gu, '_')}${TODO_CONTRACT.suffix}`
+}
+
 /** The list of a holder under the state directory. */
 export function todoPath(stateDir: string, name: string): string {
-  const file = holderOf(name).replace(/[^\p{L}\p{N} :._-]/gu, '_')
-  return `${stateDir}/${TODO_CONTRACT.dir}/${file}${TODO_CONTRACT.suffix}`
+  return `${stateDir}/${TODO_CONTRACT.dir}/${todoFile(name)}`
 }
 
 /** An item's label when the caller gives none: its words flattened, cut. */

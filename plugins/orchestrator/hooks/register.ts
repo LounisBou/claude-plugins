@@ -16,7 +16,7 @@ import { register as registerSupervision, registerWake, registerPaneTool, regist
 import { register as registerAnswered } from './answered.ts'
 import { register as registerTodo } from './todo.ts'
 import { register as registerReview } from './review.ts'
-import { register as registerCommands } from './commands.ts'
+import { register as registerCommands, registerEnd as registerCommandsEnd } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
 import { register as registerShortCommands } from './short-commands.ts'
@@ -45,6 +45,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerTodo(on)
   registerReview(on)
   registerCommands(on)
+  registerCommandsEnd(on)
   registerNaming(on)
   registerMoving(on)
   registerShortCommands(on)

@@ -30,6 +30,8 @@ import { moduleDirOf } from './module-log.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
+import { openFor, todoCounts, whoAmI } from './todo.ts'
+import { todoFile, todoName } from '../core/todo.ts'
 
 // The nouns the commands hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>
@@ -109,10 +111,11 @@ function sessionTable(lines: readonly SessionLine[]): string[] {
 }
 
 // A pane row as a table line: the gate words and the wait follow the aligned columns.
-function lineOfRow(row: PaneRow): SessionLine {
+function lineOfRow(row: PaneRow, todos: ReadonlyMap<string, number> = new Map()): SessionLine {
+  const open = todos.get(todoFile(row.name)) ?? 0
   return {
     name: row.name, role: row.head, context: row.percent, measured: row.age ?? '',
-    note: [row.past ? 'past the gate' : null, row.wait].filter(part => part !== null).join(' · '),
+    note: [row.past ? 'past the gate' : null, row.wait, open > 0 ? `${open} to-do${open > 1 ? 's' : ''}` : null].filter(part => part !== null).join(' · '),
   }
 }
 
@@ -120,8 +123,8 @@ function lineOfRow(row: PaneRow): SessionLine {
 // first — the sessions past the rotation gate lead, each side by fill — under a
 // header line naming the columns, the same rows the supervision pane draws
 // beside this store.
-export function statusText(rows: Record<string, SessionRow>): string {
-  const lines = paneRows(rows).map(lineOfRow)
+export function statusText(rows: Record<string, SessionRow>, todos: ReadonlyMap<string, number> = new Map()): string {
+  const lines = paneRows(rows).map(row => lineOfRow(row, todos))
   if (lines.length === 0) return 'Live sessions: none measured yet.'
   return [`Live sessions (${lines.length}), most urgent first:`, ...sessionTable(lines)].join('\n')
 }
@@ -142,7 +145,7 @@ export function agentsText(rows: Record<string, SessionRow>, unmeasured: readonl
     if (row.role === 'agent') agents[key] = row
   }
   const lines = [
-    ...paneRows(agents).map(lineOfRow),
+    ...paneRows(agents).map(row => lineOfRow(row)),
     ...unmeasured.map(agent => ({ name: agent.name, role: 'agent', context: agent.status ?? 'status unknown', measured: 'not measured yet', note: '' })),
   ]
   if (lines.length === 0) return 'Implementer agents: none running.'
@@ -339,7 +342,7 @@ export function register(on: On<Held>): void {
   for (const command of commandForms('status', 'orchestrator-status')) {
     on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
-      return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
+      return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS), await todoCounts($)) }
     }).catch(fallBack)
   }
 
@@ -364,6 +367,23 @@ export function register(on: On<Held>): void {
       if (!(await ownRun($, e))) return next(e)
       const rows = await readRows($)
       return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
+    }).catch(fallBack)
+  }
+}
+
+// /coordinator-end, held while the coordinator's list holds an item neither closed nor put off: the
+// module answers the refusal with the items, and any other run (another session, an empty list) goes
+// on as the markdown command says. Registered apart from the answers above, which it is not.
+export function registerEnd(on: On<Held>): void {
+  for (const command of commandForms('coordinator-end', 'coordinator-end')) {
+    on('command.run', { command }, async ($, e, next) => {
+      if (!(await ownRun($, e))) return next(e)
+      const me = await whoAmI($)
+      if (me === null || me.role !== 'coordinator') return next(e)
+      const { pending } = await openFor($, me.name)
+      if (pending.length === 0) return next(e)
+      return { text: [`Not ended: ${pending.length} to-do ${pending.length === 1 ? 'is' : 'are'} open in this list.`, ...pending.map(item => `  ${todoName(item)}: « ${item.words} » (said ${item.said_at})`),
+        'Do each (todo done, with its outcome), hand it on (todo add … to <session>, then todo done naming it), or record his ruling that puts it off (todo defer); then run the command again.'].join('\n') }
     }).catch(fallBack)
   }
 }

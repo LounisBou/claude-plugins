@@ -8,7 +8,7 @@
 // message, and told so.
 import { updateOver } from '../core/store-io.ts'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoItems, todoName, todoPath, type TodoItem,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
 } from '../core/todo.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, storeOf } from './supervision.ts'
@@ -30,7 +30,7 @@ const refuse = (result: string): Answer => ({ result, isError: true })
 
 // The session itself: its name and role, from the row the module keeps for it. Null when the name is
 // not known yet or the session keeps no list.
-async function whoAmI($: Held): Promise<{ name: string; role: string } | null> {
+export async function whoAmI($: Held): Promise<{ name: string; role: string } | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(await $.session.id())}`).catch(() => '')))
   return row?.name && row.role && KEEPERS.includes(row.role) ? { name: row.name, role: row.role } : null
 }
@@ -134,6 +134,18 @@ export async function callTodo($: Held, e: Record<string, unknown>, now: Date = 
     return { result: open.length === 0 ? 'no open to-do.' : [`${open.length} open to-do:`, ...open.map(shown)].join('\n') }
   }
   return closing($, me, action, e, now)
+}
+
+/** The count of open items in each list, by the list's file name (core's todoFile of the holder). */
+export async function todoCounts($: Held): Promise<Map<string, number>> {
+  const dir = `${await stateDir($)}/${TODO_CONTRACT.dir}`
+  const counts = new Map<string, number>()
+  for (const entry of await $.fs.list(dir).catch(() => [])) {
+    if (entry.kind !== 'file' || !entry.name.endsWith(TODO_CONTRACT.suffix) || entry.name.includes('.tmp-')) continue
+    const open = openTodos(todoItems(String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))))
+    if (open.length > 0) counts.set(entry.name, open.length)
+  }
+  return counts
 }
 
 /** The open items of a holder, split: the ones he did not put off, and the ones he did. */

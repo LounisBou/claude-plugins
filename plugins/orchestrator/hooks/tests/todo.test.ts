@@ -6,6 +6,9 @@ import { expect, test } from 'claude-code/testing'
 import { TODO_TOOL, callTodo, register as registerTodo } from '../todo.ts'
 import { todoItems } from '../../core/todo.ts'
 import { register as registerWait, Declarations, WAIT_TOOL } from '../wait.ts'
+import { registerEnd, statusText } from '../commands.ts'
+import type { SessionRow } from '../supervision.ts'
+import { todoCounts } from '../todo.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/todo-home'
@@ -249,4 +252,54 @@ test('a coordinator or an auditor with an open item is held the same; an agent, 
     if (held) await call(dollar, { action: 'add', words: 'an order' })
     expect((await declare(dollar, { kind: 'done' })).isError).toBe(held ? true : undefined)
   }
+})
+
+function ender() {
+  const handlers: Record<string, Function> = {}
+  registerEnd((...args: any[]) => { handlers[args[1].command] = args[args.length - 1]; return { catch: () => undefined } })
+  const run = (dollar: any, command = 'orchestrator:coordinator-end') => handlers[command](dollar, { command, args: '' }, (e: unknown) => ({ passed: e }))
+  return { handlers, run }
+}
+
+test('/coordinator-end lists the coordinator\'s open to-dos and refuses to end while one is neither closed nor put off', async () => {
+  const { run, handlers } = ender()
+  expect(Object.keys(handlers).sort()).toEqual(['coordinator-end', 'orchestrator:coordinator-end'])
+  const { dollar } = world({ me: ['coordinator', 'Coord: general [7952fb]'] })
+  expect(await run(dollar)).toEqual({ passed: { command: 'orchestrator:coordinator-end', args: '' } })
+  await call(dollar, { action: 'add', words: 'relay the order to the billing orchestrator', said_at: SAID })
+  await call(dollar, { action: 'add', words: 'ask for the numbers' })
+  await call(dollar, { action: 'add', words: 'check the release later' })
+  await call(dollar, { action: 'defer', id: 3, words: 'after the release, 2026-11-14' })
+  const refused = await run(dollar)
+  expect(refused.text).toContain('relay the order to the billing orchestrator')
+  expect(refused.text).toContain('ask for the numbers')
+  expect(refused.text).not.toContain('check the release later')
+  expect(refused.passed).toBe(undefined)
+  await call(dollar, { action: 'done', id: 1, outcome: 'sent to Orch: billing' })
+  await call(dollar, { action: 'drop', id: 2, words: 'not needed, he said, 2026-11-14' })
+  expect(await run(dollar)).toEqual({ passed: { command: 'orchestrator:coordinator-end', args: '' } })
+})
+
+test('/coordinator-end from another session than the coordinator runs as it always did', async () => {
+  const { run } = ender()
+  const { dollar } = world()
+  await call(dollar, { action: 'add', words: 'mine' })
+  expect((await run(dollar)).passed).toBeDefined()
+})
+
+test('status shows each session\'s open to-do count beside its row, and nothing for a session with none', async () => {
+  const sessions: Record<string, SessionRow> = {
+    'sessions/a': { role: 'orchestrator', name: 'Orch: Claude plugins [08eb0d]', repo: null, context_percent: 5, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() },
+    'sessions/b': { role: 'coordinator', name: 'Coord: general', repo: null, context_percent: 4, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() },
+  }
+  const { dollar } = world()
+  await call(dollar, { action: 'add', words: 'one' })
+  await call(dollar, { action: 'add', words: 'two' })
+  await call(dollar, { action: 'add', words: 'three' })
+  await call(dollar, { action: 'done', id: 1, outcome: 'x' })
+  const counts = await todoCounts(dollar)
+  const lines = statusText(sessions, counts).split('\n')
+  expect(lines.find(line => line.includes('Orch: Claude plugins'))).toContain('2 to-dos')
+  expect(lines.find(line => line.includes('Coord: general'))).not.toContain('to-do')
+  expect(statusText(sessions)).not.toContain('to-do')
 })
