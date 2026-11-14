@@ -48,11 +48,29 @@ describe('simpleCommands', () => {
     assert.deepEqual(commands('echo {a,b}{c,d} a{b}{c,d} {a..c}.{x,y}'), [['echo', 'ac', 'ad', 'bc', 'bd', 'a{b}c', 'a{b}d', 'a.x', 'a.y', 'b.x', 'b.y', 'c.x', 'c.y']])
   })
 
-  it('leaves what bash leaves: quoted or escaped braces, a group with no comma or range, a parameter, a range too long', () => {
+  it('leaves what bash leaves: quoted or escaped braces, a group with no comma or range, a parameter', () => {
     assert.deepEqual(commands(`echo '{a,b}' "{a,b}" \\{a,b} {a\\,b} x'{'a,b} {a,b'}'`), [['echo', '{a,b}', '{a,b}', '{a,b}', '{a,b}', 'x{a,b}', '{a,b}']])
     assert.deepEqual(commands('echo {} {a} {a..} {..b} {a..1} {1..a} {a,b x,y} ${x,y} ${a:-b,c}'), [['echo', '{}', '{a}', '{a..}', '{..b}', '{a..1}', '{1..a}', '{a,b', 'x,y}', '${x,y}', '${a:-b,c}']])
     assert.deepEqual(commands('echo repos/{owner}/{repo}/x { ls; }'), [['echo', 'repos/{owner}/{repo}/x', 'ls']])
-    assert.deepEqual(commands('echo {1..100000} {a,b}{1..100}{1..100}{1..100}'), [['echo', '{1..100000}', '{a,b}{1..100}{1..100}{1..100}']])
+  })
+
+  it('expands a word up to the limit, 1000 words, as it does a shorter one', () => {
+    const filler = Array.from({ length: 997 }, (_, k) => `x${k}`)
+    const [argv] = commands(`{git,push,--force,${filler.join(',')}}`)
+    assert.equal(argv?.length, 1000)
+    assert.deepEqual(argv?.slice(0, 3), ['git', 'push', '--force'])
+    assert.equal(commands('echo {1..1000}')[0]?.length, 1001)
+  })
+
+  it('fails closed on a word that would give more than 1000 words, as the line it hides cannot be read', () => {
+    const filler = Array.from({ length: 998 }, (_, k) => `x${k}`)
+    const overList = `{git,push,--force,${filler.join(',')}} origin main`
+    assert.throws(() => commands(overList), /brace expansion over the limit/)
+    assert.throws(() => readCommands(overList), RangeError)
+    assert.throws(() => commands('echo {a,b}{1..100}{1..100}{1..100}'), RangeError)
+    assert.throws(() => commands('echo {1..100000}'), RangeError)
+    assert.throws(() => commands('echo $(git {push,--force}{1..1001})'), RangeError)
+    assert.throws(() => commands('eval {git,push,-f}{1..1001}'), RangeError)
   })
 
   it('expands a word of a command substitution, an eval and a here-string as bash does', () => {

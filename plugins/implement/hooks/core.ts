@@ -225,13 +225,19 @@ function writesTree(argv: readonly string[]): string | null {
   return null
 }
 
+// A line the reader cannot read (a brace expansion past its limit) is refused during a check: what
+// it hides is not known to stage, commit or write nothing.
 export function bashDecision(g: Guard, command: string): string | null {
   if (!g.checking) return null
-  const write = shellActions(command).find(a => a === 'stage' || a === 'commit')
-  if (write) return checkDeny(LABEL[write])
-  if (redirectsToFile(command)) return checkDeny('a redirection into a file')
-  const writer = simpleCommands(command).map(writesTree).find(w => w !== null)
-  return writer ? checkDeny(writer) : null
+  try {
+    const write = shellActions(command).find(a => a === 'stage' || a === 'commit')
+    if (write) return checkDeny(LABEL[write])
+    if (redirectsToFile(command)) return checkDeny('a redirection into a file')
+    const writer = simpleCommands(command).map(writesTree).find(w => w !== null)
+    return writer ? checkDeny(writer) : null
+  } catch {
+    return checkDeny('a shell line it cannot read')
+  }
 }
 
 export function agentDecision(g: Guard, subagentType: unknown, isOrchestrated = false): string | null {

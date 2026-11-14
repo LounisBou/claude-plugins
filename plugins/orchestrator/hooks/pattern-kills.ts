@@ -40,7 +40,13 @@ function baseName(word: string): string {
 export function detectPatternKills(command: string): string[] {
   const found: string[] = []
   const seen = (reason: string): void => { if (!found.includes(reason)) found.push(reason) }
-  killsIn(command, 0, seen)
+  try {
+    killsIn(command, 0, seen)
+  } catch (error) {
+    // A line the reader refuses (a brace expansion past its limit) may hide a kill: it is read as one.
+    if (!(error instanceof RangeError)) throw error
+    seen('a line the reader cannot read')
+  }
   return found
 }
 

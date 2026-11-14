@@ -291,6 +291,18 @@ test('a check refuses edits until its verdict, then the phase writes again', asy
   expect(refused(await agent($, 'general-purpose'))).toBe(true)   // the phase is still armed
 })
 
+test('a shell line the reader cannot read is refused during a check, and runs once during a phase', async ($, on) => {
+  const { ran } = await world(on)
+  await start($)
+  await skill($, 'phase')
+  const hidden = 'git {add,-A}{1..1001}'
+  expect((await bash($, hidden)).result).toBe('ran')
+  expect(ran.filter(e => e.command === hidden).length).toBe(1)
+  await skill($, 'check')
+  expect(refused(await bash($, hidden))).toBe(true)
+  expect(ran.filter(e => e.command === hidden).length).toBe(1)
+})
+
 test('a check alone ends with its turn', async ($, on) => {
   await world(on)
   await start($)
