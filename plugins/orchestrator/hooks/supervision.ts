@@ -45,7 +45,7 @@ import {
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import {
-  CONSENT_REPO_CAP, ackLine, parseAsk, parseAck, isAsk, isAck,
+  CONSENT_REPO_CAP, askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
   qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
@@ -2507,8 +2507,15 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown, cons
     if (asked && !carried) await logLine($, 'supervision', `relay: the consent asked by ${name} (${subjectLabel(asked)}) is too long for the line to the coordinator, no consent can be recorded`)
     const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), carried)
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const sent = await sendToCoordinator($, to, qAskLine(entry, await machineOf($)))
-    if (sent?.isDelivered) return
+    const machine = await machineOf($)
+    const sent = await sendToCoordinator($, to, qAskLine(entry, machine))
+    if (sent?.isDelivered) {
+      // Until the old lines retire, the old ask goes beside the event line: a coordinator of an
+      // older release reads that one alone; this release's enters the first and ignores the other.
+      const old = await sendToCoordinator($, to, askLine(entry, machine))
+      if (!old?.isDelivered) await logLine($, 'supervision', `relay: the old ask line was not delivered to ${addressLabel(to)}: ${old?.reason ?? 'no answer'}`)
+      return
+    }
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
     if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
@@ -3461,6 +3468,11 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
     step = 'the entry read'
     const path = roundPath(await stateDir($), asked.entry.id)
     const known = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    // The same ask by the other line, sent beside the one it was entered by: the first was
+    // taken and acknowledged, this one changes nothing and is acknowledged nowhere.
+    if (known?.since === asked.entry.since && known.origin && (known.origin.line === 'q') !== byEvent) {
+      return { consumed: 'orchestrator: a remote question received by its other line, ignored' }
+    }
     if (known?.since === asked.entry.since) {
       if (known.status === 'open') {
         step = 'the urgent mark'

@@ -14,7 +14,7 @@ import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { SHAPED } from './fixtures.ts'
 import { ROW_MARKER } from '../remote-row.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, ANSWER_MARKER as OLD_ANSWER_MARKER, Q_MARKER, qAskLine, qAckLine, parseQ, parseQAck, seqOf, askLine as oldAskLine, ackLine as oldAckLine, answerAckLine as oldAnswerAckLine, parseAnswer as parseOldAnswer, parseAsk as parseOldAsk } from '../remote-round.ts'
 
 // The lines this release writes between machines: the event line (remote-round.ts), read back here
 // as the four lines it replaced, so each case below says what it said of them.
@@ -1237,19 +1237,22 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   // The ask again is of a new start: a clock that has not moved would give it the first one's.
   await new Promise(resolve => setTimeout(resolve, 5))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
-  // The same wait asked again: its ask, and the row that says it is held open again.
-  expect(fx.sent.length).toBe(3)
+  // The same wait asked again: its ask, the old ask line beside it, and the row that says it is held open again.
+  expect(fx.sent.length).toBe(4)
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
   // The withdrawal first, then the same wait asked again (nothing is held yet: its ack is not
   // back) and the new question: the report is the last ask.
   const shown = (m: { text: string }) => isAskLine(m.text) ? `ask: ${parseAsk(m.text)!.entry.blocks}`
+    : parseOldAsk(m.text) ? `old ask: ${parseOldAsk(m.text)!.entry.blocks}`
     : m.text.startsWith(ROW_MARKER) ? `row: ${JSON.parse(m.text.slice(ROW_MARKER.length)).blocks}` : m.text
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
     ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')],
     ['Coord: ops [abc]', 'ask: phase 3'],
+    ['Coord: ops [abc]', 'old ask: phase 3'],
     ['Coord: ops [abc]', 'row: phase 3'],
     ['Coord: ops [abc]', 'ask: phase 4'],
+    ['Coord: ops [abc]', 'old ask: phase 4'],
     ['Coord: ops [abc]', 'row: phase 4'],
   ])
 })
@@ -2990,6 +2993,67 @@ test('an older machine\'s ask line is entered, acked in its own line, and its pa
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAnswerAckLine(asked.id, asked.since)))
   expect(JSON.parse(coordinator.files.get(`${ROUND}/${asked.id}.json`)!).delivery.state).toBe('acked')
 })
+
+// Until the old lines retire, the sender writes its ask in both: the event line, then the old ask
+// line beside it, for a coordinator of an older release, which reads the old line alone.
+const oldAsks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseOldAsk(s.text) !== null)
+
+test('the ask goes in the event line and in the old ask line beside it, the same entry in both', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect([asks(sender).length, oldAsks(sender).length]).toEqual([1, 1])
+  const [q] = asks(sender)
+  const [old] = oldAsks(sender)
+  expect(sender.sent.indexOf(q)).toBeLessThan(sender.sent.indexOf(old))
+  expect(old.to).toBe(q.to)
+  expect(parseOldAsk(old.text)).toEqual(parseAsk(q.text))
+})
+
+test('a coordinator of an older release enters the ask from its old line, and its old acknowledgment clears the pending ask', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const asked = parseOldAsk(oldAsks(sender)[0].text)!.entry
+  // An older coordinator has no event branch: the old line is the one it enters.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAsks(sender)[0].text))
+  const [entry] = entries(coordinator)
+  expect([entries(coordinator).length, entry.id, entry.origin]).toEqual([1, asked.id, { machine: 'unknown', address: SENDER_AT }])
+  const [ack] = coordinator.sent.filter(s => s.to === SENDER_AT)
+  expect(ack.text).toBe(oldAckLine(asked.id, asked.since))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ack.text))
+  expect([waitOf(sender).pending, waitOf(sender).relayed_id]).toEqual([null, asked.id])
+})
+
+for (const first of ['event', 'old'] as const) {
+  test(`this release's coordinator enters the ask from the first of its two lines (${first}), acks that one, and ignores the duplicate by its id and start`, async () => {
+    const chains = mounted()
+    const sender = fake({ remote: true })
+    const coordinator = coordinatorMachine()
+    await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    const [q] = asks(sender)
+    const [old] = oldAsks(sender)
+    const [one, two] = first === 'event' ? [q, old] : [old, q]
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
+    const [entry] = entries(coordinator)
+    const path = `${ROUND}/${entry.id}.json`
+    // A mark only the first writing carries: a second writing would erase it.
+    coordinator.files.set(path, JSON.stringify({ ...entry, marked: true }) + '\n')
+    const ignored = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
+    expect(typeof ignored.consumed).toBe('string')
+    expect(ignored.text).toBeUndefined()
+    expect(entries(coordinator).length).toBe(1)
+    expect((JSON.parse(coordinator.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
+    expect(entry.origin).toEqual({ machine: 'unknown', address: SENDER_AT, ...(first === 'event' ? { line: 'q' } : {}) })
+    const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)
+    expect(sentBack).toEqual([first === 'event' ? ackLine(entry.id, entry.since) : oldAckLine(entry.id, entry.since)])
+    // The same pair sent again, its acknowledgment lost: the line the entry came by is acked again, the other still ignored.
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
+    expect(coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)).toEqual([sentBack[0], sentBack[0]])
+  })
+}
 
 test('answers that cross: the tab\'s, first at the owner, wins; the pane\'s is acked « already », passed to no model, and said on the pane', async () => {
   DECLARATIONS.turnStarted()
