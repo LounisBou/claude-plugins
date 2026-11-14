@@ -281,7 +281,7 @@ Requires push access to the repository.
 
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
-- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing.
+- Accepted: `review` `pass`, or `accepted` (the orchestrator's review, its points set aside); `norms` `pass`; `e2e` `pass`, `waived` or `not-applicable`. Anything else, or no record, is missing; `norms` is on demand, only a failed one is.
 - A repository's E2E exemption (below) stands for a missing `e2e` record, named in the `Ready` line; an `e2e` `fail` still holds.
 - A kind missing at the head takes its latest record across the PR's earlier heads of the same commit count and `pr-fingerprint`, if accepted (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record, nothing deleted; a record of an unpushed commit counts once that sha is on the PR.
@@ -336,7 +336,7 @@ none), `gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `
 on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
 or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
 script by its path, or a shell variable followed by its subcommand), need the pull request
-ready at its head: a clean review, a passed norms check and passed or waived E2E recorded at
+ready at its head: a clean review and passed or waived E2E recorded at
 the head `pr-gate` reads (« Records » above), and green CI. A `--match-head-commit` or a
 `pr-merge --sha` other than that head is not ready either. A `Ready` label put by hand is no
 act: the gate alone decides readiness. Under enforce every act is refused, before any question, with `github: <act>
@@ -356,7 +356,7 @@ shell variable or substitution) is refused outside auto-merge, an unverified rea
 it. `gh.py --stdin-json` run from Bash is refused: its request cannot be read.
 
 **The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
-`pr-checks` read through the tool, the module reads the four at the open pull request's head
+`pr-checks` read through the tool, the module reads the three at the open pull request's head
 and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`: the gate's
 act. It reads the head again just before writing, and writes nothing on a moved head or on
 records it cannot list. Outside auto-merge one the plugin undrafted for CI

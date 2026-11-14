@@ -302,7 +302,7 @@ test('warn: a pr-ready that is not ready, in auto-merge, runs with no question a
   expect(commands(seen)).toEqual(['pr-gate', 'pr-ready'])
   expect(seen.logs.length).toBe(1)
   expect(seen.logs[0]).toContain('github: pr-ready on acme/thing#12 is not ready')
-  expect(seen.logs[0]).toContain('review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(seen.logs[0]).toContain('review: no record at 0123456, e2e: no record at 0123456')
   const line = JSON.parse(seen.writes.find((w) => w.path === '/data/guard-warn.log')!.text.trim())
   expect(line.repo).toBe('acme/thing')
   expect(line.pr).toBe(12)
@@ -372,8 +372,8 @@ test('enforce: a not-ready pr-ready outside auto-merge is refused before anyone 
     const seen = await world($, on, NO_RECORDS)
     const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
     expect(out.deny).toBe('github: pr-ready refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
-      + ' 0123456, norms: no record at 0123456, e2e: no record at 0123456. A pull request is ready when a clean review,'
-      + ' a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).')
+      + ' 0123456, e2e: no record at 0123456. A pull request is ready when a clean review,'
+      + ' passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).')
     expect(seen.asked.length).toBe(0)
     expect(commands(seen)).toEqual(['pr-gate'])
   })
@@ -706,7 +706,7 @@ test('a Bash pull request opened out of draft is refused outside auto-merge in b
   const seen = await world($, on)
   const warned: any = await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b body'))
   expect(warned.deny).toBe('github: gh pr create refused on acme/thing: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is'
-    + ' put by the gate once the four conditions hold (pr-readiness {"pr": <n>, "state": "ready"} reads them now).')
+    + ' put by the gate once the three conditions hold (pr-readiness {"pr": <n>, "state": "ready"} reads them now).')
   expect(seen.bash.length).toBe(0)
   await inPhase('enforce', async () => {
     const out: any = await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b body'))
@@ -1751,7 +1751,7 @@ for (const phase of ['warn', 'enforce'] as const) {
       const seen = await world($, on, { verdict: { decision: 'ask' } })
       const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
       expect(out.deny).toBe('github: pr-ready refused on acme/thing: ' + LEAVE_DRAFT + ', and Ready is put by the gate once'
-        + ' the four conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
+        + ' the three conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
       expect(seen.asked).toEqual([])
       expect(commands(seen)).not.toContain('pr-ready')
     })
@@ -1808,7 +1808,7 @@ test('a record that completes the four puts Ready, with one line', async ($, on)
   const out: any = await $.tool.call(e2eCall)
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(out.result).toBe(WRITTEN + '\ngithub: acme/thing#12 Ready at 0123456:'
-    + ' a clean review, a passed norms check, passed E2E and green CI hold at its head.')
+    + ' a clean review, passed E2E and green CI hold at its head.')
 })
 
 test('a record written where CI is red puts no Ready, and says what is missing', async ($, on) => {
@@ -1841,7 +1841,7 @@ test('a label the gate cannot put leaves the record written, and says so', async
   expect(out.result).toContain('github: the Ready label of acme/thing#12: label not written: error: forbidden')
 })
 
-const READY_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, a passed norms check, passed E2E and green CI hold at its head.'
+const READY_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, passed E2E and green CI hold at its head.'
 
 test('a read of the gate through the tool puts Ready when the four hold, its JSON pure and its line the module\'s own', async ($, on) => {
   const seen = await world($, on)
@@ -2060,8 +2060,8 @@ test('outside auto-merge the gate puts a pull request out of draft for its CI ba
   const seen = await world($, on, { draft: false, ciUndrafts: [{ repo: 'acme/thing', pr: 12, head: HEAD }] })
   const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-draft', 'pr-readiness'])
-  expect(seen.logs).toEqual(['github: acme/thing#12 back to draft, then Ready at 0123456: a clean review, a passed norms'
-    + ' check, passed E2E and green CI hold at its head.'])
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to draft, then Ready at 0123456: a clean review,'
+    + ' passed E2E and green CI hold at its head.'])
   const gate = JSON.parse(out.result)
   expect([gate.draft, gate.labels]).toEqual([true, ['Ready']])
 })
@@ -2235,7 +2235,7 @@ const TWO = Object.fromEntries([record('review', 'pass'), record('norms', 'pass'
 const EXEMPT = {
   v: 1, repo: 'acme/thing', exempt: true, paths: [], labels: [], detail: 'no E2E on thing, 2026-11-13', session: 's', at: '2026-11-13T10:00:00Z',
 }
-const EXEMPT_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, a passed norms check, no E2E needed'
+const EXEMPT_LINE = 'github: acme/thing#12 Ready at 0123456: a clean review, no E2E needed'
   + ' (E2E exemption of acme/thing, 2026-11-13: no E2E on thing, 2026-11-13) and green CI hold at its head.'
 
 test('a pull request of a repository the operator exempted is Ready with no E2E record, its line naming the exemption', async ($, on) => {
@@ -2652,7 +2652,7 @@ test('a rebase that changed the diff carries nothing', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+    + ' e2e: no record at 0123456'])
 })
 
 test('an E2E pass at the earlier head is carried with the review and norms', async ($, on) => {
@@ -2699,7 +2699,7 @@ test('a head whose commits cannot be fingerprinted (a merge in the pull request)
   expect(seen.logs).toEqual([
     'github: acme/thing#12: no record carried to 0123456: 0123456\'s commits cannot be fingerprinted: error: commit 1234567 is a merge',
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-      + ' norms: no record at 0123456, e2e: no record at 0123456',
+      + ' e2e: no record at 0123456',
   ])
 })
 
@@ -2707,7 +2707,7 @@ test('the records of another pull request with the same diff are never carried, 
   const tree = earlier(CLEAN_OLD.map(([name]) => at(name.split('.')[0], name.startsWith('e2e') ? 'waived' : 'pass', { pr: 13, detail: 'no E2E, 2026-11-01' })))
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs[0]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(seen.logs[0]).toContain('Missing: review: no record at 0123456, e2e: no record at 0123456')
   expect(fingerprintRuns(seen)).toEqual([])
 })
 
@@ -2744,7 +2744,7 @@ test('an earlier head of more commits whose top ones are the head\'s carries not
   })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
-    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+    + ' e2e: no record at 0123456'])
   expect(fingerprintRuns(seen)).toEqual([HEAD + ' x2'])
 })
 
@@ -2784,7 +2784,7 @@ test('an earlier head whose records cannot be listed lets no earlier head carry,
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs[0]).toBe('github: acme/thing#12: no record carried to 0123456: the records of 1111111 cannot be listed:'
     + ' github: $.fs.list: EACCES ' + RECORDS + '/acme/thing/' + LATER)
-  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456, e2e: no record at 0123456')
   expect(fingerprintRuns(seen)).toEqual([])
 })
 
@@ -2799,7 +2799,7 @@ test('a review record that does not parse at the head is not carried over from a
 test('a record that does not parse at the head and whose name gives no kind lets no kind be carried', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'], records: { 'stray.json': 'not json' }, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   const out: any = await mergeProbe($)
-  expect(out.deny).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456, unreadable record stray.json.')
+  expect(out.deny).toContain('Missing: review: no record at 0123456, e2e: no record at 0123456, unreadable record stray.json.')
   expect(fingerprintRuns(seen)).toEqual([])
 })
 

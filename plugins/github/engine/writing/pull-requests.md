@@ -132,18 +132,17 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 
 Every pull request has its end-to-end tests, and they are merged with the ready PR.
 
-A pull request is ready when four things hold at its current head commit: a review ran
-there and came out clean, the norms check ran there and every finding is fixed or
-passed, its end-to-end tests ran there and passed (or the operator waived them, in their
+A pull request is ready when three things hold at its current head commit: a review ran
+there and came out clean, its end-to-end tests ran there and passed (or the operator waived them, in their
 words, dated), and every CI check is green there. Ready belongs to one head: a new
-commit makes the pull request not ready until the four hold again at the new head. A rebase
+commit makes the pull request not ready until the three hold again at the new head. A rebase
 that keeps its own commits keeps its records, a passed E2E apart.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not
-Ready`. The plugin puts `Ready` itself once the four hold. When the CI does not run on a
+Ready`. The plugin puts `Ready` itself once the three hold. When the CI does not run on a
 draft, the pull request leaves draft for it, still `Not Ready`, and, if the plugin did, goes back to draft
 once the CI is green, then takes `Ready`. A push to the pull request's branch puts `Not
-Ready` back. The plugin refuses `Ready`, leaving draft and a merge whose four conditions
+Ready` back. The plugin refuses `Ready`, leaving draft and a merge whose three conditions
 do not hold, through its tool and through the shell alike. The review, the norms check
 and the end-to-end run each leave a record at the head they read (see REFERENCE.md
 « Records »). CI is read from GitHub.
