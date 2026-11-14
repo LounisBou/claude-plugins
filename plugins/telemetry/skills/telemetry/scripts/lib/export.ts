@@ -161,9 +161,9 @@ function indexFiles(options: ExportOptions, events: string, days: readonly strin
   return { files, sessions }
 }
 
-/** A project's name as a directory name: `owner/name` becomes `owner-name`, and nothing else escapes the directory. */
+/** A project's name as a directory name: `owner/name` becomes `owner-name`, in lower case (one repository written in two cases is one directory), and nothing else escapes the directory. */
 export function projectDir(project: string): string {
-  const name = project.replace(/[^A-Za-z0-9._-]/g, '-')
+  const name = project.replace(/[^A-Za-z0-9._-]/g, '-').toLowerCase()
   return /^\.+$/.test(name) ? '_' : name
 }
 

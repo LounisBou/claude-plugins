@@ -211,7 +211,7 @@ test('the index holds a view per project: index/projects/<owner-name>/<machine>/
       lineOf(OTHER, { event: 'turn_end' }, 4),
     ].join('\n'), new Map())
     assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
-    const ours = projectIndex(remote, 'index/projects/LounisBou-claude-plugins/box/2026-11-13.json')
+    const ours = projectIndex(remote, 'index/projects/lounisbou-claude-plugins/box/2026-11-13.json')
     assert.deepEqual(ours.sessions.map(({ session, project }) => ({ session, project })), [{ session: S, project: PLUGINS }])
     assert.deepEqual(ours.events, { session_start: 1, turn_end: 1 })
     assert.equal(ours.day, '2026-11-13')
@@ -220,7 +220,7 @@ test('the index holds a view per project: index/projects/<owner-name>/<machine>/
     // The machine's whole index still lists every session, those of no project included.
     assert.equal(projectIndex(remote, 'index/box/2026-11-13.json').sessions.length, 3)
     const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
-    assert.deepEqual(files, ['index/projects/LounisBou-claude-plugins/box/2026-11-13.json', 'index/projects/acme-tool/box/2026-11-13.json'])
+    assert.deepEqual(files, ['index/projects/acme-tool/box/2026-11-13.json', 'index/projects/lounisbou-claude-plugins/box/2026-11-13.json'])
     assert.match(git(['show', 'main:index/README.md'], remote).stdout, /index\/projects\/<owner-name>\/<machine>\/<day>\.json/)
   })
 })
@@ -234,8 +234,8 @@ test('a session that crosses UTC midnight stays in its project\'s view on the la
     ].join('\n'), new Map())
     assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
     const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
-    assert.deepEqual(files, ['index/projects/LounisBou-claude-plugins/box/2026-11-13.json', 'index/projects/LounisBou-claude-plugins/box/2026-11-14.json'])
-    const later = projectIndex(remote, 'index/projects/LounisBou-claude-plugins/box/2026-11-14.json')
+    assert.deepEqual(files, ['index/projects/lounisbou-claude-plugins/box/2026-11-13.json', 'index/projects/lounisbou-claude-plugins/box/2026-11-14.json'])
+    const later = projectIndex(remote, 'index/projects/lounisbou-claude-plugins/box/2026-11-14.json')
     assert.deepEqual(later.sessions.map(entry => entry.session), [S])
     assert.deepEqual(later.events, { turn_end: 1 })
   })
@@ -255,6 +255,17 @@ test('the project views of a machine are made again: a project no day names any 
     assert.equal(exportStore({ stateDir: first, secrets: new Map(), repo: remote, machine: 'one', git }).code, 0)
     const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
     assert.deepEqual(files, ['index/projects/acme-new/one/2026-11-13.json', 'index/projects/acme-old/two/2026-11-13.json'])
+  })
+})
+
+test('two spellings of one repository\'s case share one project directory, the project field keeping its case', () => {
+  scratch((root, remote) => {
+    const state = join(root, 'state')
+    append(eventsDir(state), ['LounisBou/x', 'lounisbou/x'].map((project, i) => JSON.stringify({ v: 1, ts: `2026-11-13T10:00:0${i}Z`, event: 'session_start', session: i === 0 ? S : OTHER, project })).join('\n'), new Map())
+    assert.equal(exportStore({ stateDir: state, secrets: new Map(), repo: remote, machine: 'box', git }).code, 0)
+    const files = git(['ls-tree', '-r', '--name-only', 'main', '--', 'index/projects'], remote).stdout.trim().split('\n')
+    assert.deepEqual(files, ['index/projects/lounisbou-x/box/2026-11-13.json'])
+    assert.deepEqual(projectIndex(remote, files[0] ?? '').sessions.map(entry => entry.project).sort(), ['LounisBou/x', 'lounisbou/x'])
   })
 })
 
