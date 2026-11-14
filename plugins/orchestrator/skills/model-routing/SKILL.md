@@ -73,7 +73,7 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | A corrective phase on a findings list | `corrective` | `standard` | the gate and a reader at its head: the diff, the decisive tests |
 | A review collector, a comments agent | `review-collector`, `comments` | `standard` | its line, by you; a comments agent's tree too |
 | The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector |
-| The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | `ready`, on the recorded audit |
+| The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
 The tabs you launch and the subagents launched inside a session read this one table: say the lenses' pair in the review brief.
