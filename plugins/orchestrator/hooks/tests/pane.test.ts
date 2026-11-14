@@ -1285,8 +1285,11 @@ test('an answer not delivered keeps the entry answered, is logged, and is said u
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
 })
 
-test('the answer to a question that asks consent is written as its subject\'s consent record, the choice as its text', async () => {
-  const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
+for (const consent of [
+  { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }, { kind: 'norms-waiver' as const, repo: 'Acme/Thing', pr: 12 },
+  { kind: 'e2e-exemption' as const, repo: 'Acme/Thing' }, { kind: 'auto-merge' as const, repo: 'Acme/Thing' },
+  { kind: 'auto-deploy' as const, repo: 'Acme/Thing', env: 'prod' as const },
+]) test(`the answer to a question that asks consent (${consent.kind}) is written as its subject's consent record, the choice as its text`, async () => {
   const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, consent })
   const plain = entry('Orch: low', '2026-10-18T10:04:00.000Z', { session: 'low', choices: CHOICES })
   const { fx } = await askingPane([asked, plain])

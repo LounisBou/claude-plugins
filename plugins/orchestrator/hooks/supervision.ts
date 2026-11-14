@@ -29,7 +29,7 @@ import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, 
 import { entryQuestions, machineLine, questionBody, questionShape, type Choice } from '../core/method.ts'
 import { typedByOperator } from './models-guard.ts'
 import { moduleDirOf } from './module-log.ts'
-import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
@@ -987,11 +987,12 @@ const TAB_ANSWER = "answered in the sender's own tab"
 
 // What the operator typed in the tab, kept beside that reason (`answer.typed`): trimmed, and cut
 // past this many characters with the cut said, as cutQuestion says its own. Empty when he typed
-// nothing but blanks.
-const TYPED_CAP = 500
-function typedWords(text: string): string {
+// nothing but blanks. It only quotes the text; the consent a tab answer may write is
+// writeTabConsent's.
+const TAB_TEXT_CAP = 500
+function tabText(text: string): string {
   const said = text.trim()
-  return said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
+  return said.length > TAB_TEXT_CAP ? `${said.slice(0, TAB_TEXT_CAP)}\n[cut at ${TAB_TEXT_CAP} of ${said.length} characters]` : said
 }
 
 // Two questions are the same when their text is, whatever the spacing between the words.
@@ -2536,7 +2537,7 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
   const held = heldQuestion(prior) ?? (coordinator.local && !prior?.typed ? await openQuestion($, sessionId) : null)
   if (!held) return
   const heldKey = prior?.relayed ?? null
-  const said = typedWords(text)
+  const said = tabText(text)
   const mark = { ...held, ...(said ? { said } : {}) }
   if (prior) await writeWait($, sessionId, { ...prior, typed: { ...mark, withdrawn: false } })
   const told = await withdrawHeld($, sessionId, name, mark, consent)
@@ -2716,14 +2717,16 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
 }
 
 // The words the operator typed in the asking session's own tab, as the answer to an entry that
-// asks his consent: written as the pane's choice is (writeConsent, `by: 'tab'`), as the choice
-// they answer unambiguously (answersChoice), its text the record's answer. A prompt typed there
-// can be any instruction: words that answer none leave no record, and the log says so once.
+// asks his consent: a record (`by: 'tab'`, as writeConsent writes the pane's) only when they name
+// one choice of the entry unambiguously (answersChoice) and that choice grants (« Accorder »,
+// core's grants): the record's answer is its text. A prompt typed there can be any instruction,
+// and a refusal is no consent: free prose, an ambiguous answer and a refusing choice leave no
+// record, and the log says so once.
 async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string): Promise<void> {
   if (!entry.consent) return
   const chosen = answersChoice(typed, entry.choices)
-  if (!chosen) {
-    await logLine($, 'supervision', `round: the words typed for ${entry.id} answer none of its choices, no consent recorded`)
+  if (!chosen || !grants(chosen.text)) {
+    await logLine($, 'supervision', `round: the words typed for ${entry.id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
     return
   }
   await writeConsent($, entry, `${chosen.letter} : ${chosen.text}`, 'tab', at)

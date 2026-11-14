@@ -326,6 +326,11 @@ test('another project, other blocks, another context, another consent, no shape 
     asked('s-succ', 'Orch: belt', 'Merge it?\n- **A** : yes\n- **B** : no'),
   ]
   for (const entry of misses) expect(recordedAnswer([record, entry], entry)).toBeNull()
+  // An auto-deploy answered for one environment never answers it for another.
+  const deploy = (env: 'staging' | 'prod') => ({ ...asked('s-succ', 'Orch: belt'), consent: { kind: 'auto-deploy' as const, repo: 'acme/thing', env } })
+  const staging = answered(deploy('staging'), { text: 'A', by: 'pane', at: 'T' })
+  expect(recordedAnswer([staging, deploy('prod')], deploy('prod'))).toBeNull()
+  expect(recordedAnswer([staging, deploy('staging')], deploy('staging'))?.entry).toBe(staging)
   const none = answered(asked('s-pred', 'Orch: belt'), { text: 'superseded', by: 'sender', at: 'T' }, 'withdrawn')
   const again = asked('s-succ', 'Orch: belt')
   expect(recordedAnswer([none, again], again)).toBeNull()
