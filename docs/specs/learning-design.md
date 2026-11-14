@@ -66,7 +66,7 @@ Verified against the repository. The design reuses each piece named here before 
 | Norms result | `plugins/norms/hooks/record.ts:131,170` | norms | **model-reported**: `pass` is `open === 0`, `open` passed in by the model (the program's norms defect, still open) |
 | Rounds, review head, the correction round, escapes, cost per dispatch | the dispatch record, JSON lines (`plugins/orchestrator/skills/orchestrator/scripts/dispatch-record.sh`, header) | orchestrator | the orchestrator's act (`escaped` is its judgment) |
 | A tier drop that cost a round or an escape freezes the class; three one-round closes promote it | `dispatch-record.ts:810-826` (`frozen=`, `promote=`) | orchestrator | computed from the rows |
-| The operator's rulings, verbatim and dated | `<briefs dir>/rulings.md` (`skills/orchestrator/references/lifecycle.md:47`), `defer`/`rule-out`/waiver arguments of `dispatch-record.sh` | orchestrator | operator |
+| The operator's rulings, verbatim and dated | `<briefs dir>/rulings.md` (`skills/orchestrator/references/succession-predecessor.md:6`), `defer`/`rule-out`/waiver arguments of `dispatch-record.sh` | orchestrator | operator |
 | Token use and list-price cost per session and period | `deck.json` (`plugins/orchestrator/hooks/usage.ts`, `deck.ts`) | orchestrator | computed |
 | Check runs per head | the forge | CI | computed; read by github's ready gate (`hooks/ready.ts`, `Gate.ci`) |
 | Resolved review threads | the forge, read by `pr-threads --format resolved-threads` | reviewers | **external text** |

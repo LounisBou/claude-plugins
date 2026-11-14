@@ -1,0 +1,5 @@
+# Directives
+
+## When a decision changes, the directives change in the same move
+
+A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer. A repair is justified by what is broken, never by a rule or a ruling it sounds adjacent to: a ruling that forbids making something makes it rarer, not commoner. A problem — a finding kept in review, a defect found in real use, an agent's failure — gets three questions before its fix: what produced it, where else it can recur, and what the fix removes or changes. A deviation from the expected behaviour is a defect, whoever reports it and however honestly. A tool that says it failed has not succeeded; a workaround by hand is not a repair. It gets its row at once and its diagnosis, and a behaviour that worked before is a regression (the operator's ruling of 2026-11-03).

@@ -36,7 +36,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
-| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
+| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (default). One line, `pr-created`: `owner/name#N`, URL, head, labels; `--json` the PR. It gets `Not Ready`, draft or not; `Ready` is the gate's (« Ready »). A label failure only prints `error:` on stderr |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
 
 `pr-gate` reads the pull request, then at its head the status, check runs and Actions runs

@@ -329,9 +329,14 @@ def pr_create(args):
         payload["draft"] = True
     created = http.rest("POST", "/repos/%s/%s/pulls" % (owner, name), payload)
     # A new pull request has no record at its head, so it is never ready: Not Ready, draft or not.
+    label = None
     if isinstance(created, dict) and created.get("number"):
-        meta.follow_readiness(owner, name, created["number"], "not-ready")
-    return created
+        label = meta.follow_readiness(owner, name, created["number"], "not-ready")
+    if args.json or args.format:
+        return created
+    # One line by default; the full pull request with --json, or under a --format that reads it.
+    args.format = "pr-created"
+    return {"pull": created, "repo": "%s/%s" % (owner, name), "labels": [label] if label else []}
 
 
 _MERGE_POLL = 3

@@ -192,6 +192,17 @@ def _pr_summary(obj):
     ])
 
 
+def _pr_created(obj):
+    pull = obj.get("pull") or {}
+    return "%s#%s %s head %s labels %s" % (
+        obj.get("repo"),
+        pull.get("number"),
+        pull.get("html_url", ""),
+        (pull.get("head") or {}).get("sha", ""),
+        ", ".join(obj.get("labels") or []) or "none",
+    )
+
+
 def _threads(obj, resolved):
     items = obj if isinstance(obj, list) else obj.get("threads", [])
     return json.dumps([t for t in items if bool(t.get("isResolved")) is resolved], sort_keys=True)
@@ -460,6 +471,7 @@ _FORMATTERS = {
     "pr-merge-status": _pr_merge_status,
     "pr-details": _pr_details,
     "pr-summary": _pr_summary,
+    "pr-created": _pr_created,
     "checks-status": _checks_status,
     "open-threads": lambda obj: _threads(obj, False),
     "resolved-threads": lambda obj: _threads(obj, True),

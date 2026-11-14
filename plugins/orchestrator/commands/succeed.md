@@ -10,7 +10,7 @@ Preconditions, verify each before acting:
 
 - the moment is quiet: no verdict pending, no agent mid-delivery;
 - the project state file is current and the rulings marked (lifecycle item 0);
-- the standing succession brief exists (`references/lifecycle.md`, « Succession — the predecessor », step 1), never a brief written by hand,
+- the standing succession brief exists (`references/succession-predecessor.md`, « Succession — the predecessor », step 1), never a brief written by hand,
   a missing `Mode: ` line added with yours;
 - its « Live state » is generated now, never written by hand:
   `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
@@ -27,7 +27,7 @@ Then:
 3. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto
    --successor --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches
-   (its pair: `references/lifecycle.md`, « Succession — the predecessor », step 2).
+   (its pair: `references/succession-predecessor.md`, « Succession — the predecessor », step 2).
    No title: `--successor` takes THIS session's own name, so the successor is the same
    `Orch: <subject>` with a reference of its own, which is what every brief cites. Where the
    launcher reads no such name, it says to type one: pass `--title "<this session's current
@@ -35,7 +35,7 @@ Then:
    `--successor` places it immediately right of this tab, between it and the first agent,
    and hands it the chain.
 4. **Name the successor to your agents** once the spawn is verified and its name and reference
-   are read in `ListAgents`: `references/lifecycle.md`, « Succession — the predecessor », step 4.
+   are read in `ListAgents`: `references/succession-predecessor.md`, « Succession — the predecessor », step 4.
 5. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only,
    and the operator's in one line naming the successor, who answers them.
    On the confirmation, send it « handed over » as your
