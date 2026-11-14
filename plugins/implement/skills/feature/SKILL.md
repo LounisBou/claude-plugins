@@ -105,7 +105,7 @@ Nothing else happens in this step: no branch, no directory, no file.
 
 ## Step 3 — The one question
 
-One question, asked once, carrying four proposed values:
+One question (`method:lifecycle`, `references/questions.md`) carrying four proposed values:
 
 - **codename** — kebab-case, derived from the title, the name every path and every
   branch uses from here on;
@@ -115,9 +115,7 @@ One question, asked once, carrying four proposed values:
 - **bump** type — `major`, `minor`, `patch` or `none`, which `implement:close` reads
   and which alone decides whether a version file is ever touched.
 
-Show the four proposed values together, in one message, and **WAIT**. The user
-confirms them or corrects any of them. Asked once: a second round of confirmation
-is the user's time spent on what they already answered.
+Show the four proposed values together, in one message, and **WAIT** for the answer.
 
 Then create the feature's directory and write the design into it. The codename is
 known only now, which is why the brainstorm came first, and the directory is made
@@ -215,8 +213,8 @@ otherwise, and this skill never says it for them.
 | The user has not answered the one question | wait; nothing is derived from a value they did not confirm |
 | The design has no heading to derive a title from | ask for the title in one line, then wait |
 
-In an orchestrated build (`ORCHESTRATOR_SPAWNED` set) the orchestrator answers a stop,
-not the operator.
+Each stop says its line once (`method:lifecycle`); in an orchestrated build
+(`ORCHESTRATOR_SPAWNED` set) the orchestrator answers it, not the operator.
 
 ---
 
@@ -241,7 +239,7 @@ status:    done|blocked|question — <one line>
 1. Preflight, then the preconditions block (main branch, clean tree, MODE, prepared list)
 2. A prepared feature? WAIT for a name or "new"
 3. superpowers:brainstorming, architectural path, for the design and the title
-4. The one question: codename, title, branch type, bump type. WAIT. Asked once
+4. The one question: codename, title, branch type, bump type. WAIT
 5. git checkout -b <type>/<codename> from the main branch
 6. superpowers:writing-plans on DESIGN.md, output under plan/
 7. IMPLEMENTATION.md in the exact shape: six header lines, one row per phase, todo

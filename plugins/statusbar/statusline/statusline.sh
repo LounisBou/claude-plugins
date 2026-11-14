@@ -75,7 +75,7 @@ separator=" │ "
 # variable, so a missing field elsewhere cannot corrupt it.
 US=$'\037'
 IFS="$US" read -r h5_pct h5_reset d7_pct d7_reset pr_num pr_state model_name \
-  ctx_pct ctx_used ctx_size lines_add lines_del session_name cur_path <<<"$(
+  ctx_pct ctx_used ctx_size lines_add lines_del session_name session_id cur_path <<<"$(
   printf '%s' "$input" | jq -r --arg us "$US" '[
     .rate_limits.five_hour.used_percentage  // "",
     .rate_limits.five_hour.resets_at        // "",
@@ -94,6 +94,7 @@ IFS="$US" read -r h5_pct h5_reset d7_pct d7_reset pr_num pr_state model_name \
     .cost.total_lines_added                 // "",
     .cost.total_lines_removed               // "",
     .session_name                           // "",
+    .session_id                             // "",
     .workspace.current_dir // .cwd          // ""
   ] | map(tostring) | join($us)' 2>/dev/null
 )"
@@ -255,27 +256,28 @@ fmt_tokens() {
   if [ "$1" -ge 1000 ]; then printf '%dk' $(( $1 / 1000 )); else printf '%d' "$1"; fi
 }
 
-# The session's context gate, in tokens, resolved as the orchestrator's
-# in-process gate module does (same variables, same defaults:
-# ORCHESTRATOR_CONTEXT_GATE=80, ORCHESTRATOR_CONTEXT_GATE_TOKENS=300000,
-# ORCHESTRATOR_LARGE_WINDOW=1000000) so the bar and the
-# gate never disagree: a fixed token count on a large window, a percentage of
-# the window otherwise. Prints nothing when the window size is unknown.
+# The orchestration's contract, core's orchestration.ts as data: where the measure files lie.
+case ${BASH_SOURCE[0]} in */*) here=${BASH_SOURCE[0]%/*} ;; *) here=. ;; esac
+contract="$here/../core/orchestration.json"
+
+# The session's context gate, in tokens: the figure the orchestrator's module writes in the
+# session's measure file at each turn, so the bar shows the gate the session is held to.
+# Prints nothing without a measure file.
 # The gate only applies to orchestration sessions: they are named "Orch: …",
 # "Agent: …", "Audit: …" or "Coord: …", or "Orch : …" in the former shape that
 # sessions started before the change still carry.
 ctx_gate_tokens() {
-  local name=${session_name#\"}
+  local name=${session_name#\"} dir file
   case "$name" in
     "Orch:"*|"Agent:"*|"Audit:"*|"Coord:"*|"Orch :"*|"Agent :"*|"Audit :"*|"Coord :"*) ;;
     *) return 0 ;;
   esac
-  is_number "$ctx_size" || return 0
-  if [ "$ctx_size" -ge "${ORCHESTRATOR_LARGE_WINDOW:-1000000}" ]; then
-    printf '%s' "${ORCHESTRATOR_CONTEXT_GATE_TOKENS:-300000}"
-  else
-    printf '%d' $(( ctx_size * ${ORCHESTRATOR_CONTEXT_GATE:-80} / 100 ))
-  fi
+  case "$session_id" in ''|*[!A-Za-z0-9_-]*) return 0 ;; esac
+  [ -f "$contract" ] || return 0
+  dir=$(jq -r '.measure | "\(.module_dir)/\(.dir)"' "$contract" 2>/dev/null) || return 0
+  file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$dir/$session_id.json"
+  [ -f "$file" ] || return 0
+  jq -r '.gate_tokens // empty' "$file" 2>/dev/null
 }
 
 # >= 80% is roughly the auto-compaction threshold: context loss is close.

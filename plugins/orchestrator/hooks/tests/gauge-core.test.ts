@@ -312,3 +312,37 @@ test('the measure file keeps the session\'s start: its first figure and the brie
   await measure($('s-gone', { ORCHESTRATOR_BRIEF: '/w/gone.md' }))
   expect(fileOf('s-gone').start).toMatchObject({ brief: '/w/gone.md', brief_bytes: null })
 })
+
+// The gate the session is held to, in tokens, is written beside its figures: the readers that
+// show it (statusbar) take the owner's figure instead of re-deriving it from the variables.
+test('the measure file carries its version and the session\'s gate in tokens on its window', async () => {
+  const handlers: Record<string, Function> = {}
+  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const files = new Map<string, string>()
+  const $ = (id: string, window: number, env: Record<string, string>) => ({
+    session: { id: async () => id, usage: async () => ({ context: { tokens: 1000, window, percent: 1 } }), model: async () => 'a-model' },
+    env: { get: async (name: string) => ({ HOME: '/tmp/h', ...env } as Record<string, string>)[name] },
+    fs: {
+      read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
+      write: async (p: string, text: string) => { files.set(p, text) },
+      stat: async () => { throw new Error('ENOENT') },
+    },
+    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
+    ui: { toast: () => undefined, invalidate: () => undefined },
+  })
+  const gateOf = async (id: string, window: number, env: Record<string, string> = {}) => {
+    await handlers['session.measure']($(id, window, env), {}, (x: unknown) => x)
+    const file = JSON.parse(files.get(`/tmp/h/.claude/claude-orchestrator/measure/${id}.json`)!)
+    expect(file.version).toBe(1)
+    return file.gate_tokens
+  }
+  expect(await gateOf('g-large', 1000000)).toBe(300000)
+  expect(await gateOf('g-small', 200000)).toBe(160000)
+  expect(await gateOf('g-tokens', 1000000, { ORCHESTRATOR_CONTEXT_GATE_TOKENS: '250000' })).toBe(250000)
+  expect(await gateOf('g-percent', 200000, { ORCHESTRATOR_CONTEXT_GATE: '50' })).toBe(100000)
+  takeDrift()
+})
