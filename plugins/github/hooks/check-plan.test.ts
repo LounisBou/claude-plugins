@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parsePlan, planExcuses, planInput, planPath, planText, relaxed } from './check-plan.ts'
+import { parsePlan, planExcuses, planInput, planPath, planText } from './check-plan.ts'
 
 const plan = (e2e: string, norms: string, review?: string) => {
   const checks = planInput({ e2e, norms, review })
@@ -28,14 +28,6 @@ test('a plan file parses back, and one of another shape is none', () => {
   }
 })
 
-test('only a required check made not required is a relaxation', () => {
-  const before = plan('required', 'none: small')
-  expect(relaxed(undefined, plan('none: x', 'none: y'))).toEqual([])
-  expect(relaxed(before, plan('screenshots: x', 'none: y'))).toEqual(['e2e'])
-  expect(relaxed(before, plan('required', 'required'))).toEqual([])
-  expect(relaxed(before, plan('required', 'none: y', 'one-pass: small'))).toEqual([])
-})
-
 test('the plan excuses the kinds it does not require, with its date and reason', () => {
   expect(planExcuses(undefined)).toEqual({})
   expect(planExcuses(plan('required', 'required'))).toEqual({ required: ['e2e', 'norms'] })
@@ -57,11 +49,8 @@ test('only an explicit required requires: a check left out of a plan is not requ
   expect(planExcuses(plan('required', 'required')).required).toEqual(['e2e', 'norms'])
 })
 
-test('the lock covers a required E2E and required norms, never the review depth', () => {
-  const before = plan('required', 'required', 'full')
-  expect(relaxed(before, plan('none: docs', 'none: tiny', 'one-pass: small'))).toEqual(['e2e', 'norms'])
-  expect(relaxed(before, plan('required', 'required', 'one-pass: small'))).toEqual([])
-  expect(planText(plan('required', 'required')).endsWith('\n\nThe ready gate requires the E2E and norms checks marked required; only the operator\'s waiver lifts one.')).toBe(true)
+test('the plan text says what the gate requires', () => {
+  expect(planText(plan('required', 'required')).endsWith('\n\nThe ready gate requires the E2E and norms checks marked required.')).toBe(true)
 })
 
 test('a required review carries its max rounds, from 1 to the cap, and a former one-pass reads as one round', () => {

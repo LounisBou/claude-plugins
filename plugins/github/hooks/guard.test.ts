@@ -2649,13 +2649,14 @@ test('a plan is refused when a need other than required gives no reason, or a ne
   expect(seen.files[PLAN]).toBeUndefined()
 })
 
-test('a new plan may require more, never lift a check the plan required', reviewing('orchestrator'), async ($, on) => {
+test('a new plan replaces the previous one, whatever it requires', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on, { plan: planOf({ need: 'none', reason: 'docs only' }) })
   const stricter: any = await planned($, { e2e: 'required', norms: 'required' })
   expect(stricter.deny).toBeUndefined()
-  const lifted: any = await planned($, { e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' })
-  expect(lifted.deny).toContain('requires e2e and norms: only the operator\'s waiver lifts a required check')
   expect(JSON.parse(seen.files[PLAN]).e2e.need).toBe('required')
+  const lighter: any = await planned($, { e2e: 'none: changed my mind', norms: 'none: small', review: 'one-pass: small' })
+  expect(lighter.deny).toBeUndefined()
+  expect(JSON.parse(seen.files[PLAN]).e2e.need).toBe('none')
 })
 
 test('an E2E waiver is refused when the plan needs no E2E: nothing was planned to waive', async ($, on) => {
