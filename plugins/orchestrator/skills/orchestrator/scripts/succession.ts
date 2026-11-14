@@ -26,10 +26,11 @@
 //
 // `check` refuses (exit 1) a brief that misses an open item of the state: an open row, an open
 // pull request, a running agent or a pending question, each one it misses named.
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readText, writeAtomic } from '../../../core/store.ts'
-import type { Env } from '../../../core/paths.ts'
+import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type PruneResult } from './prune.ts'
@@ -53,6 +54,7 @@ export const FIELDS = {
   questions: "- The operator's open questions",
   next: '- The next step:',
   owners: '- Row owners (',
+  installed: '- Installed plugin (',
   notes: '- Notes of judgment (',
 } as const
 
@@ -233,8 +235,31 @@ export function ownersOf(open: OpenState): string[] {
   })
 }
 
+/**
+ * The merged pull requests of the project's main that touch this plugin since the commit the
+ * installed copy was built from, `<n> merged PRs not installed, oldest <h> h`: a git log against
+ * the sha the host recorded for its install, read in the brief's worktree on its local `origin/main`
+ * (no fetch). Empty where any of it cannot be read: a line is said only when it is known.
+ */
+export function notInstalled(brief: string, env: Env, now: Date): string {
+  try {
+    const worktree = /worktree `([^`{}]+)`/.exec(brief)?.[1] ?? ''
+    if (worktree === '' || worktree === 'none') return ''
+    const installed = JSON.parse(readText(join(configDir(env), 'plugins', 'installed_plugins.json')) ?? '{}') as { plugins?: Record<string, { gitCommitSha?: unknown }[]> }
+    const entry = Object.entries(installed.plugins ?? {}).find(([key]) => key.startsWith('orchestrator@'))?.[1]?.[0]
+    const sha = typeof entry?.gitCommitSha === 'string' ? entry.gitCommitSha : ''
+    if (!/^[0-9a-f]{7,40}$/.test(sha)) return ''
+    const dates = execFileSync('git', ['-C', worktree, 'log', '--first-parent', '-m', '--merges', '--format=%cI', `${sha}..origin/main`, '--', 'plugins/orchestrator'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).split('\n').filter(line => line !== '')
+    const oldest = Date.parse(dates[dates.length - 1] ?? '')
+    if (dates.length === 0 || Number.isNaN(oldest)) return dates.length === 0 ? '0 merged PRs not installed' : ''
+    return `${dates.length} merged PRs not installed, oldest ${Math.max(0, Math.round((now.getTime() - oldest) / 3_600_000))} h`
+  } catch {
+    return ''
+  }
+}
+
 /** The Live state's lines, generated: each field the template names, the notes last. */
-export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number): Map<string, string> {
+export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number, installed = ''): Map<string, string> {
   const questions = open.questions.map(q => `[${q.id}] ${q.text}`)
   return new Map([
     [FIELDS.rows, `- Rows open (id, label, what remains): ${list(open.rows.map(row => row.line))}`],
@@ -243,6 +268,7 @@ export function liveLines(open: OpenState, next: string, notes: readonly Note[],
     [FIELDS.questions, `- The operator's open questions, each verbatim (its \`Question i of N\` block whole), with its round entry id, or \`none\`: ${questions.length === 0 ? 'none' : questions.join('\n\n')}`],
     [FIELDS.next, `- The next step: ${next}`],
     [FIELDS.owners, `- Row owners (an open row's live agent by its label word, « ruling » for a deferred one, « NO OWNER » for neither): ${list(ownersOf(open))}`],
+    ...(installed === '' ? [] : [[FIELDS.installed, `- Installed plugin (merged on main since the installed copy was built, by git log): ${installed}`] as [string, string]]),
     [FIELDS.notes, `- Notes of judgment (generation ${generation}, at most ${NOTES_MAX}; each is promoted into an artifact or dropped at the next succession): ${notes.length === 0 ? 'none' : notes.map(n => `[g${n.generation}] ${n.text}`).join(' · ')}`],
   ])
 }
@@ -407,7 +433,7 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
       : `succession: note ${i + 1} of generation ${note.generation} promoted to ${promoted}\n`)
   })
   const notes = request.notes.map(text => ({ generation, text }))
-  const written = rewrite(brief, liveLines(open, request.next, notes, generation), generation)
+  const written = rewrite(brief, liveLines(open, request.next, notes, generation, notInstalled(brief, env, now())), generation)
   if (typeof written !== 'string') {
     io.err(`succession: ${written.error}\n`)
     return 2

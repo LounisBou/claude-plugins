@@ -1,10 +1,11 @@
 import { strict as assert } from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { deckOpen, FIELDS, leanSteps, ownersOf, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
+import { deckOpen, FIELDS, leanSteps, notInstalled, ownersOf, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
@@ -351,4 +352,46 @@ test('live writes the row owners into the brief', () => {
   const w = world()
   assert.equal(w.run('live', '--next', 'x'), 0)
   assert.match(w.read(), /- Row owners \(.*\): 2 api; 3 ruling\n/)
+})
+
+/** A repository whose main merged a pull request touching the plugin, and the install record of the commit before it. */
+function installedWorld(): { brief: string; env: Record<string, string>; merged: Date } {
+  const repo = join(dir, 'repo')
+  mkdirSync(join(repo, 'plugins', 'orchestrator'), { recursive: true })
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: '2026-11-14T10:00:00Z', GIT_AUTHOR_DATE: '2026-11-14T10:00:00Z' } }).trim()
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'a'), 'a')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'base')
+  const sha = git('rev-parse', 'HEAD')
+  git('checkout', '-q', '-b', 'feat')
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'b'), 'b')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'feature')
+  git('checkout', '-q', 'main')
+  git('merge', '-q', '--no-ff', '-m', 'Merge pull request #1', 'feat')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'plugins'), { recursive: true })
+  writeFileSync(join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: sha }] } }))
+  return { brief: `# Orchestrator succession brief — acme/belt\n\nworktree \`${repo}\`.\n`, env: { CLAUDE_CONFIG_DIR: config, HOME: dir }, merged: new Date('2026-11-14T10:00:00Z') }
+}
+
+test('notInstalled counts the merged pull requests touching the plugin since the installed commit, and says nothing it cannot read', () => {
+  const w = installedWorld()
+  assert.equal(notInstalled(w.brief, w.env, new Date(w.merged.getTime() + 5 * 3_600_000)), '1 merged PRs not installed, oldest 5 h')
+  assert.equal(notInstalled(w.brief.replace(/worktree `[^`]+`/, 'worktree `none`'), w.env, w.merged), '', 'no worktree')
+  assert.equal(notInstalled(w.brief, { ...w.env, CLAUDE_CONFIG_DIR: join(dir, 'nowhere') }, w.merged), '', 'no install record')
+  writeFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: 'a'.repeat(40) }] } }))
+  assert.equal(notInstalled(w.brief, w.env, w.merged), '', 'a commit the repository does not hold')
+})
+
+test('live writes the not-installed line into the Live state when it is known', () => {
+  const w = world()
+  const i = installedWorld()
+  writeFileSync(w.brief, readFileSync(w.brief, 'utf8').replace('## Standing context\n', `## Standing context\n\nworktree \`${i.brief.match(/worktree `([^`]+)`/)?.[1] ?? ''}\`.\n`))
+  const env = { ...i.env, ORCHESTRATOR_STATE_DIR: w.state }
+  const err: string[] = []
+  assert.equal(main(['live', w.brief, '--name', NAME, '--session', SESSION, '--record', w.record, '--next', 'x'], env, { out: () => {}, err: t => { err.push(t) } }, () => new Date(i.merged.getTime() + 3_600_000)), 0)
+  assert.match(w.read(), /- Installed plugin \(.*\): 1 merged PRs not installed, oldest 1 h\n/)
 })
