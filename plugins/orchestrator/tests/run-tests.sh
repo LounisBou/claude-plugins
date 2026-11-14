@@ -5455,10 +5455,10 @@ two_lines_only() {
     | xargs grep -LF -- 'waiting: tool' | sed "s#^$ROOT/##"
 }
 check "no text offers only the wait on the operator and done" "" "$(two_lines_only)"
-# The question of a decision round ends on a declared wait on the operator: the stop gate refuses
-# a turn that ends on a bare question.
-check "a decision round's question ends on a declared operator wait" "yes" \
-  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<what it blocks>", question: "<the block>"})`')"
+# The question of a decision round is asked with `ask` and ends on a declared wait on the operator
+# that names no question of its own: the stop gate refuses a turn that ends on a bare question.
+check "a decision round's question ends on a declared operator wait" "yes|yes" \
+  "$(spells "$ROOT/commands/decide.md" 'with one `ask` call')|$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator"})`, without `question`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 # The operator's time: a round is a wave of questions back to back, nothing relayed or launched
@@ -5486,6 +5486,8 @@ check "a mechanical base merge goes to a rebase agent, never the orchestrator; o
   "$(spells "$ORCH_REFS/rebase.md" 'A rebase or merge of the base is never yours')|$(spells "$ORCH_REFS/rebase.md" 'one that decides behaviour to a correction session')"
 check "succession prunes the state file and archives the finished journal" "yes|yes" \
   "$(spells "$ORCH_REFS/succession-predecessor.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/succession-predecessor.md" 'the finished journal, dated before it, moves to an archive file')"
+check "the predecessor's prune says live archives the settled round" "yes" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" "and archives the round's entries settled over a day ago")"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
 # them. Rule 203: move_send refuses a checkout that is not clean and pushed on its own
 # (hooks/tests/moving.test.ts « a dirty or an unpushed checkout refuses the move »). Rule 207
