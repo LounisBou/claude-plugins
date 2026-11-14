@@ -192,6 +192,103 @@ interface Feed {
   readonly hds: readonly number[]
 }
 
+// The most words one brace expansion may give: a word that would give more is left as it is.
+const BRACE_LIMIT = 1000
+
+// A word as characters and, one per character, whether it was quoted or escaped ('1') or not ('0').
+interface Marked {
+  readonly text: string
+  readonly quoted: string
+}
+
+// The values of a sequence expression `x..y` or `x..y..step` (two integers, or two single letters
+// of the same kind), or undefined when the body is no sequence or would give more than the limit.
+function sequence(body: string): string[] | undefined {
+  const m = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$/.exec(body)
+  if (m === null) return undefined
+  const [, from = '', to = '', by] = m
+  const letters = /^[A-Za-z]$/.test(from)
+  if (letters !== /^[A-Za-z]$/.test(to)) return undefined
+  const first = letters ? from.charCodeAt(0) : Number(from)
+  const last = letters ? to.charCodeAt(0) : Number(to)
+  const step = Math.abs(Number(by ?? 1)) || 1
+  if (Math.abs(last - first) / step + 1 > BRACE_LIMIT) return undefined
+  const width = !letters && (/^-?0\d/.test(from) || /^-?0\d/.test(to)) ? Math.max(from.length, to.length) : 0
+  const out: string[] = []
+  for (let v = first; first <= last ? v <= last : v >= last; v += first <= last ? step : -step) {
+    if (letters) out.push(String.fromCharCode(v))
+    else out.push(v < 0 ? '-' + String(-v).padStart(width - 1, '0') : String(v).padStart(width, '0'))
+  }
+  return out
+}
+
+// Where the brace group opened at `open` closes, and the alternatives of its top-level commas;
+// undefined when it never closes. Quoted braces and commas are no part of the syntax.
+function braceGroup(w: Marked, open: number): { close: number; parts: Marked[] } | undefined {
+  let depth = 0
+  let from = open + 1
+  const parts: Marked[] = []
+  for (let i = open; i < w.text.length; i++) {
+    if (w.quoted[i] === '1') continue
+    const c = w.text[i]
+    if (c === '{') depth++
+    else if (c === '}' && --depth === 0) {
+      parts.push({ text: w.text.slice(from, i), quoted: w.quoted.slice(from, i) })
+      return { close: i, parts }
+    }
+    else if (c === ',' && depth === 1) {
+      parts.push({ text: w.text.slice(from, i), quoted: w.quoted.slice(from, i) })
+      from = i + 1
+    }
+  }
+  return undefined
+}
+
+// The words an unquoted word gives once bash has expanded its braces (`{a,b}`, `x{1..3}`): the
+// brace expansion runs before the command is looked up, so `{git,push,--force}` is `git push
+// --force`. A brace that is quoted or escaped, follows `$`, holds no top-level comma or sequence,
+// or never closes stays as it is. Undefined when the word holds no expansion; throws when it would
+// give more than BRACE_LIMIT words.
+function braces(w: Marked, budget: { left: number }): Marked[] | undefined {
+  for (let i = 0; i < w.text.length; i++) {
+    if (w.quoted[i] === '1') continue
+    if (w.text[i] === '$' && w.text[i + 1] === '{' && w.quoted[i + 1] !== '1') {
+      const skip = braceGroup(w, i + 1)
+      if (skip !== undefined) i = skip.close
+      continue
+    }
+    if (w.text[i] !== '{') continue
+    const group = braceGroup(w, i)
+    if (group === undefined) continue
+    const body = w.text.slice(i + 1, group.close)
+    const seq = group.parts.length === 1 && !w.quoted.slice(i + 1, group.close).includes('1') ? sequence(body) : undefined
+    if (group.parts.length === 1 && seq === undefined) continue
+    const alternatives = seq === undefined ? group.parts.flatMap(part => braces(part, budget) ?? [part]) : seq.map(text => ({ text, quoted: '0'.repeat(text.length) }))
+    const post = { text: w.text.slice(group.close + 1), quoted: w.quoted.slice(group.close + 1) }
+    const tails = braces(post, budget) ?? [post]
+    const out: Marked[] = []
+    for (const alt of alternatives) {
+      for (const tail of tails) {
+        if (--budget.left < 0) throw new RangeError('brace expansion over the limit')
+        out.push({ text: w.text.slice(0, i) + alt.text + tail.text, quoted: w.quoted.slice(0, i) + alt.quoted + tail.quoted })
+      }
+    }
+    return out
+  }
+  return undefined
+}
+
+// The words of one unquoted-or-quoted word after brace expansion; the word itself, as one, when
+// it holds no expansion or would give more than BRACE_LIMIT words.
+function expandWord(text: string, quoted: string): string[] {
+  try {
+    return (braces({ text, quoted }, { left: BRACE_LIMIT }) ?? [{ text, quoted }]).map(word => word.text)
+  } catch (error) {
+    if (error instanceof RangeError) return [text]
+    throw error
+  }
+}
+
 function tokenize(command: string): ShellCommand[] {
   const found: ShellCommand[] = []
 
@@ -235,7 +332,10 @@ function tokenize(command: string): ShellCommand[] {
   const piping = [false]
   let d = 0
   let cur = ''
+  // One character per character of cur: '1' when it was quoted or escaped, '0' when not.
+  let curq = ''
   let started = 0
+  const add = (text: string, quoted: boolean): void => { cur += text; curq += (quoted ? '1' : '0').repeat(text.length) }
   const HD = ['']
   const HS = [0]
   let hn = 0
@@ -252,15 +352,17 @@ function tokenize(command: string): ShellCommand[] {
     d--
     substs[d]?.push(inside)
     cur = ''
+    curq = ''
     started = dq[d] ? 1 : 0
   }
   function flushWord(): void {
     if (started) {
       if (sk[d] === 2) { hereWords[d]?.push(cur); sk[d] = 0 }
       else if (sk[d]) sk[d] = 0
-      else words[d]?.push(cur)
+      else words[d]?.push(...expandWord(cur, curq))
     }
     cur = ''
+    curq = ''
     started = 0
   }
   function flushCmd(): void {
@@ -368,23 +470,23 @@ function tokenize(command: string): ShellCommand[] {
       if (c === '"') { dq[d] = 0; i++ }
       else if (c === '\\') {
         if (n1 === '\n') i += 2
-        else { cur += /[$`"\\]/.test(n1) ? n1 : c + n1; i += 2 }
+        else { add(/[$`"\\]/.test(n1) ? n1 : c + n1, true); i += 2 }
       }
       else if (c === '`') { push('`'); i++ }
       else if (c === '$' && n1 === '(') {
         if (at(i + 2) === '(') i = arith(i + 1)
         else { push(')'); i += 2 }
       }
-      else { cur += c; i++ }
+      else { add(c, true); i++ }
       continue
     }
     if (c === ' ' || c === '\t') { flushWord(); i++ }
     else if (c === '\n') { flushWord(); flushCmd(); i = bodies(i + 1) }
-    else if (c === '\\') { if (n1 !== '\n') { cur += n1; started = 1 } i += 2 }
+    else if (c === '\\') { if (n1 !== '\n') { add(n1, true); started = 1 } i += 2 }
     else if (c === "'") {
       const j = find("'", i + 1)
-      if (j === 0) { cur += rest(i + 1); i = L + 1 }
-      else { cur += s.slice(i, j - 1); i = j + 1 }
+      if (j === 0) { add(rest(i + 1), true); i = L + 1 }
+      else { add(s.slice(i, j - 1), true); i = j + 1 }
       started = 1
     }
     else if (c === '$' && (n1 === "'" || n1 === '"')) i++
@@ -421,10 +523,11 @@ function tokenize(command: string): ShellCommand[] {
       while (/[<>&|]/.test(at(i))) i++
       sk[d] = 1
     }
-    // `{}` is a word (`xargs -I {} kill {}`, `find -exec rm {} ;`); a lone brace groups.
-    else if (c === '{' && n1 === '}') { cur += '{}'; started = 1; i += 2 }
-    else if (c === '{' || c === '}') { flushWord(); i++ }
-    else { cur += c; started = 1; i++ }
+    // `{}` is a word (`xargs -I {} kill {}`, `find -exec rm {} ;`); a brace standing alone groups,
+    // one inside a word (`repos/{owner}/x`, `{a,b}`) stays part of it.
+    else if (c === '{' && n1 === '}') { add('{}', true); started = 1; i += 2 }
+    else if ((c === '{' || c === '}') && !started && /^[\s;&|()<>]?$/.test(n1)) { i++ }
+    else { add(c, false); started = 1; i++ }
   }
   flushWord(); flushCmd()
   while (d > 0) pop()

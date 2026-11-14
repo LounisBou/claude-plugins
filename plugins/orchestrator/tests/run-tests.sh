@@ -5158,6 +5158,9 @@ check "a watch that exits 0 over passing and skipped checks only is green, exit 
 # as no checks with the count skipped, never green.
 check "a watch that exits 0 over skipped checks only is no green: no-checks with the count, exit 2" "ci-watch: no-checks 7 $HA skipped=3|2" \
   "$(CW_BUCKETS="unit:skipping\ndocs:skipping\nsmoke:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+# A conflicting pull request starts no workflow run: an external check that passed is no green.
+check "a conflicting pull request over a passing external check is no green: no-checks conflicting, exit 2" "ci-watch: no-checks 7 $HA conflicting|2" \
+  "$(CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA conflicting" "1" 0 "" 7 --interval 1)"
 # A slower workflow's checks are not registered yet when a faster one's are done: the watch
 # exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
 # a run still going is watched to its end, then the checks are watched again.
@@ -5437,7 +5440,7 @@ check "a relayed ruling is dated by a command, pasted, never from memory" "yes|n
 # Topic 6.3 of the rules review, the operator's ruling of 2026-10-31: each ruling is relayed at
 # once, nothing is shown between two questions, and the wave launches and reports at its end.
 check "a decision round asks its questions back to back, relays each ruling at once, and never stops the work its questions do not block" "yes|yes|yes|yes|no|no" \
-  "$(spells "$ROOT/commands/decide.md" 'A question blocks only the work that depends on its answer')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
+  "$(spells "$ROOT/commands/decide.md" 'A question never stops the rest of the work')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
 check "a decision round shows nothing between a ruling and the next question" "no" \
   "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
 # Topic 6.3: the coordinator's module relays a ruling as soon as round-close returns.

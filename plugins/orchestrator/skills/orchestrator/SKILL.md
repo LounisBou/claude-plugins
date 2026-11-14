@@ -58,8 +58,8 @@ words.
    what the role needs is repaired by a successor that has it.
 8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: it is
    pasted from `date -u +%FT%TZ` or the event's own timestamp.
-9. **A question blocks only what depends on its answer.** Launch everything else, before
-   and after asking, then call `declare_wait` with what the turn waits on.
+9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
+   after asking, then `declare_wait` with what the turn waits on.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     the briefs and the templates it touches change in the same move; a deferred decision
     opens its dispatch-record row at once. Everything durable lives in files, not in your

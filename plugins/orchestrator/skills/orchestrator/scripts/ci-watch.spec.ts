@@ -247,6 +247,27 @@ test('red, cancelled and skipped readings after the watch', async () => {
   assert.match(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [4] }), /^unread 7 gh pr checks --watch exited 4 with no failing check named \(log: .*here-pr7\.log\)\|5$/)
 })
 
+test('a pull request GitHub reports as conflicting is no green: its suites never ran, whatever else passed', async () => {
+  // GitHub starts no workflow run on a conflicting pull request: only an external check (a secret scanner) reports.
+  const external = { reg: ['1'], buckets: 'GitGuardian:pass' }
+  assert.equal(await said({ ...external, view: [`OPEN ${HA} conflicting`] }), `no-checks 7 ${HA} conflicting|2`)
+  // Auto-merge never merges it: no wait for a merge, no read of the pull request beyond the two of every watch.
+  const deps = fake({ ...external, view: [`OPEN ${HA} auto conflicting`] })
+  assert.equal((await watch(options(), deps)).line, `no-checks 7 ${HA} conflicting`)
+  assert.equal(deps.calls.filter(call => call.startsWith('gh pr view')).length, 2)
+  // The read asks GitHub for the mergeability, and only a conflict counts: an uncomputed one is no obstacle.
+  assert.ok(deps.calls.some(call => call.includes('--json state,headRefOid,autoMergeRequest,isDraft,mergeable')))
+  assert.equal(await said({ ...external, view: [`OPEN ${HA}`] }), `green 7 ${HA} ${GATE}|0`)
+  // A red stays a red: the failing names come first.
+  assert.equal(await said({ reg: ['1'], buckets: 'build:cancel\nGitGuardian:pass', view: [`OPEN ${HA} conflicting`] }), `red 7 ${HA} build|1`)
+})
+
+test('the pull request line: state, head, then the flags it carries', () => {
+  assert.deepEqual(parseView(`OPEN ${HA} auto draft conflicting`), { state: 'OPEN', head: HA, auto: true, draft: true, conflicting: true })
+  assert.equal(parseView(`OPEN ${HA} conflicting`).conflicting, true)
+  assert.equal(parseView(`OPEN ${HA} auto`).conflicting, undefined)
+})
+
 test('registration: waited for, bounded, and a failure is unread', async () => {
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['none'] }), `no-checks 7 ${HA}|2`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['0'] }), `no-checks 7 ${HA}|2`)
