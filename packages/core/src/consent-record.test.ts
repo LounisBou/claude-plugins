@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
@@ -105,6 +105,16 @@ describe('a consent record of a round answer', () => {
     assert.equal(consentRecordOf({ ...fields, answer: 'B' }), undefined)
     assert.equal(consentRecordOf({ ...fields, subject: { kind: 'e2e-waiver', repo: 'o/n' } }), undefined)
     assert.equal(consentRecordOf({ ...fields, entry: '../x' }), undefined)
+  })
+})
+
+describe('the answer that grants', () => {
+  it('is « Accorder » alone, case and spacing aside', () => {
+    for (const answer of [CONSENT_GRANT, ' accorder ', 'ACCORDER']) assert.equal(grants(answer), true, answer)
+  })
+
+  it('is not « Refuser », a refusal in words, or an answer that only mentions the grant', () => {
+    for (const answer of [CONSENT_REFUSE, 'ne pas passer thing en auto-merge', 'oui, thing passe en auto-merge', 'Accorder, mais pas ce soir', '']) assert.equal(grants(answer), false, answer)
   })
 })
 

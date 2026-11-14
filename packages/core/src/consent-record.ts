@@ -17,6 +17,9 @@ export const CONSENT_RECORD_CONTRACT = {
   dir: 'consents',
   // A consent never rests on a few characters: the answer a quote holds is at least this long.
   quote_min: 8,
+  // The two choices every consent question offers, and the only answers that grant or refuse.
+  grant: 'Accorder',
+  refuse: 'Refuser',
   text_max: 20_000,
   patterns: {
     repo_part: '^[A-Za-z0-9_.-]+$',
@@ -52,6 +55,8 @@ export const CONSENT_KINDS: readonly ConsentKind[] = contract.kinds
 export const DEPLOY_ENVS: readonly DeployEnv[] = contract.envs
 export const CONSENT_QUOTE_MIN = contract.quote_min
 export const CONSENT_PRODUCER = contract.producer
+export const CONSENT_GRANT = contract.grant
+export const CONSENT_REFUSE = contract.refuse
 
 const REPO_PART = new RegExp(contract.patterns.repo_part)
 const ENTRY = new RegExp(contract.patterns.entry)
@@ -165,6 +170,11 @@ export function consentRecordOf(fields: {
   const answer = consentAnswer(fields.answer, fields.choices)
   if (answer === '') return undefined
   return parseConsentRecord({ v: CONSENT_VERSION, subject: fields.subject, entry: fields.entry, question: fields.question, answer, by: fields.by, at: fields.at })
+}
+
+/** Whether a recorded answer grants the consent: the choice « Accorder » and nothing else, case and spacing aside; « Refuser » and any other answer grant none. */
+export function grants(answer: string): boolean {
+  return spaced(answer).toLowerCase() === contract.grant.toLowerCase()
 }
 
 /** Whether two subjects are the same: the same kind, repository (as GitHub compares it), pull request and environment. */
