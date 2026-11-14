@@ -215,16 +215,14 @@ export function envPatterns(secrets: EnvSecrets): Pattern[] {
   return patterns
 }
 
-/**
- * `text` with every secret replaced by `[REDACTED:<pattern>]`, and the names of the patterns that
- * matched. `entropy: false` skips the entropy guess only, for an identifier already held to its
- * shape: a tool call's id is random by nature, a known token shape or an env value still is not.
- */
-export function redactText(text: string, secrets: EnvSecrets = new Map(), options: { entropy?: boolean } = {}): { text: string; hits: string[] } {
+/** The fixed patterns without the entropy guess, for an identifier already held to its shape. */
+const SHAPED_PATTERNS = PATTERNS.filter(pattern => pattern.name !== 'entropy')
+
+/** `text` redacted by the patterns of ~/.env (`env`, compiled once by the caller), then the fixed ones. */
+function redactWith(text: string, env: readonly Pattern[], options: { entropy?: boolean }): { text: string; hits: string[] } {
   const hits: string[] = []
   let out = text
-  const patterns = options.entropy === false ? PATTERNS.filter(p => p.name !== 'entropy') : PATTERNS
-  for (const pattern of [...envPatterns(secrets), ...patterns]) {
+  for (const pattern of [...env, ...(options.entropy === false ? SHAPED_PATTERNS : PATTERNS)]) {
     const next = pattern.apply(out, `[REDACTED:${pattern.name}]`)
     if (next !== out) hits.push(pattern.name)
     out = next
@@ -233,26 +231,35 @@ export function redactText(text: string, secrets: EnvSecrets = new Map(), option
 }
 
 /**
+ * `text` with every secret replaced by `[REDACTED:<pattern>]`, and the names of the patterns that
+ * matched. `entropy: false` skips the entropy guess only, for an identifier already held to its
+ * shape: a tool call's id is random by nature, a known token shape or an env value still is not.
+ */
+export function redactText(text: string, secrets: EnvSecrets = new Map(), options: { entropy?: boolean } = {}): { text: string; hits: string[] } {
+  return redactWith(text, envPatterns(secrets), options)
+}
+
+/**
  * An event with every string redacted, at any depth, and what matched; an object's keys are
  * redacted as strings too. The identifier fields of the event itself (its top level only) are held
  * to their shape as well; a nested field of the same name is plain text.
  */
 export function redactValue(value: unknown, secrets: EnvSecrets): { value: unknown; hits: string[] } {
-  return walk(value, secrets, undefined, 0)
+  return walk(value, envPatterns(secrets), undefined, 0)
 }
 
-function walk(value: unknown, secrets: EnvSecrets, key: string | undefined, depth: number): { value: unknown; hits: string[] } {
+function walk(value: unknown, env: readonly Pattern[], key: string | undefined, depth: number): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
     const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
     // A mark a former pass left in an identifier is accepted as it stands.
     if (shape !== undefined && !shape.test(value) && !MARK_ONLY.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }
-    const { text, hits } = redactText(value, secrets, { entropy: shape === undefined })
+    const { text, hits } = redactWith(value, env, { entropy: shape === undefined })
     return { value: text, hits }
   }
   if (Array.isArray(value)) {
     const hits: string[] = []
     const out = value.map(item => {
-      const r = walk(item, secrets, undefined, depth + 1)
+      const r = walk(item, env, undefined, depth + 1)
       hits.push(...r.hits)
       return r.value
     })
@@ -263,8 +270,8 @@ function walk(value: unknown, secrets: EnvSecrets, key: string | undefined, dept
     const out: Record<string, unknown> = {}
     for (const [k, item] of Object.entries(value)) {
       // A key is text a secret can sit in as well as a value; the field's shape is still read from the key as written.
-      const name = redactText(k, secrets)
-      const r = walk(item, secrets, k, depth + 1)
+      const name = redactWith(k, env, {})
+      const r = walk(item, env, k, depth + 1)
       hits.push(...name.hits, ...r.hits)
       out[name.text] = r.value
     }
