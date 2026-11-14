@@ -50,7 +50,7 @@ export type Gate = {
   labels: string[]
   // The pull request's commit count at this head.
   commits?: number
-  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; total: number }
+  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; unverified?: string[]; total: number }
 }
 
 // One file of a head's records directory.
@@ -666,8 +666,11 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS') {
     const skippedChecks = ci.skipped ?? []
+    // A read of the checks the base requires that failed: green cannot be told, and the failure is named.
+    const unverified = ci.unverified ?? []
+    if (unverified.length > 0) missing.push('CI unverified: ' + unverified.join('; '))
     if (skippedChecks.length > 0 && !ci.running) missing.push('CI did not run: ' + skippedChecks.join(', ') + ' skipped')
-    else missing.push('CI still running')
+    else if (unverified.length === 0 || ci.running) missing.push('CI still running')
   }
   return missing
 }

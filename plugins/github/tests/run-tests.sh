@@ -2142,9 +2142,33 @@ check "pr-gate counts a required check reported as a commit status" "SUCCESS 0 2
 gate8 req-classic "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 '[]' '{"protection":{"required_status_checks":{"contexts":["build"],"checks":[]}}}'
 check "pr-gate reads a check the branch protection requires, not reported yet, as running" "PENDING 1 2" "$(running8)"
 gate8 req-down "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 '{"__status":500,"message":"boom"}'
-check "pr-gate reads the runs alone when the required checks cannot be read" "SUCCESS 0 1" "$(running8 2>/dev/null)"
+check "pr-gate never reads green when the required checks cannot be read" "PENDING 0 1" "$(running8 2>/dev/null)"
 check "pr-gate prints one error line naming the required checks call failure" \
   "error: cannot read the checks main requires: boom (HTTP 500)" "$(gh8 pr-gate 12 2>&1 >/dev/null)"
+check "pr-gate names the failed rulesets read in ci.unverified" "rulesets of main: boom (HTTP 500)" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; print("|".join(json.load(sys.stdin)["ci"]["unverified"]))')"
+check "pr-checks reads the required checks that cannot be read as pr-gate does" "PENDING" \
+  "$(gh8 pr-checks 12 --format checks-status 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+# The protection call fails alone: the rulesets' checks stay listed (the ci check not reported
+# yet is running), and the failed read still makes the answer unverified.
+gate8 req-prot-down "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 "$RULES8" '{"__status":500,"message":"boom"}'
+check "pr-gate keeps the rulesets' checks when the protection read fails, and is unverified" \
+  "PENDING 1 2 branch protection of main: boom (HTTP 500)" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], c["running"], c["total"], "|".join(c["unverified"]))')"
+gate8 req-prot-green "$PULL8B" '{"statuses":[]}' '{"check_runs":[{"name":"GitGuardian Security Checks","status":"completed","conclusion":"success"},{"name":"ci","status":"completed","conclusion":"success"}]}'; req8 "$RULES8" '{"__status":500,"message":"boom"}'
+check "pr-gate never reads green when the protection read fails alone" "PENDING 0 2" "$(running8 2>/dev/null)"
+# The rules call fails alone: the protection's checks stay listed.
+gate8 req-rules-down "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 '{"__status":500,"message":"boom"}' '{"protection":{"required_status_checks":{"contexts":["build"],"checks":[]}}}'
+check "pr-gate keeps the protection's checks when the rulesets read fails, and is unverified" \
+  "PENDING 1 2 rulesets of main: boom (HTTP 500)" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], c["running"], c["total"], "|".join(c["unverified"]))')"
+gate8 req-both-down "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 '{"__status":500,"message":"boom"}' '{"__status":500,"message":"bang"}'
+check "pr-gate names both reads when both fail" \
+  "PENDING rulesets of main: boom (HTTP 500)|branch protection of main: bang (HTTP 500)" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], "|".join(c["unverified"]))')"
+gate8 req-ok "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 "$RULES8" '{"protection":{"required_status_checks":{"contexts":["build"],"checks":[]}}}'
+check "pr-gate with both reads readable lists the checks of both, nothing unverified" "PENDING 2 3 0" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], c["running"], c["total"], len(c["unverified"]))')"
 
 # A check is its workflow's too: every Actions run shares one app, so two workflows
 # each with a job "test" are two checks, and a success of one never hides the

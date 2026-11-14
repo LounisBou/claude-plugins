@@ -62,7 +62,7 @@ def pr_status(args):
         "pull": pull,
         "ci": fmt.gate_ci(
             statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs,
-            _required_checks(owner, name, _base(pull)),
+            *_required_checks(owner, name, _base(pull)),
         ),
     }
 
@@ -91,22 +91,28 @@ def _suite_workflows(owner, name, sha):
 
 
 def _required_checks(owner, name, base):
-    """The status check contexts the base branch requires, from its rulesets and its branch
-    protection: a check GitHub has not created yet at a head is in neither list of runs, so only
-    this names it. An empty set when the pull request names no base. None when a read fails: the
-    gate then reads the runs alone, as before, and says why on stderr."""
+    """(contexts, unverified): the status check contexts the base branch requires, from its
+    rulesets and its branch protection, read apart, and the reads that failed. A check GitHub
+    has not created yet at a head is in neither list of runs, so only this names it. No contexts
+    and nothing unverified when the pull request names no base. A failed read says why on stderr
+    and is named in unverified, one entry per read: the gate never reads green over it, and the
+    contexts the other read gave are kept."""
     if not base:
-        return set()
+        return set(), []
     branch = quote(base, safe="")
-    try:
-        rules = http.rest("GET", "/repos/%s/%s/rules/branches/%s" % (owner, name, branch), paginate=True) or []
-        protection = (http.rest("GET", "/repos/%s/%s/branches/%s" % (owner, name, branch)) or {}).get("protection") or {}
-    except errors.GhError as exc:
-        print("error: cannot read the checks %s requires: %s" % (base, exc.message), file=sys.stderr)
-        return None
-    except OSError as exc:
-        print("error: cannot read the checks %s requires: %s" % (base, exc), file=sys.stderr)
-        return None
+    unverified = []
+
+    def read(what, path, **kw):
+        try:
+            return http.rest("GET", "/repos/%s/%s/%s" % (owner, name, path), **kw)
+        except (errors.GhError, OSError) as exc:
+            why = exc.message if isinstance(exc, errors.GhError) else exc
+            print("error: cannot read the checks %s requires: %s" % (base, why), file=sys.stderr)
+            unverified.append("%s of %s: %s" % (what, base, why))
+            return None
+
+    rules = read("rulesets", "rules/branches/%s" % branch, paginate=True) or []
+    protection = (read("branch protection", "branches/%s" % branch) or {}).get("protection") or {}
     required = set()
     for rule in rules:
         if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
@@ -115,7 +121,7 @@ def _required_checks(owner, name, base):
     status = protection.get("required_status_checks") or {}
     required |= {c for c in status.get("contexts") or [] if isinstance(c, str) and c}
     required |= {c.get("context") for c in status.get("checks") or [] if isinstance(c, dict) and c.get("context")}
-    return required
+    return required, unverified
 
 
 def _base(pull):
@@ -129,13 +135,15 @@ def pr_checks(args):
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
     workflows, suite_runs = _suite_workflows(owner, name, sha)
+    required, unverified = _required_checks(owner, name, _base(pull))
     return {
         "statuses": statuses,
         "check_runs": runs.get("check_runs", []),
         "draft": bool(pull.get("draft")),
         "workflows": workflows,
         "workflow_runs": suite_runs,
-        "required": sorted(_required_checks(owner, name, _base(pull)) or []),
+        "required": sorted(required),
+        "unverified": unverified,
     }
 
 
@@ -163,7 +171,7 @@ def pr_gate(args):
         "commits": pull.get("commits"),
         "ci": fmt.gate_ci(
             statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs,
-            _required_checks(owner, name, _base(pull)),
+            *_required_checks(owner, name, _base(pull)),
         ),
     }
 
