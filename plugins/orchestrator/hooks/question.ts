@@ -253,6 +253,10 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   if (me === null) {
     return refuse('Only an orchestrator, a coordinator or an auditor asks with `ask`, once its name is known (after its first turn); an agent asks the session that launched it, by message.')
   }
+  // Until declare_wait takes a question asked here, an orchestrator's turn end would fail or double the entry.
+  if (me.role === 'orchestrator') {
+    return refuse('An orchestrator does not ask with `ask` yet: its question goes through declare_wait (kind operator, with the question block), as before.')
+  }
   const sessionId = await $.session.id()
   const sender = { session: sessionId, name: me.name, role: me.role, machine: await machineOf($) }
   const entry = askedEntry(parsed.fields, sender, askId(sessionId, now), now)
@@ -305,7 +309,7 @@ export function register(on: On<Held>): void {
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
           + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as declare_wait takes them, and offers choice_a "Accorder", choice_b "Refuser". '
-          + 'For a coordinator or an auditor; an orchestrator asks as orchestrator:decide says, until declare_wait takes a question asked here.',
+          + 'For a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
           properties: {

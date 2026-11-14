@@ -207,13 +207,22 @@ for (const [who, me] of [['an agent', ['agent', 'Agent: a1']], ['a session whose
   })
 }
 
-for (const role of ['orchestrator', 'auditor']) {
-  test(`an ${role} asks as well, named as its row names it`, async () => {
-    const { dollar, files } = world({ me: [role, `${role === 'auditor' ? 'Audit' : 'Orch'}: acme [a1b2c3]`] })
+for (const role of ['coordinator', 'auditor']) {
+  test(`${role === 'auditor' ? 'an' : 'a'} ${role} asks, named as its row names it`, async () => {
+    const { dollar, files } = world({ me: [role, `${role === 'auditor' ? 'Audit' : 'Coord'}: acme [a1b2c3]`] })
     expect((await ask(dollar, FULL)).isError).toBeUndefined()
     expect(stored(files)[0].sender.role).toBe(role)
   })
 }
+
+test('an orchestrator is refused until declare_wait takes a question: nothing stored, nothing shown', async () => {
+  const { dollar, files, shown } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })
+  const answer = await ask(dollar, FULL)
+  expect(answer.isError).toBe(true)
+  expect(answer.result).toContain('declare_wait')
+  expect(stored(files)).toEqual([])
+  expect(shown).toEqual([])
+})
 
 test('a subagent\'s call is refused', async () => {
   const { dollar, files } = world()
