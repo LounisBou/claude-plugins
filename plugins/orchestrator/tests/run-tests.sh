@@ -3860,7 +3860,7 @@ check "the coordinator runs every relayed question as a decision round by defaul
 # Topic 6.1 of the rules review, the operator's ruling of 2026-10-31: a question found settled is
 # withdrawn on the evidence read on its artifact, and its sender is told it was withdrawn.
 check "a question found settled is withdrawn by the coordinator on its evidence, its sender told" "yes|yes|no" \
-  "$(spells "$COORDSKILL" 'one found settled on its artifact is withdrawn on that evidence:')|$(spells "$COORDSKILL" '`coordinator.sh round-close <id> --withdraw "<evidence>"`, which tells its sender it was')|$(spells "$COORDSKILL" 'one found settled is not dropped by you: ask its sender')"
+  "$(spells "$COORDSKILL" 'one found settled on its artifact is withdrawn on that evidence:')|$(spells "$COORDSKILL" '`settle` (`withdrawn`, reason: the evidence), which tells its sender it was')|$(spells "$COORDSKILL" 'one found settled is not dropped by you: ask its sender')"
 # Topic 6.2 of the rules review, the operator's ruling of 2026-10-31: the urgent level first, then
 # within each level the questions grouped by orchestrator, the groups ordered by their oldest wait,
 # in the default round and --by-urgency alike.
@@ -3911,7 +3911,7 @@ check "the design no longer leaves a dead sender's questions to the pane" "no" \
 # question reaching the pane, or the coordinator's tab with the pane closed, and the asker's chat.
 check "the rulebooks say a question the pane shows is not asked twice, when it falls due, and how a wait is marked urgent" \
   "yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'declared its wait on the operator urgent, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'tab while the pane still showed it, by one `round-close`; neither is presented again.')|$(spells "$ROOT/commands/decide.md" 'declare it with `declare_wait` and `urgent: true` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
+  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'declared its wait on the operator urgent, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'tab while the pane still showed it, by one `settle`; neither is presented again.')|$(spells "$ROOT/commands/decide.md" 'declare it with `declare_wait` and `urgent: true` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
 # The coordinator's own decision round takes every orchestrator's open questions in the order
 # `round --by-urgency` prints, points at decide.md for the round's shape, and relays each ruling.
 CDECIDE="$ROOT/commands/coordinator-decide.md"
@@ -5469,9 +5469,9 @@ check "a decision round asks its questions back to back, relays each ruling at o
   "$(spells "$ROOT/commands/decide.md" 'A question never stops the rest of the work')|$(spells "$ROOT/commands/decide.md" 'agents'"'"' reports and idle notices are acted on as they arrive')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')|$(spells "$ROOT/commands/decide.md" '3. Relay it at once, showing nothing of it')|$(spells "$ROOT/commands/decide.md" 'nothing is relayed, launched or reported until the wave')|$(spells "$ROOT/commands/decide.md" 'no relay to an agent')"
 check "a decision round shows nothing between a ruling and the next question" "no" \
   "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
-# Topic 6.3: the coordinator's module relays a ruling as soon as round-close returns.
-check "the coordinator's ruling reaches its sender as soon as round-close returns" "yes|yes" \
-  "$(spells "$COORDSKILL" 'your module sends it to the sender, dated, as soon as `round-close` returns,')|$(spells "$ROOT/commands/coordinator-decide.md" 'which your module sends, dated, to the sender as soon as it returns')"
+# Topic 6.3: the coordinator's settle relays a ruling in the same call.
+check "the coordinator's ruling reaches its sender in the settle call" "yes|yes" \
+  "$(spells "$COORDSKILL" 'it sends the answer to the sender, dated, in the same call')|$(spells "$ROOT/commands/coordinator-decide.md" 'which sends it, dated, to the sender in the same call')"
 # The operator's ruling B of 2026-11-04: the module writes one line per new question in the
 # coordinator's conversation, pane open or not.
 check "the coordination skill says the module writes one line per new question, pane open or not" "yes" \
@@ -11125,7 +11125,7 @@ check "an entry opened while round prints is neither printed nor recorded as sho
 rm -f "$ASTATE/round/late.json" "$ASTATE/round-listed.json"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
-  "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'run the `round-close` the')"
+  "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'call `settle` for it')"
 # An open question the pane can show is the pane's: `round` marks it due, for the coordinator to
 # present in its tab, only when its sender marked it urgent, however long the others have
 # waited, or when no pane of the coordinator is open: its record, <state>/pane.json, names a
