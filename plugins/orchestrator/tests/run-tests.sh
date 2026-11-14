@@ -17,6 +17,8 @@ export LC_COLLATE=C
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORCH_REFS="$ROOT/skills/orchestrator/references"
+# Read by the cases of the rule-owner checks, long before the record's own section.
+REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
 # macOS sets TMPDIR with a trailing slash: every path built on it would carry a double slash
 # the scripts under test collapse, and no expected line would match what they print.
 TMPDIR="${TMPDIR:-/tmp}"
@@ -483,6 +485,21 @@ check "the lifecycle closes a predecessor started by hand like any other" "1|0" 
 # the one rule; the squash-merge of a lower branch is replayed around, never through.
 check "the rebase voids no record by itself and names the squash-merge trap" "0|1|1" \
   "$(grep -c "rebase comes BEFORE the ready" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
+# One owner per rule (the conformity audit of 2026-11-14, proposals 4, 5, 10 and 12). The rounds are
+# review.md's: under orchestration pr-review is one pass (`review_only`), and no template or
+# routing text speaks of a second round. E2E and norms are owed as the check plan says, said in
+# github's check-plan.ts and pointed to, never restated. Ready is the github gate's, and the
+# orchestrator's pre-check prints no label command. A mechanical rebase goes to an agent.
+check "review.md owns the rounds: pr-review runs as review_only, one pass" "yes" \
+  "$(spells "$ORCH_REFS/review.md" 'the `pr-review` loop it runs is `review_only` (one pass, no fix)')"
+check "no template or routing text speaks of a second round or a round number" "no|no|no|no|no" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" 'second corrective round')|$(spells "$ROOT/skills/model-routing/SKILL.md" 'survives one corrective round')|$(spells "$ROOT/templates/agent-rotation-brief.md" 'the round it failed')|$(spells "$ROOT/templates/agent-rotation-brief.md" 'survived the previous round')|$(spells "$ROOT/templates/agent-review-brief.md" '{{ROUND}}')"
+check "the proofs owed are the check plan's, pointed to in the briefs, the review reference and the templates" "yes|yes|yes|yes|yes|no" \
+  "$(spells "$ORCH_REFS/briefs.md" "github's \`check-plan.ts\` owns that rule")|$(spells "$ORCH_REFS/briefs.md" "the proofs the check plan requires over the whole diff")|$(spells "$ORCH_REFS/review.md" 'only where the plan requires `norms`')|$(spells "$ROOT/templates/agent-phase-brief.md" "owed as the pull request's check plan requires")|$(spells "$ROOT/templates/agent-review-brief.md" 'what is owed is the check plan')|$(spells "$ORCH_REFS/briefs.md" 'norms review of the full diff')"
+check "Ready is the github gate's: no pre-check label command, none of it restated, the phase brief points to the gate" "no|no|no|no|yes" \
+  "$(spells "$ORCH_REFS/review.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the github ready gate's")"
+check "a rebase is never the orchestrator's: a mechanical one goes to an agent" "yes|no|no" \
+  "$(spells "$ORCH_REFS/review.md" 'One whose conflicts are mechanical (no behaviour decided) goes to a rebase agent')|$(spells "$ORCH_REFS/review.md" 'and never by a spawned session')|$(spells "$ORCH_REFS/briefs.md" '(§30 of the design)')"
 # The rationalizations table left review.md (rule 169 of the rules review): each row repeated a
 # rule kept elsewhere, the ready and the rebase --onto pinned just above.
 check "the review reference carries no rationalizations table" "0|0" \
@@ -587,8 +604,9 @@ check "the standing rules no longer copy the « under load » rule" "no" \
 check "the phase brief template reads « under load » as emulated throttling" "yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" '« Under load » means emulated throttling, never real load on the machine')"
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
-check "the directives rule and the guard live in the briefs reference" "yes|yes" \
-  "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
+# The orchestrator writes no guard, not even over its own directives (the freeze of 2026-11-14).
+check "the directives rule lives in the briefs reference, and the orchestrator writes no guard" "yes|no" \
+  "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" 'the one instrument you may write yourself')"
 check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
@@ -743,7 +761,6 @@ echo "== dispatch record =="
 # its class. Nothing measured that, so the rule could only ever be applied from memory —
 # and an economy nobody measures is one that always looks free. One row per dispatch,
 # and a summary that names the classes where the drop did not pay.
-REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
 R="$WORK/dispatch.jsonl"
 # A build with no spec still writes its goals file, empty: `open` refuses without one.
 bash "$REC" goals "$R" init --spec none >/dev/null
@@ -1169,18 +1186,18 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
-# The gate. « Every agent-produced pull request gets its review before its verdict » was written
-# in the rulebook and in the review template, and was still broken twice in one day. A rule only prose carries is applied from memory. `review` records what a round
-# actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
+# The record. `review` records what a round actually read, and `fixed` the correction the orchestrator
+# verified. Whether a pull request is ready at its head is the github ready gate's: `ready` reads the
+# surface and the screenshots' audit only, whatever the heads and whatever the row's reviews.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
 check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
 check "and names the subcommand that records it" "1" \
   "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
 bash "$REC" surface "$G" "$g1" --none >/dev/null
-check_status "ready refuses a row no review has touched, as the github gate does" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
-check "and names what is missing" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
+check_status "ready does not read a review: a row no review has touched passes the surface" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+check "and prints no review refusal and no label command" "0|0" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')|$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'pr-readiness')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
@@ -1188,11 +1205,11 @@ check "a review records the head it read and its norms check" "aaa1111|tool" \
 check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
 check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 
-# The head moves on every corrective round, and the review that read the previous one says
-# nothing about this one. This is the case the orchestrator talked itself past.
-check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222
-check "and names both heads" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
+# The head moves on every corrective round and on a rebase: the head a review read is the github
+# gate's to compare, so `ready` neither refuses a head no review read nor names one.
+check_status "ready does not refuse a head no review has read" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
+check "and names no head a review read" "0" \
+  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
 check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
@@ -1210,11 +1227,9 @@ bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
 check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
 bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
 check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456
-check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
-check "and are named" "1" \
-  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 2>&1 | grep -c "last review read $full, head is fedcba9")"
-check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
-check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
+check_status "two heads sharing no prefix are not refused: the gate compares heads, not this pre-check" 0 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
+check_status "a head is read only to compare an audit: a six-character head on a row with no image is not refused" 0 bash "$REC" ready "$G" "$g2" --head 012345
+check "and says nothing of its length" "0" "$(bash "$REC" ready "$G" "$g2" 2>&1 --head 012345 | grep -c 'too short')"
 
 # The operator's process: ONE review round, the orchestrator's triage, ONE correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
@@ -1239,13 +1254,13 @@ bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
 check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
-check "and says which reading it rests on" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
+check "and says the surface it read, not a reading of the heads" "1|0" \
+  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c '^ready: row 3: no frontend surface$')|$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'corrected and verified')"
 check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef
 check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333
-check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
-check "and names all three heads" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
+check_status "ready does not refuse a head neither reviewed nor fixed" 0 bash "$REC" ready "$G" "$g3" --head eee5555
+check "and names no head" "0" \
+  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'its correction')"
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
@@ -1302,7 +1317,7 @@ srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
 srec audit "$S" "$s1" --head aaa1111 --images 1 >/dev/null
 check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
 check "and is counted on the ready line" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
+  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c '^ready: row 1: 1 screenshot(s) on acme/front#12')"
 srec surface "$S" "$s1" --ui acme/front#13 >/dev/null
 check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111
 srec review "$S" "$s1" --head bbb2222 --norms tool >/dev/null
@@ -1317,7 +1332,7 @@ check "a minor ruling passes and prints its reason for the operator" "1" \
   "$(srec ready "$S" "$s1" --head bbb2222 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
 s2=$(srec open "$S" --class behaviour-phase --tier standard --label "no review yet")
 srec surface "$S" "$s2" --ui acme/front#11 >/dev/null
-check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
+check_status "a row with no review does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
 check_status "surface without a kind is an error" 1 bash "$REC" surface "$S" "$s1"
 check_status "surface with two kinds is an error" 1 bash "$REC" surface "$S" "$s1" --none --minor x
 check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1" --ui 1520
@@ -1354,7 +1369,7 @@ check "a new audit replaces the last, defects included" "aaa1111|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111
 check "and says the images were audited clean" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
+  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c '^ready: row 1: 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
 srec audit "$A" "$a1" --head aaa1111 --images 3 >/dev/null
 check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111
 srec fixed "$A" "$a1" --head bbb2222 >/dev/null
@@ -1374,13 +1389,13 @@ srec audit "$A" "$a1" --head ccc3333 --images 2 >/dev/null
 check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333
 a2=$(srec open "$A" --class behaviour-phase --tier standard --label "audit, no review")
 srec surface "$A" "$a2" --ui acme/front#14 >/dev/null
-check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "a row with no review does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head eee5555 --images 2 >/dev/null
 check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
 check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444
 srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
-check_status "with no review, a clean audit at the head in front is still refused: the gate needs a review" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "with no review, a clean audit at the head in front passes: the review is the gate's" 0 srec ready "$A" "$a2" --head ddd4444
 a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
 srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
 srec surface "$A" "$a3" --minor "a label wording" >/dev/null
@@ -1470,12 +1485,12 @@ check_status "and so is the session exemption" 1 bash "$REC" exempt "$E" --e2e "
 # backend test against a container, a frontend Playwright test committed, the `E2E: none —
 # <reason>` line, silence a finding, nothing in the pull request's description.
 BR="$ORCH_REFS/briefs.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review.md"
-check "briefs.md carries the E2E rule for every phase, and no pointer to item 14" "yes|yes|yes|yes|yes|yes|no" \
-  "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')"
+check "briefs.md owes the E2E as the check plan requires, states no rule of its own, and has no pointer to item 14" "yes|yes|yes|yes|yes|yes|no|no" \
+  "$(spells "$BR" "**The E2E a pull request owes is the one its check plan requires**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" 'item 14')|$(spells "$BR" 'Every pull request carries an E2E')"
 check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
   "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. The line goes in your report')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
-check "the review brief replays the test or judges the reason, and flags silence" "yes|yes|yes|yes" \
-  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+check "the review brief replays the test, flags one the plan requires and the report lacks, and flags silence" "yes|yes|yes|yes" \
+  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise, the plan requiring one or there being no plan, it is a finding.')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # The operator's order of 2026-11-14: an E2E the plan required and now judged unneeded is ONE
@@ -5466,8 +5481,8 @@ check "the re-run is the failed jobs, once, after the failing job's cause is nam
   "$(help_has "$CWSCRIPT" 're-run the failed jobs once with `gh run rerun <run-id> --failed`')|$(help_has "$CWSCRIPT" 'after naming the failing job'"'"'s cause in one line, read in its log')"
 check "the design carries the re-run of a red outside what the pull request touches" "yes|yes" \
   "$(spells "$ROOT/docs/design.md" 'a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed')|$(spells "$ROOT/docs/design.md" 'a second red, or a red in what it touches, is reported and corrected')"
-check "a mechanical base merge is the orchestrator's, in place; one that decides behaviour is a correction" "yes|yes" \
-  "$(spells "$ORCH_REFS/review.md" 'conflicts are mechanical (no behaviour decided) is yours, done in place in a checkout and never by a spawned session')|$(spells "$ORCH_REFS/review.md" 'one that decides behaviour goes to a correction session')"
+check "a mechanical base merge goes to a rebase agent, never the orchestrator; one that decides behaviour is a correction" "yes|yes" \
+  "$(spells "$ORCH_REFS/review.md" 'A rebase or merge of the base is never yours')|$(spells "$ORCH_REFS/review.md" 'one that decides behaviour to a correction session')"
 check "succession prunes the state file and archives the finished journal" "yes|yes" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/lifecycle.md" 'the finished journal, dated before it, moves to an archive file')"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
@@ -5535,12 +5550,36 @@ check "the design names both figures and why: their gap is the takeover's verifi
   "$(spells "$ROOT/docs/design.md" 'its first turn and the turn that sends « takeover confirmed »')|$(spells "$ROOT/docs/design.md" "the gap between them is what the takeover's verification costs")"
 check "the design says why the takeover is measured in the « takeover confirmed » turn" "yes" \
   "$(spells "$ROOT/docs/design.md" 'so that its figures compare from one succession to the next')"
-# The predecessor fills the section before the spawn, and keeps the whole brief short.
-check "succeed.md and the lifecycle reference have the predecessor fill Live state and hold the brief to 9,000 characters" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')|$(spells "$ORCH_REFS/lifecycle.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters')"
+# The predecessor fills the section before the spawn, and keeps the whole brief short. One owner
+# per succession rule: the lifecycle reference states the cap and the overwrite, the command points.
+check "succeed.md has the predecessor fill Live state, the lifecycle reference holds the brief to 9,000 characters, and the command does not say it again" "yes|yes|yes|no" \
+  "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')"
 # The brief is standing: after its first use the section holds the last handover, not placeholders.
-check "succeed.md and the lifecycle reference have the predecessor overwrite the previous Live state, never append" "yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" "overwrites the previous handover's Live state")|$(spells "$ORCH_REFS/lifecycle.md" "overwrites the previous handover's Live state")"
+check "the lifecycle reference has the predecessor overwrite the previous Live state, never append, and the command does not say it again" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" "overwrites the previous handover's Live state")|$(spells "$ROOT/commands/succeed.md" "overwrites the previous handover's Live state")"
+# The rest of the succession rules, said once, in the lifecycle reference: no asking, the tab left
+# to the successor, the successor named to the agents. The command carries the steps and points.
+check "the lifecycle reference owns not asking, not closing one's own tab and naming the successor; the command says none of them again" "yes|yes|yes|no|no|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'do not wait for the operator, and do not ASK')|$(spells "$ORCH_REFS/lifecycle.md" 'Never close your own tab')|$(spells "$ORCH_REFS/lifecycle.md" "gives its successor's exact name and reference to each of its agents")|$(spells "$ROOT/commands/succeed.md" 'Do not ask the user whether to succeed')|$(spells "$ROOT/commands/succeed.md" 'Never close your own tab')|$(spells "$ROOT/commands/succeed.md" 'takes no word from a session it was never told of')"
+check "the succession texts carry no history: no ruling's date or origin, no spec section" "0|0|0" \
+  "$(grep -c "the operator's ruling\|the owner's ruling" "$ORCH_REFS/lifecycle.md")|$(grep -c '(spec §' "$ROOT/commands/succeed.md")|$(grep -c 'the map binds agents' "$ROOT/commands/succeed.md")"
+# A moment reads the section it names, never the whole reference: the kernel's table names each
+# section of the lifecycle by its heading, and no row of it has the pause, the opening or the move
+# read with a spawn.
+SKILL_FLAT=$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ')
+lifecycle_named_missing() {  # $1 the rulebook, $2 the lifecycle reference: the headings it names that the reference lacks
+  grep '`references/lifecycle.md` ›' "$1" | sed 's/^.*`references\/lifecycle.md` › //' | grep -o '« [^»]*»' | sed 's/^« //; s/ »$//' | while read -r h; do
+    grep -qE "^###? ($h|$h — .*)$" "$2" || echo "$h"; done
+}
+check "the kernel reads a section of the references, not the whole, and names the lifecycle's by headings it carries" "0|0|yes|yes|" \
+  "$(printf '%s' "$SKILL_FLAT" | grep -c 'binds whole')|$(printf '%s' "$SKILL_FLAT" | grep -c 'read it again at each such moment')|$(printf '%s' "$SKILL_FLAT" | grep -qF '`references/lifecycle.md` › « Pause, opening and move »' && echo yes || echo no)|$(printf '%s' "$SKILL_FLAT" | grep -qF 'the section the moment names' && echo yes || echo no)|$(lifecycle_named_missing "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS/lifecycle.md" | paste -sd, -)"
+check "the spawn row of the kernel does not send a spawn to the pause, the opening or the move" "0" \
+  "$(grep '^| Spawning' "$ROOT/skills/orchestrator/SKILL.md" | grep -c 'pause\|opening\|move')"
+check "the lifecycle reference is read by the section a moment names" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Read the section the moment names')|$(spells "$ORCH_REFS/lifecycle.md" 'Read before spawning, dispatching a phase to a running agent')"
+# The coordinator's round points at the method for the question's rules; it does not restate them.
+check "coordinator-decide points at the method's « Questions to the operator » and does not restate one question per message" "yes|no" \
+  "$(tr '\n' ' ' < "$ROOT/commands/coordinator-decide.md" | tr -s ' ' | grep -qF '`method:lifecycle`, « Questions to the operator »' && echo yes || echo no)|$(spells "$ROOT/commands/coordinator-decide.md" 'one question per message')"
 check "the lifecycle's step 3 points at the brief's first task, not at whole files" "no|yes|no" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'read the brief and its pointed state')|$(spells "$ORCH_REFS/lifecycle.md" "3. The successor's first task is its brief's, step by step")|$(spells "$ORCH_REFS/lifecycle.md" 'then its brief'"'"'s steps 3 to 5')"
 # The never-implement rule left the succession brief's first paragraph: the design says where a
@@ -5671,8 +5710,8 @@ OQ_PAD=$(( 9100 - $(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ') 
 { cat "$OQ_BIG"; printf '%s\n' "$(head -c "$OQ_PAD" /dev/zero | tr '\0' 'x')"; } > "$OQ_BIG_PLUS"
 check "a succession brief whose open-questions value is a 4,000-character block, the rest within the limit, lints clean" "yes|0" \
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
-check "succeed.md says the open-questions value is outside the 9,000-character cap" "yes" \
-  "$(spells "$ROOT/commands/succeed.md" '9,000 characters, the open-questions value apart')"
+check "the lifecycle reference says the open-questions value is outside the 9,000-character cap, once" "yes|no" \
+  "$(spells "$ORCH_REFS/lifecycle.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
 # His answer in the round is the module's record, which answers the same question asked again
 # (hooks/tests/relay.test.ts, « a successor asking a question its predecessor had answered »): the
 # decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
@@ -11046,6 +11085,21 @@ jq -n '{id:"tmp", from:"Orch: tmp", session:"s-tmp.tmp-1-abcdef", kind:"operator
 check "round reads no temporary file beside the sessions files as a sender's" \
   "round tmp | operator | from Orch: tmp | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
   "$(ORCHESTRATOR_STATE_DIR="$TSTATE" CLAUDE_CONFIG_DIR="$TCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round tmp ')"
+# A sender on another machine has no sessions file here, and said « sender gone » whatever it was
+# doing: its header names the machine its remote row says, and « sender gone » is left to a sender
+# with neither a row nor a session.
+RSTATE="$WORK/coord-remote"; RMOD="$WORK/coord-remote-module"
+mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote"
+cp "$CS/pane.json" "$RSTATE/pane.json"
+for who in far lost; do
+  jq -n --arg id "$who" '{id:$id, from:("Orch: " + $id), session:("s-" + $id), kind:"operator", since:"2026-10-18T10:01:00.000Z",
+    blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null,
+    origin:{machine:"bench-mac", address:"uds:/tmp/x.sock"}}' > "$RSTATE/round/$who.json"
+done
+jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote/Orch__far"
+check "round names the machine of a sender on another machine whose remote row is stored, and says gone of one with no row" \
+  "round far | operator | from Orch: far | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | remote on bench-mac|round lost | operator | from Orch: lost | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
+  "$(ORCHESTRATOR_STATE_DIR="$RSTATE" ORCHESTRATOR_MODULE_DIR="$RMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round ' | paste -sd'|' -)"
 # An entry the operator answered from the coordinator's pane is printed after the open ones and
 # before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
 ASTATE="$WORK/coord-answered"; ACFG="$WORK/coord-answered-config"
@@ -12789,8 +12843,8 @@ done
 spells_before() { case "$1" in *"$2"*) ;; *) echo no; return ;; esac; local head="${1%%"$2"*}"; case "$head" in *"$3"*) echo yes ;; *) echo no ;; esac; }
 SUCCEEDMD="$ROOT/commands/succeed.md"
 SUCCEEDFLAT=$(tr '\n' ' ' < "$SUCCEEDMD" | tr -s ' ')
-check "succeed.md has the predecessor name its successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
-  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF "send each running agent of your own ONE message giving the successor's exact name and reference" && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' 'ONE message giving the successor')"
+check "succeed.md points at the lifecycle's naming of the successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
+  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF '**Name the successor to your agents** once the spawn is verified' && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' '`references/lifecycle.md`, « Succession — the predecessor », step 4')"
 check "lifecycle.md says the predecessor names its successor to its agents" "yes" \
   "$(flat_has "$ROOT/skills/orchestrator/references/lifecycle.md" "gives its successor's exact name and reference to each of its agents")"
 check "the successor names its predecessor in its message to the agents" "1" \
@@ -12858,9 +12912,8 @@ check "both manifests carry the plugin's version" "yes|2" \
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
-# opening it); the orchestrator's « ready » puts Ready. brief-lint refuses an implementer
-# brief whose delivery opens a pull request without one of the two; `dispatch-record.sh
-# ready` prints the command to run and never calls the network. The github plugin's commands
+# opening it); the github ready gate puts Ready. brief-lint refuses an implementer
+# brief whose delivery opens a pull request without one of the two. The github plugin's commands
 # are cited by name only: they do not exist on every machine, so nothing here calls them.
 LBL_LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
 LB="$WORK/label-briefs"; mkdir -p "$LB"
@@ -12887,30 +12940,23 @@ check "the lint header describes the check" "yes" "$(spells "$LBL_LINT" 'Check 1
 LR="$WORK/label-ready/dispatch.jsonl"; mkdir -p "$WORK/label-ready"
 bash "$REC" goals "$LR" init --spec none >/dev/null
 export SURFACE_BODIES="$WORK/surface-bodies"
+# The `Ready` label is the github ready gate's: `ready` prints no command for it, on a row that
+# names its pull request, on one that names none, or on one the review and its correction read.
 lr1=$(srec open "$LR" --class behaviour-phase --tier standard --label "ui")
 srec review "$LR" "$lr1" --head aaa1111 --norms tool >/dev/null
 srec surface "$LR" "$lr1" --ui acme/front#12 >/dev/null
 srec audit "$LR" "$lr1" --head aaa1111 --images 1 >/dev/null
-check "ready on a row that names its pull request prints the command to run" "1" \
-  "$(srec ready "$LR" "$lr1" --head aaa1111 2>/dev/null | grep -c '^pr-readiness 12 ready on acme/front$')"
 lr2=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr2" --head bbb2222 --norms tool >/dev/null
 srec surface "$LR" "$lr2" --none >/dev/null
-check "ready on a row that names none prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr2" --head bbb2222 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
-check "a refused ready prints no label command" "0" \
-  "$(srec ready "$LR" "$lr2" --head ccc3333 2>&1 | grep -c 'pr-readiness')"
 lr3=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec review "$LR" "$lr3" --head ddd4444 --norms tool >/dev/null
 srec fixed "$LR" "$lr3" --head eee5555 >/dev/null
 srec surface "$LR" "$lr3" --none >/dev/null
-check "ready on a row corrected and verified at the head prints the command with the placeholders" "1" \
-  "$(srec ready "$LR" "$lr3" --head eee5555 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
 lr4=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec surface "$LR" "$lr4" --none >/dev/null
-check_status "ready on a row with no review recorded is refused" 1 srec ready "$LR" "$lr4" --head fff6666
-check "and it prints no label command" "0" \
-  "$(srec ready "$LR" "$lr4" --head fff6666 2>&1 | grep -c 'pr-readiness')"
+check "ready prints no label command, whatever the row" "0|0|0|0|0" \
+  "$(srec ready "$LR" "$lr1" --head aaa1111 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr2" --head bbb2222 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr3" --head eee5555 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr4" --head fff6666 2>&1 | grep -c 'pr-readiness')|$(srec ready "$LR" "$lr2" --head ccc3333 2>&1 | grep -c 'pr-readiness')"
 unset SURFACE_BODIES
 check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
 

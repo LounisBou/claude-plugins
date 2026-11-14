@@ -59,9 +59,8 @@ No heading of any kind: the description starts directly with the summary text, n
 with `## Summary` or any other title. State what the PR does, never what it does not
 do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
 a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
-plugin refuses, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do:
-"unchanged", "no dependency", "does not", "doesn't", "is not changed", "left untouched",
-"no other pull request", "without conflict". The summary names no pull request: no
+plugin refuses, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do,
+and names them in its refusal. The summary names no pull request: no
 `#N`, no `repo#N`, no `owner/repo#N`, no pull request URL above the sections, as links
 go in `PRs Dependency` or `Related PRs`, a closing keyword such as `Fixes #12` excepted. No horizontal rule (`---`, `***`, `___`)
 other than the `---` between two screenshots, and no bold label line (`**Label:**`)
@@ -129,48 +128,10 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 
 ## Ready pull requests
 
-A pull request is ready when a review came out clean at its head, CI is green, and the E2E
-passed or was waived unless its check plan needs none. Norms block when failed, or missing
-where planned. A plan requires only what it marks `required` (norms `none` with no
-CONTRIBUTING.md), and a required E2E or norms never goes laxer but by the operator's waiver:
+What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`).
+A required E2E or norms check goes laxer only by the operator's waiver:
 « Accorder » to « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> » / « Refuser ».
-A new commit voids readiness, a rebase keeping its commits keeps its records.
 
-The `Ready` and `Not Ready` labels carry that fact, and a draft opens `Not Ready`. The plugin
-puts `Ready` once they hold, `Not Ready` back on a push. When CI does not run on a draft,
-the plugin takes it out of draft, still `Not Ready`, and back once CI is green. Only the gate
-puts `Ready`, and it refuses an unready exit from draft or merge.
-
-## Security update pull requests
-
-A pull request that updates dependencies to fix published advisories opens its
-description with the first line and the tables below. They take the place of the
-summary text, and the four sections of the template above follow, with their rules,
-`none` where empty. A description whose first line names a CVE id is read as a security
-update and needs its tables:
-
-```
-<package>, <package> and <package> to <version> ([<CVE id>](<advisory URL>), [<CVE id>](<advisory URL>))
-
-| | |
-|---|---|
-| Package | `<vendor/name>` (locked at <old version>, now <new version>) |
-| Advisory | <advisory id> / [<CVE id>](<advisory URL>) — <advisory title>, **<severity>** |
-| Affected | `<range>`, `<range>` and `<range>` |
-| Reference | <advisory URL> |
-```
-
-The first line names the packages, the version they move to and every CVE id the
-pull request fixes. Then one table per advisory, in the order of the first line, a
-blank line between two tables, the header row empty (`| | |`) and the four rows always
-Package, Advisory, Affected, Reference. Package: the package in a code span, then its
-locked version and the new one, with `dev dependency, ` first when it is one.
-Advisory: the advisory's own id as the audit prints it (`PKSA-…`, `GHSA-…`), the CVE
-id, the advisory's title, then its severity in bold when the advisory gives one.
-Affected: each affected range in its own code span. Reference: the advisory URL, bare.
-An advisory with no CVE id puts its GHSA id where the CVE id goes, as a link too.
-
-Every CVE id in a pull request description is a markdown link to its advisory,
-`[CVE-2026-12345](<advisory URL>)`, the URL the audit prints for it: never bare and
-never in a code span. GitHub turns a bare CVE id into a link only when its own
-advisory database holds that advisory, and never one in a code span.
+The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. Leaving draft and a
+merge need `Ready`, which the gate puts just before them once every condition holds. When CI
+does not run on a draft, the plugin takes it out of draft, still `Not Ready`, and back once ready.

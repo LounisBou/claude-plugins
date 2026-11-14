@@ -33,13 +33,13 @@ import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, toldText, asksNothing, carriesChoices, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, toldText, asksNothing, carriesChoices, droppedBy, PANE_CLOSED, recordedAnswer, recordedChoice, recordedText, type SenderState, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import {
@@ -1220,6 +1220,7 @@ async function closeUnhosted($: any, orphans: readonly RoundEntry[]): Promise<vo
 // the host took it: a submit that fails or is dropped is tried again at the next reading. The
 // ids kept are those the round still holds, so the list never outgrows it.
 async function wakeForDue($: any): Promise<void> {
+  await reconcileRound($)
   const store = await readStore($)
   const local = store.rows
   const read = (await readRound($)).map(found => found.entry)
@@ -1699,6 +1700,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           const at = e.text.indexOf(delivery.body)
           passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
         }
+        const withdrawal = parseWithdrawal(delivery.body)
+        if (withdrawal) {
+          const received = await receiveWithdrawal($, withdrawal, peerAddress(delivery))
+          if (received) return received
+        }
         if (isMarked(delivery.body)) {
           const received = await receiveRow($, delivery.body)
           // A remote orchestrator's row is one of the deck's keys.
@@ -1845,6 +1851,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // that the host runs before its first row (hostedSuccessors); an entry from another
         // machine while a live remote row of its sender's name was measured on that machine.
         // Stat before the read: a write landing between the two is seen by the next tick.
+        await reconcileRound($)
         pane.roundSeen = await roundMtime($)
         const read = await readRound($)
         const hosted = await hostedSuccessors($, read.map(found => found.entry), local, store.alive)
@@ -3080,6 +3087,42 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
   return settled
 }
 
+// The state of an entry's sender its latest row gives: a sender on another machine by its remote row
+// (measured on the machine the entry came from), one on this machine by its store row and the wait
+// file that vouches for what it holds. Null when there is no row to read.
+async function senderState($: any, entry: RoundEntry, local: Record<string, SessionRow>, remote: readonly RemoteRow[]): Promise<SenderState | null> {
+  if (entry.origin) {
+    const row = remote.find(found => found.name === entry.from && found.machine === entry.origin!.machine)
+    return row ? { at: row.updated_at, held: row.held } : null
+  }
+  const row = entry.session === '' ? undefined : local[sessionKey(entry.session)]
+  if (!row) return null
+  const wait = parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(entry.session)}`).catch(() => '')))
+  return { at: row.updated_at, held: openQuestions(wait) }
+}
+
+// The round brought to what its senders say: an open operator question that the latest row of its
+// sender, newer than the entry, no longer holds open is withdrawn by the sender, as a withdrawal
+// would have settled it. The one source is the sender's row, so a withdrawal message that was lost,
+// late or doubled changes nothing: the next row heals it. Read on every row received, at the round's
+// reading and at every pane draw; a failure is one log line.
+async function reconcileRound($: any): Promise<void> {
+  try {
+    const open = (await readRound($)).map(found => found.entry).filter(entry => entry.status === 'open' && entry.kind === 'operator')
+    if (open.length === 0) return
+    const local = await readSessions($)
+    const remote = await readRemoteRows($)
+    const now = Date.now()
+    for (const entry of open) {
+      const sender = await senderState($, entry, local, remote)
+      if (!sender || !droppedBy(entry, sender, now)) continue
+      await tellSettled($, await withdrawStale($, entry.session, null, `no longer waited on by ${entry.from} (row ${sender.at})`, other => other.id !== entry.id), now + RELAY_BOUND_MS)
+    }
+  } catch (err) {
+    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+  }
+}
+
 // Every entry of the round on this machine, each with the file it was read from. A file that
 // does not parse to an entry is skipped, never repaired; a temporary file is no entry yet. A
 // directory that exists and cannot be listed is said in the log and read as empty; one never
@@ -3303,7 +3346,8 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   const to = await coordinatorAddress($)
   if (!to || to.local) return
   const prs = await prsOf($, sessionId, read.repo)
-  const row = remoteRowOf(withWait(read, String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))), await machineOf($), prs)
+  const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
+  const row = remoteRowOf(withWait(read, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
@@ -3512,7 +3556,29 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
     return { consumed: 'orchestrator: a malformed supervision row, refused' }
   }
   await writeAtomic($, `${await storeOf($)}/${remoteKey(row.name)}`, JSON.stringify(row) + '\n')
+  await reconcileRound($)
   return { consumed: 'orchestrator: a supervision row, stored' }
+}
+
+// A remote orchestrator's withdrawal (withdrawalText): the fast path to what its next row says. In
+// the coordinator's session alone, the open entry of that sender with that start and those blocks is
+// settled as answered in its tab; any other is a message nobody needs: nothing is open, nothing
+// changes. Only the peer whose address the entry came from (origin.address) can withdraw it, and
+// the words the message quotes are a peer's, never the operator's consent: they are not passed on.
+// Consumed whatever it holds, the line being the module's own.
+async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<typeof parseWithdrawal>>, from: string | null): Promise<{ consumed: string } | null> {
+  if (await ownRole($) !== 'coordinator') return null
+  try {
+    const blocks = cleanBlocks(withdrawal.blocks)
+    for (const { entry } of await readRound($)) {
+      if (entry.status !== 'open' || entry.kind !== 'operator' || !entry.origin || entry.origin.address !== from || entry.from !== withdrawal.name || entry.since !== withdrawal.since || entry.blocks !== blocks) continue
+      await tellSettled($, await withdrawEntry($, entry.session, entry.from, { blocks, since: entry.since }), Date.now() + RELAY_BOUND_MS)
+    }
+    $.ui.invalidate('ui.render')
+  } catch (err) {
+    await logLine($, 'supervision', `receive: a withdrawal failed (${withdrawal.name}): ${(err as Error).message}`)
+  }
+  return { consumed: 'coordinator: a remote withdrawal, applied' }
 }
 
 // The rows received from other machines, each checked again as it is read; a stale or

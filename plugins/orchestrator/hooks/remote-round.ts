@@ -13,7 +13,7 @@
 import { cutQuestion, RELAY_CAP } from './relay.ts'
 import { parseChoices, type RoundEntry } from './round.ts'
 import { roleOf } from './session-name.ts'
-import { BLOCKS_CAP } from './remote-row.ts'
+import { BLOCKS_CAP, cleanBlocks } from './remote-row.ts'
 import { parseConsentSubject } from '../core/consent-record.ts'
 
 // The lines' fixed heads: what the receivers key on, and nothing a person or a model writes by
@@ -80,7 +80,7 @@ export function askLine(entry: RoundEntry, machine: string): string {
   return ASK_MARKER + JSON.stringify({
     ...sent,
     from: spaced(sent.from),
-    blocks: sent.blocks === null ? null : spaced(sent.blocks).slice(0, BLOCKS_CAP),
+    blocks: sent.blocks === null ? null : cleanBlocks(sent.blocks),
     question: cutQuestion(sent.question),
     machine,
   })

@@ -30,26 +30,19 @@
 # and goal still open is one. The record is JSON lines: appendable, greppable, and read back
 # with the `jq` the rest of this plugin already needs.
 #
-# Why it exists: the routing rule says a tier drop that costs a second corrective round is
+# Why it exists: the routing rule says a tier drop that costs more than one round is
 # reverted for its class. Nothing measured that, so the rule could only be applied from
 # memory - and an economy nobody measures is one that always looks free, because its cost
 # lands rounds later where nobody attributes it. `summary` names the classes where the
 # drop did not pay, so the reversion is a reading rather than an impression.
 #
-# A green `ready` (head read, or corrected and verified) also prints one line naming the
-# command that puts the `Ready` label, `pr-readiness <n> ready on <owner/repo>`, the pull
-# request read from a `--ui` row; the orchestrator runs it with the github tool. This script
-# never calls the network.
+# `review` records the head a review session read, and `fixed` the one correction round the
+# orchestrator verified on the artifact (with no review, or a second time, it records what it was
+# given and warns). Whether a pull request is ready at its head is the github ready gate's, never
+# this script's: `ready` checks the surface and the screenshots' audit only, and prints no label
+# command. This script never calls the network.
 #
-# `review` and `ready` carry the second rule the record is asked to hold: a pull request is
-# ready only when a review session read ITS head (either side may abbreviate the other, from
-# 7 characters) - or when the head is the one correction round that review produced, which the
-# orchestrator verified on the artifact.
-# A row with no review is refused, as the github ready gate refuses a pull request with no
-# review at its head. `fixed` with no review, or a second time, records what it was given
-# and warns.
-#
-# `surface` and `ready` carry a third: a pull request that changes what a user sees carries
+# `surface` and `ready` carry one rule: a pull request that changes what a user sees carries
 # screenshots of it. The rule was in the rulebook, the phase brief and the review brief, and
 # five front-office pull requests were still declared ready without one image - two
 # « skipped, no data on the reference account », three never shot at all. So the row says,
@@ -58,10 +51,10 @@
 # operator will read), or changes none (`--none`); `ready` refuses a row that says nothing,
 # and on a `--ui` row reads the pull request's description and refuses it when no image is
 # there. The surface lives beside the review, not in it: a new review round must not erase
-# it. This is a default refusal, unlike the two warnings above; a project with no frontend
+# it. This is a default refusal, unlike the warning of `fixed`; a project with no frontend
 # says `--none` on its rows.
 #
-# `audit` and `ready` carry a fourth: an image is looked at, not only counted. On one day three
+# `audit` and `ready` carry another: an image is looked at, not only counted. On one day three
 # captures showing a defect - an off-centre icon in a control unlike its neighbours, a button
 # pushed onto its own row past the edge of the controls above, an « after » image with stray
 # text left in a search field - were each read by an orchestrator and passed, because every
@@ -72,7 +65,7 @@
 # means every image is clean). A new audit replaces the previous one, and a review round does
 # not erase it. On a `--ui` row, `ready`
 # refuses when no audit is recorded at the head in front of it or at the reviewed or fixed
-# head the rules above accept, when the audit covers fewer images than the description
+# head, when the audit covers fewer images than the description
 # carries, and when it recorded any defect: the defect is fixed, the capture retaken, and the
 # images audited again. `--minor` and `--none` rows are not held to it. Whether the audit was
 # honest stays the orchestrator's; the record makes it a step nobody can skip by forgetting.
