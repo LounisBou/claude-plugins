@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import { grants } from '../../core/consent-record.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
-import { parseSettle, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
+import { parseSettle, planAsked, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
 import { waitKey } from '../supervision.ts'
 import { entryFingerprint, type RoundEntry } from '../round.ts'
@@ -503,4 +503,109 @@ test('an answer of the operator is kept in the journal as what was asked and how
   expect(events.map(event => [event.kind, event.trust, event.source.code])).toEqual([['answer', 'operator', 'orchestrator.answer.other']])
   expect(events[0].evidence).toEqual([{ type: 'ruling', path: `claude-orchestrator/round/${chosen}.json`, line: 1 }])
   expect(JSON.stringify(events)).not.toContain('acme/app#2 first')
+})
+
+// --- the machine-wide decide: no coordinator live ----------------------------------------------
+
+const OTHER = 'Orch: other [a1b2c3]'
+const COORD_PID = '4242'
+
+// A machine where a second orchestrator (s-other) and an implementer agent (s-agent) are named, and
+// the coordinator's record is as `record` says (none when absent); `ps` lists `listing`, or fails.
+function decideMachine(record: Record<string, unknown> | null, listing: string | null = `${COORD_PID} Ss ttys009\n`) {
+  const m = machine()
+  m.files.set(`${SESSIONS}/s-other`, row('orchestrator', OTHER))
+  m.files.set(`${SESSIONS}/s-agent`, row('agent', 'Agent: worker [a1b2c3]'))
+  if (record !== null) m.files.set(`${MODULE}/coordinator.json`, JSON.stringify(record))
+  const as = (session: string): World => {
+    const dollar = m.as(session)
+    const run = dollar.process.run
+    dollar.process.run = async (argv: readonly string[], options?: never) =>
+      argv[0] === 'ps' ? (listing === null ? { exitCode: 1, stdout: '', stderr: 'ps failed' } : { exitCode: 0, stdout: listing, stderr: '' }) : run(argv, options)
+    return dollar
+  }
+  return { ...m, other: as('s-other'), agent: as('s-agent'), auditor: as('s-audit'), coordinator: as('s-coord') }
+}
+const RUNNING = { name: COORD, tty: '/dev/ttys009', pid: Number(COORD_PID) }
+
+test('with no coordinator live, another orchestrator settles an open question answered-here: its asker is sent the answer, the consent is the tab\'s', async () => {
+  const m = decideMachine(null)
+  const id = await asked(m, { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' })
+  const answer = await settle(m.other, request(id, { text: 'Accorder' }), AT)
+  expect(answer.isError).toBeUndefined()
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { text: 'Accorder', by: 'coordinator', settler: OTHER, at: AT.toISOString() } })
+  expect(m.sent).toEqual([{ to: { sessionId: 's-ask' }, text: `[module] The operator answered your question ${id} « ${QUESTION.subject} » (blocks: acme/app#1) through ${OTHER} at ${AT.toISOString()} — Accorder` }])
+  const record = [...m.files.entries()].find(([p]) => p.includes(`/consents/acme/app/${id}`))
+  expect(JSON.parse(record![1]).by).toBe('tab')
+})
+
+test('a coordinator record whose process is gone, or now on another tty, is no coordinator live; a record of a process that runs, one with no pid, and a listing that fails are', async () => {
+  for (const gone of [decideMachine({ ...RUNNING, pid: 31337 }), decideMachine({ ...RUNNING, tty: '/dev/ttys777' })]) {
+    expect((await settle(gone.other, request(await asked(gone)), AT)).isError).toBeUndefined()
+  }
+  for (const m of [decideMachine(RUNNING), decideMachine({ name: COORD, tty: '/dev/ttys009' }), decideMachine({ ...RUNNING, pid: 31337 }, null)]) {
+    const id = await asked(m)
+    const refused = await settle(m.other, request(id), AT)
+    expect(refused.isError).toBe(true)
+    expect(entryOf(m, id).status).toBe('open')
+    expect(m.sent).toEqual([])
+  }
+})
+
+test('while a coordinator is live it settles any question, as before', async () => {
+  const m = decideMachine(RUNNING)
+  const id = await asked(m)
+  expect((await settle(m.coordinator, request(id, { text: 'B' }), AT)).isError).toBeUndefined()
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'coordinator', settler: COORD } })
+})
+
+test('with no coordinator live, another orchestrator still cannot withdraw another session\'s question, nor settle it by message', async () => {
+  const m = decideMachine(null)
+  const id = await asked(m)
+  for (const input of [request(id, { outcome: 'withdrawn', text: 'moot' }), request(id, { outcome: 'answered-by-message', author: COORD })]) {
+    expect((await settle(m.other, input, AT)).isError).toBe(true)
+  }
+  expect(entryOf(m, id).status).toBe('open')
+  expect(m.sent).toEqual([])
+})
+
+test('with no coordinator live, an implementer agent, an auditor and a subagent settle nothing of another session', async () => {
+  const m = decideMachine(null)
+  m.files.set(`${SESSIONS}/s-audit`, row('auditor', 'Audit: method'))
+  const id = await asked(m)
+  for (const who of [m.agent, m.auditor]) expect((await settle(who, request(id), AT)).isError).toBe(true)
+  const hooks = capture<World>(registerSettle)
+  const registered: ToolSpec[] = []
+  m.other.tool.register = async (spec: ToolSpec) => { registered.push(spec) }
+  await hooksOn(hooks, 'session.start').at(-1)!.handler(m.other, { cwd: '/w' }, async () => undefined)
+  const settleHook = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'mcp__orchestrator__settle').at(-1)!
+  expect(((await settleHook.handler(m.other, { id, outcome: 'answered-here', answer: 'A', agentId: 'a-1' }, async () => undefined)) as Out).isError).toBe(true)
+  expect(entryOf(m, id).status).toBe('open')
+  expect(m.sent).toEqual([])
+})
+
+test('the closing proposal of another session stays the coordinator\'s: another orchestrator settles none, coordinator live or not', async () => {
+  const m = decideMachine(null)
+  const relayed = { id: 'r-1', from: ASKER, session: 's-ask', since: '2026-11-14T14:00:00Z', status: 'open', kind: 'done', question: 'done?' }
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed))
+  expect((await settle(m.other, request('r-1'), AT)).isError).toBe(true)
+  expect(entryOf(m, 'r-1').status).toBe('open')
+})
+
+test('a record that exists and cannot be read counts as a coordinator live; the refusal says a coordinator is recorded', async () => {
+  const m = decideMachine(RUNNING)
+  const id = await asked(m)
+  const read = m.other.fs.read
+  m.other.fs.read = async (p: string) => { if (p === `${MODULE}/coordinator.json`) throw new Error('EACCES'); return read(p) }
+  const refused = await settle(m.other, request(id), AT)
+  expect([refused.isError, refused.result]).toEqual([true, expect.stringContaining('A coordinator is recorded live')])
+  expect(entryOf(m, id).status).toBe('open')
+})
+
+test('a replica of another machine is its owner\'s: no stand-in settles it, whatever the coordinator\'s state', () => {
+  const entry = { id: 'q-r', status: 'open', sender: { session: 's-far', name: 'Orch: far' }, origin: { address: 'peer' }, seq: 1 }
+  const me = { session: 's-other', name: OTHER, role: 'orchestrator' }
+  const refused = planAsked(entry, request('q-r'), me, AT.toISOString(), false, false)
+  expect('error' in refused && refused.error).toContain("only it, or the coordinator, settles it")
+  expect('error' in planAsked({ ...entry, origin: undefined }, request('q-r'), me, AT.toISOString(), false, false)).toBe(false)
 })
