@@ -11,7 +11,7 @@ test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 const FIELDS = (): string[] => [
   '--out', join(dir, 'review-12.md'), '--repo', 'acme/app', '--pr', '12', '--title', 'a fix of the thing (row 9 THING)',
-  '--spec', '/b/thing-brief.md', '--report', '/b/review-12-report.md', '--branch', 'fix/thing', '--head', '0123456789abcdef0123456789abcdef01234567',
+  '--spec', '/b/thing-brief.md', '--index', '/b/review-12-report.md', '--branch', 'fix/thing', '--head', '0123456789abcdef0123456789abcdef01234567',
   '--worktree', '/w/review-12', '--orchestrator', 'Orch: acme [a1b2c3]', '--reason', 'it is one small hook fix',
 ]
 
@@ -110,7 +110,7 @@ test('the optional fields and their defaults: plan is the spec, norms CONTRIBUTI
 
 test('a field missing or malformed is refused with its reason, and nothing is written', () => {
   const without = (flag: string): string[] => { const a = FIELDS(); const k = a.indexOf(flag); a.splice(k, 2); return a }
-  for (const flag of ['--out', '--repo', '--pr', '--title', '--spec', '--report', '--branch', '--head', '--worktree', '--orchestrator', '--reason']) {
+  for (const flag of ['--out', '--repo', '--pr', '--title', '--spec', '--index', '--branch', '--head', '--worktree', '--orchestrator', '--reason']) {
     const done = run(without(flag))
     assert.equal(done.code, 2, flag)
     assert.match(done.err, new RegExp(`${flag} is required`), flag)
@@ -127,6 +127,35 @@ test('a field missing or malformed is refused with its reason, and nothing is wr
   assert.match(run([...FIELDS(), '--lens']).err, /--lens needs a value/)
   assert.match(run([]).err, new RegExp(USAGE.slice(0, 30).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   assert.equal(existsSync(join(dir, 'review-12.md')), false)
+})
+
+test('--index is the path the review agent writes its index to: it fills the template, an absolute path is required, --report is refused naming --index', () => {
+  assert.equal(run([...FIELDS(), '--index', '/b/new-index.md']).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /report: \/b\/new-index\.md`/)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /\*\*Your index\*\*, `\/b\/new-index\.md`, a new file/)
+  const set = FIELDS(); set[set.indexOf('--index') + 1] = 'rel/index.md'
+  assert.match(run(set).err, /--index is an absolute path/)
+  rmSync(join(dir, 'review-12.md'))
+  const renamed = FIELDS(); renamed[renamed.indexOf('--index')] = '--report'
+  const done = run(renamed)
+  assert.equal(done.code, 2)
+  assert.match(done.err, /--report is no longer a flag: the review's index path is --index/)
+  assert.match(done.err, /never the implementer's report/)
+  assert.equal(existsSync(join(dir, 'review-12.md')), false)
+})
+
+test('an --index path that already exists is refused, naming it, and nothing is written; a new path is accepted', () => {
+  const taken = join(dir, 'implementer-report.md')
+  writeFileSync(taken, 'the implementer report')
+  const args = FIELDS(); args[args.indexOf('--index') + 1] = taken
+  const done = run(args)
+  assert.equal(done.code, 2)
+  assert.equal(done.err, `review-brief: --index ${taken} already exists: it must be a new file for the review's index, never the implementer's report or another file\n`)
+  assert.equal(existsSync(join(dir, 'review-12.md')), false)
+  assert.equal(readFileSync(taken, 'utf8'), 'the implementer report')
+  args[args.indexOf('--index') + 1] = join(dir, 'review-12-index.md')
+  assert.equal(run(args).code, 0)
+  assert.equal(existsSync(join(dir, 'review-12-index.md')), false)
 })
 
 test('a placeholder the command does not know is refused, naming it: a template that grows a field breaks here, not in a live brief', () => {
