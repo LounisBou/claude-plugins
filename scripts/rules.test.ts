@@ -29,5 +29,8 @@ describe('unenforced rules', () => {
     const out: string[] = []
     assert.equal(run(root, [], { out: l => { out.push(l) }, err: () => {}, env: {} }), 0)
     assert.equal(out.at(-1), 'plugins/p/skills/s/SKILL.md:3: Only ask once.')
+    const json: string[] = []
+    assert.equal(run(root, ['--json'], { out: l => { json.push(l) }, err: () => {}, env: {} }), 0)
+    assert.deepEqual(json.map(l => JSON.parse(l)), [{ plugins: [{ plugin: 'p', rules: 3, byCode: 1, byEval: 1, left: 1 }] }])
   })
 })

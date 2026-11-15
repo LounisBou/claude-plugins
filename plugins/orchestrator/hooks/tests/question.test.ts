@@ -17,6 +17,9 @@ const NOW = new Date('2026-11-14T15:00:00Z')
 const row = (role: string, name: string) =>
   JSON.stringify({ role, name, repo: null, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() })
 
+// A row written by a measure whose walk did not finish: no name, no role.
+const bareRow = () => JSON.stringify({ ...JSON.parse(row('orchestrator', 'x')), role: null, name: null })
+
 // Every field of the call filled, as the method's question.
 const FULL = {
   subject: 'merge order of acme/app#1',
@@ -31,20 +34,24 @@ const FULL = {
   urgent: true,
 }
 
-type Options = { me?: [role: string, name: string] | null; logThrows?: string; files?: Record<string, string> }
+// `walk`: the name the host holds for the session, on its tty (the walk's own reads: the process table and
+// the host's record of the process). `bare`: a row written by a measure whose walk did not finish.
+type Options = { me?: [role: string, name: string] | null; logThrows?: string; files?: Record<string, string>; walk?: string; bare?: boolean; session?: string }
 
 function world(options: Options = {}) {
   // Each world is a fresh turn of the main thread: the questions it asks are numbered from one.
   askTurnStarted()
   const files = new Map<string, string>(Object.entries(options.files ?? {}))
   const me = options.me === undefined ? ['coordinator', 'Coord: general [a1b2c3]'] : options.me
-  if (me !== null) files.set(`${MODULE}/store/sessions/s-me`, row(me[0], me[1]))
+  const sid = options.session ?? 's-me'
+  if (me !== null) files.set(`${MODULE}/store/sessions/${sid}`, options.bare ? bareRow() : row(me[0], me[1]))
+  if (options.walk !== undefined) files.set(`${HOME}/.claude/sessions/4242.json`, JSON.stringify({ pid: 4242, sessionId: sid, name: options.walk, status: 'busy' }))
   const shown: string[] = []
   const logs: string[] = []
   const dollar: any = {
     plugin: { name: 'orchestrator', root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
-    session: { id: async () => 's-me' },
+    session: { id: async () => sid },
     clock: { sleep: async () => undefined },
     ui: {
       log: (text: string) => {
@@ -66,6 +73,8 @@ function world(options: Options = {}) {
         if (log !== null) { logs.push(log); return { exitCode: 0, stdout: '', stderr: '' } }
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
+        if (options.walk !== undefined && argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=')) return { exitCode: 0, stdout: '1 ttys001\n', stderr: '' }
+        if (options.walk !== undefined && argv[0] === 'ps') return { exitCode: 0, stdout: '4242 host --resume 043603d9 --name Orch: launched\n', stderr: '' }
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'box-1.local\n', stderr: '' }
         if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
@@ -217,6 +226,47 @@ for (const role of ['coordinator', 'auditor']) {
     expect(stored(files)[0].sender.role).toBe(role)
   })
 }
+
+// A woken orchestrator has no row in its first turn (the measure writes it when a turn ends), and a
+// row written while the walk did not finish carries no name: the name the host holds answers.
+for (const [when, options] of [
+  ['in its first turn, no row written yet', { me: null, walk: 'Orch: acme', session: 's-first' }],
+  ['after a turn whose measure could not name it', { me: ['orchestrator', 'Orch: acme'], bare: true, walk: 'Orch: acme', session: 's-bare' }],
+] as const) {
+  test(`a woken orchestrator asks ${when}, named as the host names it`, async () => {
+    const { dollar, files, shown } = world(options as Options)
+    expect((await ask(dollar, FULL)).isError).toBeUndefined()
+    expect(stored(files)[0].sender).toMatchObject({ role: 'orchestrator', name: 'Orch: acme' })
+    expect(shown[0]).toBe(`Question 1 of 1 (${stored(files)[0].id})`)
+  })
+}
+
+for (const [who, options] of [
+  ['an agent with no row yet', { me: null, walk: 'Agent: a1', session: 's-agent' }],
+  ['an operator\'s session named by no role', { me: null, walk: 'Fix the login bug', session: 's-operator' }],
+  ['a session whose walk finds nothing', { me: null, session: 's-nothing' }],
+] as const) {
+  test(`${who} is still refused: no keeper's name is known`, async () => {
+    const { dollar, files } = world(options as Options)
+    expect((await ask(dollar, FULL)).isError).toBe(true)
+    expect(stored(files)).toEqual([])
+  })
+}
+
+test('a row naming an agent is refused without a walk, whatever its host names', async () => {
+  const { dollar, files } = world({ me: ['agent', 'Agent: a1'], walk: 'Orch: acme', session: 's-agent-row' })
+  expect((await ask(dollar, FULL)).isError).toBe(true)
+  expect(stored(files)).toEqual([])
+})
+
+test('a walk that does not finish is said in the log, and the question refused', async () => {
+  const { dollar, files, logs } = world({ me: null, walk: 'Orch: acme', session: 's-unfinished' })
+  const run = dollar.process.run
+  dollar.process.run = async (argv: readonly string[]) => (argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=') ? Promise.reject(new Error('ps timed out')) : run(argv))
+  expect((await ask(dollar, FULL)).isError).toBe(true)
+  expect(stored(files)).toEqual([])
+  expect(logs.join('\n')).toMatch(/own name not walked/)
+})
 
 test('an orchestrator asks as well, its question stored and shown', async () => {
   const { dollar, files, shown } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { parseOptions, report, type Gh, type ReportInput } from './report.ts'
+import { parseOptions, report, type Check, type Gh, type ReportInput } from './report.ts'
 
 const WEEK = '2026-11-08'
 const NOW = Date.parse('2026-11-14T12:00:00Z')
@@ -18,6 +18,8 @@ interface Files {
   measure?: Record<string, unknown>
   archive?: Record<string, unknown>[]
   record?: string[]
+  /** Learning journal files, by `<plugin>/journal/<name>.json`. */
+  journals?: Record<string, unknown>
 }
 
 function scratch(files: Files, work: (config: string, dir: string) => void): void {
@@ -35,6 +37,7 @@ function scratch(files: Files, work: (config: string, dir: string) => void): voi
     ;(files.round ?? []).forEach((r, i) => put(join(module, 'round', `${i}.json`), JSON.stringify(r)))
     ;(files.archive ?? []).forEach((r, i) => put(join(module, 'round', 'archive', `${i}.json`), JSON.stringify(r)))
     for (const [id, m] of Object.entries(files.measure ?? {})) put(join(module, 'measure', `${id}.json`), JSON.stringify(m))
+    for (const [name, body] of Object.entries(files.journals ?? {})) put(join(config, `${name}.json`), typeof body === 'string' ? body : JSON.stringify(body))
     if (files.record !== undefined) {
       put(join(dir, 'record.jsonl'), `${files.record.join('\n')}\n`)
       put(join(module, 'records', S(1)), `${join(dir, 'record.jsonl')}\n${join(dir, 'gone.jsonl')}\n`)
@@ -52,8 +55,14 @@ const ghFor = (answers: { prs?: Record<string, string>; runs?: Record<string, st
   return answer === undefined ? { status: 1, stdout: '', stderr: `no access to ${repo}\nmore` } : { status: 0, stdout: answer, stderr: '' }
 }
 
+/** Stands in for the checkout's scripts: each script's answer by name, or a failure that printed nothing. */
+const checkFor = (answers: { prompts?: unknown; rules?: unknown }): Check => (checkout, script) => {
+  const answer = (answers as Record<string, unknown>)[script]
+  return answer === undefined ? { status: 1, stdout: '', stderr: `no ${script} in ${checkout}\nmore` } : { status: 0, stdout: typeof answer === 'string' ? answer : JSON.stringify(answer), stderr: '' }
+}
+
 function lines(config: string, over: Partial<ReportInput> = {}): string[] {
-  return report({ config, env: {}, now: NOW, week: WEEK, tools: ['acme/tool'], cwd: '/nowhere', gh: ghFor({}), repositoryAt: () => undefined, ...over })
+  return report({ config, env: {}, now: NOW, week: WEEK, tools: ['acme/tool'], cwd: '/nowhere', gh: ghFor({}), check: checkFor({}), repositoryAt: () => undefined, ...over })
 }
 const find = (out: string[], start: string): string => out.find(l => l.startsWith(start)) ?? `missing ${start}`
 
@@ -475,5 +484,184 @@ test('what happened before or after the week is read for the cost baseline only:
     assert.equal(find(out, '5 '), '5 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
     assert.equal(find(out, '  acme/tool#7 '), '  acme/tool#7    30 min  $2.00')
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
+  })
+})
+
+/** A learning journal event of version 1, shaped as the contract writes it; `random` makes its name distinct. */
+const journaled = (at: string, plugin: string, code: string, random: string, kind = 'refusal'): [string, Record<string, unknown>] => {
+  const id = `${at.replace(/[-:]/g, '')}-${random}`
+  return [`${plugin}/journal/${id}`, { v: 1, id, at, kind, source: { plugin, code }, subject: { repo: null, pr: null, head: null }, context: { role: null, mode: null, paths: [], languages: [], session: null }, evidence: [], trust: 'computed' }]
+}
+
+test('refusals by guard source: the week\'s refusals of the learning journals, per plugin and guard code, most first, never one total', () => {
+  const journals = Object.fromEntries([
+    journaled('2026-11-09T10:00:00Z', 'github', 'github.ready.missing-review', '00000001'),
+    // The evening of the 7th UTC is the 8th in Paris: the week's first day.
+    journaled('2026-11-07T23:30:00Z', 'acme', 'acme.guard.alpha', '0000000a'),
+    journaled('2026-11-12T09:00:00Z', 'acme', 'acme.guard.beta', '0000000b'),
+    journaled('2026-11-10T10:00:00Z', 'github', 'github.ready.missing-review', '00000002'),
+    journaled('2026-11-10T11:00:00Z', 'orchestrator', 'orchestrator.stop.declared-wait', '00000003'),
+    journaled('2026-11-11T11:00:00Z', 'github', 'github.ready.missing-e2e', '00000004'),
+    journaled('2026-11-11T12:00:00Z', 'github', 'github.ready.missing-e2e', '00000005'),
+    journaled('2026-11-11T13:00:00Z', 'github', 'github.ready.missing-e2e', '00000006'),
+    // Out of the week or not a refusal: the evening of the 14th UTC is the 15th in Paris, the 7th is before the week, a finding is no refusal.
+    journaled('2026-11-14T23:30:00Z', 'github', 'github.ready.missing-review', '00000007'),
+    journaled('2026-11-07T10:00:00Z', 'github', 'github.ready.missing-review', '00000008'),
+    journaled('2026-11-10T10:00:00Z', 'norms', 'norms.check.open-finding', '00000009', 'finding'),
+  ])
+  const events = [
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(1), { outcome: 'refused', decided_by: 'plugin:github' }),
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(2), { outcome: 'refused', decided_by: 'plugin:acme-tool' }),
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { refusals: { 'plugin:acme-bot': 2, user: 1, 'plugin:acme-none': 0 } }),
+  ]
+  scratch({ journals, events }, config => {
+    writeFileSync(join(config, 'github', 'journal', 'folded.json'), '[]')
+    writeFileSync(join(config, 'github', 'journal', 'torn.json'), '{')
+    const out = lines(config)
+    const at = out.indexOf('refusals by guard source (the learning journals: plugin and guard code)')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 6).map(l => l.trim().split(/\s+/)), [
+      ['github', 'github.ready.missing-e2e', '3'],
+      ['github', 'github.ready.missing-review', '2'],
+      // Equal counts sort by plugin then code.
+      ['acme', 'acme.guard.alpha', '1'],
+      ['acme', 'acme.guard.beta', '1'],
+      ['orchestrator', 'orchestrator.stop.declared-wait', '1'],
+    ])
+    // The coverage: what the table counts against the role table's total, and the plugins that refused with no journal (a decider that refused nothing is not one).
+    assert.equal(out[at + 6], '  coverage: this table counts 8 refusals, the role table 5; no journal for acme-bot, acme-tool')
+    assert.match(out[0] ?? '', / \(1 unreadable event lines or files left out\)$/)
+  })
+  // A journal directory with nothing but its fold file or an audit event, and a journal that is a file: nothing counted, nothing unreadable but the file.
+  const [auditName, auditBody] = journaled('2026-11-10T10:00:00Z', 'norms', 'norms.step.review', '0000000c')
+  const [invalidName, invalidBody] = journaled('2026-11-10T10:00:00Z', 'norms', 'norms.guard.invalid', '0000000d')
+  const quiet = { 'github/journal/folded': [], [auditName]: { ...auditBody, v: 2, kind: 'link', fact: { record: null, row: null, session: null, goal: null, prs: [] } }, [invalidName]: { ...invalidBody, stray: true } }
+  scratch({ journals: quiet }, config => {
+    mkdirSync(join(config, 'orchestrator'), { recursive: true })
+    writeFileSync(join(config, 'orchestrator', 'journal'), 'x')
+    const out = lines(config)
+    assert.ok(out.includes('  none in the journals for the week'))
+    assert.ok(out.includes('  coverage: this table counts 0 refusals, the role table 0; no journal for any plugin that refused'))
+    // The invalid event and the journal that is a file are counted, the fold file and the audit event are not.
+    assert.match(out[0] ?? '', / \(2 unreadable event lines or files left out\)$/)
+  })
+  scratch({}, config => {
+    const out = lines(config)
+    assert.ok(out.includes('  none in the journals for the week'))
+    assert.deepEqual(out.slice(out.indexOf('role          refusals  of them by a plugin') + 1, out.indexOf('role          refusals  of them by a plugin') + 6).map(l => l.trim().split(/\s+/)), [['orchestrator', '0', '0'], ['coordinator', '0', '0'], ['auditor', '0', '0'], ['agent', '0', '0'], ['other', '0', '0']])
+  })
+})
+
+test('refusals by role: the five roles, each with its refusals and those of a plugin, a role the report does not name counted as other', () => {
+  const refused = (ts: string, session: string, role: string | undefined, decider: string): Record<string, unknown> => ev(ts, 'tool_call', session, { outcome: 'refused', decided_by: decider, ...(role === undefined ? {} : { role }) })
+  const events = [
+    refused('2026-11-10T10:00:00Z', S(1), 'orchestrator', 'plugin:github'),
+    refused('2026-11-10T10:01:00Z', S(1), 'orchestrator', 'user'),
+    refused('2026-11-11T10:00:00Z', S(2), 'agent', 'hook'),
+    // A session with no live call counts its summary's refusals, under its role.
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { role: 'auditor', refusals: { 'plugin:github': 2, user: 3 } }),
+    refused('2026-11-12T10:00:00Z', S(4), 'reviewer', 'plugin:norms'),
+    refused('2026-11-12T10:00:00Z', S(5), undefined, 'auto_mode'),
+    // A session with live calls and a summary counts its live calls only.
+    refused('2026-11-13T10:00:00Z', S(7), 'coordinator', 'plugin:github'),
+    ev('2026-11-13T12:00:00Z', 'session_summary', S(7), { role: 'coordinator', refusals: { 'plugin:github': 4 } }),
+    // Outside the week, in Paris days: the 7th at 23:30 UTC is the 8th (inside), the 14th at 23:30 UTC is the 15th (outside), and a summary of the 1st.
+    refused('2026-11-07T23:30:00Z', S(8), 'agent', 'hook'),
+    refused('2026-11-14T23:30:00Z', S(9), 'agent', 'hook'),
+    refused('2026-11-01T10:00:00Z', S(6), 'coordinator', 'hook'),
+    ev('2026-11-01T12:00:00Z', 'session_summary', S(10), { role: 'auditor', refusals: { 'plugin:github': 6 } }),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    const at = out.indexOf('role          refusals  of them by a plugin')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 6).map(l => l.trim().split(/\s+/)), [
+      ['orchestrator', '2', '1'],
+      ['coordinator', '1', '1'],
+      ['auditor', '5', '2'],
+      ['agent', '2', '2'],
+      ['other', '2', '1'],
+    ])
+  })
+})
+
+const PROMPTS = { budgets: { alpha: { tokens: 800, budget: 900 }, beta: { tokens: 500, budget: 500 } }, duplicates: { count: 3, ceiling: 4 }, faults: [] }
+const RULES = { plugins: [{ plugin: 'alpha', rules: 10, byCode: 6, byEval: 1, left: 3 }, { plugin: 'beta', rules: 5, byCode: 5, byEval: 0, left: 0 }, { plugin: 'gamma', rules: 4, byCode: 0, byEval: 1, left: 3 }] }
+const lineOf = (out: string[], name: string): string => out.find(l => l.startsWith(`${name}:`)) ?? `missing ${name}`
+
+test('prompt budgets: every plugin at or under its budget, by plugin', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS, rules: RULES }) }), 'prompt budgets'), 'prompt budgets: all 2 plugins within their budget (alpha 800/900, beta 500/500)')
+  })
+})
+
+test('prompt budgets: the plugins over their budget, or with none, come first and the rest after', () => {
+  scratch({}, config => {
+    const prompts = { ...PROMPTS, budgets: { alpha: { tokens: 950, budget: 900 }, beta: { tokens: 500, budget: 500 }, gamma: { tokens: 10, budget: null } }, faults: ['x'] }
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts, rules: RULES }) }), 'prompt budgets'), 'prompt budgets: 2 of 3 plugins over their budget (alpha 950/900, gamma 10/no budget); within: (beta 500/500)')
+  })
+})
+
+test('prompt budgets: a script that fails but printed its figures is read, one that printed none is n/a with its reason', () => {
+  scratch({}, config => {
+    const failing: Check = () => ({ status: 1, stdout: JSON.stringify(PROMPTS), stderr: 'a fault' })
+    assert.match(lineOf(lines(config, { check: failing }), 'prompt budgets'), /^prompt budgets: all 2 plugins within/)
+    assert.equal(lineOf(lines(config), 'prompt budgets'), 'prompt budgets: n/a — npm run prompts in /nowhere printed no JSON: no prompts in /nowhere')
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: 'nope' }) }), 'prompt budgets'), /^prompt budgets: n\/a — npm run prompts in \/nowhere printed no JSON$/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: '[]' }) }), 'prompt budgets'), /n\/a — npm run prompts answered something else than an object/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: {} }) }), 'prompt budgets'), /n\/a — npm run prompts listed no plugin/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: { budgets: { a: {} } } }) }), 'prompt budgets'), /n\/a — npm run prompts listed no plugin or a plugin without its tokens/)
+  })
+})
+
+test('duplicates: the count against its ceiling, within at the ceiling and over above it', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS }) }), 'duplicates'), 'duplicates: 3 sentences said more than once, ceiling 4: within')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...PROMPTS, duplicates: { count: 4, ceiling: 4 } } }) }), 'duplicates'), 'duplicates: 4 sentences said more than once, ceiling 4: within')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...PROMPTS, duplicates: { count: 5, ceiling: 4 } } }) }), 'duplicates'), 'duplicates: 5 sentences said more than once, ceiling 4: over')
+  })
+})
+
+test('one plugin or one sentence is not plural', () => {
+  scratch({}, config => {
+    const one = { budgets: { alpha: { tokens: 1, budget: 2 } }, duplicates: { count: 1, ceiling: 1 } }
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'prompt budgets'), 'prompt budgets: all 1 plugin within their budget (alpha 1/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...one, budgets: { alpha: { tokens: 3, budget: 2 } } } }) }), 'prompt budgets'), 'prompt budgets: 1 of 1 plugin over their budget (alpha 3/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'duplicates'), 'duplicates: 1 sentence said more than once, ceiling 1: within')
+  })
+})
+
+test('duplicates: n/a with the reason when the script gave none or no figure', () => {
+  scratch({}, config => {
+    assert.match(lineOf(lines(config), 'duplicates'), /^duplicates: n\/a — npm run prompts in \/nowhere printed no JSON/)
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { budgets: PROMPTS.budgets } }) }), 'duplicates'), 'duplicates: n/a — npm run prompts gave no count or no ceiling')
+  })
+})
+
+test('rules held by prose alone: the totals and the plugins that have some', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS, rules: RULES }) }), 'rules held by prose alone'), 'rules held by prose alone: 6 of 19 (held by code 11, named by an eval 2); by plugin: alpha 3, gamma 3')
+    const none = { plugins: [{ plugin: 'alpha', rules: 2, byCode: 2, byEval: 0, left: 0 }] }
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: none }) }), 'rules held by prose alone'), 'rules held by prose alone: 0 of 2 (held by code 2, named by an eval 0)')
+  })
+})
+
+test('rules held by prose alone: n/a with the reason when the script gave none or no counts', () => {
+  scratch({}, config => {
+    assert.match(lineOf(lines(config), 'rules held by prose alone'), /^rules held by prose alone: n\/a — npm run rules in \/nowhere printed no JSON: no rules in \/nowhere$/)
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [{ plugin: 'a' }] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: {} }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+  })
+})
+
+test('the three lines come after the nine figures, and the scripts run in the report\'s working directory', () => {
+  scratch({}, config => {
+    const asked: string[] = []
+    const check: Check = (checkout, script) => { asked.push(`${script}@${checkout}`); return checkFor({ prompts: PROMPTS, rules: RULES })(checkout, script) }
+    const out = lines(config, { check, cwd: '/checkout' })
+    assert.deepEqual(asked, ['prompts@/checkout', 'rules@/checkout'])
+    assert.deepEqual(out.slice(-4).map(l => l.split(':')[0]), ['', 'prompt budgets', 'duplicates', 'rules held by prose alone'])
+    assert.ok(out.findIndex(l => l.startsWith('9 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
   })
 })
