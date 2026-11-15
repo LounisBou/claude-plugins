@@ -1,0 +1,148 @@
+// hooks/tests/findings.test.ts
+// What the module's journal keeps of a review: one event per Critical or Important finding of each
+// pass the loop accepts, written as the pass ends, so the findings outlive the session; and the pull
+// request on every event written once the module read it. An event holds where and how severe,
+// never what was said.
+import { expect, test } from 'claude-code/testing'
+import { parseLearningEvent } from '../../core/learning.ts'
+import { REPORT_REQUEST } from '../report.ts'
+import { observedAs, watchJournal } from './journal.ts'
+
+const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+const HEAD = 'a'.repeat(40)
+const SUBJECT = { repo: 'lounisbou/claude-review', pr: 12, head: HEAD }
+const SECRET = 'the token hunter2 is logged'
+
+type Seen = { gh: string[]; records: any[] }
+
+// A checkout of LounisBou/claude-review on a branch whose pull request is 12, and the github tools.
+function wire(on: any): Seen {
+  const seen: Seen = { gh: [], records: [] }
+  on('tool.call', { tool: 'Agent' }, (_$: any, e: any) => ({ result: e.answer }))
+  on('tool.list', () => ({ value: [{ name: 'mcp__github__gh' }, { name: 'mcp__github__record' }] }))
+  on('classic.Stop', () => ({}))
+  on('process.run', (_$: any, e: any) => {
+    const line = e.argv.join(' ')
+    if (line === 'git rev-parse --show-toplevel') return { value: { ...ok, stdout: '/clone/repo\n' } }
+    if (line === 'git remote get-url origin') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
+    if (line === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: 'feature\n' } }
+    if (line === 'git rev-parse HEAD') return { value: { ...ok, stdout: HEAD + '\n' } }
+    return { value: ok }
+  })
+  on('tool.call', { tool: 'mcp__github__gh' }, (_$: any, e: any) => {
+    seen.gh.push(e.command)
+    return { result: '12\n' }
+  })
+  on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
+    seen.records.push(e.result)
+    return { result: '/data/records/review.json' }
+  })
+  return seen
+}
+
+const loopCall = ($: any, args: Record<string, unknown>): Promise<any> => $.tool.call({ tool: 'mcp__pr-review__loop', ...args } as any)
+
+const review = ($: any, findings: { severity: string; file: string }[]): Promise<any> =>
+  $.tool.call({
+    tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST,
+    answer: 'The review.\n```json\n' + JSON.stringify({ findings: findings.map((f) => ({ ...f, summary: SECRET })) }) + '\n```\n',
+  } as any)
+
+const FOUND = [
+  { severity: 'critical', file: 'src/a.ts' },
+  { severity: 'important', file: '/clone/repo/tests/a.test.ts:12' },
+  { severity: 'suggestion', file: 'docs/a.md' },
+]
+
+async function pass($: any, findings: { severity: string; file: string }[], keys: string[]): Promise<any> {
+  await loopCall($, { action: 'begin_pass' })
+  await review($, findings)
+  return loopCall($, { action: 'findings', keys })
+}
+
+test('a pass the loop goes on from leaves its Critical and Important findings, each with its file and the pull request', async ($, on) => {
+  const seen = wire(on)
+  const journal = watchJournal(on)
+  await loopCall($, { action: 'start' })
+  const out = await pass($, FOUND, ['a', 'b', 'c'])
+  expect(String(out.result)).toContain('"new"')
+  const events = journal()
+  expect(events.map((e) => parseLearningEvent(e))).toEqual(events)
+  expect(events.map((e) => [e.kind, e.trust, e.source.code, e.evidence, e.context.paths])).toEqual([
+    ['finding', 'review', 'pr-review.finding', [{ type: 'finding', severity: 'critical', file: 'src/a.ts' }], ['src/a.ts']],
+    ['finding', 'review', 'pr-review.finding', [{ type: 'finding', severity: 'important', file: 'tests/a.test.ts' }], ['tests/a.test.ts']],
+  ])
+  expect(events.map((e) => e.subject)).toEqual([SUBJECT, SUBJECT])
+  expect(events.every((e) => e.context.session === 'sess-1')).toBe(true)
+  expect(JSON.stringify(events)).not.toMatch(/hunter2|logged|\/clone/)
+  // The pull request is asked once per loop: the next pass reads it from what the first one noted.
+  expect(seen.gh).toEqual(['pr-get'])
+  await pass($, FOUND.slice(0, 1), ['a'])
+  expect(seen.gh).toEqual(['pr-get'])
+  expect(journal().length).toBe(3)
+  // A stop the loop would once have held names the same pull request.
+  await $.classic.Stop({ stop_hook_active: false } as any)
+  expect(journal().at(-1)).toMatchObject({ ...observedAs('pr-review.stop.loop-open'), subject: SUBJECT })
+})
+
+test('the pass that ends the loop takes the pull request the record read: no call of its own', async ($, on) => {
+  const seen = wire(on)
+  const journal = watchJournal(on)
+  await loopCall($, { action: 'start', review_only: true })
+  const out = await pass($, FOUND, ['a', 'b', 'c'])
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(seen.records).toEqual(['fail'])
+  expect(seen.gh).toEqual(['pr-get'])
+  expect(journal().map((e) => [e.source.code, e.subject])).toEqual([['pr-review.finding', SUBJECT], ['pr-review.finding', SUBJECT]])
+})
+
+test('a pass with no Critical or Important finding writes nothing', async ($, on) => {
+  wire(on)
+  const journal = watchJournal(on)
+  await loopCall($, { action: 'start' })
+  await pass($, FOUND.slice(2), ['c'])
+  expect(journal()).toEqual([])
+})
+
+test('a finding whose file is no path of the repository is kept, without its path', async ($, on) => {
+  wire(on)
+  const journal = watchJournal(on)
+  await loopCall($, { action: 'start' })
+  await pass($, [{ severity: 'critical', file: 'the whole diff' }, { severity: 'important', file: '/elsewhere/b.ts' }], ['a', 'b'])
+  expect(journal().map((e) => [e.evidence, e.context.paths])).toEqual([[[], []], [[], []]])
+})
+
+test('a journal that cannot be written changes nothing of the loop: its answer, its record, one line in the log', async ($, on) => {
+  const seen = wire(on)
+  const logged: string[] = []
+  on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+  on('session.id', () => ({ value: 'sess-1' }))
+  on('fs.write', () => ({ deny: 'disk full' }))
+  on('ui.log', (_$: any, e: any) => { logged.push(String(e.text)); return { value: undefined } })
+  await loopCall($, { action: 'start', review_only: true })
+  const out = await pass($, FOUND, ['a', 'b', 'c'])
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(String(out.result)).toContain('record: /data/records/review.json')
+  expect(seen.records).toEqual(['fail'])
+  expect(logged.length).toBe(1)
+  expect(logged[0]).toContain('pr-review: the journal could not be written or pruned')
+  expect(logged[0]).toContain('disk full')
+})
+
+test('a guard observed during process-comments names the pull request open_comments read', async ($, on) => {
+  const journal = watchJournal(on)
+  on('process.run', () => ({ value: { ...ok, stdout: '{"pr": 7}' } }))
+  on('skill.prompt', () => ({ text: 'SKILL TEXT' }))
+  on('tool.list', () => ({ value: [{ name: 'mcp__github__gh' }] }))
+  on('tool.call', { tool: 'mcp__github__gh' }, (_$: any, e: any) => ({
+    result: JSON.stringify(e.command === 'pr-get' ? [{ number: 7, head: { sha: HEAD }, base: { repo: { full_name: 'Owner/Repo' } } }] : e.command === 'comments-resolved-batch' ? {} : []),
+  }))
+  on('tool.call', () => ({ result: 'ran' }))
+  await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
+  await $.tool.call({ tool: 'mcp__pr-review__open_comments' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b', replace_all: false } as any)
+  const [event] = journal()
+  expect(parseLearningEvent(event)).toEqual(event)
+  expect(event).toMatchObject(observedAs('pr-review.edit.ungranted'))
+  expect(event.subject).toEqual({ repo: 'owner/repo', pr: 7, head: HEAD })
+})

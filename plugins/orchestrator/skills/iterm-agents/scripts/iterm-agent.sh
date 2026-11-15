@@ -31,6 +31,8 @@
 #     --gate-tokens sets THIS session's context gate, in tokens: the launch exports
 #     ORCHESTRATOR_CONTEXT_GATE_TOKENS beside ORCHESTRATOR_SPAWNED. Absent, nothing is
 #     exported and the default holds. With --brief, the startup prompt also says the gate.
+#     --tier also exports the tier's name, ORCHESTRATOR_TIER, for what records the session's
+#     events; a launch by --model, or on the caller's own pair, exports none.
 #   iterm-agent.sh spawn --dir <path> --auditor [--of <tty> | --of self] --title "Audit: <subject>" [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
 #     an auditor: immediately right of the orchestrator it audits (the caller, else the one --of
 #     names; a coordinator names it), its model and effort (the pair given, else the caller's),

@@ -12,7 +12,7 @@ export const MEASURE_VERSION = 1
 /** The registry of dispatch records (`<session>`, one record path a line) and the round's entries, beside it. */
 export const RECORDS_DIR = 'records'
 export const ROUND_DIR = 'round'
-/** The settled entries of the round, moved under its directory once a day old. */
+/** Under the round directory, the one that keeps the old round files. */
 export const ROUND_ARCHIVE_DIR = 'archive'
 
 /** The tool by which a turn declares what will wake it, and the kinds it takes. */

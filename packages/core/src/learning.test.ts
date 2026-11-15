@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DATA_FILES } from './data.ts'
 import {
-  AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, CANDIDATE_CONTRACT, eventId, parseCandidate, signatureFrom, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
+  AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, CANDIDATE_CONTRACT, CANDIDATE_STATE_CONTRACT, candidateStateDir, candidateStateFile, isDue, judged, moved, parseCandidateState, readCandidateState, retrospectiveStartArgv, scopeFits, eventId, parseCandidate, signatureFrom, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
+  answerEvent, answerGiven, findingEvent, repoPath, subjectOf,
   foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, pathClassesOf, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
@@ -467,5 +468,199 @@ describe('the candidate', () => {
 
   it('refuses a window that does not end after it starts, or a time that is none', () => {
     for (const change of [{ since: CANDIDATE.until }, { since: '2026-11-15T10:00:00Z' }, { until: 'soon' }, { since: '2026-10-15' }]) assert.equal(read(change), undefined, JSON.stringify(change))
+  })
+})
+
+describe('what a writer names: the subject', () => {
+  it('keeps each field that fits the contract, the repository in lower case', () => {
+    assert.deepEqual(subjectOf({ repo: ' Owner/Name ', pr: 7, head: HEAD.toUpperCase() }), { repo: 'owner/name', pr: 7, head: HEAD })
+  })
+
+  it('reads a field it cannot take as unknown, so the event is never lost for it', () => {
+    assert.deepEqual(subjectOf({ repo: 'not a repository', pr: '7', head: 'abc' }), { repo: null, pr: null, head: null })
+    assert.deepEqual(subjectOf({ repo: 'owner/name', pr: 0 }), { repo: 'owner/name', pr: null, head: null })
+    assert.deepEqual(subjectOf({}), { repo: null, pr: null, head: null })
+    assert.notEqual(learningEvent({ at: AT, random: '0a1b2c3d', kind: 'refusal', source: EVENT.source, trust: 'computed', subject: subjectOf({ repo: '../x', pr: -1 }) }), undefined)
+  })
+})
+
+describe('a finding as an event', () => {
+  const known = { at: AT, random: '0a1b2c3d', plugin: 'pr-review', subject: subjectOf({ repo: 'Owner/Name', pr: 7, head: HEAD }), context: { session: 'abc-123', role: null } }
+
+  it('reads a file as a path of the repository', () => {
+    assert.equal(repoPath('./src/a.ts:12'), 'src/a.ts')
+    assert.equal(repoPath('src/a.ts:12-14'), 'src/a.ts')
+    assert.equal(repoPath('/clone/repo/src/a.ts', '/clone/repo/'), 'src/a.ts')
+    for (const file of ['/elsewhere/a.ts', 'the whole diff', '../a.ts', '']) assert.equal(repoPath(file, '/clone/repo'), undefined)
+    assert.equal(repoPath('/a.ts', '/'), undefined)
+  })
+
+  it('holds the code, the file as its path and the pointer a signature reads, in the trust of a review', () => {
+    const event = findingEvent({ ...known, code: 'pr-review.finding', severity: 'critical', file: 'src/a.ts:3' })
+    assert.deepEqual(parseLearningEvent(event), event)
+    assert.equal(event?.kind, 'finding')
+    assert.equal(event?.trust, 'review')
+    assert.deepEqual(event?.subject, { repo: 'owner/name', pr: 7, head: HEAD })
+    assert.deepEqual(event?.context, { role: null, mode: null, paths: ['src/a.ts'], languages: ['typescript'], session: 'abc-123' })
+    assert.deepEqual(event?.evidence, [{ type: 'finding', severity: 'critical', file: 'src/a.ts' }])
+    assert.equal(event && signatureOf(event), 'finding:pr-review.finding:critical:source:typescript')
+  })
+
+  it('keeps a finding whose severity is not the contract\'s, or whose file is no path, without the pointer', () => {
+    const norms = findingEvent({ ...known, plugin: 'norms', code: 'norms.magic-values.warning', severity: 'warning', file: 'tests/a.test.ts' })
+    assert.deepEqual(norms?.evidence, [])
+    assert.equal(norms && signatureOf(norms), 'finding:norms.magic-values.warning:test:typescript')
+    const lost = findingEvent({ ...known, code: 'pr-review.finding', severity: 'critical', file: 'the whole diff' })
+    assert.deepEqual([lost?.evidence, lost?.context.paths], [[], []])
+    assert.equal(findingEvent({ at: AT, random: '0a1b2c3d', plugin: 'norms', code: 'norms.agent.info', severity: 'info', file: 'a.md' })?.subject.pr, null)
+  })
+
+  it('answers nothing for a code the contract refuses', () => {
+    assert.equal(findingEvent({ ...known, code: 'Not A Code', severity: 'critical', file: 'src/a.ts' }), undefined)
+  })
+})
+
+describe('the operator\'s answer as an event', () => {
+  const known = { at: AT, random: '0a1b2c3d', plugin: 'orchestrator' }
+  const consent = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+  const choices = [{ letter: 'A', text: 'split the pull request' }, { letter: 'B', text: 'keep it whole' }]
+
+  it('reads a consent\'s answer as its kind, granted or refused', () => {
+    assert.deepEqual(answerGiven('A : Accorder', { consent: { kind: 'e2e-waiver' }, choices: consent }), { asked: 'e2e-waiver', granted: true })
+    assert.deepEqual(answerGiven('Refuser', { consent: { kind: 'e2e-waiver' }, choices: consent }), { asked: 'e2e-waiver', granted: false })
+    assert.deepEqual(answerGiven('do as you see fit', { consent: { kind: 'auto-merge' }, choices: consent }), { asked: 'auto-merge', granted: false })
+  })
+
+  it('reads any other answer as the letter it opens with, beside the recommended one', () => {
+    assert.deepEqual(answerGiven('b — keep it whole', { choices, recommended: 'A' }), { letter: 'B', recommended: 'A' })
+    assert.deepEqual(answerGiven('neither, drop it', { choices, recommended: 'A' }), { letter: null, recommended: 'A' })
+    assert.deepEqual(answerGiven('yes', {}), { letter: null, recommended: null })
+  })
+
+  it('names what was asked and how he answered in its code, in his trust, and none of his words', () => {
+    const subject = subjectOf({ repo: 'Owner/Name', pr: 7 })
+    const granted = answerEvent({ ...known, subject, context: { session: 'abc-123', role: 'orchestrator' }, given: { asked: 'e2e-waiver', granted: true }, ruling: 'orchestrator/round/q-1.json' })
+    assert.deepEqual(parseLearningEvent(granted), granted)
+    assert.deepEqual([granted?.kind, granted?.trust, granted?.source.code], ['answer', 'operator', 'orchestrator.answer.e2e-waiver.granted'])
+    assert.deepEqual(granted?.subject, { repo: 'owner/name', pr: 7, head: null })
+    assert.deepEqual(granted?.evidence, [{ type: 'ruling', path: 'orchestrator/round/q-1.json', line: 1 }])
+    const code = (given: Parameters<typeof answerEvent>[0]['given']) => answerEvent({ ...known, given })?.source.code
+    assert.equal(code({ asked: 'push', granted: false }), 'orchestrator.answer.push.refused')
+    assert.equal(code({ letter: 'a', recommended: 'A' }), 'orchestrator.answer.recommended')
+    assert.equal(code({ letter: 'B', recommended: 'A' }), 'orchestrator.answer.other')
+    assert.equal(code({ letter: 'B', recommended: null }), 'orchestrator.answer.other')
+    assert.equal(code({ letter: null, recommended: 'A' }), 'orchestrator.answer.own-words')
+  })
+
+  it('leaves out a ruling that is no path of the contract, and refuses a grant that is no code', () => {
+    assert.deepEqual(answerEvent({ ...known, given: { letter: null, recommended: null }, ruling: '/home/op/.claude/round/q 1.json' })?.evidence, [])
+    assert.deepEqual(answerEvent({ ...known, given: { letter: null, recommended: null }, ruling: null })?.evidence, [])
+    assert.equal(answerEvent({ ...known, given: { asked: 'Not A Kind', granted: true } }), undefined)
+  })
+})
+
+describe("the candidate's state", () => {
+  const EVENTS = ['20261101T101500Z-0a1b2c3d', '20261102T101500Z-0a1b2c3d', '20261103T101500Z-0a1b2c3d']
+  const CANDIDATE = {
+    v: 1, signature: 'refusal:github.writing.rule', kind: 'refusal', code: 'github.writing.rule', severity: null, classes: [], languages: [],
+    since: '2026-10-15T10:00:00Z', until: '2026-11-14T10:00:00Z', events: EVENTS, prs: ['owner/name#7', 'owner/name#8'], repos: ['owner/name'],
+  }
+  const CAUSE = { resolved: true, first_failure: 'the rules are read after the text is written', counterfactual: 'read first, the commit passes at once', evidence: [EVENTS[0]], alternatives: ['the rules changed between two commits'], confidence: 'medium' }
+  const REMEDY = { scope: 'project', rung: 'guard', target: 'owner/name', proof: { type: 'test', path: 'hooks/tests/writing.test.ts' } }
+  const AT = '2026-11-14T11:00:00Z'
+  const candidate = parseCandidate(CANDIDATE)
+  assert.ok(candidate)
+  const judge = (change: Record<string, unknown> = {}) => judged(candidate, { signature: CANDIDATE.signature, cause: CAUSE, remedy: REMEDY, ...change }, AT)
+  const proposed = judge()
+  assert.ok(typeof proposed !== 'string', String(proposed))
+
+  it('a judgment with its cause and its remedy is a proposed state that reads back whole', () => {
+    assert.deepEqual(proposed, { v: 1, signature: CANDIDATE.signature, state: 'proposed', at: AT, candidate: CANDIDATE, cause: CAUSE, remedy: REMEDY, pr: null, ruling: null })
+    assert.deepEqual(parseCandidateState(JSON.parse(JSON.stringify(proposed))), proposed)
+    assert.equal(parseCandidateState({ ...proposed, scope: 'method' }), undefined)
+    assert.equal(parseCandidateState({ ...proposed, v: 2 }), undefined)
+    assert.equal(parseCandidateState({ ...proposed, signature: 'refusal:github.other.rule' }), undefined)
+  })
+
+  it('refuses a cause without a part of its claim, and evidence that is no event of the candidate', () => {
+    for (const part of ['first_failure', 'counterfactual', 'evidence', 'alternatives', 'confidence']) {
+      const { [part]: _dropped, ...short } = CAUSE as Record<string, unknown>
+      assert.equal(typeof judge({ cause: short }), 'string', part)
+    }
+    for (const change of [{ evidence: [] }, { evidence: ['20261104T101500Z-0a1b2c3d'] }, { alternatives: [] }, { confidence: 'certain' }, { first_failure: ' ' }, { counterfactual: 'x'.repeat(CANDIDATE_STATE_CONTRACT.text_max + 1) }, { resolved: 'yes' }]) {
+      assert.equal(typeof judge({ cause: { ...CAUSE, ...change } }), 'string', JSON.stringify(change))
+    }
+  })
+
+  it('an unresolved cause names the observation that would have decided, and has no remedy', () => {
+    const cause = { resolved: false, observation: 'the step that wrote the text, which no event points at' }
+    const unresolved = judge({ cause, remedy: null })
+    assert.ok(typeof unresolved !== 'string')
+    assert.equal(unresolved.state, 'unresolved')
+    assert.match(String(judge({ cause })), /unresolved one has none/)
+    assert.match(String(judge({ remedy: null })), /resolved cause has a remedy/)
+    assert.equal(typeof judge({ cause: { resolved: false }, remedy: null }), 'string')
+    assert.equal(parseCandidateState({ ...unresolved, state: 'proposed' }), undefined)
+  })
+
+  it('refuses a remedy without its scope, its rung, its target or its proof, and a proof that is not its rung\'s', () => {
+    for (const part of ['scope', 'rung', 'target', 'proof']) {
+      const { [part]: _dropped, ...short } = REMEDY as Record<string, unknown>
+      assert.equal(typeof judge({ remedy: short }), 'string', part)
+    }
+    const bad = [{ scope: 'team' }, { rung: 'reminder' }, { target: 'name' }, { proof: { type: 'test', path: '../x.ts' } }, { proof: { type: 'eval-case', case: 'writing-rule' } }, { rung: 'prompt-rule' }, { proof: { type: 'none' } }]
+    for (const change of bad) assert.equal(typeof judge({ remedy: { ...REMEDY, ...change } }), 'string', JSON.stringify(change))
+    assert.ok(typeof judge({ remedy: { ...REMEDY, rung: 'prompt-rule', proof: { type: 'eval-case', case: 'writing-rule' } } }) !== 'string')
+    assert.equal(typeof judge({ signature: 'refusal:github.other.rule' }), 'string')
+  })
+
+  it('places a scope by the candidate\'s repositories and kind', () => {
+    const wide = { ...candidate, repos: ['owner/name', 'owner/other'] }
+    assert.deepEqual(CANDIDATE_STATE_CONTRACT.scopes.map(scope => scopeFits(candidate, scope)), [true, false, false, false])
+    assert.deepEqual(CANDIDATE_STATE_CONTRACT.scopes.map(scope => scopeFits(wide, scope)), [false, true, true, false])
+    assert.equal(scopeFits({ ...candidate, kind: 'answer' }, 'personal'), true)
+    assert.match(String(judge({ remedy: { ...REMEDY, scope: 'method' } })), /do not place a lesson at the scope method/)
+    assert.match(String(judge({ remedy: { ...REMEDY, target: 'owner/other' } })), /lands in the repository of its events, owner\/name/)
+  })
+
+  it('moves to merged with its pull request, to rejected with its ruling, and refuses either without', () => {
+    assert.match(String(moved(proposed, { state: 'merged' }, AT)), /names its pull request/)
+    const opened = moved(proposed, { state: 'proposed', pr: 'owner/name#9' }, AT)
+    assert.ok(typeof opened !== 'string')
+    const merged = moved(opened, { state: 'merged' }, '2026-11-15T11:00:00Z')
+    assert.ok(typeof merged !== 'string')
+    assert.deepEqual([merged.state, merged.pr, merged.at], ['merged', 'owner/name#9', '2026-11-15T11:00:00Z'])
+    const ineffective = moved(merged, { state: 'ineffective' }, AT)
+    assert.ok(typeof ineffective !== 'string')
+    assert.match(String(moved(proposed, { state: 'rejected' }, AT)), /holds the ruling/)
+    const rejected = moved(proposed, { state: 'rejected', ruling: 'not worth a guard' }, AT)
+    assert.ok(typeof rejected !== 'string')
+    assert.equal(rejected.ruling, 'not worth a guard')
+    const again = moved(rejected, { state: 'proposed' }, AT)
+    assert.ok(typeof again !== 'string')
+    assert.equal(again.ruling, null)
+    assert.equal(typeof moved(proposed, { state: 'merged', pr: '#9' }, AT), 'string')
+    assert.equal(typeof moved(proposed, { state: 'merged', pr: 'owner/name#9' }, 'soon'), 'string')
+  })
+
+  it('a candidate is judged once, and again when rejected or unresolved only at twice its events', () => {
+    const rejected = moved(proposed, { state: 'rejected', ruling: 'no' }, AT)
+    const unresolved = judge({ cause: { resolved: false, observation: 'the step' }, remedy: null })
+    assert.ok(typeof rejected !== 'string' && typeof unresolved !== 'string')
+    const grown = (count: number) => ({ ...candidate, events: Array.from({ length: count }, (_, i) => `2026110${i + 1}T101500Z-0a1b2c3d`) })
+    assert.equal(isDue(candidate, undefined), true)
+    assert.equal(isDue(grown(9), proposed), false)
+    for (const state of [rejected, unresolved]) {
+      assert.equal(isDue(grown(5), state), false)
+      assert.equal(isDue(grown(6), state), true)
+    }
+  })
+
+  it('names the state file by the signature, under the learning plugin\'s directory, and the command that starts a retrospective', () => {
+    assert.equal(candidateStateDir('/c'), '/c/learning/candidates')
+    assert.equal(candidateStateFile('finding:pr-review.finding:critical:source:python'), 'finding_pr-review.finding_critical_source_python.json')
+    assert.deepEqual(retrospectiveStartArgv('/p/learning/', '/c'), ['node', '--experimental-strip-types', '--no-warnings', '/p/learning/skills/learning/scripts/retrospective.ts', 'start', '--config', '/c'])
+    assert.equal(typeof readCandidateState(null), 'string')
+    assert.equal(typeof readCandidateState({ ...proposed, candidate: null }), 'string')
   })
 })
