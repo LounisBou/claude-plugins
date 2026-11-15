@@ -24,6 +24,40 @@ export function roundEntryPath(state: string, id: string): string {
   return `${state}/${ROUND_DIR}/${id}.json`
 }
 
+/** A session's entry in the records registry, its id with any character outside `[A-Za-z0-9._-]` made `_`. */
+export function registryNameOf(session: string): string {
+  return session.replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+/** The registry of the dispatch records a session wrote or took over, `<state>/records/<session>`: one record path a line. */
+export function recordsRegistryPath(state: string, session: string): string {
+  return `${state}/${RECORDS_DIR}/${registryNameOf(session)}`
+}
+
+/** ci-watch's logs under the orchestrator's state directory, each with its owner file `<log>.session` beside it. */
+export const CI_WATCH_DIR = 'ci-watch'
+
+/**
+ * The log of a pull request's watch, `<slug>-pr<n>.log`, or `<slug>-pr<n>-base.log` for the watch of
+ * the base branch after the merge: the slug is the repository named (`here` when none), any
+ * character outside `[A-Za-z0-9._-]` made `_`.
+ */
+export function ciWatchLogName(repo: string | undefined, pr: string, base = false): string {
+  return `${(repo ?? 'here').replace(/[^A-Za-z0-9._-]/g, '_')}-pr${pr}${base ? '-base' : ''}.log`
+}
+
+/** The path of that log under the state directory `state`. */
+export function ciWatchLogPath(state: string, repo: string | undefined, pr: string, base = false): string {
+  return `${state}/${CI_WATCH_DIR}/${ciWatchLogName(repo, pr, base)}`
+}
+
+/** The pull request number a watch log's name carries, or null: a base watch's log, or no watch log. */
+export function watchNumberOf(name: string): string | null {
+  if (/-pr\d+-base\.log$/.test(name)) return null
+  const m = /-pr(\d+)\.log$/.exec(name)
+  return m ? m[1] ?? null : null
+}
+
 /** The tool by which a turn declares what will wake it, and the kinds it takes. */
 export const WAIT_TOOL = 'declare_wait'
 export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const

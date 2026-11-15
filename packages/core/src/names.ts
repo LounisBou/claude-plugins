@@ -59,3 +59,21 @@ export function sessionName(prefix: Prefix, subject: string): string {
 export function currentSessionName(name: string): string {
   return name.replace(FORMER, '$1: ')
 }
+
+const ORCH: Prefix = 'Orch'
+const ORCH_TYPED = new RegExp(`^${ORCH} ?: *(\\S.*)$`, 's')
+
+/**
+ * A session name in the house shape: blanks and the ` [reference]` the host appends left off, a
+ * hand-typed « Orch:x » or a former « Orch : x » spelled « Orch: x ». A name the shape does not
+ * read as an orchestrator's stays as it was given, trimmed.
+ */
+export function orchForm(raw: string): string {
+  const name = raw.trim().replace(/ \[[^\]\s]+\]$/, '').replace(/\s+$/, '')
+  const typed = ORCH_TYPED.exec(name)
+  if (typed?.[1] !== undefined) {
+    const canonical = `${ORCH}: ${typed[1]}`
+    if (parseSessionName(canonical)?.role === 'orchestrator') return canonical
+  }
+  return name
+}

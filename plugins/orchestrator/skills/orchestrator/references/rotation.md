@@ -8,6 +8,10 @@ Rotation = a **resume brief** (`agent-rotation-brief.md`) for a fresh session, w
 
 **Execute the rotation yourself where the platform allows** (macOS + iTerm2): once the dispatch gate trips and the agent answered its resume brief's path, use the `orchestrator:iterm-agents` skill, « Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`, its lines the proof. Without such tooling, stop and say why.
 
+## An agent the host stopped
+
+`[module] <agent> stopped: …` (the host's limit text, or an API error) means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on its own tier (never a lower one), its resume brief written by you from the branch, the pull request and the dispatch record, since it cannot write one. An API error that leaves its tab answering: send it one prompt to resume first.
+
 ## Your own context (the orchestrator is not exempt)
 
 - SKILL.md's principles: 10 stay compaction-ready, 4 refresh the state from the artifacts, 7 measure your own context.

@@ -7,15 +7,19 @@
 // The gate's decisions live in stop-gate.ts and its handler in guards.ts, which reads the
 // declaration itself. The turn's end (supervision.ts) still receives it as the one machine line
 // the declaration spells (waitLine), written last in its answer. The model's own line decides nothing.
-import { waitLine, type DeclaredWait } from './stop-gate.ts'
-import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
+import {
+  checkWakeDone, deferredRows, goalsPaths, isDegradedPass, isOwnRecord, openRows, orchestrationOf, ownerOf, parseGoalsCheck,
+  recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
+} from './stop-gate.ts'
+import { RECORDS_DIR, WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
-import { configDir, logLine } from './module-io.ts'
+import { configDir, logLine, stateDir } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
 import { holdsDone } from './unattended.ts'
-import { holdsTodos } from './todo.ts'
+import { holdsTodos, openFor, whoAmI } from './todo.ts'
+import { todoName } from './todo-format.ts'
 import { readAsked } from './question.ts'
 
 // The nouns the declaration holds.
@@ -113,6 +117,71 @@ async function openAsked($: Held): Promise<{ id: string; blocks: string }[]> {
   }
 }
 
+// The bound on the declaration's reads of the dispatch record and its goals: one tool call, never a held turn.
+export const RECORD_READ_MS = 5000
+
+// What a done or a deferred wait is declared with instead when the session waits on its own work.
+export const DECLARE_NOTHING = ' If you are waiting on an agent, a command or a monitor you started, declare nothing: '
+  + 'it wakes you by itself when it ends or answers.'
+
+// What the orchestrator's dispatch record and the goals beside it still hold against a done or a
+// deferred wait, read as the stop gate reads them at the stop (checkWakeDone): an open row or goal
+// refuses a done; a deferred wait takes only rows, goals and to-dos the operator put off
+// (dispatch-record.sh defer, goals … defer, todo defer), counted as its blocks says, and is refused
+// when he put off none. Read at the declaration too, because the gate reads them only when nothing
+// else wakes the session: a done declared while an agent ran went through with its rows open. Only an
+// orchestrator's records are read, its own (the owner file); a read that fails or runs out of time
+// holds nothing, said in the log.
+export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string | null> {
+  if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
+  const me = await whoAmI($)
+  if (me === null || me.role !== 'orchestrator') return null
+  const until = Date.now() + RECORD_READ_MS
+  const read = async <T>(work: () => Promise<T>, fallback: T): Promise<T> => {
+    const left = until - Date.now()
+    if (left <= 0) return fallback
+    try {
+      const done = await withDeadline(work(), left)
+      return isDegradedPass(done) ? fallback : done
+    } catch {
+      return fallback
+    }
+  }
+  const state = await stateDir($)
+  const safe = (await $.session.id()).replace(/[^A-Za-z0-9._-]/g, '_')
+  const registered = String(await read(() => $.fs.read(`${state}/${RECORDS_DIR}/${safe}`), '')).split('\n').map(line => line.trim()).filter(Boolean)
+  const own = orchestrationOf(me.name)
+  const records: string[] = []
+  for (const path of registered) {
+    if (isOwnRecord(ownerOf(String(await read(() => $.fs.read(`${path}.owner`), ''))), own)) records.push(path)
+  }
+  const texts: string[] = []
+  for (const path of records) texts.push(String(await read(() => $.fs.read(path), '')))
+  const goals: GoalsReading[] = []
+  for (const path of goalsPaths(records)) {
+    if (await read(() => $.fs.exists(path), false) !== true) continue
+    const done = await read(() => $.process.run(['bash', `${$.plugin.root}/skills/orchestrator/scripts/goals.sh`, 'check', path, '--json'], { timeoutMs: Math.max(1, until - Date.now()) }), null)
+    const reading = done && (done.exitCode === 0 || done.exitCode === 1) ? parseGoalsCheck(path, String(done.stdout ?? '')) : null
+    if (reading) goals.push(reading)
+    else await logLine($, 'wait', `goals unread at the declaration: ${path}`)
+  }
+  const owed = await read(() => openFor($, me.name), { pending: [], deferred: [] })
+  const held = checkWakeDone({
+    agents: [], checkouts: [],
+    deferred: openRows(texts),
+    deferredRows: deferredRows(texts),
+    goalsOpen: goals.flatMap(g => g.open),
+    goalsDeferred: goals.flatMap(g => g.deferred),
+    goalsFaults: goals.flatMap(g => g.faults),
+    todosDeferred: owed.deferred.map(todoName),
+    rowRecords: recordsWithOpenRows(records, texts),
+    goalsRecords: goals.filter(g => g.open.length > 0).map(g => g.path),
+    ending: wait.kind,
+    ids: wait.kind === 'deferred' ? wait.blocks : undefined,
+  })
+  return held === null ? null : `${held.reason}${DECLARE_NOTHING}`
+}
+
 const LEARNING = 'learning@lounisbou'
 export const RETROSPECTIVE_TIMEOUT_MS = 30_000
 
@@ -199,6 +268,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // So is one while a to-do of the session's own list is open (todo.ts).
     const owed = await holdsTodos($, parsed.wait)
     if (owed !== null) return { result: owed, isError: true }
+    // And one the dispatch record contradicts: an open row or goal, or a deferral he never made.
+    const left = declarations.handedOver(await $.session.id()) ? null : await holdsRecord($, parsed.wait)
+    if (left !== null) return { result: left, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
   }).catch(async ($, e, next) => {
