@@ -221,6 +221,63 @@ export function unattendedLine(list: readonly Unattended[], unread: readonly str
   return parts.length === 0 ? null : `PR délaissées : ${parts.join(' ; ')}`
 }
 
+/** An open dispatch row ready to start: its number and its keyword, the label's first word. */
+export interface ReadyRow {
+  readonly id: number
+  readonly keyword: string
+}
+
+/** The subject of an `Agent: <subject>` session name, lowercased; null for any other name. */
+function agentSubject(name: string | undefined): string | null {
+  const match = /^Agent ?: (.+?)(?: \[[^\]]*\])?$/u.exec((name ?? '').trim())
+  return match?.[1] === undefined ? null : match[1].toLowerCase()
+}
+
+/**
+ * The open rows ready with nobody on them: `blocker: none`, not deferred, and neither a live agent
+ * (`live`, the session names the launcher lists running) nor an open pull request (`lines`, the
+ * ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
+ * agent's subject, or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
+ * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
+ */
+export function readyRows(input: {
+  readonly texts: readonly string[]
+  readonly lines: readonly LedgerLine[]
+  readonly live: ReadonlySet<string>
+}): ReadyRow[] {
+  const alive = [...input.live].flatMap(name => agentSubject(name) ?? [])
+  const ready: ReadyRow[] = []
+  for (const text of input.texts) {
+    for (const raw of text.split('\n')) {
+      let value: unknown
+      try {
+        value = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      if (typeof value !== 'object' || value === null || Array.isArray(value) || isLedgerMarked(value)) continue
+      const row = value as Record<string, unknown>
+      const { id, state, blocker, deferred, label, note } = row
+      if (typeof id !== 'number' || state !== 'open' || blocker !== 'none') continue
+      if (typeof deferred === 'string' && deferred.trim() !== '') continue
+      const words = typeof label === 'string' ? label.trim() : ''
+      const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''
+      const held = (typeof note === 'string' ? note : '').toLowerCase()
+      const wanted = keyword.toLowerCase()
+      const named = (subject: string | null): boolean => subject !== null && wanted !== '' && subject.includes(wanted)
+      if (alive.some(subject => named(subject) || held.includes(`agent: ${subject}`))) continue
+      if (input.lines.some(line => named(agentSubject(line.agent)) || new RegExp(`${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
+      ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword })
+    }
+  }
+  return ready
+}
+
+/** « Lignes prêtes sans agent : <id> <KEYWORD>, … »; null when none is ready. */
+export function readyRowsLine(list: readonly ReadyRow[]): string | null {
+  return list.length === 0 ? null : `Lignes prêtes sans agent : ${list.map(row => `${row.id} ${row.keyword}`).join(', ')}`
+}
+
 /** The lines whose pull request is no longer open, in the repositories the forge listed (`open`, by repository). */
 export function endedLines(lines: readonly LedgerLine[], open: ReadonlyMap<string, readonly number[]>): LedgerLine[] {
   return lines.filter(line => open.has(line.repo) && !(open.get(line.repo) ?? []).includes(line.pr))

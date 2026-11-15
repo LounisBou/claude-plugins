@@ -5,8 +5,8 @@
 // refusal they make. The lines of the pull requests the forge no longer lists open go to the archive
 // beside their record as they are met. Every read is bounded; one that fails is said, never a refusal.
 import {
-  archiveOf, endedLines, ledgerLines, prKey, unattended, unattendedLine, withArchived, withoutLines,
-  type LedgerLine, type OpenPr, type Unattended,
+  archiveOf, endedLines, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
 import { launcherOf } from '../core/orchestration.ts'
@@ -19,7 +19,8 @@ export const UNATTENDED_BOUND_MS = 20_000
 // The open pull requests read per repository: more than one orchestration ever holds open.
 export const FORGE_LIMIT = 200
 
-export type Reading = { list: Unattended[]; unread: string[]; line: string | null }
+// `ready`: the open rows with `blocker: none` that no live agent and no open pull request holds; `readyLine` says them.
+export type Reading = { list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null }
 
 // The forge's open pull requests of a repository opened under the operator's account: the work of
 // the orchestrations, never a teammate's.
@@ -61,13 +62,14 @@ async function registered($: any, state: string, sessionId: string): Promise<str
   return (await readOr($, `${state}/records/${safe(sessionId)}`)).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
-// The lines of the records a session registered, each with its record; `own` keeps only those its
-// orchestration owns, as the stop gate reads them.
-async function linesOf($: any, records: readonly string[], own?: string | null): Promise<{ path: string; lines: LedgerLine[] }[]> {
-  const read: { path: string; lines: LedgerLine[] }[] = []
+// The lines of the records a session registered, each with its record and its text; `own` keeps only
+// those its orchestration owns, as the stop gate reads them.
+async function linesOf($: any, records: readonly string[], own?: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
+  const read: { path: string; text: string; lines: LedgerLine[] }[] = []
   for (const path of records) {
     if (own !== undefined && !isOwnRecord(ownerOf(await readOr($, `${path}.owner`)), own)) continue
-    read.push({ path, lines: ledgerLines(await readOr($, path)) })
+    const text = await readOr($, path)
+    read.push({ path, text, lines: ledgerLines(text) })
   }
   return read
 }
@@ -143,18 +145,27 @@ export async function readUnattended($: any, sessionId: string, now: number = Da
     }
     kept.push(...record.lines.filter(line => !ended.includes(line)))
   }
-  // The launcher's listing names the agents running, read only when a line names one; one that cannot
-  // be read takes every agent a line names for running, so no pull request is called unattended on a
-  // read that failed.
-  const named = new Set(kept.flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
-  let live: ReadonlySet<string> = named
-  if (named.size > 0) {
+  // The launcher's listing names the agents running, read once and only when a line names one or a
+  // row is ready; one that cannot be read takes every agent a line names for running, so no pull
+  // request is called unattended on a read that failed, and names no row ready.
+  let seen: ReadonlySet<string> | null | undefined
+  const running = async (): Promise<ReadonlySet<string> | null> => {
+    if (seen !== undefined) return seen
     const launched = await $.process.run(['bash', launcherOf($.plugin.root), 'list'], { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null)
-    if (launched && launched.exitCode === 0) live = liveNames(listing(String(launched.stdout ?? '')))
-    else await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running")
+    seen = launched && launched.exitCode === 0 ? liveNames(listing(String(launched.stdout ?? ''))) : null
+    if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
+    return seen
   }
+  const named = new Set(kept.flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
+  const live = named.size > 0 ? await running() ?? named : named
   const list = unattended({ open, lines: kept, live, now, claimed: await othersClaims($, state, sessionId, now) })
-  return { list, unread, line: unattendedLine(list, unread) }
+  const texts = own.map(record => record.text)
+  let ready: ReadyRow[] = []
+  if (readyRows({ texts, lines: kept, live: new Set() }).length > 0) {
+    const agents = await running()
+    if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents })
+  }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready) }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
@@ -177,8 +188,8 @@ export async function holdsDone($: any, wait: DeclaredWait): Promise<string | nu
   return reading !== null && reading.list.length > 0 ? unattendedRefusal(unattendedLine(reading.list, []) ?? '') : null
 }
 
-// The line each turn end leaves for the next turn's context, by session.
-const pending = new Map<string, string>()
+// The lines each turn end leaves for the next turn's context, by session.
+const pending = new Map<string, string[]>()
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
@@ -187,8 +198,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const sessionId = await $.session.id()
       const reading = await boundedReading($, sessionId)
       if (reading !== null) {
-        if (reading.line === null) pending.delete(sessionId)
-        else pending.set(sessionId, reading.line)
+        const said = [reading.line, reading.readyLine].flatMap(text => text ?? [])
+        if (said.length === 0) pending.delete(sessionId)
+        else pending.set(sessionId, said)
         await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread })
       }
     } catch (err) {
@@ -204,10 +216,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('prompt.submit', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
       const sessionId = await $.session.id()
-      const line = pending.get(sessionId)
-      if (line !== undefined) {
+      const said = pending.get(sessionId)
+      if (said !== undefined) {
         pending.delete(sessionId)
-        return next({ ...e, context: [...(e.context ?? []), line] })
+        return next({ ...e, context: [...(e.context ?? []), ...said] })
       }
     } catch (err) {
       await logLine($, 'unattended', (err as Error).message)
