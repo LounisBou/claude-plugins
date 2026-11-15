@@ -118,6 +118,50 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "
 ROLE_WORDS = tuple(NAMES["roles"])
 _WORD = {role: word for word, role in NAMES["roles"].items()}
 ORCH, COORD, AUDIT, AGENT = (_WORD[role] for role in ("orchestrator", "coordinator", "auditor", "agent"))
+# The launcher's argument set is core's (launcher.ts), read here as the generated `launcher.json`:
+# the request's version, and each option's default for a request that leaves it out.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "launcher.json"),
+          encoding="utf-8") as _fh:
+    LAUNCHER_ARGS = json.load(_fh)
+
+
+def args_of(command, options=None, **given):
+    """The attributes a command reads: each option of `command` in core's argument set at its
+    default, then `options` (a request's), then `given`."""
+    spec = LAUNCHER_ARGS["commands"][command]
+    values = {}
+    for option in spec["options"]:
+        kind = option["kind"]
+        values[option["dest"]] = (False if kind == "flag" else True if kind == "off"
+                                  else [] if kind == "list" else option.get("default", ""))
+    for name in spec.get("positionals", []):
+        values[name] = ""
+    values.update(options or {})
+    values.update(given)
+    return argparse.Namespace(**values)
+
+
+def args_from_line(command, words):
+    """The attributes a command line makes, read by the launcher's entry (the suite's cases that
+    call a command in this process); a line it refuses exits as the entry does."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    done = subprocess.run(["bash", LAUNCHER_SH, command] + list(words), stdout=subprocess.PIPE,
+                          env=dict(os.environ, ORCHESTRATOR_PRINT_REQUEST="1"))
+    if done.returncode:
+        sys.exit(done.returncode)
+    request = json.loads(done.stdout)
+    args = args_of(command, request.get("options") or {})
+    rest = request.get("rest")
+    if rest:
+        args.spawn = args_of(rest["command"], rest.get("options") or {},
+                             unknown=rest.get("unknown") or [])
+    return args
+
+
+def request_of(command, **options):
+    """A request of the argument set's version, for a command this adapter starts itself."""
+    return {"version": LAUNCHER_ARGS["version"], "command": command, "options": options}
 
 
 def name_shape(*words):
@@ -3696,8 +3740,8 @@ def start_home_watch(socket, tty):
         os.makedirs(os.path.dirname(home_end_marker(socket)), exist_ok=True)
         if os.path.exists(home_end_marker(socket)):
             os.remove(home_end_marker(socket))
-        subprocess.Popen([sys.executable, os.path.abspath(__file__), "home-watch", "--socket",
-                          socket, "--tty", tty], stdin=subprocess.DEVNULL,
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--request",
+                          json.dumps(request_of("home-watch", socket=socket, tty=tty))], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     except OSError as exc:
@@ -3705,13 +3749,9 @@ def start_home_watch(socket, tty):
               file=sys.stderr)
 
 
-def cmd_home_watch(argv):
+def cmd_home_watch(args):
     """Wait for the home server to end, then write its end when no launcher command did:
     run in the background by the start of a home tab, never by hand."""
-    p = argparse.ArgumentParser(prog="home-watch", add_help=False)
-    p.add_argument("--socket", default="")
-    p.add_argument("--tty", default="")
-    args, _ = p.parse_known_args(argv)
     if not args.socket:
         die("home-watch: --socket is required")
     poll = float(os.environ.get("ORCHESTRATOR_HOME_WATCH_POLL", "0.5"))
@@ -3888,17 +3928,11 @@ def close_home_tab(tty, socket, expect, listed=None):
     sys.stdout.flush()
 
 
-def cmd_takeover(argv):
+def cmd_takeover(args):
     """A successor's close of its predecessor inside their home session: the predecessor's
     window 0 killed, guarded by its name and proved on the process table and the server, then
     the successor's own window moved to index 0 without taking the operator's view; window 0
     is selected only if the operator was on it."""
-    p = argparse.ArgumentParser(prog="takeover", add_help=False)
-    p.add_argument("--tty", default="")
-    p.add_argument("--expect-title", dest="expect", default="")
-    args, unknown = p.parse_known_args(argv)
-    if unknown:
-        die("takeover: unknown option %s" % unknown[0])
     if not args.tty:
         die("takeover: --tty is required")
     if not in_home_session():
@@ -3955,20 +3989,13 @@ def cmd_takeover(argv):
     print("took window 0: the predecessor's window %s on %s was closed" % (pred.window, args.tty))
 
 
-def cmd_home(argv):
+def cmd_home(args):
     """Move a running orchestrator into a home session of its own, in its own place: a home
     server whose window 0 resumes the same conversation once the session has ended where it
     runs now, and a tab right of the caller's that shows it. Run by the hooks module at the
     end of the turn that named the session; prints `moved: <server>` (the module then ends
     the session, and window 0 closes the old tab once the session is gone) or `stay: <why>`.
     Nothing is ended here, and any failure leaves the session running where it is."""
-    p = argparse.ArgumentParser(prog="home", add_help=False)
-    p.add_argument("--session", default="")
-    p.add_argument("--name", default="")
-    p.add_argument("--prompt", default="")
-    args, unknown = p.parse_known_args(argv)
-    if unknown:
-        die("home: unknown option %s" % unknown[0])
     if not args.session:
         die("home: --session is required")
     args.name = current_name(args.name)
@@ -4065,18 +4092,12 @@ def resumed_host_running(pane_tty, session_id):
     return bool(pid)
 
 
-def cmd_home_release(argv):
+def cmd_home_release(args):
     """Close the tab a moved orchestrator left, once its resumed session is proved running:
     run by a watcher of window 0, beside the resume. Guarded by the proof (the resumed host on
     window 0's tty, or in the host's registry), by the tab's own session id, read before the
     move, and by the process table: a tab with a host still on it, or whose session is
     another's by then, is left as it is."""
-    p = argparse.ArgumentParser(prog="home-release", add_help=False)
-    p.add_argument("--tty", default="")
-    p.add_argument("--session-id", dest="session_id", default="")
-    p.add_argument("--pane-tty", dest="pane_tty", default="")
-    p.add_argument("--resumed", default="")
-    args, _ = p.parse_known_args(argv)
     if not args.tty or not args.session_id or not args.pane_tty or not args.resumed:
         die("home-release: --tty, --session-id, --pane-tty and --resumed are required")
     if host_cli_on(args.tty) is not None:
@@ -4185,7 +4206,7 @@ async def list_rows(app):
     return lines
 
 
-def cmd_list(_argv):
+def cmd_list(_args):
     chosen = terminal()
     for line in chosen.rows() or []:
         print(line)
@@ -4646,54 +4667,15 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
         "and effort are its orchestrator's to name")
 
 
-def spawn_parser():
-    """The parser of `spawn`'s options, which `rotate` reads its refusals with too."""
-    p = argparse.ArgumentParser(prog="spawn", add_help=False)
-    p.add_argument("--dir")
-    p.add_argument("--model", default="")
-    p.add_argument("--tier", default="")
-    p.add_argument("--effort", default="")
-    p.add_argument("--inherit-model", dest="inherit", action="store_true")
-    p.add_argument("--permission-mode", dest="mode", default="auto")
-    p.add_argument("--title", default="")
-    p.add_argument("--title-free", dest="title_free", action="store_true", default=False)
-    p.add_argument("--no-remote-control", dest="remote_control", action="store_false", default=True)
-    p.add_argument("--prompt", default="")
-    p.add_argument("--prompt-file", dest="prompt_file", default="")
-    p.add_argument("--brief", default="")
-    p.add_argument("--orchestrator", default="")
-    p.add_argument("--left-of", dest="left_of", default="")
-    p.add_argument("--right-of", dest="right_of", default="")
-    p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
-    p.add_argument("--trust", action="store_true", default=False)
-    p.add_argument("--successor", action="store_true", default=False)
-    p.add_argument("--auditor", action="store_true", default=False)
-    p.add_argument("--of", default="")
-    p.add_argument("--coordinator-successor", dest="coordinator_successor",
-                    action="store_true", default=False)
-    p.add_argument("--resident", action="store_true", default=False)
-    p.add_argument("--wake", action="store_true", default=False)
-    p.add_argument("--open", dest="open_", action="store_true", default=False)
-    p.add_argument("--resume", default="")
-    p.add_argument("--mcp", action="append", default=[])
-    p.add_argument("--account-connectors", dest="account_connectors",
-                    action="store_true", default=False)
-    p.add_argument("--gate-tokens", dest="gate_tokens", default=None)
-    p.add_argument("--keep-tool", dest="keep_tool", action="append", default=[])
-    p.add_argument("--drop-tool", dest="drop_tool", action="append", default=[])
-    p.add_argument("--keep-synced-skills", dest="keep_synced_skills", action="store_true",
-                   default=False)
-    return p
-
-
-def cmd_spawn(argv, pair_from="", old_tty="", made=None):
+def cmd_spawn(args, pair_from="", old_tty="", made=None):
     """`pair_from` is a rotation's: the source of the model and effort it passes on as flags,
     read on the rotated agent's transcript, so the launch says where they came from. `old_tty`
     is a rotation's too: the session it replaces, named when what follows the verification
     fails. So is `made`, filled as the terminal makes the new session, so that an interrupt
     once it exists still knows what to name. Returns `made`, what the terminal recorded of the
     new session, for `rotate` to name."""
-    args, unknown = spawn_parser().parse_known_args(argv)
+    # A rotation's spawn words its own parse kept back; a spawn's own are refused before here.
+    unknown = getattr(args, "unknown", None) or []
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
     args.title = current_name(args.title)
@@ -5380,28 +5362,11 @@ def bench_server(bench, socket, what):
     return path
 
 
-def cmd_bench_open(argv):
+def cmd_bench_open(args):
     """Open an orchestrator on a bench: its home server on a socket inside the bench, the
     orchestrator in window 0, no tab, no remote control, the plugin directories and the
     settings it is given. Prints `socket=`, `tty=` (window 0's) and `session=` (its id, which
     names its transcript); `close --bench <dir> --socket <socket>` ends it."""
-    p = argparse.ArgumentParser(prog="bench-open", add_help=False)
-    p.add_argument("--bench", default="")
-    p.add_argument("--dir", default="")
-    p.add_argument("--title", default="")
-    p.add_argument("--plugin-dir", dest="plugin_dir", action="append", default=[])
-    p.add_argument("--settings", default="")
-    p.add_argument("--prompt", default="")
-    p.add_argument("--prompt-file", dest="prompt_file", default="")
-    p.add_argument("--model", default="")
-    p.add_argument("--effort", default="")
-    p.add_argument("--permission-mode", dest="mode", default="auto")
-    p.add_argument("--mcp", action="append", default=[])
-    p.add_argument("--trust", action="store_true", default=False)
-    p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
-    args, unknown = p.parse_known_args(argv)
-    if unknown:
-        die("bench-open: unknown option %s" % unknown[0])
     bench = bench_root(args.bench, "bench-open")
     if not args.dir:
         die("bench-open: --dir is required")
@@ -5524,17 +5489,13 @@ def close_bench(args):
     sys.stdout.flush()
 
 
-def cmd_screen(argv):
+def cmd_screen(args):
     """What a tab is showing, right now.
 
     An agent that has gone quiet is inspected, not waited for — and inspecting it
     means reading what it is stopped on. The typed-command era read this through a
     scripting bridge; dropping that bridge dropped the reading with it, and the round that
     followed spent its sessions parked on a question nobody could see."""
-    p = argparse.ArgumentParser(prog="screen", add_help=False)
-    p.add_argument("--tty", dest="tty")
-    p.add_argument("--lines", type=int, default=40)
-    args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("screen: --tty is required")
 
@@ -5542,11 +5503,7 @@ def cmd_screen(argv):
         print(line)
 
 
-def cmd_verify(argv):
-    p = argparse.ArgumentParser(prog="verify", add_help=False)
-    p.add_argument("--tty", dest="tty")
-    p.add_argument("--pid", dest="pid", type=int)
-    args, _ = p.parse_known_args(argv)
+def cmd_verify(args):
     if not args.tty:
         die("verify: --tty is required")
     # A home session's tab carries only the tmux client: its host runs in window 0 of the
@@ -5794,14 +5751,7 @@ def host_words(reading):
     return "%s; %s" % (words, note) if note else words
 
 
-def cmd_close(argv):
-    p = argparse.ArgumentParser(prog="close", add_help=False)
-    p.add_argument("--tty", dest="tty")
-    p.add_argument("--expect-title", dest="expect", default=None)
-    p.add_argument("--keep-checkout", dest="keep_checkout", action="store_true", default=False)
-    p.add_argument("--bench", default="")
-    p.add_argument("--socket", default="")
-    args, _ = p.parse_known_args(argv)
+def cmd_close(args):
     if args.bench or args.socket:
         close_bench(args)
         return
@@ -5854,14 +5804,7 @@ def cmd_close(argv):
         delete_checkout(checkout)
 
 
-def cmd_move(argv):
-    p = argparse.ArgumentParser(prog="move", add_help=False)
-    p.add_argument("--tty", dest="tty")
-    p.add_argument("--left-of", dest="left_of", default="")
-    p.add_argument("--right-of", dest="right_of", default="")
-    p.add_argument("--leftmost", action="store_true", default=False)
-    p.add_argument("--force", action="store_true", default=False)
-    args, _ = p.parse_known_args(argv)
+def cmd_move(args):
     if not args.tty:
         die("move: --tty is required")
     if not args.left_of and not args.right_of and not args.leftmost:
@@ -5944,12 +5887,10 @@ def rotated_session(tty):
     return sid if isinstance(sid, str) else ""
 
 
-def cmd_pair(argv):
+def cmd_pair(_words):
     """The calling session's model and effort now, read on its transcript (read_pair):
     `model=<m> effort=<e>`, or exit 1 with the reason. Read-only: an orchestrator answers a
     pause with it, rather than declaring either."""
-    if argv:
-        die("pair: takes no argument; it reads the calling session's own transcript")
     try:
         model, effort = caller_pair(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
     except PairUnreadable as exc:
@@ -5997,12 +5938,7 @@ def close_refusals(what, tty, expect):
     return term, name, ""
 
 
-def cmd_rotate(argv):
-    p = argparse.ArgumentParser(prog="rotate", add_help=False)
-    p.add_argument("--old-tty", dest="old_tty")
-    p.add_argument("--expect-title", dest="expect", default="")
-    p.add_argument("--force", action="store_true", default=False)
-    args, rest = p.parse_known_args(argv)
+def cmd_rotate(args):
     if not args.old_tty:
         die("rotate: --old-tty is required")
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
@@ -6010,12 +5946,7 @@ def cmd_rotate(argv):
     # makes, and neither is an auditor or the coordinator's own successor. Each is read as the
     # spawn reads it, by what it sets and not by its spelling: the spawn takes a flag's prefix
     # for the flag, and a refusal by exact words let --no-ver through as --no-verify.
-    try:
-        asked, _ = quietly(lambda: spawn_parser().parse_known_args(rest))
-    except Unread as exc:
-        why = str(exc)
-        why = why[len("spawn: error: "):] if why.startswith("spawn: error: ") else why
-        die("rotate: refused: the spawn's options cannot be read (%s): nothing was spawned" % why)
+    asked = args.spawn
     for flag, taken in (("--successor", asked.successor), ("--auditor", asked.auditor),
                         ("--coordinator-successor", asked.coordinator_successor),
                         ("--wake", asked.wake), ("--open", asked.open_),
@@ -6064,15 +5995,14 @@ def cmd_rotate(argv):
     # orchestrator may have escalated since. A tier, or a model with its effort, is the
     # orchestrator naming the pair, and the spawn types it as named.
     pair_from = ""
-    named = ("--tier", "--model", "--effort", "--inherit-model")
-    if not any(word.partition("=")[0] in named for word in rest):
+    if not (asked.tier or asked.model or asked.effort or asked.inherit):
         sid = rotated_session(args.old_tty)
         try:
             model, effort, path = read_pair(sid)
         except PairUnreadable as exc:
             die("rotate: refused: the agent on %s runs on a model and an effort that cannot be "
                 "read (%s); pass --tier, or --model with --effort" % (args.old_tty, exc))
-        rest = rest + ["--model", model, "--effort", effort]
+        asked.model, asked.effort = model, effort
         pair_from = "transcript %s" % path
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
@@ -6088,7 +6018,7 @@ def cmd_rotate(argv):
         try:
             try:
                 try:
-                    made = cmd_spawn(rest, pair_from, args.old_tty, made=spawned)
+                    made = cmd_spawn(asked, pair_from, args.old_tty, made=spawned)
                 except AfterSpawn as exc:
                     made, after = {"tty": exc.tty}, exc
                 except (Exception, SystemExit) as exc:
@@ -6521,11 +6451,11 @@ def finish_rotation(made, old, after):
             "host read before the spawn has ended" % tty))
     # The replacement works in the same checkout: a rotation deletes nothing. A session whose
     # identity was never read is closed only while its title holds the one it had.
-    close_args = ["--tty", tty, "--keep-checkout"]
+    close_args = args_of("close", tty=tty, keep_checkout=True)
     if old["expect"]:
-        close_args += ["--expect-title", old["expect"]]
+        close_args.expect = old["expect"]
     elif old["title"] and not (old["window"] or old["session"]) and not DRY_RUN:
-        close_args += ["--expect-title", old["title"]]
+        close_args.expect = old["title"]
     old["closing"] = True
     try:
         cmd_close(close_args)
@@ -6735,10 +6665,8 @@ def old_host(old):
             "with kill %s" % (host[0], old["tty"], host[0]))
 
 
-def cmd_resolve_tier(argv):
-    if len(argv) != 1:
-        die("resolve-tier: exactly one tier is required (deep, standard or light)")
-    print(resolve_tier(argv[0]))
+def cmd_resolve_tier(words):
+    print(resolve_tier(words[0]))
 
 
 def transcript_of_session(sid):
@@ -6848,15 +6776,10 @@ def tool_rows(offered, catalogue):
     return rows
 
 
-def cmd_tools(argv):
+def cmd_tools(args):
     """`tools [--transcript <path>]`: what a session on this machine is given and what each
     item costs on every call, read from a transcript and nothing launched (§65). By default
     the caller's own, found through the session id the host sets in its environment."""
-    p = argparse.ArgumentParser(prog="tools", add_help=False)
-    p.add_argument("--transcript", default="")
-    args, unknown = p.parse_known_args(argv)
-    if unknown:
-        die("tools: unknown option %s" % unknown[0])
     path = args.transcript
     if not path:
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -6873,18 +6796,14 @@ def cmd_tools(argv):
         print(line)
 
 
-def cmd_trust(argv):
+def cmd_trust(args):
     """`trust prune [--apply]`: the record's entries whose directory no longer exists.
 
     A trust entry outlives its directory, and a checkout per phase adds one per dispatch,
     so the record only grows. An entry for a directory that is gone holds nothing the host
     can use. Listing is the default; only --apply writes, with the same temporary file,
     replace and owner-only mode as the writer that made the entries."""
-    p = argparse.ArgumentParser(prog="trust", add_help=False)
-    p.add_argument("action", nargs="?", default="")
-    p.add_argument("--apply", action="store_true", default=False)
-    args, unknown = p.parse_known_args(argv)
-    if unknown or args.action != "prune":
+    if args.action != "prune":
         die("trust: usage: trust prune [--apply]")
     try:
         with open(TRUST_FILE) as fh:
@@ -6919,9 +6838,29 @@ COMMANDS = {
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|pair|close|move|rotate|trust|tools|home|home-release|takeover|bench-open} [options] (see header)")
-    COMMANDS[sys.argv[1]](sys.argv[2:])
+    """The adapter's one way in: the request the launcher's entry (launcher.ts) read from the
+    command line by core's argument set, as `--request <json>`."""
+    if len(sys.argv) != 3 or sys.argv[1] != "--request":
+        die(LAUNCHER_ARGS["usage"])
+    try:
+        request = json.loads(sys.argv[2])
+    except ValueError as exc:
+        die("the launcher's request does not read as JSON: %s" % exc)
+    if not isinstance(request, dict) or request.get("version") != LAUNCHER_ARGS["version"]:
+        die("the launcher's request is not of version %s of its argument set"
+            % LAUNCHER_ARGS["version"])
+    command = request.get("command")
+    if command not in COMMANDS:
+        die(LAUNCHER_ARGS["usage"])
+    if "words" in request:
+        COMMANDS[command](request["words"])
+        return
+    args = args_of(command, request.get("options") or {})
+    rest = request.get("rest")
+    if rest:
+        args.spawn = args_of(rest["command"], rest.get("options") or {},
+                             unknown=rest.get("unknown") or [])
+    COMMANDS[command](args)
 
 
 if __name__ == "__main__":
