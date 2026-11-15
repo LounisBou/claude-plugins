@@ -51,6 +51,15 @@ export function refusalEvent(stamp: Stamp, code: string): Built[] {
   return event === undefined ? [] : [event]
 }
 
+/*
+ * A guard that observes instead of refusing: the call it once refused went through. One version 1
+ * escape, its code as its source, the refusal it would have answered as its evidence.
+ */
+export function observedEvent(stamp: Stamp, code: string): Built[] {
+  const event = learningEvent({ ...input(stamp, code, { evidence: [{ type: 'refusal', code }] }), kind: 'escape' })
+  return event === undefined ? [] : [event]
+}
+
 /** A repository the contract takes, lower-cased as the forge reads it; null for anything else. */
 function repoOf(value: unknown): string | null {
   return typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.trim()) ? value.trim().toLowerCase() : null

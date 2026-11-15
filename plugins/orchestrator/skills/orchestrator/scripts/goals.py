@@ -20,8 +20,8 @@ goals had been moved « after the build » by the plan itself. Nothing measured 
 the spec, because the spec's goals lived nowhere a command could read. They live here now,
 once, with their status: `open`, `met` (with evidence a local read can verify) or
 `ruled-out` (with the operator's own words), or `deferred` (open work the operator put off,
-with his words: the goal stays unmet, and the stop gate takes the ending `waiting: deferred`). The stop gate refuses `waiting: done` while a
-goal is open or a row does not hold.
+with his words: the goal stays unmet, and the stop gate takes the ending `waiting: deferred`). The stop gate observes `waiting: done` while a
+goal is open or a row does not hold: the stop passes, the gate logs it.
 
 The file is Markdown: a header (`spec:`, `repo:`, `aim:`), then one table row per goal,
 `| id | status | goal | plan | evidence or ruling |`. A literal `|` in a cell is written `\\|`.

@@ -30,6 +30,7 @@ import { moduleDirOf } from './module-log.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
+import { END_TODO_OPEN_CODE, observed } from './observe.ts'
 import { openFor, todoCounts, whoAmI } from './todo.ts'
 import { todoFile, todoName } from './todo-format.ts'
 
@@ -371,9 +372,8 @@ export function register(on: On<Held>): void {
   }
 }
 
-// /coordinator-end, held while the coordinator's list holds an item neither closed nor put off: the
-// module answers the refusal with the items, and any other run (another session, an empty list) goes
-// on as the markdown command says. Registered apart from the answers above, which it is not.
+// /coordinator-end, observed while the coordinator's list holds an item neither closed nor put off: the
+// items go to the log, one escape to the journal, and every run goes on as the markdown command says. Registered apart from the answers above, which it is not.
 export function registerEnd(on: On<Held>): void {
   for (const command of commandForms('coordinator-end', 'coordinator-end')) {
     on('command.run', { command }, async ($, e, next) => {
@@ -382,8 +382,10 @@ export function registerEnd(on: On<Held>): void {
       if (me === null || me.role !== 'coordinator') return next(e)
       const { pending } = await openFor($, me.name)
       if (pending.length === 0) return next(e)
-      return { text: [`Not ended: ${pending.length} to-do ${pending.length === 1 ? 'is' : 'are'} open in this list.`, ...pending.map(item => `  ${todoName(item)}: « ${item.words} » (said ${item.said_at})`),
-        'Do each (todo done, with its outcome), hand it on (todo add … to <session>, then todo done naming it), or record his ruling that puts it off (todo defer); then run the command again.'].join('\n') }
+      // Observed, not refused: the coordinator ends, the open items said in the log, one escape in the journal.
+      await logLine($, 'commands', `coordinator-end let through with ${pending.length} to-do open: ${pending.map(todoName).join(', ')}`)
+      await observed($, END_TODO_OPEN_CODE)
+      return next(e)
     }).catch(fallBack)
   }
 }
