@@ -17,10 +17,9 @@ import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, parseAsk as parseOldAsk, ackLine as oldAckLine, askLine as oldAskLine, parseAck as parseOldAck, parseAnswer as parseOldAnswer } from '../remote-round.ts'
+import { Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf } from '../remote-round.ts'
 
-// The lines this release writes between machines: the event line (remote-round.ts), read back here
-// as the four lines it replaced, so each case below says what it said of them.
+// The lines written between machines: the event line (remote-round.ts) and its acknowledgment.
 const askLine = qAskLine
 const ackLine = (id: string, since: string) => qAckLine({ id, seq: seqOf(since), of: 'ask' })
 const isAskLine = (text: string) => parseQ(text)?.event.kind === 'ask'
@@ -1029,7 +1028,7 @@ test('a remote wait becomes an entry on the coordinator\'s machine, and is acked
   expect(typeof consumed.consumed).toBe('string')
   const entry = only(entries(coordinator))
   expect(entries(coordinator).length).toBe(1)
-  expect(entry).toEqual({ ...asked, at: entry.at, origin: { machine: 'unknown', address: SENDER_AT, line: 'q' } })
+  expect(entry).toEqual({ ...asked, at: entry.at, origin: { machine: 'unknown', address: SENDER_AT } })
   expect(coordinator.files.has(`${ROUND}/${asked.id}.json`)).toBe(true)
   expect(acks(coordinator)).toEqual([{ to: SENDER_AT, text: ackLine(asked.id, since) }])
 })
@@ -1094,7 +1093,7 @@ test('an ask reaching a session that is not the coordinator is consumed and ente
   expect(elsewhere.logged.filter(l => l.includes('| receive: a remote question reached a session that is no coordinator')).length).toBe(1)
   // A line that fails the check is consumed the same, in the coordinator's own session too.
   const coordinator = coordinatorMachine()
-  const refused = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', `${OLD_ASK_MARKER}{"id":1}`))
+  const refused = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', `${Q_MARKER}{"id":1}`))
   expect(typeof refused.consumed).toBe('string')
   expect([entries(coordinator), coordinator.sent]).toEqual([[], []])
 })
@@ -1243,92 +1242,47 @@ test('the notice of a question settled in the tab carries his words on one line,
   expect(withdrawalText('Orch: belt', 'phase 3', 'T')).not.toContain('typed')
 })
 
-// --- an older machine's lines, still read and answered in its own line; crossing answers --------
+// --- the event line alone between machines -----------------------------------------------------
 
-// Until the old lines retire, the sender writes its ask in both: the event line, then the old ask
-// line beside it, for a coordinator of an older release, which reads the old line alone.
-const oldAsks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseOldAsk(s.text) !== null)
-
-test('the ask goes in the event line and in the old ask line beside it, the same entry in both', async () => {
-  const chains = mounted()
-  const sender = fake({ remote: true })
-  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
-  expect([asks(sender).length, oldAsks(sender).length]).toEqual([1, 1])
-  const q = only(asks(sender))
-  const old = only(oldAsks(sender))
-  expect(sender.sent.indexOf(q)).toBeLessThan(sender.sent.indexOf(old))
-  expect(old.to).toBe(q.to)
-  expect(parseOldAsk(old.text)).toEqual(parseAsk(q.text))
-})
-
-test('a coordinator of an older release enters the ask from its old line, and its old acknowledgment clears the pending ask', async () => {
+test('the ask goes by the event line alone, and an old line from another machine is entered nowhere', async () => {
   const chains = mounted()
   const sender = fake({ remote: true })
   const coordinator = coordinatorMachine()
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
-  const asked = parseOldAsk(only(oldAsks(sender)).text)!.entry
-  // An older coordinator has no event branch: the old line is the one it enters.
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(oldAsks(sender)).text))
-  const entry = only(entries(coordinator))
-  expect([entries(coordinator).length, entry.id, entry.origin]).toEqual([1, asked.id, { machine: 'unknown', address: SENDER_AT }])
-  const ack = only(coordinator.sent.filter(s => s.to === SENDER_AT))
-  expect(ack.text).toBe(oldAckLine(asked.id, asked.since))
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ack.text))
-  expect([waitOf(sender).pending, waitOf(sender).relayed_id]).toEqual([null, asked.id])
+  const q = only(asks(sender))
+  expect(sender.sent.filter(s => s.text.startsWith('[module-') && !s.text.startsWith('[module-row] ')).map(s => s.text)).toEqual([q.text])
+  // The entry's old ask line ([module-ask]) is no line this module reads: nothing entered, nothing acknowledged.
+  const old = `[module-ask] ${JSON.stringify(askObject(q.text))}`
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', old))
+  expect([entries(coordinator), coordinator.sent]).toEqual([[], []])
+  // Nor is an old acknowledgment: the ask stays pending until its event line's.
+  const pending = waitOf(sender).pending
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', `[module-ack] {"id":"${pending}","since":"${waitOf(sender).waiting_since}"}`))
+  expect([waitOf(sender).pending, waitOf(sender).relayed_id ?? null]).toEqual([pending, null])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(pending, waitOf(sender).waiting_since)))
+  expect([waitOf(sender).pending, waitOf(sender).relayed_id]).toEqual([null, pending])
 })
 
-// An older machine's question, asked by its machine line: this release enters none, whichever
-// line carries it. It is refused, logged, and answered by that line, so its sender is told to
-// ask it with ask, its wait cleared there, never acknowledged as entered.
-for (const line of ['event', 'old'] as const) {
-  test(`an operator question from an older machine (${line} line) is entered nowhere, logged, and answered to its sender to ask it again`, async () => {
-    const chains = mounted()
-    const coordinator = coordinatorMachine()
-    const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:01.000Z')
-    const text = line === 'event' ? qAskLine(asked, 'm-old') : oldAskLine(asked, 'm-old')
-    const result = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', text))
-    expect(typeof result.consumed).toBe('string')
-    expect(result.text).toBeUndefined()
-    expect(entries(coordinator)).toEqual([])
-    expect(coordinator.logged.filter(l => l.endsWith(`| receive: an operator question from m-old refused, its release asks by its machine line: ${asked.id}`)).length).toBe(1)
-    const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT)
-    expect(sentBack.length).toBe(1)
-    expect(parseQAck(only(sentBack).text)).toBeNull()
-    expect(parseOldAck(only(sentBack).text)).toBeNull()
-    const answer = line === 'event' ? (() => { const q = parseQ(only(sentBack).text); return q?.event.kind === 'answer' ? { id: q.id, ...q.event } : null })() : parseOldAnswer(only(sentBack).text)
-    expect([answer?.id, answer?.since]).toEqual([asked.id, asked.since])
-    expect(answer?.readable).toContain('Ask it again with the ask tool.')
-  })
-}
-
-for (const first of ['event', 'old'] as const) {
-  test(`this release's coordinator enters the ask from the first of its two lines (${first}), acks that one, and ignores the duplicate by its id and start`, async () => {
-    const chains = mounted()
-    const sender = fake({ remote: true })
-    const coordinator = coordinatorMachine()
-    await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
-    const q = only(asks(sender))
-    const old = only(oldAsks(sender))
-    const [one, two] = first === 'event' ? [q, old] : [old, q]
-    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
-    const entry = only(entries(coordinator))
-    const path = `${ROUND}/${entry.id}.json`
-    // A mark only the first writing carries: a second writing would erase it.
-    coordinator.files.set(path, JSON.stringify({ ...entry, marked: true }) + '\n')
-    const ignored = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
-    expect(typeof ignored.consumed).toBe('string')
-    expect(ignored.text).toBeUndefined()
-    expect(entries(coordinator).length).toBe(1)
-    expect((JSON.parse(coordinator.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
-    expect(entry.origin).toEqual({ machine: 'unknown', address: SENDER_AT, ...(first === 'event' ? { line: 'q' } : {}) })
-    const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)
-    expect(sentBack).toEqual([first === 'event' ? ackLine(entry.id, entry.since) : oldAckLine(entry.id, entry.since)])
-    // The same pair sent again, its acknowledgment lost: the line the entry came by is acked again, the other still ignored.
-    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
-    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
-    expect(coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)).toEqual([only(sentBack), only(sentBack)])
-  })
-}
+// An older machine's question, asked by its machine line: this release enters none. It is
+// refused, logged, and answered by the event line, so its sender is told to ask it with ask, its
+// wait cleared there, never acknowledged as entered.
+test('an operator question from an older machine is entered nowhere, logged, and answered to its sender to ask it again', async () => {
+  const chains = mounted()
+  const coordinator = coordinatorMachine()
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:01.000Z')
+  const result = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', qAskLine(asked, 'm-old')))
+  expect(typeof result.consumed).toBe('string')
+  expect(result.text).toBeUndefined()
+  expect(entries(coordinator)).toEqual([])
+  expect(coordinator.logged.filter(l => l.endsWith(`| receive: an operator question from m-old refused, its release asks by its machine line: ${asked.id}`)).length).toBe(1)
+  const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT)
+  expect(sentBack.length).toBe(1)
+  expect(parseQAck(only(sentBack).text)).toBeNull()
+  const q = parseQ(only(sentBack).text)
+  const answer = q?.event.kind === 'answer' ? { id: q.id, ...q.event } : null
+  expect([answer?.id, answer?.since]).toEqual([asked.id, asked.since])
+  expect(answer?.readable).toContain('Ask it again with the ask tool.')
+})
 
 // --- a question asked with ask, its coordinator on another machine (remote-asked.ts) ------------
 
