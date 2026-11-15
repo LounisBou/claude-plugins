@@ -246,11 +246,15 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 **norms**
 - `hooks/record.ts:71-104`: the pass is computed from figures the model passes in; `:35-39` stores the scope's head and never compares it at `check_done`.
   **Partly** (#28, #77, #181): the head is compared and later commits may touch only the files the check
-  read; the figures the model passes must account once for each finding its agents reported, and the pass is still `open === 0` over them.
+  read; the figures the model passes must account once for each finding its agents reported, and the pass is still `open === 0` over them
+  (`hooks/record.ts:268`). **Open: a choice.** The check keeps the model's word on which findings it fixed, with one round of agents as today; or the
+  agents run again after the fixes and the pass is what they still report, a second round of agents for each check that fixed something.
 - `hooks/guards.ts:50`: `/\bpush/i` on the last prompt grants a push (« don't push » included). **Fixed** (#28): the host's dialog.
 - The agents declared « read-only » carry `Bash`. **Fixed** (#28) by a guard on their shell.
 - `hooks/check.ts:83` couples to `ORCHESTRATOR_SPAWNED`; `scripts/resolve_base.sh:31` calls raw `gh`. **Fixed** (#28).
-- Suspected: `/norms:learn` writes reviewer text into project rules, an injection path. **Open**: not read yet.
+- Suspected: `/norms:learn` writes reviewer text into project rules, an injection path. **Dropped**: the threads reach the model fenced and named as
+  data (`hooks/learn.ts:56-73`), the rule proposed is the model's own sentence, and none is written to `CONTRIBUTING.md` before the person has read it
+  and said « add », one rule at a time (`commands/learn.md:15-16,119`).
 
 **pr-review**
 - `hooks/loop.ts:57-63`: `start` then `findings {keys: []}` records a clean pass with no review run and no pinned head. **Fixed** (#18).
