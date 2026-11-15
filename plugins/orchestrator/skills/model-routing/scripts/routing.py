@@ -212,15 +212,13 @@ def cmd_cost(argv):
 
 
 # The size rule and the trials a rung needs, read by `pick`.
-MIN_TRIALS = 6  # graded trials a pair needs in a class, record rows only
+MIN_TRIALS = 6
 SMALL_FILES = 3
 SMALL_LINES = 50
 
 
 def size_bucket(files, lines):
-    """The bucket of a piece of work: `small` at most SMALL_FILES files and SMALL_LINES lines,
-    `large` beyond. The one rule a measured task and a phase given to `pick` are both read by.
-    """
+    """The bucket of a phase: `small` at most SMALL_FILES files and SMALL_LINES lines, `large` beyond."""
     return "small" if files <= SMALL_FILES and lines <= SMALL_LINES else "large"
 
 
@@ -234,11 +232,11 @@ CLASS_TIERS = {
     "review-collector": "standard", "comments": "standard", "review-lens": "standard",
     "search": "light",
 }
-# Work nothing downstream re-checks: never explored online, held offline to a pair that never failed.
+# Work nothing downstream re-checks: never explored.
 NEVER_EXPLORED = {"orchestrator", "successor", "decision-round", "contract-phase", "final-verification"}
 EXPLORE_AFTER = 3
 # A class's former name, still read wherever data written under it lives: the dispatch record's
-# rows, the trials, the tables (a table holding both keys reads the current one), the command line.
+# rows, the tables (a table holding both keys reads the current one), the command line.
 FORMER_CLASSES = {"n-bis": "corrective"}
 
 
