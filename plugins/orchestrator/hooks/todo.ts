@@ -11,7 +11,8 @@ import {
   addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
-import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf } from './supervision.ts'
+import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
+import { roleOf } from './session-name.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -28,11 +29,38 @@ type Answer = { result: string; isError?: true }
 
 const refuse = (result: string): Answer => ({ result, isError: true })
 
-// The session itself: its name and role, from the row the module keeps for it. Null when the name is
-// not known yet or the session keeps no list.
+// The sessions whose own walk found no keeper's name, by session id and the instant of the walk: a
+// session that is none (an operator's, an agent's with no row yet) is not walked again at every call.
+const UNNAMED_FOR_MS = 60_000
+const unnamed = new Map<string, number>()
+
+// The session itself: its name and role, from the row the module keeps for it, else from its own
+// walk. The row is written when a turn ends (session.measure), so a session in its first turn has
+// none, a woken orchestrator's first turn included, and a row written while the walk did not finish
+// carries no name: the name the host already holds for the session (its record, its launch title)
+// answers then. A row that names a role other than a keeper's is an agent's: no walk. Null when the
+// name is not known or the session keeps no list.
 export async function whoAmI($: Held): Promise<{ name: string; role: string } | null> {
-  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(await $.session.id())}`).catch(() => '')))
-  return row?.name && row.role && KEEPERS.includes(row.role) ? { name: row.name, role: row.role } : null
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (row?.name && row.role) return KEEPERS.includes(row.role) ? { name: row.name, role: row.role } : null
+  const seen = unnamed.get(sessionId)
+  if (seen !== undefined && Date.now() - seen < UNNAMED_FOR_MS) return null
+  let walked: { known: boolean; name: string | null }
+  try {
+    walked = await walkedName($, sessionId)
+  } catch (err) {
+    await logLine($, 'todo', `own name not walked: ${messageOf(err)}`)
+    return null
+  }
+  if (!walked.known) {
+    await logLine($, 'todo', 'own name not walked: the walk did not finish, so the name stays unknown')
+    return null
+  }
+  const role = roleOf(walked.name)
+  if (walked.name && role && KEEPERS.includes(role)) return { name: walked.name, role }
+  unnamed.set(sessionId, Date.now())
+  return null
 }
 
 /** The items a holder's list keeps, open or closed; none when there is no list. */
@@ -157,7 +185,7 @@ export async function callTodo($: Held, e: Record<string, unknown>, now: Date = 
   const action = ACTIONS.find(known => known === e['action'])
   if (action === undefined) return refuse(`action is one of ${ACTIONS.join(', ')}.`)
   const me = await whoAmI($)
-  if (me === null) return refuse("Only an orchestrator, a coordinator or an auditor keeps a to-do list, once its name is known (after its first turn).")
+  if (me === null) return refuse("Only an orchestrator, a coordinator or an auditor keeps a to-do list, once the host names it.")
   if (action === 'add') return add($, me, e, now)
   if (action === 'list') {
     const open = openTodos(await readTodos($, me.name))
