@@ -5,7 +5,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { EXEMPT_REFUSAL, register } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { parseLearningEvent } from '../core/learning.ts'
-import { CONSENT_GRANT, CONSENT_REFUSE, consentRecordOf } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
 // The writing rules read this file of the plugin, which no scenario below is about.
@@ -2394,21 +2394,8 @@ const exemptCall = (exempt: boolean, detail: string, over: Record<string, unknow
   ({ tool: 'mcp__github__record', repo: 'acme/thing', exempt, detail, ...over }) as any
 const exemptionOf = (seen: Seen) => JSON.parse(seen.files[EXEMPTION])
 const HIS_EXEMPTION = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
-const answeredExemption = (answer: string) => consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer })
-// The operator's answers to round questions asking an exemption of acme/thing, one record each.
-const exemptionWorld = (...answers: string[]) => consentWorld(Object.fromEntries(answers.map((answer, i) => ['a' + i, answeredExemption(answer)])))
-
-test('words the operator typed are no consent: with no consent record they exempt nothing', async ($, on) => {
+test('the operator\'s quoted, dated words exempt a repository through the record tool, with its rules, and revoke it: no consent record is read', async ($, on) => {
   const seen = await world($, on)
-  await typed($, HIS_EXEMPTION)
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(out.deny).toContain('declare_wait\'s consent_kind "e2e-exemption" and consent_repo "')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('the operator\'s recorded answer exempts a repository through the record tool, with its rules, and revokes it', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
   const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
   expect(set.deny).toBeUndefined()
   expect(set.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/')
@@ -2417,39 +2404,18 @@ test('the operator\'s recorded answer exempts a repository through the record to
   expect(revoke.result).toBe('github: acme/thing no longer exempt from E2E')
   expect(exemptionOf(seen)).toMatchObject({ exempt: false, paths: [], labels: [] })
   expect(recordRun(seen)).toBeUndefined()
+  expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
 test('an exemption with no rule covers every pull request of the repository', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+  const seen = await world($, on)
   const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
   expect(set.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
   expect(exemptionOf(seen).exempt).toBe(true)
 })
 
-test('an exemption may quote the operator\'s answer in a consent record of the repository\'s exemption, not of a waiver', async ($, on) => {
-  const words = 'exempt thing from E2E, 2026-11-13'
-  const seen = await world($, on, exemptionWorld(words))
-  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + words))
-  expect(out.deny).toBeUndefined()
-  expect(exemptionOf(seen).exempt).toBe(true)
-})
-
-test('a consent record of a waiver of one pull request does not exempt the repository', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent() }))
-  const out: any = await $.tool.call(exemptCall(true, CONSENT_WORDS))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('the operator\'s answer exempts a repository with no date in it', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('plus de dérogation E2E sur thing'))
-  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur thing'))
-  expect(undated.deny).toBeUndefined()
-  expect(exemptionOf(seen).exempt).toBe(true)
-})
-
-test('an exemption is refused without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+test('an exemption is refused without a repository or with rules that are not lists of names', async ($, on) => {
+  const seen = await world($, on)
   const unnamed: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { repo: 'thing' }))
   expect(unnamed.deny).toContain('{"repo": "owner/name"}')
   const ruled: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: 'docs/' }))
@@ -2457,68 +2423,22 @@ test('an exemption is refused without a repository, with rules that are not list
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
-test('the repository named outside the operator\'s quoted answer does not count', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('plus de dérogation E2E pour docs/', 'plus de dérogation E2E sur thing pour docs/'))
-  const outside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E pour docs/ » — operator about acme/thing', { paths: ['docs/'] }))
-  expect(outside.deny).toContain('an E2E exemption quotes the operator')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const inside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E sur thing pour docs/ » — operator', { paths: ['docs/'] }))
-  expect(inside.deny).toBeUndefined()
-})
-
-// The operator's answer to a question stating the expiry, in a consent record the question of which says it.
-const untilWorld = (question: string, answer = HIS_EXEMPTION) =>
-  consentWorld({ a: consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, question, answer }) })
-
-test('an exemption with an expiry is written with it when the question the operator answered states it', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + AHEAD + '?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'], until: AHEAD }))
-  expect(out.deny).toBeUndefined()
-  expect(out.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/ until ' + AHEAD)
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, until: AHEAD, detail: HIS_EXEMPTION })
-})
-
 test('an exemption with no expiry is written as before, with no until in the file', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+  const seen = await world($, on)
   const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
   expect(out.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
   expect(exemptionOf(seen)).not.toHaveProperty('until')
 })
 
-test('an expiry the operator\'s question did not state is refused', async ($, on) => {
+test('an exemption with a limit rests on the operator\'s quoted, dated words, with no consent record', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until 2026-11-03T18:00:00Z?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: AHEAD }))
-  expect(out.deny).toContain('to a question that states its expiry ' + AHEAD)
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('an exemption with no expiry is refused to an answer whose question stated one', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + AHEAD + '?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
-  expect(out.deny).toContain('to a question that names no limit')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-for (const question of ['Exempt thing from E2E jusqu\'à ce soir?', 'Exempt thing from E2E, valid 16/11 12h Paris?', 'Exempt thing from E2E for today only, expires 18h?']) {
-  test('an exemption with no expiry is refused to an answer whose question limits it in words: ' + question, async ($, on) => {
-    mock.clock(on, { now: RECEIVED })
-    const seen = await world($, on, untilWorld(question))
-    const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
-    expect(out.deny).toContain('to a question that names no limit')
-    expect(seen.files[EXEMPTION]).toBeUndefined()
-  })
-}
-
-test('an expiry is refused to an answer whose question states none', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: AHEAD }))
-  expect(out.deny).toContain('to a question that states its expiry ' + AHEAD)
-  expect(seen.files[EXEMPTION]).toBeUndefined()
+  const seen = await world($, on)
+  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'], until: AHEAD }))
+  expect(out.deny).toBeUndefined()
+  expect(out.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/ until ' + AHEAD)
+  expect(exemptionOf(seen)).toMatchObject({ exempt: true, until: AHEAD, detail: HIS_EXEMPTION })
+  expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
 // The operator's case at the gate: until 2026-11-16T11:00:00Z (Paris noon), it excuses E2E before that instant and nothing at it.
@@ -2542,42 +2462,22 @@ for (const [label, now, covered] of [
   })
 }
 
-// The operator's own answer, as relayed, to a question asking the exemption until the Paris noon of 2026-11-16 (11:00 UTC).
-test('the operator\'s answer « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris » is quoted for an exemption until 11:00 UTC, the instant its question states', async ($, on) => {
+// The operator's own sentence, quoted with its date: the exemption until the Paris noon of 2026-11-16 (11:00 UTC).
+test('the operator\'s sentence « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris », quoted and dated, exempts a repository until 11:00 UTC', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
   const repo = 'geonativefr/geo-git-flow'
   const until = '2026-11-16T11:00:00Z'
-  const words = 'Accorder la dispense de geo-git-flow et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris !'
-  const seen = await world($, on, consentWorld({
-    a: consent({ subject: { kind: 'e2e-exemption', repo }, question: 'Exempt ' + repo + ' from E2E until ' + until + ' (16/11/2026 12h00, Paris)?', answer: words }),
-  }, '/cfg/consents/' + repo))
-  const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', { repo, until }))
+  const words = '« Accorder la dispense de geo-git-flow et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris ! » — operator, 2026-11-15T08:06:00Z'
+  const seen = await world($, on)
+  const out: any = await $.tool.call(exemptCall(true, words, { repo, until }))
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
-  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until, detail: '« ' + words + ' » — operator' })
-})
-
-// The record core writes from the operator's answer relayed by the coordinator (consentRecordOf, as the orchestrator's settle calls it), read by the record tool.
-test('the record core writes from the operator\'s sentence exempts a repository until 11:00 UTC, the instant its question states', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const repo = 'acme/thing'
-  const until = '2026-11-16T11:00:00Z'
-  const words = "Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
-  const record = consentRecordOf({
-    subject: { kind: 'e2e-exemption', repo }, entry: 'q-a', question: 'Exempt ' + repo + ' from E2E until ' + until + '?', answer: words,
-    choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], by: 'coordinator', at: '2026-11-03T10:00:00Z',
-  })
-  expect(record?.answer).toBe(words)
-  const seen = await world($, on, consentWorld({ a: record }, '/cfg/consents/' + repo))
-  const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', { repo, until }))
-  expect(out.deny).toBeUndefined()
-  expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
-  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until })
+  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until, detail: words })
 })
 
 test('an expiry that is past, unreadable or given to a revocation is refused', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + BEHIND + ', tomorrow, 2026-02-31T00:00:00Z?'))
+  const seen = await world($, on)
   const past: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: BEHIND }))
   expect(past.deny).toContain('already past')
   const now: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: '2026-11-02T12:00:00Z' }))
@@ -2591,75 +2491,26 @@ test('an expiry that is past, unreadable or given to a revocation is refused', a
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
-test('each rule of an exemption is in the operator\'s answer as given', async ($, on) => {
-  const words = 'plus de dérogation E2E sur thing, 2026-11-13'
-  const given = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
-  const seen = await world($, on, exemptionWorld(words, given))
-  for (const rule of [{ paths: ['docs/'] }, { labels: ['no-e2e'] }]) {
-    const out: any = await $.tool.call(exemptCall(true, words, rule))
-    expect(out.deny, JSON.stringify(rule)).toContain('each rule as given')
-  }
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const quoted: any = await $.tool.call(exemptCall(true, given, { paths: ['docs/'], labels: ['no-e2e'] }))
-  expect(quoted.deny).toBeUndefined()
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'], labels: ['no-e2e'] })
-})
-
-test('a rule found only inside a longer word of the operator\'s answer is not given', async ($, on) => {
-  const cases = [
-    ['plus de dérogation E2E sur thing pour src/docs/, 2026-11-13', { paths: ['docs/'] }],
-    ['plus de dérogation E2E sur thing pour docs/api, 2026-11-13', { paths: ['docs/'] }],
-    ['plus de dérogation E2E sur thing avec no-e2e, 2026-11-13', { labels: ['e2e'] }],
-    ['plus de dérogation E2E sur thing avec e2e-skip, 2026-11-13', { labels: ['e2e'] }],
-  ] as const
-  const whole = 'plus de dérogation E2E sur thing pour docs/, avec e2e. 2026-11-13'
-  const seen = await world($, on, exemptionWorld(...cases.map(([words]) => words), whole))
-  for (const [words, rule] of cases) {
-    const out: any = await $.tool.call(exemptCall(true, words, rule))
-    expect(out.deny, words).toContain('each rule as given')
-  }
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const given: any = await $.tool.call(exemptCall(true, whole, { paths: ['docs/'], labels: ['e2e'] }))
-  expect(given.deny).toBeUndefined()
-})
-
-for (const [answer, rule] of [
-  ['lance les tests du dépôt, 2026-11-13', {}],
-  ['lance les tests de thing, 2026-11-13', {}],
-  ['plus de dérogation E2E sur ce dépôt, 2026-11-13', {}],
-  ['exempt thing from E2E, 2026-11-13', { paths: ['docs/'] }],
-  ['exempt thing from E2E for no-e2e, 2026-11-13', { labels: ['e2e'] }],
-] as const) {
-  test('a consent answer that grants no exemption, names no repository or misses a rule exempts nothing: ' + answer + ' ' + JSON.stringify(rule), async ($, on) => {
-    const seen = await world($, on, exemptionWorld(answer))
-    const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + answer + ' — on acme/thing, exempt, docs/ e2e', rule))
-    expect(out.deny).toContain('an E2E exemption quotes the operator')
-    expect(seen.files[EXEMPTION]).toBeUndefined()
+// What «quoted with its date» means for an exemption and for a waiver: words, and a date.
+const UNQUOTED: Array<[string, string]> = [
+  ['an empty detail', ''],
+  ['a blank detail', '   \n '],
+  ['words with no date', 'plus de dérogation E2E sur thing'],
+  ['a date with no words', '2026-11-13'],
+  ['a date with a few characters', 'ok, 2026-11-13T10:00:00Z'],
+  ['a detail past the record\'s limit', 'plus de dérogation E2E sur thing, 2026-11-13 ' + 'x'.repeat(500)],
+]
+for (const [why, detail] of UNQUOTED) {
+  test('an exemption is refused with ' + why + ', and a revocation too: nothing is written', async ($, on) => {
+    const seen = await world($, on, { exemption: EXEMPT })
+    const set: any = await $.tool.call(exemptCall(true, detail, { repo: 'acme/other' }))
+    expect(set.deny).toContain('an E2E exemption rests on the operator\'s words, quoted in "detail" with their date')
+    const revoke: any = await $.tool.call(exemptCall(false, detail))
+    expect(revoke.deny).toContain('rests on the operator\'s words, quoted in "detail" with their date')
+    expect(seen.files['/data/e2e-exempt/acme/other.json']).toBeUndefined()
+    expect(exemptionOf(seen).exempt).toBe(true)
   })
 }
-
-test('a consent answer that does not name the repository revokes nothing', async ($, on) => {
-  const seen = await world($, on, { exemption: EXEMPT, ...exemptionWorld('remets les E2E, 2026-11-13') })
-  const out: any = await $.tool.call(exemptCall(false, 'operator ruled: remets les E2E, 2026-11-13 — acme/thing'))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(exemptionOf(seen).exempt).toBe(true)
-})
-
-test('a consent answer with the exemption, the repository and each rule exempts', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('exempt thing from E2E for docs/, 2026-11-13'))
-  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: exempt thing from E2E for docs/, 2026-11-13', { paths: ['docs/'] }))
-  expect(out.deny).toBeUndefined()
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'] })
-})
-
-test('a revocation names the repository in the operator\'s answer', async ($, on) => {
-  const seen = await world($, on, { exemption: EXEMPT, ...exemptionWorld('plus de dérogation E2E sur ce dépôt, 2026-11-13', 'remets les E2E sur thing, 2026-11-13') })
-  const unnamed: any = await $.tool.call(exemptCall(false, 'plus de dérogation E2E sur ce dépôt, 2026-11-13'))
-  expect(unnamed.deny).toContain('an E2E exemption quotes the operator')
-  expect(exemptionOf(seen).exempt).toBe(true)
-  const named: any = await $.tool.call(exemptCall(false, 'remets les E2E sur thing, 2026-11-13'))
-  expect(named.result).toBe('github: acme/thing no longer exempt from E2E')
-})
 
 test('an exemption of a repository named with a dot segment is refused before any file is written', async ($, on) => {
   const seen = await world($, on)
@@ -3333,52 +3184,34 @@ test('a run that failed at an earlier head before the « Accorder » leaves it s
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
 })
 
-test('a waived record with no « Accorder » recorded is refused, and names the question to put and where it goes', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
-  const out: any = await $.tool.call(waiveCall('the operator said so'))
-  expect(out.deny).toContain('github: an E2E waiver is the operator\'s « Accorder » to one question, « Dispense d\'E2E pour acme/thing#12 : <why> »')
-  expect(out.deny).toContain('asked as method:lifecycle « Questions to the operator » says')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a waived record over an « Accorder » carries his answer, dated by the module that recorded it', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: granted() }))
-  const out: any = await $.tool.call(waiveCall(''))
-  expect(out.deny).toBeUndefined()
-  const argv = recordRun(seen)!
-  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
-})
-
-// ---- the operator's recorded answer, quoted: his own words, from any channel ----
+// ---- the operator's quoted words, with their date: from any channel, no consent record ----
 
 const QUOTED = 'operator, 2026-11-03: ' + CONSENT_WORDS
-const NOT_RECORDED = 'github: an E2E waiver is the operator\'s « Accorder »'
-const QUOTE_SAYS = 'quote his recorded answer to it, whatever its channel, in "detail"'
+const NO_CONSENT_FILE = (seen: Seen) => Object.keys(seen.files).filter((path) => path.includes('/consents/'))
 
-for (const by of ['pane', 'tab', 'coordinator']) {
-  test('an E2E waiver quoting his recorded answer given by ' + by + ' is written as given', async ($, on) => {
-    const seen = await world($, on, consentWorld({ a: consent({ by }) }))
-    const out: any = await $.tool.call(waiveCall(QUOTED))
-    expect(out.deny).toBeUndefined()
-    const argv = recordRun(seen)!
-    expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
-  })
-}
+test('an E2E waiver quoting the operator\'s dated words is written as given, with no consent record', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call(waiveCall(QUOTED))
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--kind') + 1]).toBe('e2e')
+  expect(argv[argv.indexOf('--result') + 1]).toBe('waived')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
+  expect(NO_CONSENT_FILE(seen)).toEqual([])
+})
 
-for (const [why, records, detail] of [
-  ['no consent record', {}, QUOTED],
-  ['an answer that is no part of the quote', { a: consent() }, 'operator, 2026-11-03: waive it, he said'],
-  ['his « Refuser »', { a: consent({ answer: 'Refuser' }) }, QUOTED],
-  ['a free-text refusal, quoted whole', { a: consent({ answer: 'Refuser, no waiver for this one' }) }, 'operator: Refuser, no waiver for this one'],
-  ['a record naming another pull request', { a: consent({ subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }) }, QUOTED],
-  ['a record of the norms waiver', { a: consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 } }) }, QUOTED],
-  ['a newer « Refuser » than the answer quoted', { a: consent(), b: consent({ answer: 'Refuser', entry: 'b', at: '2026-11-04T10:00:00Z' }) }, QUOTED],
-] as const) {
-  test('an E2E waiver quoting ' + why + ' is refused', async ($, on) => {
-    const seen = await world($, on, consentWorld(records as Record<string, unknown>))
+test('an E2E waiver is written over a recorded « Refuser »: his later words, quoted, stand', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
+  const out: any = await $.tool.call(waiveCall(QUOTED))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toBeDefined()
+})
+
+for (const [why, detail] of UNQUOTED) {
+  test('an E2E waiver with ' + why + ' is refused, and says what to quote', async ($, on) => {
+    const seen = await world($, on)
     const out: any = await $.tool.call(waiveCall(detail))
-    expect(out.deny).toContain(NOT_RECORDED)
-    expect(out.deny).toContain(QUOTE_SAYS)
+    expect(out.deny).toContain('github: an E2E waiver rests on the operator\'s words, quoted in "detail" with their date')
     expect(recordRun(seen)).toBeUndefined()
   })
 }
@@ -3428,20 +3261,21 @@ test('a norms check that failed at an earlier head after his « Accorder » void
   expect(seen.logs).toEqual([NORMS_MISSING])
 })
 
-test('a waived norms record with no « Accorder » to the norms question is refused', reviewing('norms'), async ($, on) => {
-  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: granted() }) })
-  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
-  expect(out.deny).toContain('github: a norms waiver is the operator\'s « Accorder » to one question, « Dispense de normes pour acme/thing#12 : <why> »')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a waived norms record over his « Accorder » to the norms question is written', reviewing('norms'), async ($, on) => {
-  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
-  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+test('a norms waiver quoting the operator\'s dated words is written as given, with no consent record', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, git: CLEAN })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: QUOTED })
   expect(out.deny).toBeUndefined()
   const argv = recordRun(seen)!
   expect(argv[argv.indexOf('--kind') + 1]).toBe('norms')
-  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
+  expect(NO_CONSENT_FILE(seen)).toEqual([])
+})
+
+test('a norms waiver with no quoted words is refused', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toContain('github: a norms waiver rests on the operator\'s words, quoted in "detail" with their date')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 // ---- the deploy list ----
