@@ -276,6 +276,16 @@ case "${SUITE_SHARD:-1}" in 1|2|3|4) ;; *) echo "SUITE_SHARD is 1, 2, 3 or 4, no
 shard_has() { [ -z "${SUITE_SHARD:-}" ] || [ "$SUITE_SHARD" = "$1" ]; }
 
 if shard_has 1; then
+echo "== the hooks module's tests =="
+
+# The module's own tests (hooks/tests/*.test.ts) run only in the host's kit. Without `claude` the
+# check fails: it does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to run the module's tests" "found" "absent"
+fi
+
 echo "== suite environment =="
 
 # The suite started from inside a role reads the same as one started outside it: every role
