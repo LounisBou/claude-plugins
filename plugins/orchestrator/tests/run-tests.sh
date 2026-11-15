@@ -3586,7 +3586,7 @@ CDECIDE="$ROOT/commands/coordinator-decide.md"
 check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
   "yes|yes|yes|yes|1|yes" \
   "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator-decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/coordinator-decide` |')"
-COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
+COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$ROOT/skills/coordination/references/succession.md" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn $(needs_tier "$@") "$@" 2>&1; }
@@ -10572,8 +10572,9 @@ rm -f "$ASTATE/round/w6.json"
 # time an answer the pane had sent (the operator's report of 2026-10-25). The record keeps the
 # ids printed before while the round holds them, drops the others, and is written by one rename.
 printf '["gone-entry","w1"]\n' > "$ASTATE/round-listed.json"
-ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | sed -n 's/^round \([^ ]*\) .*| open.*/\1/p' | sort | paste -sd, -)
-check "round records the ids of the open entries it printed, keeps those printed before while the round holds them" \
+# Only the entries whose question it printed: one printed as its header alone is the pane's.
+ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | awk '/^round / { id = ($0 ~ /\| open/) ? $2 : ""; next } /^    / && id != "" { print id; id = "" }' | sort | paste -sd, -)
+check "round records the ids of the open entries whose question it printed, keeps those printed before while the round holds them" \
   "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
   "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
 rm -f "$ASTATE/round-listed.json"
