@@ -83,11 +83,11 @@ Each file is one moment's: read the file or files the moment names, and no other
 | Moment | Read |
 |---|---|
 | Planning the phases (`build`) | `references/phases.md` |
-| Writing a brief, choosing a tier (`build`) | `references/brief.md`, `references/standing-rules.md` |
+| Dispatching a row, choosing a tier (`build`) | `references/brief.md` |
 | Spawning, dispatching, verifying, standing down, closing an agent | `references/agents.md` |
 | Rotating an agent past its gate | `references/rotation.md` |
 | Handing over | `/orchestrator-succeed`, then `references/succession-predecessor.md` |
-| Taking over | `references/succession-successor.md` |
+| Taking over | the text `succession.sh takeover` prints, nothing else |
 | Pausing, opening | `references/pause-opening-move.md` |
 | Launching a review round (`build`) | `references/review-thresholds.md`, `references/review-round.md` |
 | Launching a comments round, publishing as the operator (`build`) | `references/review-comments.md`, `references/review-round.md` (« The cost of a round ») |

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { deckOpen, fallOf, fill, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
+import { closeVerb, deckOpen, fallOf, fill, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -37,7 +37,7 @@ function deckOf(orchestrators: object[]): object {
 }
 
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
-function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string> } = {}) {
+function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number> } = {}) {
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs', 'belt')
   mkdirSync(join(state, 'round'), { recursive: true })
@@ -71,7 +71,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`] })
+  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty] })
   return { state, briefs, record, out, err, run, text: () => out.join('') }
 }
 
@@ -81,11 +81,9 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   const text = w.text()
   assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\nMode: build\n'))
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
-  assert.ok(text.includes('nothing more unless it lists open or deferred goals: then, in'))
   assert.ok(text.includes(`dispatch-record.sh goals ${w.record} status | grep -v '| met |'`))
   assert.ok(text.includes(`State directory: \`${w.state}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
-  assert.ok(text.includes('`workspace.sh list belt`'))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
   // Nothing about it is written beside the record: the brief is the output, never a file.
   assert.deepEqual(['succession-brief.md', 'state.md'].filter(f => existsSync(join(w.briefs, f))), [])
@@ -110,6 +108,55 @@ test('a takeover from the state alone: a state file, an earlier succession brief
   assert.equal(w.run(), 0)
   assert.equal(w.text(), alone)
   assert.ok(!/GHOST|ghost|open=99|Is this read/.test(w.text()))
+})
+
+test('an orchestrator closed with no handover is taken up from the state alone: no brief, no note, and the print carries all the successor needs', () => {
+  // The fixture is the state an orchestrator leaves when its tab is closed mid-work: the record, its
+  // owner, goals, the deck, the round and the to-do list; no succession brief, no handover note anywhere.
+  const w = world()
+  assert.deepEqual(['succession-brief.md', 'handover.md', 'notes.md', 'state.md'].filter(f => existsSync(join(w.briefs, f)) || existsSync(join(w.state, f))), [])
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  const text = w.text()
+  const needs: Record<string, string> = {
+    'its mode': 'Mode: build\n',
+    'whom it succeeds': 'SUCCESSOR ORCHESTRATOR of `Orch: belt`',
+    'the predecessor\'s close': 'close --tty /dev/ttys009 --expect-title "Orch: belt"',
+    'the goals command': `dispatch-record.sh goals ${w.record} status`,
+    'the open rows': 'open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide',
+    'who owns each row': '- Row owners: 2 api; 3 ruling; 4 READY NOT STARTED; 5 READY NOT STARTED; 6 blocked: row 2 closed',
+    'the pull requests': 'acme/app#12 en cours (agent Agent: pr)',
+    'the live agents': '- Agents running (name and reference, brief path): Agent: api',
+    'the open question, verbatim': '[q-2] **Question 1 of 1**\nWhich schema?',
+    'the stray to-do items': 'to-do 2 → row 1 closed; to-do 3 → row 9 missing',
+    'the project sheet': 'objective a belt that holds; spec /specs/belt.md; goals met=1/2 open=G2 (plan: phase 2)',
+    'the state directory': `State directory: \`${w.state}\``,
+    'the first dispatch': 'Your next turn dispatches every open row with no agent',
+  }
+  for (const [need, part] of Object.entries(needs)) assert.ok(text.includes(part), `the print carries ${need}: ${part}`)
+  assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
+  // The successor reads no reference to take over, and re-reads nothing the print already read live.
+  assert.ok(!/references\/succession-successor\.md|pr-status|rev-parse/.test(text))
+})
+
+test('the close printed is the one command that fits the predecessor\'s place: takeover for window 0 of a home session, close for a tab', () => {
+  const home = world({ windows: { '/dev/ttys009': 0 } })
+  assert.equal(home.run('--tty', '/dev/ttys009'), 0)
+  assert.match(home.text(), /iterm-agent\.sh takeover --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
+  assert.ok(!/ close --tty/.test(home.text()))
+  const other = world({ windows: { '/dev/ttys009': 2 } })
+  assert.equal(other.run('--tty', '/dev/ttys009'), 0)
+  assert.match(other.text(), /iterm-agent\.sh close --tty \/dev\/ttys009/)
+  assert.ok(!/ takeover --tty/.test(other.text()))
+  assert.equal(closeVerb('none', () => 0).verb, 'close')
+})
+
+test('two takeovers on one state print the same text', () => {
+  const w = world()
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  const first = w.text()
+  w.out.length = 0
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  assert.equal(w.text(), first)
 })
 
 test('the Live state: the open rows at level 1, their owners by agent, ruling or blocker, the ledger, the agents, the questions', () => {

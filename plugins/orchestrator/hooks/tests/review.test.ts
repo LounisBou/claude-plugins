@@ -9,6 +9,14 @@ import { NOT_ORCHESTRATOR, answerLines, findingsOf, register as registerReview, 
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 import { answerText } from '../audit-events.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Host, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
+
+type World = Host<Noun>
+// What the review tool answers: its text, and whether it is an error.
+type Out = { readonly result: string; readonly isError?: boolean }
+// A value down a path of records, as a schema is read.
+const at = (value: unknown, ...keys: string[]): unknown => keys.reduce<unknown>((o, k) => fieldsOf(o)?.[k], value)
 
 const HOME = '/tmp/h'
 const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
@@ -20,12 +28,12 @@ function fake(name: string, answer: unknown = { result: 'written' }) {
   const files: Record<string, string> = {
     [ROW]: JSON.stringify({ role: null, name, pid: '501', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
   }
-  const dollar = {
+  const dollar = hostOf({
     session: { id: async () => 's-one' },
     env: { get: async (key: string) => ({ HOME } as Record<string, string>)[key] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     fs: {
-      read: async (p: string) => { if (p in files) return files[p]; throw new Error(`ENOENT: ${p}`) },
+      read: async (p: string) => { const text = files[p]; if (text !== undefined) return text; throw new Error(`ENOENT: ${p}`) },
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -35,18 +43,22 @@ function fake(name: string, answer: unknown = { result: 'written' }) {
       },
     },
     tool: { call: async (input: Record<string, unknown>) => { calls.push(input); return answer } },
-  }
+  })
   return { dollar, calls, logged }
 }
 
 // The handler registered for the review tool, its matcher read.
-function handler(): (dollar: any, e: object) => Promise<any> {
-  let found: Function | null = null
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'tool.call' && args.length === 3 && (args[1] as { tool?: string }).tool === 'mcp__orchestrator__review') found = args[2]
-    return { catch: () => undefined }
-  })
-  return (dollar, e) => found!(dollar, e)
+function handler(): (dollar: World, e: Events['tool.call']) => Promise<Out> {
+  const found = hooksOn(capture<World>(register), 'tool.call').filter(h => h.matcher?.['tool'] === 'mcp__orchestrator__review').at(-1)!
+  return async (dollar, e) => await found.handler(dollar, e, async () => undefined) as Out
+}
+
+// The review module's session-start hook, and the tool specs it registers through `dollar`.
+async function registeredSpecs(dollar: World): Promise<ToolSpec[]> {
+  const registered: ToolSpec[] = []
+  const started = hooksOn(capture<World>(registerReview), 'session.start').at(-1)!
+  await started.handler({ ...dollar, tool: { ...dollar.tool, register: async (tool: ToolSpec) => { registered.push(tool) } } }, { cwd: '/w' }, async () => undefined)
+  return registered
 }
 
 const ACCEPTED = {
@@ -204,30 +216,14 @@ test('a subagent of the orchestrator writes no check plan', async () => {
 })
 
 test('the plan\'s schema names the needs core\'s readiness contract gives each check', async () => {
-  let started: Function | null = null
-  registerReview((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'session.start') started = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
-  const registered: any[] = []
-  const fx = fake('Orch: belt')
-  const dollar = { ...fx.dollar, tool: { ...fx.dollar.tool, register: async (tool: unknown) => { registered.push(tool) } } }
-  await started!(dollar, {}, async () => undefined)
-  const plan = registered.find((t) => t.name === 'review').inputSchema.properties.plan.properties
-  for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
+  const registered = await registeredSpecs(fake('Orch: belt').dollar)
+  const plan = at(registered.find((t) => t.name === 'review'), 'inputSchema', 'properties', 'plan', 'properties')
+  for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(at(plan, check, 'description')).toBe(PLAN_NEEDS[check].join(', '))
 })
 
 test('the plan\'s schema says a required review takes its rounds, up to core\'s cap, and the tool passes them to github', async () => {
-  let started: Function | null = null
-  registerReview((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'session.start') started = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
-  const registered: any[] = []
-  const fx = fake('Orch: belt')
-  const dollar = { ...fx.dollar, tool: { ...fx.dollar.tool, register: async (tool: unknown) => { registered.push(tool) } } }
-  await started!(dollar, {}, async () => undefined)
-  const description = registered.find((t) => t.name === 'review').inputSchema.properties.plan.description
+  const registered = await registeredSpecs(fake('Orch: belt').dollar)
+  const description = at(registered.find((t) => t.name === 'review'), 'inputSchema', 'properties', 'plan', 'description')
   expect(description).toContain('"required: max <n>"')
   expect(description).toContain('1 to ' + REVIEW_ROUNDS.cap)
   const planned = fake('Orch: belt [a1b2c3]', { result: 'github: check plan of acme/thing#164' })
@@ -278,15 +274,15 @@ for (const [label, change] of [
 // A fake whose runs answer git's head and dispatch-record's line, each run kept with its init.
 function rowFake(record: { exitCode: number; stdout: string; stderr: string } = { exitCode: 0, stdout: 'row 4: fail — two to fix — findings: /b/review-128.md\n', stderr: '' }) {
   const fx = fake('Orch: belt', { result: WRITTEN })
-  const runs: { argv: string[]; init: Record<string, unknown> | undefined }[] = []
+  const runs: { argv: string[]; init: ProcessRunInit | undefined }[] = []
   // Once the gate's record is written, four of the five keys the record script reads are set, and
   // ORCHESTRATOR_JOURNAL_DIR is not; before it, the session's check reads HOME alone.
   const vars: Record<string, string> = { HOME, PATH: '/usr/bin:/bin', CLAUDE_CONFIG_DIR: '/cfg', ORCHESTRATOR_STATE_DIR: '/state' }
   let written = false
   const call = fx.dollar.tool.call
-  fx.dollar.tool.call = async (input: Record<string, unknown>) => { written = true; return call(input) }
-  ;(fx.dollar.env as { get: (key: string) => Promise<string | undefined> }).get = async (key: string) => (written ? vars[key] : key === 'HOME' ? HOME : undefined)
-  fx.dollar.process.run = async (argv: readonly string[], init?: Record<string, unknown>) => {
+  fx.dollar.tool.call = async (input: { tool: string } & Record<string, unknown>) => { written = true; return call(input) }
+  fx.dollar.env.get = async (key: string) => (written ? vars[key] : key === 'HOME' ? HOME : undefined)
+  fx.dollar.process.run = async (argv: readonly string[], init?: ProcessRunInit) => {
     runs.push({ argv: [...argv], init })
     if (argv[0] === 'git') return { exitCode: 0, stdout: '0123456789abcdef0123456789abcdef01234567\n', stderr: '' }
     if (String(argv[1] ?? '').endsWith('/dispatch-record.sh')) return record
@@ -377,7 +373,7 @@ test('a verdict\'s few words: its line\'s first, cut to 120, or what it decided 
 test('a head that cannot be read writes no row, a warning on the verdict\'s success', async () => {
   const fx = rowFake()
   const run = fx.dollar.process.run
-  fx.dollar.process.run = async (argv: readonly string[], init?: Record<string, unknown>) =>
+  fx.dollar.process.run = async (argv: readonly string[], init?: ProcessRunInit) =>
     argv[0] === 'git' ? { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' } : run(argv, init)
   const out = await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 })
   expect(out).toEqual({ result: `${WRITTEN}\n${ROUNDS}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: no head read in /work/thing: fatal: not a git repository` })

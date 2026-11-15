@@ -13,12 +13,24 @@ import {
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
+import { capture, hookOf, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
+
+// The host a hook under test is handed: every noun, those a fake does not set throwing.
+type World = Host<Noun>
+type StopEvent = Events['classic.Stop']
+// The chain beneath a hook: it answers what it is handed.
+type Pass = (x: unknown) => Promise<unknown>
+const through: Pass = async x => x
+// A decision's or an answer's fields, as a test reads them.
+type Read = { readonly case?: unknown; readonly reason?: unknown; readonly warn?: unknown; readonly detail?: unknown; readonly block?: unknown; readonly result?: unknown; readonly isError?: unknown }
+const fieldsIn = (value: unknown): Read => fieldsOf(value) ?? {}
 import { machineLine } from '../../core/method.ts'
 import { unnamedReport } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
@@ -121,7 +133,7 @@ test('an open dispatch row holds the stop and names the row', () => {
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {
   const slow = new Promise((resolve) => setTimeout(resolve, 250))
   const outcome = await withDeadline(slow, 10)
-  expect(outcome.decision).toBe('pass')
+  expect(isDegradedPass(outcome) && outcome.decision).toBe('pass')
 })
 
 test('the read that wins the race is answered as itself, and the degraded pass is told apart', async () => {
@@ -280,7 +292,8 @@ function declaredBy(message: string): DeclaredWait | null {
   const ids = deferredIds(line)
   return ids === null ? null : { kind: 'deferred', blocks: ids }
 }
-const checkWake = (facts: Parameters<typeof gateWake>[0]) => gateWake({ declared: declaredBy(facts.message), ...facts })
+// The wake check over a turn that declared the machine line its message ends on, as declare_wait would.
+const checkWake = ({ message, ...facts }: Parameters<typeof gateWake>[0] & { message?: string }) => gateWake({ declared: declaredBy(message ?? ''), ...facts })
 
 
 const AGENT_BUSY = { label: 'Agent: belt-p3', state: 'busy' as const, tty: '/dev/ttys002' }
@@ -330,9 +343,9 @@ test('the remaining cases: idle agents and nothing to wake are flagged for the l
     warn: 'idle-agents', detail: 'Agent: idle-p3',
   })
   // A malformed machine line, and a question, declare no wait: the host's list of work in flight alone decides.
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x', tasks: [] }) as any).case).toBe('nothing-will-wake')
+  expect(fieldsIn(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x', tasks: [] })).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting operator blocks the order', tasks: ['sleep 90'] })).toBeNull()
-  expect((checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?', tasks: [] }) as any).case).toBe('nothing-will-wake')
+  expect(fieldsIn(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?', tasks: [] })).case).toBe('nothing-will-wake')
   expect(checkWake({ agents: [], resident: true, delivered: [], message: 'stopped.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
 })
@@ -341,17 +354,12 @@ test('the wake check decides on the declared wait alone: the same line written b
   const none = { agents: [], resident: false, delivered: [], tasks: [] as string[] }
   const refused = { case: 'nothing-will-wake' as const }
   // Each kind is released by its declaration.
-  expect(gateWake({ ...none, message: 'x', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
-  expect(gateWake({ ...none, message: 'x', declared: { kind: 'done', blocks: '' } })).toBe('read-what-is-left')
-  expect(gateWake({ ...none, message: 'x', declared: { kind: 'deferred', blocks: '2 items' } })).toBe('read-what-is-left')
-  // The model's own last line, with no declaration, is no wait: nothing wakes it.
-  for (const line of ['waiting: operator — blocks: the report', 'waiting: done', 'waiting: deferred — 2 items', 'waiting: tool — the deploy run', 'waiting: your call?', 'Your call?']) {
-    expect(gateWake({ ...none, message: `x\n${line}` })).toMatchObject(refused)
-  }
-  // A declaration is read as it is, whatever the message says.
-  expect(gateWake({ ...none, message: 'waiting: done', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
-  // The predecessor's last word is no wait either.
-  expect(gateWake({ ...none, message: 'Takeover confirmed.\nhanded over' })).toMatchObject(refused)
+  expect(gateWake({ ...none, declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
+  expect(gateWake({ ...none, declared: { kind: 'done', blocks: '' } })).toBe('read-what-is-left')
+  expect(gateWake({ ...none, declared: { kind: 'deferred', blocks: '2 items' } })).toBe('read-what-is-left')
+  // The model's own last line is no input of the check: with no declaration, nothing wakes it,
+  // the predecessor's « handed over » included.
+  expect(gateWake({ ...none })).toMatchObject(refused)
 })
 
 // --- check 2 -----------------------------------------------------------------------------
@@ -360,8 +368,8 @@ const CI_WATCH = '/plugins/orch-root/skills/orchestrator/scripts/ci-watch.sh'
 const ciLog = (tell: string, checks: readonly { name: string; bucket: string }[]) => ({ number: '160', tell, checks })
 
 test('a pending head is told once, again only for a failing set not yet told', () => {
-  const run = (log: ReturnType<typeof ciLog>, reported: Map<string, unknown>, watched = new Set<string>(), ignored = new Set<string>()) =>
-    checkCi({ logs: [log], reported: reported as any, watched, ignored, watchCommand: CI_WATCH })
+  const run = (log: ReturnType<typeof ciLog>, reported: Heads, watched = new Set<string>(), ignored = new Set<string>()) =>
+    checkCi({ logs: [log], reported, watched, ignored, watchCommand: CI_WATCH })
   const pending = ciLog('t1', [{ name: 'build', bucket: 'pending' }])
   const first = run(pending, readHeads(''))
   expect(first.lines.length).toBe(1)
@@ -444,7 +452,7 @@ type Setup = {
   chain?: string
   listing?: string
   records?: string[]
-  heads?: string
+  heads?: string | undefined
   ciLogs?: Record<string, { mtimeMs: number; text: string }>
   ps?: string
   agentCwd?: string
@@ -479,23 +487,24 @@ type Setup = {
   shared?: { path: string; text: string; owner?: string; goals?: { exitCode: number; stdout: string } }[]
 }
 
-function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string }; inits: Record<string, any> } {
-  const inits: Record<string, any> = {}
+function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string | undefined }; inits: Record<string, ProcessRunInit | undefined> } {
+  const inits: Record<string, ProcessRunInit | undefined> = {}
   const written: string[] = []
   const ran: string[] = []
   const wrote: Record<string, string> = {}
-  const stamp: { atRun?: string } = {}
-  const env = {
+  const stamp: { atRun?: string | undefined } = {}
+  const env: Readonly<Record<string, string>> = {
     HOME, ITERM_SESSION_ID: 'w0t0:2:17',
     ORCHESTRATOR_HOST_CLI: 'hostcli', ...(setup.env ?? {}),
   }
   // The fake serves whatever root the module resolves: the default config-dir root, or the
   // override's when the setup sets one.
-  const S = statePaths(env.ORCHESTRATOR_STATE_DIR ?? STATE)
-  const dollar = {
+  const S = statePaths(env['ORCHESTRATOR_STATE_DIR'] ?? STATE)
+  const plugin = { name: 'orchestrator', root: '/plugins/orch-root' }
+  const dollar = hostOf({
     // The launcher's scripts are found under the engine's $.plugin.root: the
     // environment above deliberately carries no CLAUDE_PLUGIN_ROOT, as live.
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin,
     session: { id: async () => 'a1b2c3' },
     env: { get: async (name: string) => env[name] },
     fs: {
@@ -518,7 +527,8 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
-        if (p.startsWith(`${S.root}/round/`) && setup.round?.[p.slice(S.root.length + 7)] !== undefined) return setup.round[p.slice(S.root.length + 7)]
+        const asked = p.startsWith(`${S.root}/round/`) ? setup.round?.[p.slice(S.root.length + 7)] : undefined
+        if (asked !== undefined) return asked
         if (p.startsWith(`${S.root}/todo/`) && setup.todos !== undefined) return setup.todos
         if (p.startsWith(`${S.ci}/`)) {
           // The owner file is read before its log: the log's own read is the one that fails.
@@ -558,14 +568,14 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         || (setup.shared ?? []).some(record => record.goals !== undefined && p === `${record.path.replace(/\/[^/]*$/, '')}/goals.md`),
     },
     process: {
-      run: async (argv: readonly string[], init?: object) => {
+      run: async (argv: readonly string[], init?: ProcessRunInit) => {
         inits[argv.join(' ')] = init
         const line = logLineOf(argv)
         if (line !== null) {
           written.push(line)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
-        const block = blockOf(argv, (p: string) => setup.transcript ?? '')
+        const block = blockOf(argv, () => setup.transcript ?? '')
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
         if (argv[0] === 'sh') {
@@ -619,40 +629,39 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, written, ran, wrote, stamp, inits }
 }
 
 // `declarations`: given, the gate reads it as the host does and the caller declares; omitted, each stop
 // declares the machine line its message ends on, as a turn that called declare_wait with it would.
-function mounted(declarations?: Declarations): { handlers: Record<string, Function>; matchers: Record<string, object | undefined> } {
-  const handlers: Record<string, Function> = {}
-  const matchers: Record<string, object | undefined> = {}
+type Guards = {
+  'classic.Stop': Hook<World, Events['classic.Stop']>
+  'prompt.submit': Hook<World, Events['prompt.submit']>
+  // The guard on Bash, the last tool call it registers.
+  'tool.call': Hook<World, Events['tool.call']>
+  'tool.call:SendMessage': Hook<World, Events['tool.call']>
+}
+function mounted(declarations?: Declarations): { handlers: Guards; matchers: { 'classic.Stop': Matcher | undefined; 'tool.call:SendMessage': Matcher | undefined } } {
   const own = declarations ?? new Declarations()
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    // The two tool calls the guards watch are told apart by their tool: Bash keeps the
-    // event's own key, SendMessage gets its own.
-    const key = args.length === 3 && (args[1] as any).tool === 'SendMessage' ? 'tool.call:SendMessage' : args[0]
-    handlers[key] = args[args.length - 1] as Function
-    matchers[key] = args.length === 3 ? args[1] : undefined
-    // The engine's on returns a registration taking one .catch; the fake accepts it and
-    // drops it — the body's own catch is what the wiring tests.
-    return { catch: () => undefined }
-  }, own)
-  const gate = handlers['classic.Stop']
-  if (declarations === undefined) {
-    handlers['classic.Stop'] = (dollar: any, e: any, next: Function) => {
+  const hooks = capture<World>(on => registerGuards(on, own))
+  const stopHook = hookOf(hooks, 'classic.Stop')
+  const gate = stopHook.handler
+  const handlers: Guards = {
+    'classic.Stop': declarations !== undefined ? gate : async (dollar, e, next) => {
       own.turnStarted()
       const wait = declaredBy(String(e.last_assistant_message ?? ''))
       if (wait !== null) own.declare(wait)
       return gate(dollar, e, next)
-    }
+    },
+    'prompt.submit': hookOf(hooks, 'prompt.submit').handler,
+    'tool.call': hookOf(hooks, 'tool.call', { tool: 'Bash' }).handler,
+    'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).handler,
   }
-  return { handlers, matchers }
+  return { handlers, matchers: { 'classic.Stop': stopHook.matcher, 'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).matcher } }
 }
 
-const stopEvent = (over: Record<string, unknown> = {}) => ({
-  hook_event_name: 'Stop',
+const stopEvent = (over: Record<string, unknown> = {}): StopEvent => ({
   session_id: 'a1b2c3',
   transcript_path: TRANSCRIPT,
   cwd: '/tmp/h/work/repo',
@@ -663,20 +672,20 @@ const stopEvent = (over: Record<string, unknown> = {}) => ({
 
 // A stop through the gate. The gate observes and never refuses: `observed` is what it once refused
 // the stop for, read off its log line, and every such stop passes with one escape in the journal.
-async function stop(handler: Function, dollar: any, e: object) {
-  return observing(dollar, e, async (seen, pass) => handler(seen, e, pass))
+async function stop(handler: Guards['classic.Stop'], dollar: World, e: StopEvent) {
+  return observing(dollar, async (seen, pass) => handler(seen, e, pass))
 }
 
 // Runs `through` over a $ whose log lines and journal are read, then checks the gate's observation.
-async function observing(dollar: any, e: object, through: (dollar: any, pass: (x: unknown) => unknown) => Promise<unknown>) {
+async function observing(dollar: World, through: (dollar: World, pass: Pass) => Promise<unknown>) {
   let passed: unknown = null
   const lines: string[] = []
-  const fx = journalled({ ...dollar, process: { ...dollar.process, run: async (argv: readonly string[], ...rest: unknown[]) => {
+  const fx = journalled({ ...dollar, process: { ...dollar.process, run: async (argv: readonly string[], init?: ProcessRunInit) => {
     const line = logLineOf(argv)
     if (line !== null) lines.push(line)
-    return dollar.process.run(argv, ...rest)
+    return init === undefined ? dollar.process.run(argv) : dollar.process.run(argv, init)
   } } })
-  const answer = await through(fx.dollar, (x: unknown) => { passed = x; return x })
+  const answer = await through(fx.dollar, async (x: unknown) => { passed = x; return x })
   const mark = '| stop gate: let through: '
   const held = lines.find(line => line.includes(mark))
   const observed = held === undefined ? undefined : held.slice(held.indexOf(mark) + mark.length)
@@ -727,7 +736,7 @@ test('a busy own agent releases the stop, no pull request read for it', async ()
 })
 
 // A stop that passes and adds exactly one `warn <what>` line to the log: the demoted cases' shape.
-async function warnsNotRefuses(handlers: any, fx: { dollar: any; written: string[] }, event: any, what: string): Promise<void> {
+async function warnsNotRefuses(handlers: Guards, fx: { dollar: World; written: string[] }, event: StopEvent, what: string): Promise<void> {
   const before = fx.written.filter(l => l.includes(`| stop gate: warn ${what}`)).length
   const out = await stop(handlers['classic.Stop'], fx.dollar, event)
   expect(out.answer).toBe(out.passed)
@@ -829,7 +838,7 @@ test('a checkout left of the project no longer holds a done stop: the log carrie
   expect(held.answer).toBe(held.passed)
   expect(held.observed).toBeUndefined()
   expect(left.written.some(l => l.endsWith('| stop gate: warn working-copies /tmp/h/work/repo/belt'))).toBe(true)
-  const gone = fakeDollar({ cwd: '', top: '', workspace: '/tmp/h/work/repo/belt | feat/belt | abc1234 | clean | pushed\n' })
+  const gone = fakeDollar({ top: '', workspace: '/tmp/h/work/repo/belt | feat/belt | abc1234 | clean | pushed\n' })
   const passed = await stop(handlers['classic.Stop'], gone.dollar, stopEvent({ last_assistant_message: 'waiting: done', cwd: '' }))
   expect(passed.answer).toBe(passed.passed)
   expect(passed.observed).toBeUndefined()
@@ -1247,8 +1256,8 @@ test("the idle agent's pull request is read with one --json argument, in the age
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
   const gh = 'gh pr view feat/belt --json number,state'
   expect(fx.ran).toContain(gh)
-  expect(fx.inits[gh].cwd).toBe('/tmp/h/work/belt')
-  expect(fx.inits[gh].timeoutMs).toBeGreaterThan(0)
+  expect(fx.inits[gh]?.cwd).toBe('/tmp/h/work/belt')
+  expect(fx.inits[gh]?.timeoutMs).toBeGreaterThan(0)
 })
 
 test('the agent on a tty is found by its host record, or by the basename of an absolute host path', async () => {
@@ -1327,12 +1336,12 @@ test("a peer's idle notice the session subscribed to will wake it, until the not
   expect(held.answer).toBe(held.passed)
   expect(held.observed).toBeUndefined()
   // A prompt from someone else leaves the subscription standing.
-  await handlers['prompt.submit'](fx.dollar, { text: 'what is the state?', origin: { kind: 'composer' }, wait: false }, (x: unknown) => x)
+  await handlers['prompt.submit'](fx.dollar, { text: 'what is the state?', origin: { kind: 'composer' } }, through)
   const still = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(WAITING))
   expect(still.answer).toBe(still.passed)
   expect(still.observed).toBeUndefined()
   // The peer's message arrives: the wait is over, and the gate reads the session again.
-  await handlers['prompt.submit'](fx.dollar, { text: 'Message from Orch: belt [b7f1]: handed over', origin: { kind: 'peer-send-message' }, wait: false }, (x: unknown) => x)
+  await handlers['prompt.submit'](fx.dollar, { text: 'Message from Orch: belt [b7f1]: handed over', origin: { kind: 'peer-send-message' } }, through)
   await warnsNotRefuses(handlers, fx, stopEvent(WAITING), 'nothing-will-wake')
 })
 
@@ -1370,7 +1379,7 @@ test('the wake decision: an awaited notice wakes, and a handed-over session is n
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', awaiting: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', handedOver: true })).toBeNull()
   // A delivered idle agent is still told: a subscription does not lift it.
-  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
+  expect(fieldsIn(checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'x', awaiting: true })).warn).toBe('idle-delivered')
 })
 
 test('a ci-watch this session started, still running, will wake it; a stranger\'s will not', async () => {
@@ -1420,7 +1429,7 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done', handedOver: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
   expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
-  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
+  expect(fieldsIn(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'done', watching: true })).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
   // A bare question declares no wait: it wakes nothing.
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
@@ -1689,13 +1698,13 @@ test('another session\'s question open in the round wakes no plain ending of thi
 test('an open question wakes a plain ending, and a line spelling no machine line is no refusal of its own', () => {
   const base = { agents: [], resident: false, delivered: [], tasks: [] as string[], questionOpen: true }
   expect(checkWake({ ...base, message: PLAIN.last_assistant_message })).toBe(null)
-  expect((checkWake({ ...base, questionOpen: false, message: PLAIN.last_assistant_message }) as any).case).toBe('nothing-will-wake')
+  expect(fieldsIn(checkWake({ ...base, questionOpen: false, message: PLAIN.last_assistant_message })).case).toBe('nothing-will-wake')
   expect(checkWake({ ...base, message: 'Done.\nwaiting operatr blocks the order' })).toBe(null)
 })
 
 test('nothing will wake, decided over the facts with the host list', () => {
   const base = { agents: [], resident: false, delivered: [], message: 'stopped.' }
-  expect((checkWake({ ...base, tasks: [] }) as any).case).toBe('nothing-will-wake')
+  expect(fieldsIn(checkWake({ ...base, tasks: [] })).case).toBe('nothing-will-wake')
   expect(checkWake({ ...base, tasks: ['sleep 90'] })).toBeNull()
   expect(checkWake({ ...base, tasks: hostTasks([], [{ id: 'c1', schedule: '0 9 * * *' }]) })).toBeNull()
   expect(checkWake({ ...base, tasks: [], background: ['tail -f deploy.log'] })).toBeNull()
@@ -1712,15 +1721,15 @@ test('nothing will wake, decided over the facts with the host list', () => {
 test('a wait on the operator that blocks nothing is refused, the right line named', () => {
   const base = { agents: [], resident: false, delivered: [] }
   for (const blocks of ['nothing', 'Nothing.', 'none', 'NONE', 'nothing yet', 'nothing to ask', 'none for now', 'nothing.', 'n/a', 'N/A', '-', '']) {
-    const held = checkWake({ ...base, message: `Watching the deploys.\nwaiting: operator — blocks: ${blocks}` }) as any
+    const held = fieldsIn(checkWake({ ...base, message: `Watching the deploys.\nwaiting: operator — blocks: ${blocks}` }))
     expect([blocks, held.case]).toEqual([blocks, 'blocks-nothing'])
     expect(held.reason).toContain('declare done')
   }
-  const urgent = checkWake({ ...base, message: 'waiting: operator (urgent) — blocks: nothing.' }) as any
+  const urgent = fieldsIn(checkWake({ ...base, message: 'waiting: operator (urgent) — blocks: nothing.' }))
   expect(urgent.case).toBe('blocks-nothing')
-  const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
+  const running = fieldsIn(checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }))
   expect(running.reason).toContain('tail -f deploy.log runs in the background: declare no wait')
-  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
+  const busy = fieldsIn(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }))
   expect(busy.case).toBe('blocks-nothing')
   expect(busy.reason).toContain('An agent of yours is busy: declare no wait')
   // What blocks something is still the operator's wait.
@@ -1732,7 +1741,7 @@ test('a wait on the operator that blocks nothing is refused, the right line name
 
 
 test('nothing to wake with no list from the host is flagged for the log and carries no refusal text', () => {
-  const nothing = checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' }) as any
+  const nothing = fieldsIn(checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' }))
   expect(nothing).toEqual({ warn: 'nothing-will-wake', detail: '' })
   expect(nothing.reason).toBeUndefined()
 })
@@ -1906,7 +1915,7 @@ test('the items line with a wrong count is refused at the stop, naming the total
 test('waiting: deferred with no ids is no malformed machine line, at the gate and at the stop', async () => {
   const base = { agents: [], resident: false, delivered: [] }
   for (const message of ['waiting: deferred', 'Nothing left.\nwaiting: deferred —', '**waiting: deferred**']) {
-    const held = checkWake({ ...base, message }) as any
+    const held = fieldsIn(checkWake({ ...base, message }))
     expect([message, held]).toEqual([message, { warn: 'nothing-will-wake', detail: '' }])
   }
   const { handlers } = mounted()
@@ -1920,9 +1929,9 @@ test('waiting: deferred with no ids is no malformed machine line, at the gate an
 test('the lines that fit name the deferred ending', () => {
   const base = { agents: [], resident: false, delivered: [] }
   const NAMED = 'if the operator deferred it, his ruling recorded, declare a deferred wait'
-  expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing' }) as any).reason).toContain(NAMED)
+  expect(fieldsIn(checkWake({ ...base, message: 'waiting: operator — blocks: nothing' })).reason).toContain(NAMED)
   // While something runs, what fits is no wait at all.
-  expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['sleep 9'] }) as any).reason).not.toContain(NAMED)
+  expect(fieldsIn(checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['sleep 9'] })).reason).not.toContain(NAMED)
 })
 
 // Only goals are deferred, no row: the guards path hands the gate the goals the operator put off
@@ -2077,27 +2086,38 @@ test('the register\'s own record is held to its owner file too', async () => {
 // --- the declared wait (hooks/wait.ts) ---------------------------------------------------------
 
 // The declarations each wait mounting holds: the gate chained after it reads the same ones.
-const WAITS = new WeakMap<Record<string, Function>, Declarations>()
-function waitMounted(): Record<string, Function> {
-  const handlers: Record<string, Function> = {}
+type Waits = {
+  'session.start': Hook<World, Events['session.start']>
+  'turn.start': Hook<World, Events['turn.start']>
+  'tool.call': Hook<World, Events['tool.call']>
+  'turn.complete': Hook<World, Events['turn.complete']>
+}
+// A property of a registered tool's input schema.
+const propertyOf = (spec: ToolSpec | undefined, name: string) => fieldsOf(fieldsOf(spec?.inputSchema?.['properties'])?.[name])
+const WAITS = new WeakMap<Waits, Declarations>()
+function waitMounted(): Waits {
   const declarations = new Declarations()
-  registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  }, declarations)
+  const hooks = capture<World>(on => registerWait(on, declarations))
+  const handlers: Waits = {
+    'session.start': hookOf(hooks, 'session.start', {}).handler,
+    'turn.start': hookOf(hooks, 'turn.start', {}).handler,
+    'tool.call': hookOf(hooks, 'tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }).handler,
+    'turn.complete': hookOf(hooks, 'turn.complete', {}).handler,
+  }
   WAITS.set(handlers, declarations)
   return handlers
 }
 
 // The stop as the gate reads it: the declarations of the wait module beside it, read directly.
-async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
+async function chainedStop(wait: Waits, dollar: World, e: StopEvent) {
   const gate = mounted(WAITS.get(wait)).handlers['classic.Stop']
-  return observing(dollar, e, async (seen, pass) => gate(seen, e, pass))
+  return observing(dollar, async (seen, pass) => gate(seen, e, pass))
 }
 
-const declare = (wait: Record<string, Function>, dollar: any, input: object) =>
-  wait['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input })
-const turnStarts = (wait: Record<string, Function>, dollar: any) => wait['turn.start'](dollar, { turnId: 't' }, (x: unknown) => x)
+// A declaration through the tool, and its answer as it came.
+const declare = async (wait: Waits, dollar: World, input: object) =>
+  fieldsIn(await wait['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input }, through))
+const turnStarts = (wait: Waits, dollar: World) => wait['turn.start'](dollar, {}, through)
 const NOTHING_RUNS = { background_tasks: [], session_crons: [] }
 
 test('a declaration is validated: a known kind, and what it blocks where the kind needs it', () => {
@@ -2130,14 +2150,14 @@ test('an operator question may declare the subject it asks consent on, in flat f
 
 test('the declare_wait tool is registered at every start, and refused to a subagent and on a bad input', async () => {
   const wait = waitMounted()
-  const tools: any[] = []
+  const tools: ToolSpec[] = []
   const { dollar } = fakeDollar({})
-  dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
-  await wait['session.start'](dollar, {}, (x: unknown) => x)
+  dollar.tool = { ...dollar.tool, register: async spec => { tools.push(spec) } }
+  await wait['session.start'](dollar, { cwd: '/tmp/h/work/repo' }, through)
   expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
   // The consent an operator question asks names the environment of an auto-deploy.
-  expect(tools[0].inputSchema.properties.consent_env).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
-  expect(tools[0].inputSchema.properties.consent).toBe(undefined)
+  expect(propertyOf(tools[0], 'consent_env')).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
+  expect(propertyOf(tools[0], 'consent')).toBe(undefined)
   expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.
@@ -2162,7 +2182,7 @@ test('a declared operator wait releases the stop whatever the last line says', a
   expect((await declare(wait, fx.dollar, { kind: 'operator', blocks: 'G2: the scope' })).isError).toBeUndefined()
   // The model's own line says done, which the open row would refuse: the declaration decides.
   const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: done`, ...NOTHING_RUNS }))
-  expect((passed.answer as any)?.block).toBeUndefined()
+  expect(fieldsIn(passed.answer)?.block).toBeUndefined()
   expect(fx.written.some(l => l.endsWith('| stop gate: check1 blocks G2: the scope'))).toBe(true)
   // A declared operator wait that blocks nothing is refused as the line would be.
   await declare(wait, fx.dollar, { kind: 'operator', blocks: 'nothing' })
@@ -2204,7 +2224,7 @@ test('a wait declared in an earlier turn is stale and never read', async () => {
   expect(String(held.observed)).toContain('Nothing will wake you')
   // A subagent's turn starting is not the session's: the declaration stands.
   await declare(wait, dollar, { kind: 'done' })
-  await wait['turn.start'](dollar, { turnId: 's', agentId: 'a-1' }, (x: unknown) => x)
+  await wait['turn.start'](dollar, { agentId: 'a-1' }, through)
   const passed = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
   expect(passed.observed).toBeUndefined()
@@ -2215,17 +2235,17 @@ test('the turn\'s end hands the declared wait to its readers, and shows the answ
   const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
   await declare(wait, dollar, { kind: 'deferred', blocks: '2 items' })
   let seen = ''
-  const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, async x => { seen = String(x.answer); return { text: x.answer } })
   expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'deferred', blocks: '2 items' }))
   expect(machineLine(seen)).toBe('waiting: deferred — 2 items')
   expect(shown).toEqual({ text: 'Watching.' })
   // An urgent operator wait reaches the turn's end as the urgent line the relay reads.
   await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true })
-  await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, async x => { seen = String(x.answer); return { text: x.answer } })
   expect(URGENT_LINE.test(machineLine(seen))).toBe(true)
   expect(MACHINE_LINE.exec(machineLine(seen))?.[1]).toBe('G4: the scope')
   // An agent's end is not the session's.
-  await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, async x => { seen = String(x.answer); return { text: x.answer } })
   expect(seen).toBe('Done.')
 })
 
@@ -2264,23 +2284,25 @@ test("a coordinator's long turn is never held to the agents' limit", async () =>
 })
 
 const message = (to: string, text: string) => ({ tool: 'SendMessage', to, message: text })
-const delivered = async (e: any) => ({ result: { sent: e.message } })
+// The text a delivered message carried, as the fake delivery answers it.
+const sentBy = (out: unknown) => fieldsOf(fieldsIn(out).result)?.['sent']
+const delivered = async (e: Events['tool.call']) => ({ result: { sent: e['message'] } })
 
 test("an agent's long message to its orchestrator is cut to the limit with the pointer to its report", async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
   const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt [a1b2c3]', `${LONG} report: ${REPORT}`), delivered)
-  expect(out.result.sent).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
+  expect(sentBy(out)).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
 })
 
 test("an agent's long message to its orchestrator that names no report goes whole with one escape, a short one goes whole with none", async () => {
   const { handlers } = mounted()
   const fx = journalled(fakeDollar({ launchName: 'Agent: belt-p3' }).dollar)
   const dollar = fx.dollar
-  expect((await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)).result.sent).toBe(LONG)
+  expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered))).toBe(LONG)
   expect(fx.journal()).toEqual(['escape orchestrator.message.report-unnamed'])
   const short = `demo#12 abc1234 — gate green — blocking: none — report: ${REPORT}`
-  expect((await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered)).result.sent).toBe(short)
+  expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered))).toBe(short)
   expect(fx.journal().length).toBe(1)
 })
 
@@ -2289,7 +2311,7 @@ test("the coordinator's and an orchestrator's long messages are never cut", asyn
   for (const launchName of ['Coord: machine', 'Orch: other']) {
     const { dollar } = fakeDollar({ launchName })
     const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)
-    expect(out.result.sent).toBe(LONG)
+    expect(sentBy(out)).toBe(LONG)
   }
 })
 
@@ -2447,12 +2469,12 @@ test('a coordinator\'s stop is never held by its list: only its end command is',
 test('declare_wait takes no tool wait: what the module reads in flight passes with nothing declared', async () => {
   expect(parseDeclaration({ kind: 'tool', blocks: 'the deploy run' })).toEqual({ error: 'kind is one of operator, done, deferred' })
   const wait = waitMounted()
-  const tools: any[] = []
+  const tools: ToolSpec[] = []
   const fx = fakeDollar({ ps: NOTHING_PS })
-  fx.dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
-  await wait['session.start'](fx.dollar, {}, (x: unknown) => x)
-  expect(tools[0].inputSchema.properties.kind.enum).toEqual(['operator', 'done', 'deferred'])
-  expect(tools[0].description).not.toContain('`tool`')
+  fx.dollar.tool = { ...fx.dollar.tool, register: async spec => { tools.push(spec) } }
+  await wait['session.start'](fx.dollar, { cwd: '/tmp/h/work/repo' }, through)
+  expect(propertyOf(tools[0], 'kind')?.['enum']).toEqual(['operator', 'done', 'deferred'])
+  expect(tools[0]?.description).not.toContain('`tool`')
   const SUBAGENT = { id: 'a', type: 'subagent', status: 'running', description: 'search' }
   const MONITOR = { id: 'm', type: 'monitor', status: 'running', description: 'the deploy log' }
   for (const task of [SHELL_TASK, SUBAGENT, MONITOR]) {
@@ -2465,15 +2487,15 @@ test('declare_wait takes no tool wait: what the module reads in flight passes wi
 
 test('no refusal teaches a tool wait: what runs, or a busy agent, wakes the session with no wait declared', () => {
   const base = { agents: [], resident: false, delivered: [] }
-  const nothing = checkWake({ ...base, message: 'stopped.', tasks: [] }) as any
+  const nothing = fieldsIn(checkWake({ ...base, message: 'stopped.', tasks: [] }))
   expect(nothing.case).toBe('nothing-will-wake')
   expect(nothing.reason).not.toContain('tool wait')
   expect(nothing.reason).toContain('its end wakes you, with no wait to declare')
-  const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
+  const running = fieldsIn(checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }))
   expect(running.case).toBe('blocks-nothing')
   expect(running.reason).not.toContain('tool wait')
   expect(running.reason).toContain('tail -f deploy.log runs in the background: declare no wait, its end wakes you.')
-  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
+  const busy = fieldsIn(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }))
   expect(busy.reason).toContain('An agent of yours is busy: declare no wait, its idle notice wakes you.')
 })
 
@@ -2510,13 +2532,13 @@ test('an executor with its pull request open still holds a done, and another idl
   const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3'], tasks: ['bash ci-watch.sh 160'] }
   expect(checkWake({ ...base, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
   // An open pull request wakes nothing: with no task of the host, no subscription, no watch and no open question, it is refused.
-  expect((checkWake({ ...base, tasks: [], message: 'Reviewing.' }) as any).case).toBe('nothing-will-wake')
+  expect(fieldsIn(checkWake({ ...base, tasks: [], message: 'Reviewing.' })).case).toBe('nothing-will-wake')
   expect(checkWake({ ...base, tasks: [], awaiting: true, message: 'Reviewing.' })).toBeNull()
   expect(checkWake({ ...base, tasks: [], watching: true, message: 'Reviewing.' })).toBeNull()
   expect(checkWake({ ...base, tasks: [], questionOpen: true, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
-  expect(checkWake({ ...base, tasks: undefined, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  expect(checkWake({ ...base, tasks: null, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
   const other = { label: 'Agent: other-p4', state: 'idle' as const, tty: '/dev/ttys004' }
   expect(checkWake({ ...base, agents: [AGENT_IDLE, other], message: 'Reviewing.' })).toEqual({ warn: 'idle-agents', detail: 'Agent: other-p4' })
   expect(checkWake({ ...base, message: 'waiting: done' })).toBe('read-what-is-left')
-  expect((checkWakeDone({ agents: [AGENT_IDLE], checkouts: [], deferred: [] }) as any).reason).toContain('Agent: idle-p3 is still there')
+  expect(fieldsIn(checkWakeDone({ agents: [AGENT_IDLE], checkouts: [], deferred: [] })).reason).toContain('Agent: idle-p3 is still there')
 })

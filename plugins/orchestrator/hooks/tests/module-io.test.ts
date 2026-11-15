@@ -5,6 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { configDir, gateEnv, logLine, stateDir, writeAtomic } from '../module-io.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { hostOf } from '../../core/capture.ts'
 
 function envOf(vars: Record<string, string>) {
   return { env: { get: async (name: string) => vars[name] } }
@@ -47,7 +48,7 @@ test('a log line never throws, whatever the run does', async () => {
 test('an atomic write goes through a temporary file beside its target, then one rename', async () => {
   const files = new Map<string, string>()
   const runs: (readonly string[])[] = []
-  const $ = {
+  const $ = hostOf({
     fs: {
       write: async (path: string, text: string) => { files.set(path, text) },
       read: async (path: string) => { const text = files.get(path); if (text === undefined) throw new Error('ENOENT'); return text },
@@ -64,7 +65,7 @@ test('an atomic write goes through a temporary file beside its target, then one 
       },
     },
     clock: { sleep: async () => undefined },
-  }
+  })
   await writeAtomic($, '/s/deck.json', '{"v":1}\n')
   expect(files.get('/s/deck.json')).toBe('{"v":1}\n')
   expect([...files.keys()]).toEqual(['/s/deck.json'])

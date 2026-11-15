@@ -8,6 +8,12 @@ import { expect, test } from 'claude-code/testing'
 import { bashWritesTheMap, editsTheMap, mapPaths, MODELS_DENY, namesTheMap, typedByOperator } from '../models-guard.ts'
 import { register as registerGuards } from '../guards.ts'
 import { journalled, logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun } from '../../core/host.ts'
+
+type World = Host<Noun>
+type Guard = Hook<World, Events['tool.call']>
+const denyOf = (answer: unknown) => fieldsOf(answer)?.['deny']
 
 const HOME = '/tmp/h'
 const MAP = `${HOME}/.claude/claude-orchestrator/models.json`
@@ -51,11 +57,11 @@ test('the operator lifts the guard by naming the map or a tier in a prompt he ty
 })
 
 // The wiring, over a faked $: the session's name as the launch gave it, read by the walk.
-function fakeDollar(launchName: string | null): { dollar: any; written: string[] } {
+function fakeDollar(launchName: string | null): { dollar: World; written: string[] } {
   const written: string[] = []
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
-  const dollar = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch-root' },
     session: { id: async () => 'a1b2c3' },
     env: { get: async (name: string) => env[name] },
     fs: {
@@ -79,30 +85,21 @@ function fakeDollar(launchName: string | null): { dollar: any; written: string[]
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, written }
 }
 
 // The guard's own registration, told apart from the kill guard's by its matcher.
-function mounted(): { guard: Function; matcher: any; prompt: Function } {
-  let guard: Function = () => undefined
-  let matcher: any
-  let prompt: Function = () => undefined
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    const handler = args[args.length - 1] as Function
-    if (args[0] === 'prompt.submit') prompt = handler
-    if (args.length === 3 && Array.isArray((args[1] as any).tool)) {
-      guard = handler
-      matcher = args[1]
-    }
-    return { catch: () => undefined }
-  })
-  return { guard, matcher, prompt }
+function mounted(): { guard: Guard; matcher: Matcher | undefined; prompt: Hook<World, Events['prompt.submit']> } {
+  const hooks = capture<World>(on => registerGuards(on))
+  const found = hooksOn(hooks, 'tool.call').filter(h => Array.isArray(h.matcher?.['tool'])).at(-1)
+  const prompt = hooksOn(hooks, 'prompt.submit').at(-1)?.handler ?? (async () => undefined)
+  return { guard: found?.handler ?? (async () => undefined), matcher: found?.matcher, prompt }
 }
 
-async function call(guard: Function, dollar: any, e: object) {
+async function call(guard: Guard, dollar: World, e: Events['tool.call']) {
   let passed: unknown = null
-  const answer = await guard(dollar, e, (x: unknown) => { passed = x; return x })
+  const answer = await guard(dollar, e, async (x: unknown) => { passed = x; return x })
   return { answer, passed }
 }
 
@@ -136,7 +133,7 @@ test('a Bash overwrite of the map is refused with the rule and writes no escape,
   for (const command of overwrites) {
     const fx = journalled(fakeDollar('Orch: belt').dollar)
     const out = await call(guard, fx.dollar, bash(command))
-    expect((out.answer as any).deny).toBe(MODELS_DENY)
+    expect(denyOf(out.answer)).toBe(MODELS_DENY)
     expect(out.passed).toBeNull()
     expect(fx.journal()).toEqual([])
   }
@@ -151,28 +148,28 @@ test('a Bash overwrite of the map is refused with the rule and writes no escape,
 test('the operator\'s typed word on the map lifts the Bash refusal; a peer\'s delivery does not', async () => {
   const { guard, prompt } = mounted()
   const fx = journalled(fakeDollar('Orch: belt').dollar)
-  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
-  expect(((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer as any).deny).toBe(MODELS_DENY)
-  await prompt(fx.dollar, typed('bind standard to a-model'), (x: unknown) => x)
+  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), async (x: unknown) => x)
+  expect(denyOf((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer)).toBe(MODELS_DENY)
+  await prompt(fx.dollar, typed('bind standard to a-model'), async (x: unknown) => x)
   const lifted = await call(guard, fx.dollar, bash(`mv x ${MAP}`))
   expect(lifted.answer).toBe(lifted.passed)
-  await prompt(fx.dollar, typed('go on with the next phase'), (x: unknown) => x)
-  expect(((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer as any).deny).toBe(MODELS_DENY)
+  await prompt(fx.dollar, typed('go on with the next phase'), async (x: unknown) => x)
+  expect(denyOf((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer)).toBe(MODELS_DENY)
   expect(fx.journal()).toEqual([])
 })
 
 test('the operator\'s typed word on the map writes no escape; a peer\'s delivery does', async () => {
   const { guard, prompt } = mounted()
   const fx = journalled(fakeDollar('Orch: belt').dollar)
-  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
+  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), async (x: unknown) => x)
   await call(guard, fx.dollar, write)
   expect(fx.journal()).toEqual([ESCAPE])
-  await prompt(fx.dollar, typed('bind standard to a-model'), (x: unknown) => x)
+  await prompt(fx.dollar, typed('bind standard to a-model'), async (x: unknown) => x)
   const lifted = await call(guard, fx.dollar, write)
   expect(lifted.answer).toBe(lifted.passed)
   expect(fx.journal()).toEqual([ESCAPE])
   // His next typed prompt, on something else, puts the observation back.
-  await prompt(fx.dollar, typed('go on with the next phase'), (x: unknown) => x)
+  await prompt(fx.dollar, typed('go on with the next phase'), async (x: unknown) => x)
   await call(guard, fx.dollar, write)
   expect(fx.journal()).toEqual([ESCAPE, ESCAPE])
 })

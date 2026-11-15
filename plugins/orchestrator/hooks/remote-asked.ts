@@ -8,7 +8,7 @@
 // it `already` and pushes its own state again. A push or a reply not acknowledged is sent again
 // every ANSWER_RESEND_MS, ANSWER_SENDS times in all, then failed, said in the log and, for a reply,
 // in the pane. The handlers' `$` is the supervision's.
-import { ROUND_DIR } from '../core/orchestration.ts'
+import { roundEntryPath } from '../core/orchestration.ts'
 import { updateOver } from '../core/store-io.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host } from './host.ts'
@@ -25,7 +25,7 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui
 type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session'>
 
 async function pathOf($: Pushing, id: string): Promise<string> {
-  return `${await stateDir($)}/${ROUND_DIR}/${id}.json`
+  return roundEntryPath(await stateDir($), id)
 }
 
 // The answers a replica sends its owner: those given on its own machine.

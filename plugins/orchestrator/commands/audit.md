@@ -1,7 +1,7 @@
 ---
 description: Launch an audit of the method, on the operator's word
 argument-hint: <subject> [--since <date>]
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(git:*), Bash(ls:*), Bash(date:*), Read, Write
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief.sh:*)
 ---
 
 Run on the operator's word only: he types this command, in the session whose tab the
@@ -11,27 +11,15 @@ with this session. A measurement goes to a read-only subagent.
 Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the title
 `Audit: <subject>`.
 
-1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the
-   project's briefs directory as `audit-<subject>-brief.md`, and fill every
-   `{{PLACEHOLDER}}` with what you can read, each path absolute, and write under the title
-   the kind (retrospective, measure or costed design), his words, the question and what is
-   established, in about ten lines; a costed design needs thirty at most:
-   - the repository and the project's name;
-   - the previous report: the newest under `<briefs dir>/audits/`, or « none »;
-   - the start: `--since`, else the previous report's date, read from
-     the previous report's file name, which a command wrote, else the repository's first
-     commit;
-   - the project's method files you know, or « none known »;
-   - its dispatch record and bug register, or « none »;
-   - `rhythm.sh`: the installed `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/rhythm.sh`,
-     resolved now — the auditor's shell carries none of your variables;
-   - the launcher, `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh`, and the
-     succession template, `${CLAUDE_PLUGIN_ROOT}/templates/auditor-succession-brief.md`, both
-     resolved now: an auditor kept on past its report succeeds with them;
-   - the report: `<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed.
-2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
-   repair any other finding before the spawn.
-3. **Spawn**, beside the audited orchestrator: this session, or the one the brief names,
+1. **Print the brief.** Run, the texts in his language, each a line or two:
+
+   ```
+   ${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief.sh audit --subject <subject> --repository <repository> --briefs <the project's briefs directory> --kind retrospective|measure|design --words "<his words>" --question "<the question>" [--established "<what is established>"] [--since <date>] [--reading "<the project's method files>"] [--records "<its dispatch record and bug register>"]
+   ```
+
+   It finds the previous report under `<briefs>/audits/` and starts at its date (else the first
+   commit), dates the report, resolves every path, and prints the brief's path and the report's.
+2. **Spawn**, beside the audited orchestrator: this session, or the one he names,
    with `--of <its tty>` (from `iterm-agent.sh list`) added to the line below:
 
    ```
@@ -42,10 +30,10 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    chain. The auditor never closes this tab.
    On a non-zero exit, run the `move` the line on stdout prints and never relaunch; on
    « unverified » or « API is not available », read `list` and move the tab only if misplaced.
-4. **The spawn's success line is its proof**, read once.
-5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
+3. **The spawn's success line is its proof**, read once.
+4. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
    own work: the auditor messages nobody but an orchestrator he orders it to, and ends by itself.
-6. **Close its tab yourself** once the auditor has delivered its report and you have relayed
+5. **Close its tab yourself** once the auditor has delivered its report and you have relayed
    its verdict to the operator: `iterm-agent.sh close --tty <its tty> --expect-title "Audit: <subject>"`.
    It stays open only on his word.
 

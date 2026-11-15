@@ -7,41 +7,39 @@
 import { expect, test } from 'claude-code/testing'
 import { register, syncArgv, startBoundMs, SYNC_TIMEOUT_MS, START_BOUND_MS } from '../short-commands.ts'
 import { logLineOf } from './fakes.ts'
+import { capture, hookOf, hostOf } from '../../core/capture.ts'
+import type { Host, Noun, ProcessRunInit, ProcessRunResult } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const INSTALLED = `${HOME}/.claude/plugins/cache/lounisbou/orchestrator/0.82.0-abc`
 
-function fakeDollar(over: { root?: string; env?: Record<string, string>; run?: (argv: readonly string[]) => any } = {}) {
-  const runs: { argv: readonly string[]; timeoutMs?: number }[] = []
+function fakeDollar(over: { root?: string; env?: Record<string, string>; run?: (argv: readonly string[]) => ProcessRunResult | Promise<ProcessRunResult> } = {}) {
+  const runs: { argv: readonly string[]; timeoutMs?: number | undefined }[] = []
   const written: string[] = []
   const env: Record<string, string> = { HOME, ...over.env }
-  const dollar = {
+  const dollar = hostOf({
     env: { get: async (name: string) => env[name] },
-    plugin: { name: 'orchestrator', root: over.root ?? INSTALLED },
+    plugin: { root: over.root ?? INSTALLED },
     process: {
-      run: async (argv: readonly string[], opts: { timeoutMs?: number } = {}) => {
+      run: async (argv: readonly string[], opts: ProcessRunInit = {}) => {
         const line = logLineOf(argv)
         if (line !== null) { written.push(line); return { exitCode: 0, stdout: '', stderr: '' } }
         runs.push({ argv, timeoutMs: opts.timeoutMs })
         return over.run ? over.run(argv) : { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, runs, written }
 }
 
-function startHook(): { matcher: object | undefined; handler: Function } {
-  const hooks: { event: string; matcher: object | undefined; handler: Function }[] = []
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    hooks.push({ event: args[0], matcher: args.length === 3 ? args[1] : undefined, handler: args[args.length - 1] as Function })
-    return { catch: () => undefined }
-  })
+function startHook() {
+  const hooks = capture<Host<Noun>>(register)
   expect(hooks.map(h => h.event)).toEqual(['session.start'])
-  return hooks[0]
+  return hookOf(hooks, 'session.start', {})
 }
 
 const start = { cwd: '/w', surface: 'terminal', isInteractive: true }
-const passed = (x: unknown) => ({ passed: x })
+const passed = async (x: unknown) => ({ passed: x })
 
 test('the writer is asked from an installed plugin, or wherever an override points, never from a checkout', () => {
   expect(syncArgv(INSTALLED, `${HOME}/.claude`, undefined)).toEqual(['bash', `${INSTALLED}/short-commands.sh`, 'sync', '--dir', `${HOME}/.claude/commands`])

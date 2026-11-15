@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import { main } from './coordinator.ts'
 import { fixture, type Fixture } from './fixture.ts'
@@ -242,6 +244,25 @@ describe('round', () => {
     mkdirSync(join(f.state, 'round-listed.json'))
     assert.equal(main(f.ctx, ['round']), 0)
     assert.deepEqual(f.err, [`coordinator: round: cannot record the listed entries in ${join(f.state, 'round-listed.json')}`])
+  })
+
+  it('keeps every id of twelve listings recorded at once, and rewrites a torn record whole', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'round-listed-'))
+    const ids = Array.from({ length: 12 }, (_, i) => `q${String(i).padStart(2, '0')}`)
+    const module = JSON.stringify(fileURLToPath(new URL('./round.ts', import.meta.url)))
+    const lister = (own: string): Promise<number> => new Promise(resolve => {
+      const entries = ids.map(id => ({ id, kind: 'operator', status: id === own ? 'open' : 'closed' }))
+      const code = `import { recordListed } from ${module}
+recordListed({ err: () => {} }, ${JSON.stringify(state)}, ${JSON.stringify(entries)}, { pane: false, text: true, live: new Set(), remote: new Map() })`
+      spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', code], { stdio: 'ignore' })
+        .on('exit', status => resolve(status ?? 1))
+    })
+    assert.deepEqual(await Promise.all(ids.map(lister)), ids.map(() => 0))
+    assert.deepEqual(JSON.parse(readFileSync(join(state, 'round-listed.json'), 'utf8')), ids)
+    writeFileSync(join(state, 'round-listed.json'), '["q00", "q0')
+    await lister('q05')
+    assert.equal(readFileSync(join(state, 'round-listed.json'), 'utf8'), '["q05"]\n')
+    assert.deepEqual(readdirSync(state), ['round-listed.json'])
   })
 
   it('prints nothing with no round directory, and refuses an argument', () => {

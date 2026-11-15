@@ -8,6 +8,8 @@ import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, 
 import { parseRoundEntry } from '../supervision.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hookOf, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Host, type Next, type Noun, type ToolSpec } from '../../core/host.ts'
 
 const HOME = '/tmp/ask-home'
 const MODULE = `${HOME}/.claude/claude-orchestrator`
@@ -42,14 +44,14 @@ function world(options: Options = {}) {
   // Each world is a fresh turn of the main thread: the questions it asks are numbered from one.
   askTurnStarted()
   const files = new Map<string, string>(Object.entries(options.files ?? {}))
-  const me = options.me === undefined ? ['coordinator', 'Coord: general [a1b2c3]'] : options.me
+  const me: [role: string, name: string] | null = options.me === undefined ? ['coordinator', 'Coord: general [a1b2c3]'] : options.me
   const sid = options.session ?? 's-me'
   if (me !== null) files.set(`${MODULE}/store/sessions/${sid}`, options.bare ? bareRow() : row(me[0], me[1]))
   if (options.walk !== undefined) files.set(`${HOME}/.claude/sessions/4242.json`, JSON.stringify({ pid: 4242, sessionId: sid, name: options.walk, status: 'busy' }))
   const shown: string[] = []
   const logs: string[] = []
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
     session: { id: async () => sid },
     clock: { sleep: async () => undefined },
@@ -76,19 +78,27 @@ function world(options: Options = {}) {
         if (options.walk !== undefined && argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=')) return { exitCode: 0, stdout: '1 ttys001\n', stderr: '' }
         if (options.walk !== undefined && argv[0] === 'ps') return { exitCode: 0, stdout: '4242 host --resume 043603d9 --name Orch: launched\n', stderr: '' }
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'box-1.local\n', stderr: '' }
-        if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
-        if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
+        const [verb, , from = '', to = ''] = argv
+        if (verb === 'mv') { files.set(to, files.get(from)!); files.delete(from) }
+        if (verb === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, files, shown, logs }
 }
 
 const stored = (files: Map<string, string>): Asked[] =>
   [...files.entries()].filter(([p]) => p.startsWith(`${ROUND}/`) && p.endsWith('.json')).map(([, text]) => JSON.parse(text) as Asked)
 
-const ask = (dollar: any, input: Record<string, unknown>, now = NOW) => callAsk(dollar, { tool: `mcp__orchestrator__${ASK_TOOL}`, ...input }, now)
+// Two entries, in their order: a test that asked two questions reads both.
+const pair = (entries: Asked[]): [Asked, Asked] => {
+  const [first, second] = entries
+  if (first === undefined || second === undefined) throw new Error(`two entries expected, ${entries.length} stored`)
+  return [first, second]
+}
+
+const ask = (dollar: Host<Noun>, input: Record<string, unknown>, now = NOW) => callAsk(dollar, { tool: `mcp__orchestrator__${ASK_TOOL}`, ...input }, now)
 
 // --- validation ---------------------------------------------------------------------------------
 
@@ -149,7 +159,7 @@ test('a call stores one object in the round with every field it was given, its i
   const { dollar, files, shown } = world()
   const answer = await ask(dollar, FULL)
   expect(answer.isError).toBeUndefined()
-  const [entry] = stored(files)
+  const entry = stored(files)[0]!
   expect(stored(files).length).toBe(1)
   expect(entry).toEqual({
     v: ASK_VERSION,
@@ -184,14 +194,14 @@ test('several calls in one turn make several objects, each its own id, numbered 
   expect(entries.length).toBe(2)
   expect(new Set(entries.map(entry => entry.id)).size).toBe(2)
   expect(entries.every(entry => entry.status === 'open' && entry.seq === 1)).toBe(true)
-  expect(answers[0]).toContain(`Question 1 of 1** (${entries[0].id})`)
-  expect(answers[1]).toContain(`Question 2 of 2** (${entries[1].id})`)
+  expect(answers[0]).toContain(`Question 1 of 1** (${entries[0]?.id})`)
+  expect(answers[1]).toContain(`Question 2 of 2** (${entries[1]?.id})`)
 })
 
 test('an object ask stored is no entry of the relay\'s, and an entry of the relay\'s is no object of ask\'s', async () => {
   const { dollar, files } = world()
   await ask(dollar, FULL)
-  const [text] = [...files.entries()].filter(([p]) => p.startsWith(`${ROUND}/`)).map(([, t]) => t)
+  const [text = ''] = [...files.entries()].filter(([p]) => p.startsWith(`${ROUND}/`)).map(([, t]) => t)
   expect(parseAsked(text)).not.toBeNull()
   expect(parseRoundEntry(text)).toBeNull()
   const old = JSON.stringify({ id: 'x', from: 'Orch: a', session: 's', kind: 'operator', since: 't', blocks: 'b', question: 'q', choices: [], recommendation: null, status: 'open', at: 't', answer: null })
@@ -222,7 +232,7 @@ for (const role of ['coordinator', 'auditor']) {
   test(`${role === 'auditor' ? 'an' : 'a'} ${role} asks, named as its row names it`, async () => {
     const { dollar, files } = world({ me: [role, `${role === 'auditor' ? 'Audit' : 'Coord'}: acme [a1b2c3]`] })
     expect((await ask(dollar, FULL)).isError).toBeUndefined()
-    expect(stored(files)[0].sender.role).toBe(role)
+    expect(stored(files)[0]?.sender.role).toBe(role)
   })
 }
 
@@ -236,8 +246,8 @@ for (const [when, options] of [
     const { dollar, files } = world(options as Options)
     const answer = await ask(dollar, FULL)
     expect(answer.isError).toBeUndefined()
-    expect(stored(files)[0].sender).toMatchObject({ role: 'orchestrator', name: 'Orch: acme' })
-    expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0].id})`)
+    expect(stored(files)[0]?.sender).toMatchObject({ role: 'orchestrator', name: 'Orch: acme' })
+    expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0]?.id})`)
   })
 }
 
@@ -272,18 +282,18 @@ test('an orchestrator asks as well, its question stored and shown', async () => 
   const { dollar, files } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })
   const answer = await ask(dollar, FULL)
   expect(answer.isError).toBeUndefined()
-  expect(stored(files)[0].sender.role).toBe('orchestrator')
-  expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0].id})`)
+  expect(stored(files)[0]?.sender.role).toBe('orchestrator')
+  expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0]?.id})`)
 })
 
 test('« Question i of N » counts this turn\'s questions only: one asked in a later turn reads 1 of 1, whatever stays open', async () => {
   const { dollar, files } = world()
   const heads: string[] = []
-  const head = (answer: any) => heads.push(String(/Question \d+ of \d+/.exec(String(answer.result))?.[0]))
+  const head = (answer: { readonly result: string }) => heads.push(String(/Question \d+ of \d+/.exec(String(answer.result))?.[0]))
   head(await ask(dollar, FULL))
   await mounted()['turn.start'](dollar, {}, async () => undefined)
   head(await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1)))
-  const [first, second] = stored(files).sort((a, b) => (a.at < b.at ? -1 : 1))
+  const [first, second] = pair(stored(files).sort((a, b) => (a.at < b.at ? -1 : 1)))
   expect([first.status, second.status]).toEqual(['open', 'open'])
   expect(heads).toEqual(['Question 1 of 1', 'Question 1 of 1'])
   // A subagent's turn is not the main thread's: it starts no count.
@@ -299,7 +309,7 @@ test('a question its project already had answered is answered from the newest re
   const fields = { ...FULL, urgent: undefined }
   const before = world()
   await ask(before.dollar, fields)
-  const [first] = stored(before.files)
+  const first = stored(before.files)[0]!
   const answered = (id: string, by: string, at: string, over: Record<string, unknown> = {}) =>
     JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text: `B from ${id}`, by, at, settler: 'x' }, ...over })
   const { dollar, files, shown } = world({
@@ -324,7 +334,7 @@ test('words typed in a tab are a record only when they name one choice: free pro
   const fields = { ...FULL, urgent: undefined }
   const before = world()
   await ask(before.dollar, fields)
-  const [first] = stored(before.files)
+  const first = stored(before.files)[0]!
   const typed = (id: string, text: string, at: string) =>
     JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text, by: 'tab', at, settler: 'x' } })
   const { dollar, files } = world({
@@ -344,7 +354,7 @@ test('a prompt he types claims the asker\'s open questions; the turn\'s end answ
   const { dollar, files } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
   await ask(dollar, { ...FULL, urgent: undefined, subject: 'tag order' })
-  const [first, second] = stored(files).sort((a, b) => (a.subject < b.subject ? -1 : 1))
+  const [first, second] = pair(stored(files).sort((a, b) => (a.subject < b.subject ? -1 : 1)))
   // A model's own prompt, or a command, claims nothing.
   expect(await claimAsked(dollar, 'model', 'B')).toEqual([])
   expect(await claimAsked(dollar, 'composer', '/compact')).toEqual([])
@@ -364,7 +374,7 @@ test('a prompt he types claims the asker\'s open questions; the turn\'s end answ
 test('a question the wait keeps whose reopening cannot be written is never answered by the turn\'s end', async () => {
   const { dollar, files, logs } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
-  const [kept] = stored(files)
+  const kept = stored(files)[0]!
   await claimAsked(dollar, 'composer', 'B', NOW)
   const run = dollar.process.run
   let refused = 0
@@ -419,25 +429,27 @@ test('an id is safe as a file name and differs by instant and draw', () => {
 // --- registration -------------------------------------------------------------------------------
 
 function mounted() {
-  const handlers: Record<string, Function> = {}
-  const on = (event: string, ...rest: any[]) => {
-    const [matcher, handler] = rest.length === 2 ? rest : [{}, rest[0]]
-    handlers[`${event}${matcher.tool ? `:${matcher.tool}` : ''}`] = handler
-    return { catch: () => undefined }
+  const hooks = capture(registerQuestion)
+  const tool = `mcp__orchestrator__${ASK_TOOL}`
+  return {
+    'session.start': (dollar: Host<Noun>, e: Events['session.start'], next: Next<Events['session.start']>) => hookOf(hooks, 'session.start', {}).handler(dollar, e, next),
+    'turn.start': (dollar: Host<Noun>, e: Events['turn.start'], next: Next<Events['turn.start']>) => hookOf(hooks, 'turn.start', {}).handler(dollar, e, next),
+    'prompt.submit': (dollar: Host<Noun>, e: Events['prompt.submit'], next: Next<Events['prompt.submit']>) => hookOf(hooks, 'prompt.submit', {}).handler(dollar, e, next),
+    'turn.complete': (dollar: Host<Noun>, e: Events['turn.complete'], next: Next<Events['turn.complete']>) => hookOf(hooks, 'turn.complete', {}).handler(dollar, e, next),
+    // The tool's hook answers the call itself: nothing beneath it is called.
+    [`tool.call:${tool}`]: (dollar: Host<Noun>, e: Events['tool.call']) => hookOf(hooks, 'tool.call', { tool }).handler(dollar, e, async () => { throw new Error('the tool calls nothing beneath') }),
   }
-  registerQuestion(on as any)
-  return handlers
 }
 
 test('the tool is registered with flat fields only, and answers its calls', async () => {
   const { dollar, files } = world()
-  const registered: any[] = []
-  dollar.tool = { register: async (spec: unknown) => { registered.push(spec) } }
+  const registered: ToolSpec[] = []
+  dollar.tool.register = async (spec: ToolSpec) => { registered.push(spec) }
   const handlers = mounted()
   await handlers['session.start'](dollar, { cwd: '/w' }, async () => undefined)
   expect(registered.map(spec => spec.name)).toEqual([ASK_TOOL])
-  const properties = registered[0].inputSchema.properties
-  expect(Object.values(properties).every((p: any) => p.type !== 'object' && p.type !== 'array')).toBe(true)
+  const properties = fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {}
+  expect(Object.values(properties).every(p => fieldsOf(p)?.['type'] !== 'object' && fieldsOf(p)?.['type'] !== 'array')).toBe(true)
   expect(Object.keys(properties).sort()).toEqual(['blocks', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'choice_e', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'context', 'question', 'recommended', 'subject', 'urgent', 'why'])
   await handlers[`tool.call:mcp__orchestrator__${ASK_TOOL}`](dollar, FULL)
   expect(stored(files).length).toBe(1)
@@ -446,16 +458,16 @@ test('the tool is registered with flat fields only, and answers its calls', asyn
 test('his prompt in the tab claims through the hook, and the turn\'s end answers, keeping what its declared operator wait waits on', async () => {
   const { dollar, files } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
-  const [entry] = stored(files)
+  const entry = stored(files)[0]!
   const handlers = mounted()
   const next = async (x: unknown) => x
   await handlers['prompt.submit'](dollar, { origin: { kind: 'composer' }, text: 'B' }, next)
-  expect(stored(files)[0].claimed?.typed).toBe('B')
+  expect(stored(files)[0]?.claimed?.typed).toBe('B')
   DECLARATIONS.turnStarted()
   DECLARATIONS.declare({ kind: 'operator', blocks: entry.blocks, asked: [entry.id] })
   await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'Noted.' }, next)
   expect(stored(files)[0]).toMatchObject({ status: 'open' })
-  expect(stored(files)[0].claimed).toBeUndefined()
+  expect(stored(files)[0]?.claimed).toBeUndefined()
   await handlers['prompt.submit'](dollar, { origin: { kind: 'composer' }, text: 'B' }, next)
   DECLARATIONS.turnStarted()
   await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'Merging acme/app#2 first.' }, next)

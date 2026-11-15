@@ -8,6 +8,12 @@ import { expect, test } from 'claude-code/testing'
 import { guardFallback, killDecision, register as registerGuards } from '../guards.ts'
 import { detectPatternKills } from '../pattern-kills.ts'
 import { logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type CatchHook, type Events, type Hook, type Host, type Noun } from '../../core/host.ts'
+
+type World = Host<Noun>
+type Guard = Hook<World, Events['tool.call']>
+const denyOf = (answer: unknown) => fieldsOf(answer)?.['deny']
 
 // Kills by name or pattern: the program is pkill or killall, or kill takes its pids
 // from a command substitution or, through xargs, from a lister.
@@ -740,10 +746,10 @@ test('a mark never read refuses a line the reader cannot read, and a mark as rea
 // The wiring half: the whole of the reduced $ faked.
 const HOME = '/tmp/h'
 
-function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: any; written: string[] } {
+function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: World; written: string[] } {
   const written: string[] = []
-  const env = { HOME, ...(setup.spawned === undefined ? {} : { ORCHESTRATOR_SPAWNED: setup.spawned }) }
-  const dollar = {
+  const env: Record<string, string> = { HOME, ...(setup.spawned === undefined ? {} : { ORCHESTRATOR_SPAWNED: setup.spawned }) }
+  const dollar = hostOf({
     env: {
       get: async (name: string) => {
         if (name === 'ORCHESTRATOR_SPAWNED' && setup.noEnv) throw new Error('the marker cannot be read')
@@ -754,7 +760,7 @@ function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: any
       read: async (p: string) => { throw new Error(`unread: ${p}`) },
       write: async () => undefined,
     },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     process: {
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
@@ -762,24 +768,20 @@ function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: any
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, written }
 }
 
-function mounted(): { handlers: Record<string, Function> } {
-  const handlers: Record<string, Function> = {}
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
-  return { handlers }
+// The last tool-call hook the guards register, by its event: the Bash guard.
+function mounted(): { handlers: { 'tool.call': Guard } } {
+  return { handlers: { 'tool.call': hooksOn(capture<World>(on => registerGuards(on)), 'tool.call').at(-1)!.handler } }
 }
 
 const bashCall = (command: string) => ({ tool: 'Bash', tool_use_id: 't1', command })
 
-async function callBash(handler: Function, dollar: any, e: object) {
+async function callBash(handler: Guard, dollar: World, e: Events['tool.call']) {
   let passedThrough: unknown = null
-  const answer = await handler(dollar, e, (x: unknown) => { passedThrough = x; return x })
+  const answer = await handler(dollar, e, async (x: unknown) => { passedThrough = x; return x })
   return { answer, passedThrough }
 }
 
@@ -788,7 +790,7 @@ test("a marked session's kill by pattern is denied, the tool never asked", async
   const { dollar } = fakeDollar({ spawned: '1' })
   for (const c of ['pkill -f vite', 'killall node', 'kill $(pgrep -f vite)', 'pgrep node | xargs kill']) {
     const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
-    expect((answer as any).deny, c).toContain(DENY_START)
+    expect(denyOf(answer), c).toContain(DENY_START)
     expect(passedThrough, c).toBeNull()
   }
 })
@@ -798,8 +800,8 @@ test("a marked session's wide kill is denied, the tool never asked", async () =>
   const { dollar } = fakeDollar({ spawned: '1' })
   for (const c of ['kill -9 -1', 'kill -- -1', 'kill 0', 'kill -TERM -$$']) {
     const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
-    expect((answer as any).deny, c).toContain(DENY_START)
-    expect((answer as any).deny, c).toContain('Seen: kill of all processes or a process group.')
+    expect(denyOf(answer), c).toContain(DENY_START)
+    expect(denyOf(answer), c).toContain('Seen: kill of all processes or a process group.')
     expect(passedThrough, c).toBeNull()
   }
 })
@@ -809,7 +811,7 @@ test("a marked session's line the reader cannot read is denied, the tool never a
   const { dollar } = fakeDollar({ spawned: '1' })
   for (const c of UNREADABLE) {
     const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
-    expect((answer as any).deny, c).toContain(DENY_START)
+    expect(denyOf(answer), c).toContain(DENY_START)
     expect(passedThrough, c).toBeNull()
   }
 })
@@ -847,8 +849,8 @@ test('a handler that cannot read its marker refuses a kill by pattern alone, wit
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({ noEnv: true })
   const killed = await callBash(handlers['tool.call'], dollar, bashCall('pkill -f vite'))
-  expect((killed.answer as any).deny).toContain('kill refused')
-  expect((killed.answer as any).deny).toContain('the marker cannot be read')
+  expect(denyOf(killed.answer)).toContain('kill refused')
+  expect(denyOf(killed.answer)).toContain('the marker cannot be read')
   expect(killed.passedThrough).toBeNull()
   expect(written.length).toBe(1)
   const e = bashCall('kill 1234')
@@ -858,26 +860,21 @@ test('a handler that cannot read its marker refuses a kill by pattern alone, wit
 
 // The registered net: a re-entered call, or one past its budget, decides on the mark
 // the guard read last.
-function mountedNet(): { body: Function; net: Function } {
-  let body: Function = () => undefined
-  let net: Function = () => undefined
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    const isBash = args[0] === 'tool.call'
-    if (isBash) body = args[args.length - 1] as Function
-    return { catch: (handler: Function) => { if (isBash) net = handler } }
-  })
-  return { body, net }
+function mountedNet(): { body: Guard; net: CatchHook<World, Events['tool.call']> } {
+  const last = hooksOn(capture<World>(on => registerGuards(on)), 'tool.call').at(-1)!
+  return { body: last.handler, net: last.net ?? (async () => undefined) }
 }
+
+// A next past its budget, the call beneath not run.
+const pastBudget = () => Object.assign(async (x: unknown) => x, { called: false, error: { kind: 'budget', message: 'the hook ran past its budget' } })
 
 test("the net refuses a spawned session's kill by pattern when the guard could not finish", async () => {
   const { body, net } = mountedNet()
   const marked = fakeDollar({ spawned: '1' })
   await callBash(body, marked.dollar, bashCall('git status'))
-  const failed: any = (x: unknown) => x
-  failed.called = false
-  failed.error = { kind: 'budget', message: 'the hook ran past its budget' }
+  const failed = pastBudget()
   const refused = await net(marked.dollar, bashCall('pkill -f vite'), failed)
-  expect(refused.deny).toContain(DENY_START)
+  expect(denyOf(refused)).toContain(DENY_START)
   const e = bashCall('kill 1234')
   expect(await net(marked.dollar, e, failed)).toBe(e)
 })
@@ -886,19 +883,15 @@ test("the net refuses a spawned session's line the reader cannot read when the g
   const { body, net } = mountedNet()
   const marked = fakeDollar({ spawned: '1' })
   await callBash(body, marked.dollar, bashCall('git status'))
-  const failed: any = (x: unknown) => x
-  failed.called = false
-  failed.error = { kind: 'budget', message: 'the hook ran past its budget' }
-  for (const c of UNREADABLE) expect((await net(marked.dollar, bashCall(c), failed)).deny, c).toContain(DENY_START)
+  const failed = pastBudget()
+  for (const c of UNREADABLE) expect(denyOf(await net(marked.dollar, bashCall(c), failed)), c).toContain(DENY_START)
 })
 
 test("the net lets an operator's own session kill by pattern when the guard could not finish", async () => {
   const { body, net } = mountedNet()
   const own = fakeDollar({})
   await callBash(body, own.dollar, bashCall('git status'))
-  const failed: any = (x: unknown) => x
-  failed.called = false
-  failed.error = { kind: 'budget', message: 'the hook ran past its budget' }
+  const failed = pastBudget()
   const e = bashCall('pkill -f vite')
   expect(await net(own.dollar, e, failed)).toBe(e)
 })

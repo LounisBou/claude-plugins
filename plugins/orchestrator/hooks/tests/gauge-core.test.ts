@@ -3,6 +3,22 @@ import { expect, test } from 'claude-code/testing'
 import { tripGate, parseMeasure, measureFilePath, newerInstalled } from '../gauge-core.ts'
 import { currentReading, driftAnnouncement, writeMeasure, takeDrift, register as registerGauge } from '../gauge.ts'
 import { logLineOf, disk, emptied, MEASURES } from './fakes.ts'
+import { capture, hooksOn, hostOf, type HostParts } from '../../core/capture.ts'
+import type { Events, SessionContextUsage } from '../../core/host.ts'
+
+// The gauge's hooks, each called with a host made of the parts a test hands it.
+type GaugeEvent = 'session.start' | 'session.measure' | 'session.compact' | 'session.end'
+function gaugeHooks(): { [K in GaugeEvent]: (parts: HostParts, e: Events[K]) => Promise<unknown> } {
+  const hooks = capture(registerGauge)
+  const call = <K extends GaugeEvent>(event: K) => (parts: HostParts, e: Events[K]) => {
+    const hook = hooksOn(hooks, event)[0]
+    if (hook === undefined) throw new Error(`no hook ${event}`)
+    return hook.handler(hostOf(parts), e, async (x: Events[K]) => x)
+  }
+  return { 'session.start': call('session.start'), 'session.measure': call('session.measure'), 'session.compact': call('session.compact'), 'session.end': call('session.end') }
+}
+// A measure event: the gauge reads its figures from the session, not from the event.
+const MEASURED: Events['session.measure'] = { context: { window: 0 } }
 
 test('the gate trips at 80 percent of the window', () => {
   expect(tripGate(79, 79000, 100000).tripped).toBe(false)
@@ -44,7 +60,7 @@ test('env overrides move the thresholds', () => {
 test('the measure file is one JSON line at the session path, put there in one rename', async () => {
   const d = disk()
   const $ = { ...d, env: { get: async (name: string) => (name === 'CLAUDE_CONFIG_DIR' ? '/cfg' : undefined) } }
-  await writeMeasure($, 's1',
+  await writeMeasure(hostOf($), 's1',
     { context_tokens: 123, context_window: 1000, context_percent: 12, model: 'a-model', updated_at: 't' })
   expect(measureFilePath('/cfg', 's1')).toBe('/cfg/claude-orchestrator/measure/s1.json')
   expect(measureFilePath('/cfg', 's1', '/sandbox/module')).toBe('/sandbox/module/measure/s1.json')
@@ -73,13 +89,7 @@ test('a fresh module load announces no drift, and a later change is announced on
   // load is announced exactly once, never re-announced on the next measure.
   const toasts: string[] = []
   let answersAs = 'a-model'
-  const handlers: Record<string, Function> = {}
-  // The engine's on returns a registration taking one .catch; the fake
-  // accepts it and drops it — the body's own catch is what this test drives.
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const $ = {
     ...disk(),
     session: {
@@ -90,13 +100,12 @@ test('a fresh module load announces no drift, and a later change is announced on
     env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
     ui: { toast: (text: string) => { toasts.push(text) }, invalidate: () => undefined },
   }
-  const through = (e: unknown) => e
-  await handlers['session.measure']($, {}, through)
+  await handlers['session.measure']($, MEASURED)
   expect(toasts).toEqual([])
   answersAs = 'another-model'
-  await handlers['session.measure']($, {}, through)
+  await handlers['session.measure']($, MEASURED)
   expect(toasts).toEqual([driftAnnouncement('another-model', 'a-model')])
-  await handlers['session.measure']($, {}, through)
+  await handlers['session.measure']($, MEASURED)
   expect(toasts).toEqual([driftAnnouncement('another-model', 'a-model')])
   // The toast fades; the line itself waits for the model's next prompt, handed once.
   expect(takeDrift()).toBe(driftAnnouncement('another-model', 'a-model'))
@@ -107,12 +116,8 @@ test('a compaction removes the measure file, and a measure without figures forge
   // After /compact the figures measured before it are no longer the conversation's:
   // the gate reads the measure file, and the next prompt was told the old fill. The file goes
   // (an unmeasured session has none); it is never rewritten empty, which left 0-byte files behind.
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
-  let usage: object = { context: { tokens: 850, window: 1000, percent: 85 } }
+  const handlers = gaugeHooks()
+  let usage: { context: SessionContextUsage } = { context: { tokens: 850, window: 1000, percent: 85 } }
   const d = disk()
   const $ = {
     ...d,
@@ -121,29 +126,25 @@ test('a compaction removes the measure file, and a measure without figures forge
     ui: { toast: () => undefined, invalidate: () => undefined },
   }
   const path = measureFilePath('/tmp/cfg', 's-compact')
-  await handlers['session.measure']($, {}, (x: unknown) => x)
+  await handlers['session.measure']($, MEASURED)
   expect(d.files.has(path)).toBe(true)
-  const e = { trigger: 'manual', messages: [] }
-  expect(await handlers['session.compact']($, e, (x: unknown) => x)).toBe(e)
+  const e = {}
+  expect(await handlers['session.compact']($, e)).toBe(e)
   expect(d.files.has(path)).toBe(false)
   // A subagent's compaction is its own.
-  await handlers['session.measure']($, {}, (x: unknown) => x)
-  await handlers['session.compact']($, { ...e, agentId: 'a-1' }, (x: unknown) => x)
+  await handlers['session.measure']($, MEASURED)
+  await handlers['session.compact']($, { ...e, agentId: 'a-1' })
   expect(d.files.has(path)).toBe(true)
   // Then a measure with no token count: the figures are forgotten.
   usage = { context: { window: 1000 } }
-  await handlers['session.measure']($, {}, (x: unknown) => x)
+  await handlers['session.measure']($, MEASURED)
   expect(d.files.has(path)).toBe(false)
   expect(emptied(d)).toEqual([])
   takeDrift()
 })
 
 test('a session end keeps its measure file, and one never measured leaves none: no empty file is ever written', async () => {
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const d = disk()
   const $ = (id: string) => ({
     ...d,
@@ -151,16 +152,16 @@ test('a session end keeps its measure file, and one never measured leaves none: 
     env: { get: async (name: string) => (name === 'CLAUDE_CONFIG_DIR' ? '/tmp/cfg' : undefined) },
     ui: { toast: () => undefined, invalidate: () => undefined },
   })
-  await handlers['session.measure']($('s-end'), {}, (x: unknown) => x)
+  await handlers['session.measure']($('s-end'), MEASURED)
   expect(d.files.has(`${MEASURES}/s-end.json`)).toBe(true)
-  await handlers['session.end']($('s-end'), { sessionId: 's-end' }, (x: unknown) => x)
+  await handlers['session.end']($('s-end'), { sessionId: 's-end' })
   // A subagent, or a session that ended before its first answer, was never measured.
-  await handlers['session.end']($('s-never'), { sessionId: 's-never' }, (x: unknown) => x)
+  await handlers['session.end']($('s-never'), { sessionId: 's-never' })
   // The closed session's last figures stay: the series of closed sessions is what shows whether a change of method helped.
   expect([...d.files.keys()]).toEqual([`${MEASURES}/s-end.json`])
   expect(emptied(d)).toEqual([])
   // A compaction still removes it: the gate reads that file, and the conversation no longer has those figures.
-  await handlers['session.compact']($('s-end'), {}, (x: unknown) => x)
+  await handlers['session.compact']($('s-end'), {})
   expect([...d.files.keys()]).toEqual([])
 })
 
@@ -168,11 +169,7 @@ test('a measure before the first answer writes nothing and logs nothing', async 
   // Live finding: the host leaves the token count and the percentage out until the
   // session's first answer, and a reading carrying them as undefined crashed every
   // reader on toLocaleString. Such a measure is no measure: no file, no log line.
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const writes: string[] = []
   const $ = {
     session: {
@@ -184,17 +181,13 @@ test('a measure before the first answer writes nothing and logs nothing', async 
     env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
     ui: { toast: () => undefined, invalidate: () => undefined },
   }
-  const e = {}
-  expect(await handlers['session.measure']($, e, (x: unknown) => x)).toBe(e)
+  const e = MEASURED
+  expect(await handlers['session.measure']($, e)).toBe(e)
   expect(writes).toEqual([])
 })
 
 test('a measure with figures fills the reading the pane and the store read', async () => {
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const $ = {
     ...disk(),
     session: {
@@ -205,7 +198,7 @@ test('a measure with figures fills the reading the pane and the store read', asy
     env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
     ui: { toast: () => undefined, invalidate: () => undefined },
   }
-  await handlers['session.measure']($, {}, (x: unknown) => x)
+  await handlers['session.measure']($, MEASURED)
   expect(currentReading()?.context_percent).toBe(42)
   expect(currentReading()?.context_tokens).toBe(42000)
   takeDrift()
@@ -264,11 +257,7 @@ test('a compaction that cannot remove the measure file is said, and blocks nothi
   // The every-handler-logs rule: the compaction is never held on the store's own
   // failure, but the failure is not swallowed either — one line, the gauge's
   // own stamp naming the half that failed.
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const written: string[] = []
   const $ = {
     session: { id: async () => 's1' },
@@ -284,8 +273,8 @@ test('a compaction that cannot remove the measure file is said, and blocks nothi
       },
     },
   }
-  const e = { trigger: 'manual', messages: [] }
-  const answer = await handlers['session.compact']($, e, (x: unknown) => x)
+  const e = {}
+  const answer = await handlers['session.compact']($, e)
   expect(answer).toBe(e)
   expect(written.length).toBe(1)
   expect(written[0]).toContain('| gauge |')
@@ -299,16 +288,12 @@ test('a reader of an empty or partial measure file reads it as unmeasured and wr
     expect(parseMeasure(await $.fs.read(`${MEASURES}/${id}.json`))).toBeNull()
   }
   // The gauge's own read-back (the start kept across a reload) is a read: the file stays as it was.
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   d.history.length = 0
   await handlers['session.measure']({
     ...$, session: { usage: async () => ({ context: { tokens: 1, window: 2, percent: 3 } }), model: async () => 'a-model', id: async () => 's-empty' },
     ui: { toast: () => undefined, invalidate: () => undefined },
-  }, {}, (x: unknown) => x)
+  }, MEASURED)
   expect(parseMeasure(d.files.get(`${MEASURES}/s-empty.json`)!)).toMatchObject({ context_tokens: 1 })
   expect(d.files.get(`${MEASURES}/s-partial.json`)).toBe('{"context_tokens":12')
   takeDrift()
@@ -318,11 +303,7 @@ test('a reader of an empty or partial measure file reads it as unmeasured and wr
 // start: the first figure of a session is kept in its measure file on every later measure, read
 // back after a reload of the module, and the launcher's ORCHESTRATOR_BRIEF names the brief.
 test('the measure file keeps the session\'s start: its first figure and the brief it started on', async () => {
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const d = disk(new Map<string, string>([['/w/brief.md', 'x'.repeat(4321)]]))
   const files = d.files
   const usage = { context: { tokens: 21000, window: 1000000, percent: 2 } }
@@ -332,7 +313,7 @@ test('the measure file keeps the session\'s start: its first figure and the brie
     env: { get: async (name: string) => ({ HOME: '/tmp/h', ...env } as Record<string, string>)[name] },
     ui: { toast: () => undefined, invalidate: () => undefined },
   })
-  const measure = (dollar: object) => handlers['session.measure'](dollar, { context: usage.context }, (x: unknown) => x)
+  const measure = (dollar: HostParts) => handlers['session.measure'](dollar, { context: usage.context })
   const fileOf = (id: string) => JSON.parse(files.get(`/tmp/h/.claude/claude-orchestrator/measure/${id}.json`)!)
   await measure($('s-start', { ORCHESTRATOR_BRIEF: '/w/brief.md' }))
   usage.context = { tokens: 90000, window: 1000000, percent: 9 }
@@ -354,11 +335,7 @@ test('the measure file keeps the session\'s start: its first figure and the brie
 })
 
 test('a session start removes the module\'s own empty measure files older than a day, and nothing else', async () => {
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const DAY = 24 * 3600 * 1000
   const now = Date.now()
   const d = disk(new Map([
@@ -370,23 +347,19 @@ test('a session start removes the module\'s own empty measure files older than a
     ...d,
     fs: { ...d.fs, list: async () => [...d.files.keys()].map(path => {
       const name = path.slice(path.lastIndexOf('/') + 1)
-      return { name, kind: 'file' as const, size: d.files.get(path)!.length, isLink: false, mtimeMs: now - age[name] }
+      return { name, kind: 'file' as const, size: d.files.get(path)!.length, isLink: false, mtimeMs: now - (age[name] ?? 0) }
     }) },
     env: { get: async (name: string) => (name === 'CLAUDE_CONFIG_DIR' ? '/tmp/cfg' : undefined) },
   }
   const e = { cwd: '/w' }
-  expect(await handlers['session.start']($, e, (x: unknown) => x)).toBe(e)
+  expect(await handlers['session.start']($, e)).toBe(e)
   expect([...d.files.keys()].sort()).toEqual([`${MEASURES}/new-empty.json`, `${MEASURES}/old-empty.json.tmp-1-abc`, `${MEASURES}/old-full.json`])
 })
 
 // The gate the session is held to, in tokens, is written beside its figures: the readers that
 // show it (statusbar) take the owner's figure instead of re-deriving it from the variables.
 test('the measure file carries its version and the session\'s gate in tokens on its window', async () => {
-  const handlers: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const handlers = gaugeHooks()
   const d = disk()
   const files = d.files
   const $ = (id: string, window: number, env: Record<string, string>) => ({
@@ -396,7 +369,7 @@ test('the measure file carries its version and the session\'s gate in tokens on 
     ui: { toast: () => undefined, invalidate: () => undefined },
   })
   const gateOf = async (id: string, window: number, env: Record<string, string> = {}) => {
-    await handlers['session.measure']($(id, window, env), {}, (x: unknown) => x)
+    await handlers['session.measure']($(id, window, env), MEASURED)
     const file = JSON.parse(files.get(`/tmp/h/.claude/claude-orchestrator/measure/${id}.json`)!)
     expect(file.version).toBe(1)
     return file.gate_tokens
