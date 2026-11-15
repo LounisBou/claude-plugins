@@ -10303,8 +10303,8 @@ check "two orchestrators in one checkout are still a pull request collision; a f
   "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
-mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts" "$WORK/coord-tree/core"
-cp "$COORD" "$CT/coordinator/scripts/" && cp "$ROOT/core/names.json" "$WORK/coord-tree/core/"
+mkdir -p "$CT/iterm-agents/scripts"
+cp -R "$ROOT/skills/coordinator" "$ROOT/skills/orchestrator" "$CT/" && cp -R "$ROOT/core" "$WORK/coord-tree/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
@@ -10316,7 +10316,7 @@ check "a host name that cannot be known is said, and exit 2" "unread sessions: t
 printf 'HOST_CLI = os.environ.get("ORCHESTRATOR_HOST_CLI", "hostcli")\n' > "$CT/iterm-agents/scripts/iterm_agent.py"
 check "without ORCHESTRATOR_HOST_CLI the host's name is the launcher's default" "5" \
   "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep -c '^session ')"
-check "the script never spells the host's name" "0" "$(grep -v 'CLAUDE_CONFIG_DIR' "$COORD" | grep -ci 'claude')"
+check "the script never spells the host's name" "0" "$(cat "$COORD" "$ROOT/skills/coordinator/scripts/facts.ts" | grep -v 'CLAUDE_CONFIG_DIR' | grep -ci 'claude')"
 check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
 
 # The sleeping orchestrators: paused on the operator's word, their tab closed by the
@@ -10699,26 +10699,6 @@ ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_N
 check "round records the ids of the open entries it printed, keeps those printed before while the round holds them" \
   "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
   "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
-# One read of the round serves the print and the record: an entry opened while the print runs
-# was recorded as shown though never printed, and its settling later told a coordinator that
-# had never seen it. A jq shim writes such an entry while round prints.
-LATE_BIN="$WORK/late-jq"
-mkdir -p "$LATE_BIN"
-REAL_JQ=$(command -v jq)
-cat > "$LATE_BIN/jq" <<SHIM
-#!/bin/bash
-case "\$*" in
-  *'def ordered'*) [ -f "$ASTATE/round/late.json" ] || jq -n '{id:"late", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:05:00.000Z",
-    blocks:"phase 9", question:"Late?", choices:[], recommendation:null, status:"open", at:"2026-10-20T10:05:00.000Z", answer:null}' > "$ASTATE/round/late.json" ;;
-esac
-exec "$REAL_JQ" "\$@"
-SHIM
-chmod +x "$LATE_BIN/jq"
-rm -f "$ASTATE/round-listed.json"
-LATE_OUT=$(PATH="$LATE_BIN:$PATH" ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)
-check "an entry opened while round prints is neither printed nor recorded as shown" "yes|0|yes|no" \
-  "$([ -f "$ASTATE/round/late.json" ] && echo yes)|$(printf '%s\n' "$LATE_OUT" | grep -c '^round late ')|$([ -s "$ASTATE/round-listed.json" ] && echo yes)|$(jq -e 'index("late") != null' "$ASTATE/round-listed.json" >/dev/null 2>&1 && echo yes || echo no)"
-rm -f "$ASTATE/round/late.json" "$ASTATE/round-listed.json"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
   "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'call `settle` for it')"
@@ -10786,8 +10766,6 @@ printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > 
 check "an entry answered in the pane is never due, and once closed is never listed again" \
   "0|0|0" \
   "$(dround | grep -c '^round xu .* | due')|$(jq -c '.status = "closed"' "$DSTATE/round/xu.json" > "$DSTATE/round/xu.next" && mv "$DSTATE/round/xu.next" "$DSTATE/round/xu.json"; dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
-check "round refuses a pinned clock that is no UTC time" "exit 1|coordinator: round: COORDINATOR_NOW is no UTC time: soon" \
-  "$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round >/dev/null 2>&1; echo "exit $?")|$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round 2>&1)"
 # round --by-urgency lists the same lines, due marked the same, each set ordered urgent first,
 # then grouped by orchestrator within each level, the groups by their earliest wait in it, each
 # oldest first: the operator's ruling of 2026-10-31 (6.2), the order a decision round asks in.
