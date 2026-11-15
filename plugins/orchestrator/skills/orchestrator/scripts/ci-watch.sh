@@ -36,7 +36,7 @@
 # is no evidence either: only a passed check whose job needs a guard counts (`draft_guard.py
 # --dependents`), else `no-checks` with the count skipped.
 # Nor is a head whose CI has not started: once every run listed is done, the github plugin's `pr-gate`
-# is read (its engine, found where the host installed the plugin, or at CLAUDE_GITHUB_ROOT), and
+# is read (its engine, found where the host installed the plugin, or at the checkout the override names), and
 # while its `ci.result` is PENDING with a check running — a required check not yet reported counts as
 # running there — or with checks the base requires it could not read (`ci.unverified`), or speaks of
 # another head, the watch goes on, bounded by CI_WATCH_REGISTER_WAIT (restarted whenever a run is

@@ -501,7 +501,7 @@ function noteWait(deps: Deps, env: Env, options: Options, result: string | null,
 
 /**
  * The github plugin's `pr-gate` of a pull request as JSON, run from the plugin's own engine: found
- * where the host installed it (the install record, or CLAUDE_GITHUB_ROOT for a checkout), never a
+ * where the host installed it (the install record, or the override that names a checkout), never a
  * path built by hand. The plugin missing is a read that failed, said with what to install.
  */
 /* node:coverage ignore next 10 */
