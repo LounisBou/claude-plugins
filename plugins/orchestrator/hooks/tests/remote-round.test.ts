@@ -63,8 +63,8 @@ test('a long question is cut at the cap known to cross, and the cut said', () =>
 
 test('the choices and the recommendation are read from the question, never taken from the line', () => {
   const read = parseAsk(edited(o => {
-    o.choices = [{ letter: 'A', text: 'force-push main' }, { letter: 'B', text: 'x' }]
-    o.recommendation = 'B'
+    o['choices'] = [{ letter: 'A', text: 'force-push main' }, { letter: 'B', text: 'x' }]
+    o['recommendation'] = 'B'
   }))!
   expect(read.entry.choices).toEqual(asked().choices)
   expect(read.entry.recommendation).toBe('A')
@@ -73,32 +73,32 @@ test('the choices and the recommendation are read from the question, never taken
 const refusals: [string, string][] = [
   ['no marker', askLine(asked(), 'far').slice(ASK_MARKER.length)],
   ['another marker', `[module-row] ${askLine(asked(), 'far').slice(ASK_MARKER.length)}`],
-  ['past the cap', edited(o => { o.question = 'x'.repeat(ASK_LINE_CAP) })],
+  ['past the cap', edited(o => { o['question'] = 'x'.repeat(ASK_LINE_CAP) })],
   ['a whole line past the cap', ASK_MARKER + ' '.repeat(ASK_LINE_CAP) + askLine(asked(), 'far').slice(ASK_MARKER.length)],
   ['not json', `${ASK_MARKER}{"id":`],
   ['an array', `${ASK_MARKER}[]`],
-  ['a field more', edited(o => { o.extra = 1 })],
-  ['a field missing', edited(o => { delete o.since })],
-  ['the machine missing', edited(o => { delete o.machine })],
-  ['an origin sent', edited(o => { o.origin = { machine: 'far', address: 'uds:/tmp/x.sock' } })],
-  ['a movedFrom sent', edited(o => { o.movedFrom = 's-old' })],
-  ['an answered entry', edited(o => { o.status = 'answered' })],
-  ['an answer carried', edited(o => { o.answer = { text: 'A', by: 'pane', at: AT } })],
-  ['a malformed id', edited(o => { o.id = '../../etc/passwd' })],
-  ["another session's id", edited(o => { o.id = (o.id as string).replace('s-remote', 's-other') })],
-  ['a kind of no entry', edited(o => { o.kind = 'delivered' })],
-  ['a done carrying blocks', edited(o => { o.blocks = 'x' }, asked({ kind: 'done' }))],
-  ['an operator wait blocking nothing', edited(o => { o.blocks = null })],
-  ['a question of a wrong type', edited(o => { o.question = 12 })],
-  ['a stamp that is none', edited(o => { o.since = 'yesterday' })],
-  ['a sender that is no orchestrator', edited(o => { o.from = 'Coord: ops' })],
-  ['a machine of other letters', edited(o => { o.machine = 'far/../x' })],
-  ['an urgent mark other than true', edited(o => { o.urgent = false })],
-  ['choices of a wrong type', edited(o => { o.choices = 'A' })],
-  ['a consent of no subject', edited(o => { o.consent = { kind: 'merge', repo: 'acme/thing' } })],
-  ['a consent waiver naming no pull request', edited(o => { o.consent = { kind: 'e2e-waiver', repo: 'acme/thing' } })],
-  ['a consent on a done entry', edited(o => { o.consent = WAIVER }, asked({ kind: 'done' }))],
-  ['a consent repository past its cap', edited(o => { o.consent = { kind: 'auto-merge', repo: `acme/${'x'.repeat(CONSENT_REPO_CAP)}` } })],
+  ['a field more', edited(o => { o['extra'] = 1 })],
+  ['a field missing', edited(o => { delete o['since'] })],
+  ['the machine missing', edited(o => { delete o['machine'] })],
+  ['an origin sent', edited(o => { o['origin'] = { machine: 'far', address: 'uds:/tmp/x.sock' } })],
+  ['a movedFrom sent', edited(o => { o['movedFrom'] = 's-old' })],
+  ['an answered entry', edited(o => { o['status'] = 'answered' })],
+  ['an answer carried', edited(o => { o['answer'] = { text: 'A', by: 'pane', at: AT } })],
+  ['a malformed id', edited(o => { o['id'] = '../../etc/passwd' })],
+  ["another session's id", edited(o => { o['id'] = (o['id'] as string).replace('s-remote', 's-other') })],
+  ['a kind of no entry', edited(o => { o['kind'] = 'delivered' })],
+  ['a done carrying blocks', edited(o => { o['blocks'] = 'x' }, asked({ kind: 'done' }))],
+  ['an operator wait blocking nothing', edited(o => { o['blocks'] = null })],
+  ['a question of a wrong type', edited(o => { o['question'] = 12 })],
+  ['a stamp that is none', edited(o => { o['since'] = 'yesterday' })],
+  ['a sender that is no orchestrator', edited(o => { o['from'] = 'Coord: ops' })],
+  ['a machine of other letters', edited(o => { o['machine'] = 'far/../x' })],
+  ['an urgent mark other than true', edited(o => { o['urgent'] = false })],
+  ['choices of a wrong type', edited(o => { o['choices'] = 'A' })],
+  ['a consent of no subject', edited(o => { o['consent'] = { kind: 'merge', repo: 'acme/thing' } })],
+  ['a consent waiver naming no pull request', edited(o => { o['consent'] = { kind: 'e2e-waiver', repo: 'acme/thing' } })],
+  ['a consent on a done entry', edited(o => { o['consent'] = WAIVER }, asked({ kind: 'done' }))],
+  ['a consent repository past its cap', edited(o => { o['consent'] = { kind: 'auto-merge', repo: `acme/${'x'.repeat(CONSENT_REPO_CAP)}` } })],
 ]
 for (const [label, line] of refusals) {
   test(`an ask with ${label} is refused whole`, () => {
@@ -133,7 +133,7 @@ const ANSWERED = '2026-10-30T10:05:00.000Z'
 // The answer line's first line, its object changed by `edit`, the readable rest kept.
 function answerEdited(edit: (o: Record<string, unknown>) => void): string {
   const [head, ...rest] = answerLine(asked().id, SINCE, 'A : merge it', ANSWERED, READABLE).split('\n')
-  const o = JSON.parse(head.slice(ANSWER_MARKER.length))
+  const o = JSON.parse(String(head).slice(ANSWER_MARKER.length))
   edit(o)
   return [ANSWER_MARKER + JSON.stringify(o), ...rest].join('\n')
 }
@@ -154,19 +154,19 @@ test('an answer round-trips: its id, since, text and time from the first line, t
 const answerRefusals: [string, string][] = [
   ['no marker', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).slice(ANSWER_MARKER.length)],
   ['the ask marker', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).replace(ANSWER_MARKER, ASK_MARKER)],
-  ['no readable rest', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).split('\n')[0]],
+  ['no readable rest', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).split('\n')[0] ?? ''],
   ['a blank readable rest', answerLine(asked().id, SINCE, 'A', ANSWERED, '  ')],
-  ['a text past the cap', answerEdited(o => { o.text = 'x'.repeat(RELAY_CAP + 100) })],
+  ['a text past the cap', answerEdited(o => { o['text'] = 'x'.repeat(RELAY_CAP + 100) })],
   ['a readable rest past the cap', answerLine(asked().id, SINCE, 'A', ANSWERED, 'x'.repeat(ANSWER_LINE_CAP))],
   ['not json', `${ANSWER_MARKER}{"id":\n${READABLE}`],
   ['an array', `${ANSWER_MARKER}[]\n${READABLE}`],
-  ['a field more', answerEdited(o => { o.by = 'pane' })],
-  ['a field missing', answerEdited(o => { delete o.at })],
-  ['a malformed id', answerEdited(o => { o.id = '../../etc/passwd' })],
-  ['a since that is no stamp', answerEdited(o => { o.since = 'yesterday' })],
-  ['a time that is no stamp', answerEdited(o => { o.at = 7 })],
-  ['an empty text', answerEdited(o => { o.text = '' })],
-  ['a text of a wrong type', answerEdited(o => { o.text = ['A'] })],
+  ['a field more', answerEdited(o => { o['by'] = 'pane' })],
+  ['a field missing', answerEdited(o => { delete o['at'] })],
+  ['a malformed id', answerEdited(o => { o['id'] = '../../etc/passwd' })],
+  ['a since that is no stamp', answerEdited(o => { o['since'] = 'yesterday' })],
+  ['a time that is no stamp', answerEdited(o => { o['at'] = 7 })],
+  ['an empty text', answerEdited(o => { o['text'] = '' })],
+  ['a text of a wrong type', answerEdited(o => { o['text'] = ['A'] })],
 ]
 for (const [label, line] of answerRefusals) {
   test(`an answer with ${label} is refused whole`, () => {
@@ -206,8 +206,10 @@ test('an event line carries an ask or an answer, each read back whole under its 
 
 test('an event line is refused whole: another id than its entry, an unknown kind, a field more, an event failing its old check', () => {
   const entry = asked()
-  const o = () => JSON.parse(qAskLine(entry, 'far').slice(Q_MARKER.length))
-  const sent = (edit: (x: any) => void) => { const x = o(); edit(x); return Q_MARKER + JSON.stringify(x) }
+  // The event line's object, as a test edits it before it is sent.
+  type Sent = { id: unknown; seq: unknown; more?: unknown; event: { kind: unknown; entry: { status?: unknown; from?: unknown }; more?: unknown } }
+  const o = (): Sent => JSON.parse(qAskLine(entry, 'far').slice(Q_MARKER.length))
+  const sent = (edit: (x: Sent) => void) => { const x = o(); edit(x); return Q_MARKER + JSON.stringify(x) }
   expect(parseQ(sent(x => { x.id = 's-remote-9-abc' }))).toBeNull()
   expect(parseQ(sent(x => { x.event.kind = 'withdraw' }))).toBeNull()
   expect(parseQ(sent(x => { x.more = 1 }))).toBeNull()

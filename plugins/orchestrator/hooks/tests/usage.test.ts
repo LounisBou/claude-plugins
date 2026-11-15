@@ -5,16 +5,15 @@
 import { expect, test } from 'claude-code/testing'
 import {
   periodStarts, recordOf, messageCost, sumsOf, newBook, settle, ingest, rewind, forget, usageOf, consumedOf,
-  type Prices,
+  type Price, type Prices,
 } from '../usage.ts'
 
-const PRICES: Prices = {
-  'a-model': { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 },
-  'b-model': {
-    input: 0.1, output: 0.5, cache_write_5m: 0.125, cache_write_1h: 0.2, cache_read: 0.01,
-    above: { tokens: 100000, input: 0.5, output: 2.5, cache_write_5m: 0.625, cache_write_1h: 1, cache_read: 0.05 },
-  },
+const A_PRICE: Price = { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 }
+const B_PRICE: Price = {
+  input: 0.1, output: 0.5, cache_write_5m: 0.125, cache_write_1h: 0.2, cache_read: 0.01,
+  above: { tokens: 100000, input: 0.5, output: 2.5, cache_write_5m: 0.625, cache_write_1h: 1, cache_read: 0.05 },
 }
+const PRICES: Prices = { 'a-model': A_PRICE, 'b-model': B_PRICE }
 
 type Over = { id?: string | null; model?: string; at?: string; input?: number; output?: number; read?: number; write?: number; hour?: number; type?: string }
 function line(over: Over = {}): string {
@@ -22,9 +21,9 @@ function line(over: Over = {}): string {
     input_tokens: over.input ?? 10, output_tokens: over.output ?? 20,
     cache_read_input_tokens: over.read ?? 0, cache_creation_input_tokens: over.write ?? 0,
   }
-  if (over.hour !== undefined) usage.cache_creation = { ephemeral_1h_input_tokens: over.hour, ephemeral_5m_input_tokens: (over.write ?? 0) - over.hour }
+  if (over.hour !== undefined) usage['cache_creation'] = { ephemeral_1h_input_tokens: over.hour, ephemeral_5m_input_tokens: (over.write ?? 0) - over.hour }
   const message: Record<string, unknown> = { model: over.model ?? 'a-model', usage, content: [] }
-  if (over.id !== null) message.id = over.id ?? 'msg-1'
+  if (over.id !== null) message['id'] = over.id ?? 'msg-1'
   return JSON.stringify({ type: over.type ?? 'assistant', timestamp: over.at ?? '2026-10-28T10:00:00.000Z', message })
 }
 
@@ -48,16 +47,16 @@ test('a message whose four token counts are zero is the host\'s placeholder: no 
 
 test('the 5-minute and the 1-hour cache writes are priced apart', () => {
   const record = recordOf(line({ input: 0, output: 0, write: 1000, hour: 400 }))!.record
-  expect(near(messageCost(record, PRICES['a-model']), (600 * 5 + 400 * 8) / 1e6)).toBe(true)
+  expect(near(messageCost(record, A_PRICE), (600 * 5 + 400 * 8) / 1e6)).toBe(true)
   const unsplit = recordOf(line({ input: 0, output: 0, write: 1000 }))!.record
-  expect(near(messageCost(unsplit, PRICES['a-model']), 1000 * 5 / 1e6)).toBe(true)
+  expect(near(messageCost(unsplit, A_PRICE), 1000 * 5 / 1e6)).toBe(true)
 })
 
 test('a tiered price switches to its upper rates past the threshold of the whole prompt', () => {
   const below = recordOf(line({ model: 'b-model', input: 50000, read: 50000, output: 10 }))!.record
-  expect(near(messageCost(below, PRICES['b-model']), (50000 * 0.1 + 50000 * 0.01 + 10 * 0.5) / 1e6)).toBe(true)
+  expect(near(messageCost(below, B_PRICE), (50000 * 0.1 + 50000 * 0.01 + 10 * 0.5) / 1e6)).toBe(true)
   const above = recordOf(line({ model: 'b-model', input: 50000, read: 50000, write: 1, output: 10 }))!.record
-  expect(near(messageCost(above, PRICES['b-model']), (50000 * 0.5 + 50000 * 0.05 + 1 * 0.625 + 10 * 2.5) / 1e6)).toBe(true)
+  expect(near(messageCost(above, B_PRICE), (50000 * 0.5 + 50000 * 0.05 + 1 * 0.625 + 10 * 2.5) / 1e6)).toBe(true)
 })
 
 test('one usage per message id, the last line of it read; a message without id counts each time', () => {
@@ -174,7 +173,7 @@ test('new prices reprice the kept records', () => {
   settle(book, NOW, PRICES, 'p')
   ingest(book, '/t.jsonl', 0, line({ model: 'c-model' }) + '\n', 100)
   expect(usageOf(book, NOW).day.cost_usd).toBeNull()
-  settle(book, NOW, { ...PRICES, 'c-model': PRICES['a-model'] }, 'q')
+  settle(book, NOW, { ...PRICES, 'c-model': A_PRICE }, 'q')
   expect(near(usageOf(book, NOW).day.cost_usd, (10 * 4 + 20 * 20) / 1e6)).toBe(true)
 })
 
@@ -202,24 +201,25 @@ test('a message two files carry stays while either still does: forgetting or rew
 
 test('a price missing a rate, or with a rate that is no finite number, is no price: the cost is null, never NaN', () => {
   const record = recordOf(line({ write: 100, hour: 40 }))!.record
-  const { cache_write_1h, ...partial } = PRICES['a-model']
-  const broken: Prices = {
-    partial: partial as any,
-    text: { ...PRICES['a-model'], input: '4' as any },
-    none: { ...PRICES['a-model'], output: null as any },
-    tier: { ...PRICES['b-model'], above: { ...PRICES['b-model'].above!, tokens: 'x' as any } },
-    upper: { ...PRICES['b-model'], above: { ...PRICES['b-model'].above!, cache_read: null as any } },
+  const { cache_write_1h, ...partial } = A_PRICE
+  // Prices as routing/prices.json may hold them: the module meets them unchecked on disk.
+  const broken: Record<string, unknown> = {
+    partial,
+    text: { ...A_PRICE, input: '4' },
+    none: { ...A_PRICE, output: null },
+    tier: { ...B_PRICE, above: { ...B_PRICE.above, tokens: 'x' } },
+    upper: { ...B_PRICE, above: { ...B_PRICE.above, cache_read: null } },
   }
-  for (const model of Object.keys(broken)) {
-    expect(messageCost(record, broken[model])).toBeNull()
-    const sums = sumsOf([{ ...record, model }], broken, -Infinity)
+  for (const [model, price] of Object.entries(broken)) {
+    expect(messageCost(record, price as Price)).toBeNull()
+    const sums = sumsOf([{ ...record, model }], broken as Prices, -Infinity)
     expect(sums.cost).toBeNull()
     expect(sums.tokens.input).toBe(10)
   }
   // An upper tier that leaves a rate out takes the base one.
-  const { cache_read, ...upperPartial } = PRICES['b-model'].above!
+  const { cache_read, ...upperPartial } = B_PRICE.above!
   const big = recordOf(line({ model: 'b-model', input: 200000, read: 1000, output: 10 }))!.record
-  const cost = messageCost(big, { ...PRICES['b-model'], above: upperPartial as any })
+  const cost = messageCost(big, { ...B_PRICE, above: upperPartial } as Price)
   expect(near(cost, (200000 * 0.5 + 1000 * 0.01 + 10 * 2.5) / 1e6)).toBe(true)
 })
 

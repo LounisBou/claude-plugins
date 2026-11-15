@@ -9,6 +9,8 @@ import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwn
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf, type Captured, type HostParts } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Host, type Noun } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -106,14 +108,14 @@ test('a delivery reaches the orchestrator with its facts read on the repository,
   const view = (head: string) => JSON.stringify({ number: 12, headRefOid: head, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
   const clean = fake({ repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(SHA) } })
   await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
-  expect(clean.sent[0].text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
+  expect(clean.sent[0]!.text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
   const dirty = fake({ repo: { 'git status --porcelain': ' M a.ts\n', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(OTHER) } })
   await drive(mounted(), 'turn.complete', dirty.dollar, turnEnd(report))
-  expect(dirty.sent[0].text.split('\n')[1]).toContain('FALSE CLAIM of delivery (tree dirty; local head is not the pull request\'s)')
+  expect(dirty.sent[0]!.text.split('\n')[1]).toContain('FALSE CLAIM of delivery (tree dirty; local head is not the pull request\'s)')
   // A question carries no facts line: nothing is claimed delivered.
   const asks = fake({ repo: { 'git status --porcelain': ' M a.ts\n' } })
   await drive(mounted(), 'turn.complete', asks.dollar, turnEnd(QUESTION))
-  expect(asks.sent[0].text.includes('facts')).toBe(false)
+  expect(asks.sent[0]!.text.includes('facts')).toBe(false)
 })
 
 test('the owner is the chain naming the tty, the one written last when two do', () => {
@@ -147,7 +149,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { repo?: Record<string, string>; name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { repo?: Record<string, string>; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -165,8 +167,8 @@ function fake(over: Over = {}) {
   const logged: string[] = []
   const usage = { context: { tokens: 120000, window: 1000000, percent: 12 } }
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
-  if (over.gateTokens) env.ORCHESTRATOR_CONTEXT_GATE_TOKENS = over.gateTokens
-  if (over.reportsTo) env.ORCHESTRATOR_REPORTS_TO = over.reportsTo
+  if (over.gateTokens) env['ORCHESTRATOR_CONTEXT_GATE_TOKENS'] = over.gateTokens
+  if (over.reportsTo) env['ORCHESTRATOR_REPORTS_TO'] = over.reportsTo
   for (const r of over.registry ?? []) files.set(`${HOME}/.claude/sessions/${r.pid}.json`, JSON.stringify({ pid: Number(r.pid), sessionId: r.sessionId, name: r.name, startedAt: r.startedAt, kind: 'interactive', entrypoint: 'cli' }))
   const name = over.name ?? AGENT
   if (!over.walk) files.set(ROW, JSON.stringify({
@@ -189,7 +191,6 @@ function fake(over: Over = {}) {
       id: async () => 's-one',
       usage: async () => usage,
       model: async () => 'a-model',
-      surfaces: async () => [],
       send: async (args: { to: unknown; text: string }) => {
         if (over.send === 'reject') throw new Error('the send was rejected')
         if (over.send === 'refuse') return { isDelivered: false, reason: 'nobody by that name' }
@@ -198,11 +199,12 @@ function fake(over: Over = {}) {
       },
     },
     env: { get: async (n: string) => env[n] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     fs: {
       read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => { files.set(p, text) },
       exists: async (p: string) => files.has(p),
@@ -212,6 +214,7 @@ function fake(over: Over = {}) {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const [verb = '', first = '', second = '', third = ''] = argv
         const locked = lockRun(argv, files)
         if (locked) return locked
         const line = logLineOf(argv)
@@ -219,9 +222,9 @@ function fake(over: Over = {}) {
           logged.push(line)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
-        if (argv[0] === 'mv' && files.has(argv[2])) {
-          files.set(argv[3], files.get(argv[2])!)
-          files.delete(argv[2])
+        if (verb === 'mv' && files.has(second)) {
+          files.set(third, files.get(second)!)
+          files.delete(second)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'rm') {
@@ -230,9 +233,8 @@ function fake(over: Over = {}) {
         }
         // The walk: the session's own tty, and its host process on it by name.
         if (argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 0, stdout: `${seed}\n`, stderr: '' }
-        if (argv[0] === 'ps' && argv[1] === '-p' && UNDERNEATH[argv[2]]) {
-          return { exitCode: 0, stdout: `${UNDERNEATH[argv[2]].ppid} ${UNDERNEATH[argv[2]].tty}\n`, stderr: '' }
-        }
+        const under = verb === 'ps' && first === '-p' ? UNDERNEATH[second] : undefined
+        if (under) return { exitCode: 0, stdout: `${under.ppid} ${under.tty}\n`, stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-A' && (over.alive || over.exiting)) return { exitCode: 0, stdout: (over.alive ?? []).map(pid => `${pid}\n`).join('') + (over.exiting ?? []).map(pid => `${pid} ?Es ??\n`).join(''), stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
         // The agent's checkout, as git and gh answer for it: by the command's first three words.
@@ -244,26 +246,29 @@ function fake(over: Over = {}) {
     ui: { toast: () => undefined, invalidate: () => undefined },
     command: { run: async () => undefined },
     prompt: { submit: async () => undefined },
-  }
+  } satisfies HostParts
   return { dollar, files, mtimes, sent, logged, usage }
 }
 
-function mounted(): Record<string, Function[]> {
-  const chains: Record<string, Function[]> = {}
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
-    return { catch: () => undefined }
-  })
-  return chains
+// The module's hooks as it registers them, in their order.
+function mounted(): Array<Captured<Host<Noun>>> {
+  return capture<Host<Noun>>(register)
 }
 
-async function drive(chains: Record<string, Function[]>, event: string, dollar: any, e: object) {
-  const run = async (i: number, ev: any): Promise<any> =>
-    i >= (chains[event] ?? []).length ? ev : chains[event][i](dollar, ev, (x: any) => run(i + 1, x))
+// The event through every hook on it, each handing the next its own event, over a host of these parts.
+async function drive<K extends keyof Events>(hooks: ReadonlyArray<Captured<Host<Noun>>>, event: K, parts: HostParts, e: Events[K]): Promise<unknown> {
+  const chain = hooksOn(hooks, event)
+  const $ = hostOf(parts)
+  const run = async (i: number, ev: Events[K]): Promise<unknown> => {
+    const hook = chain[i]
+    return hook === undefined ? ev : hook.handler($, ev, async (x: Events[K]) => run(i + 1, x))
+  }
   return run(0, e)
 }
 
-const turnEnd = (answer: string, turnId = 't') => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId })
+// A measure event: the module reads the figures from the session, not from the event.
+const MEASURED: Events['session.measure'] = { context: { window: 0 } }
+const turnEnd = (answer: string, turnId = 't') => ({ answer, reason: 'answer', isAborted: false, turnId })
 const UNREAD = 'facts (read by the module): tree unread, unpushed unread, head unread'
 const QUESTION = 'Merge the fixture change first, or rebase on it?\n\nstatus: question — merge order'
 
@@ -271,12 +276,12 @@ test('each state is sent once to the orchestrator, a repeat sends nothing, a new
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
-  await drive(chains, 'turn.start', fx.dollar, { text: '' })
+  await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still waiting on the merge order.\nstatus: question — merge order'))
   expect(fx.sent.length).toBe(1)
-  expect(fx.sent[0].to).toBe(ORCH)
-  expect(fx.sent[0].text).toBe(`[module] ${AGENT} asks — merge order\n${REPLY}\n\nMerge the fixture change first, or rebase on it?`)
+  expect(fx.sent[0]!.to).toBe(ORCH)
+  expect(fx.sent[0]!.text).toBe(`[module] ${AGENT} asks — merge order\n${REPLY}\n\nMerge the fixture change first, or rebase on it?`)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Which base branch?\nstatus: question — base'))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('The seed fails.\nstatus: blocked — no seed'))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('The seed fails.\nstatus: blocked — no seed'))
@@ -285,10 +290,10 @@ test('each state is sent once to the orchestrator, a repeat sends nothing, a new
   expect(fx.sent.length).toBe(4)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR #12, head def, 41 passed.\nstatus: done — PR #12'))
   expect(fx.sent.length).toBe(5)
-  expect(fx.sent[1].text).toContain('Which base branch?')
-  expect(fx.sent[2].text).toBe(`[module] ${AGENT} is blocked — no seed\n${REPLY}\n\nThe seed fails.`)
-  expect(fx.sent[3].text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${UNREAD}\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
-  expect(fx.sent[4].text).toContain('head def')
+  expect(fx.sent[1]!.text).toContain('Which base branch?')
+  expect(fx.sent[2]!.text).toBe(`[module] ${AGENT} is blocked — no seed\n${REPLY}\n\nThe seed fails.`)
+  expect(fx.sent[3]!.text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${UNREAD}\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
+  expect(fx.sent[4]!.text).toContain('head def')
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
 })
 
@@ -301,8 +306,8 @@ test('a turn with no status line reports it once and clears the state', async ()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
   expect(fx.sent.length).toBe(3)
-  expect(fx.sent[0].text).toBe(`${NO_STATUS}\n${REPLY}\n\nWorking on the second task.`)
-  expect(fx.sent[2].text).toBe(`${NO_STATUS}\n${REPLY}\n\nBack at it.`)
+  expect(fx.sent[0]!.text).toBe(`${NO_STATUS}\n${REPLY}\n\nWorking on the second task.`)
+  expect(fx.sent[2]!.text).toBe(`${NO_STATUS}\n${REPLY}\n\nBack at it.`)
 })
 
 test('the orchestrator comes from the chain, never from the text', async () => {
@@ -425,14 +430,14 @@ test('the gate crossing takes the same fallback', async () => {
   const fx = fake({ gateTokens: '200000', chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
   fx.usage.context.tokens = 210000
   fx.usage.context.percent = 21
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent).toEqual([{ to: { sessionId: 's-new' }, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
 })
 
 for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'auditor'], ['a session', null]] as const) {
   test(`a session that is no agent (${role}) sends nothing on a status line`, async () => {
     const chains = mounted()
-    const fx = fake({ name, role: role as any })
+    const fx = fake({ name, role })
     await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
     expect(fx.sent.length).toBe(0)
     expect(fx.files.has(WAIT)).toBe(false)
@@ -453,22 +458,22 @@ for (const failure of ['reject', 'refuse'] as const) {
 test('the gate crossing is sent once per crossing, at the threshold the session runs under', async () => {
   const chains = mounted()
   const fx = fake({ gateTokens: '200000' })
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent.length).toBe(0)
   fx.usage.context.tokens = 210000
   fx.usage.context.percent = 21
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   fx.usage.context.tokens = 230000
   fx.usage.context.percent = 23
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
   // Back under it (a compaction), then over again: a new crossing, a new message.
   fx.usage.context.tokens = 40000
   fx.usage.context.percent = 4
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   fx.usage.context.tokens = 205000
   fx.usage.context.percent = 20
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent.length).toBe(2)
   expect(fx.files.get(GATE)).toBe('reported\n')
 })
@@ -477,14 +482,14 @@ test('the default gate holds when the session sets none, and a non-agent crossin
   const chains = mounted()
   const fx = fake()
   fx.usage.context.tokens = 290000
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent.length).toBe(0)
   fx.usage.context.tokens = 300000
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent.length).toBe(1)
   const orch = fake({ name: 'Orch: other', role: 'orchestrator' })
   orch.usage.context.tokens = 900000
-  await drive(chains, 'session.measure', orch.dollar, {})
+  await drive(chains, 'session.measure', orch.dollar, MEASURED)
   expect(orch.sent.length).toBe(0)
   expect(orch.files.has(GATE)).toBe(false)
 })
@@ -493,7 +498,7 @@ test('a gate send that fails is logged and tried again on the next measure', asy
   const chains = mounted()
   const fx = fake({ send: 'refuse' })
   fx.usage.context.tokens = 400000
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.logged.some(l => l.includes('gate: not delivered to Orch: belt'))).toBe(true)
   expect(fx.files.has(GATE)).toBe(false)
 })
@@ -632,7 +637,7 @@ test("a run launched from the agent's shell writes no row and reports no gate in
   const run = fake({ walk: 'underneath' })
   run.usage.context.tokens = 400000
   run.usage.context.percent = 40
-  await drive(chains, 'session.measure', run.dollar, {})
+  await drive(chains, 'session.measure', run.dollar, MEASURED)
   const row = JSON.parse(run.files.get(ROW)!)
   expect([row.role, row.name, row.pid, row.tty]).toEqual([null, null, undefined, undefined])
   expect(run.sent).toEqual([])
@@ -640,7 +645,7 @@ test("a run launched from the agent's shell writes no row and reports no gate in
   const agent = fake({ walk: 'agent' })
   agent.usage.context.tokens = 400000
   agent.usage.context.percent = 40
-  await drive(chains, 'session.measure', agent.dollar, {})
+  await drive(chains, 'session.measure', agent.dollar, MEASURED)
   expect(JSON.parse(agent.files.get(ROW)!).name).toBe(AGENT)
   expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 400,000 (40%) — at the gate` }])
 })
@@ -655,10 +660,10 @@ test('a long delivery that names its report is relayed cut to the limit, its poi
   const long = `${'d'.repeat(VERDICT_LIMIT * 2)}\nbelt#12 abc1234 — gate green — report: ${REPORT_FILE}\nstatus: done — PR 12`
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
   expect(fx.sent.length).toBe(1)
-  const body = fx.sent[0].text.split('\n\n').slice(1).join('\n\n')
+  const body = fx.sent[0]!.text.split('\n\n').slice(1).join('\n\n')
   expect(body.endsWith(` … (cut: full report at ${REPORT_FILE})`)).toBe(true)
-  expect(fx.sent[0].text.startsWith(`[module] ${AGENT} reports its delivery`)).toBe(true)
-  expect(fx.sent[0].text).toContain('— PR 12\n')
+  expect(fx.sent[0]!.text.startsWith(`[module] ${AGENT} reports its delivery`)).toBe(true)
+  expect(fx.sent[0]!.text).toContain('— PR 12\n')
   expect(body.length).toBeLessThanOrEqual(VERDICT_LIMIT + ` … (cut: full report at ${REPORT_FILE})`.length)
 })
 
@@ -691,8 +696,8 @@ test('an agent whose turn ends with no status line, its background work running 
   const chains = mounted()
   const fx = fake()
   const running = [{ type: 'bash', command: 'npm test', status: 'running' }]
-  expect((await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: running }))).block).toBeUndefined()
-  expect((await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: [] }))).block).toBeUndefined()
+  expect(fieldsOf(await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: running })))?.['block']).toBeUndefined()
+  expect(fieldsOf(await drive(chains, 'classic.Stop', fx.dollar, stopOf('Waiting on the suite.', { background_tasks: [] })))?.['block']).toBeUndefined()
 })
 
 test('a waiting status is reported once, however many turns repeat it, and again when it changes', async () => {
