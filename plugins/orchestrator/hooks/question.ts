@@ -513,6 +513,16 @@ export function askTurnStarted(): void {
   thisTurn.length = 0
 }
 
+/** A question was asked in this turn: its place among the turn's questions, from one. */
+export function askedInTurn(id: string): number {
+  return thisTurn.push(id)
+}
+
+/** The ids of the questions asked in the main thread's current turn. */
+export function askedThisTurn(): readonly string[] {
+  return thisTurn
+}
+
 const flatText = (text: string): string => plainText(text).replace(/\s+/g, ' ').trim()
 
 /**
@@ -590,7 +600,7 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   }
   // Numbered among the questions asked in this turn: several asked in one turn read 1 of 1, then 2 of 2;
   // one asked in a later turn reads 1 of 1 again, whatever stays open from before.
-  const asked = thisTurn.push(entry.id)
+  const asked = askedInTurn(entry.id)
   const block = questionBlock(entry, { i: asked, n: asked })
   // The block goes in the asker's own message: a line of the host's log does not reach the operator's chat.
   return { result: `Asked as ${entry.id}: stored in the round. Write this block in your message as it stands, once:\n\n${block}` }

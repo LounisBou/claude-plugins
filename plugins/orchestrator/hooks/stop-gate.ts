@@ -378,6 +378,19 @@ export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
   return named
 }
 
+// The ids of the open questions a turn's final text copies: its id line (`**Question i of N** (<id>)`)
+// or its `_Question_ : …` line verbatim. A mention by subject, or an id inside a sentence, copies
+// nothing. The caller hands only the questions asked in an earlier turn.
+export function restatedQuestions(message: string, open: readonly { id: string; ask: string }[]): string[] {
+  const lines = message.split('\n')
+  return open
+    .filter(q => lines.some(line => line.includes(`(${q.id})`) && /\bQuestion \d+ of \d+\b/.test(line)) || message.includes(`_Question_ : ${q.ask}`))
+    .map(q => q.id)
+}
+
+export const restatedReason = (ids: readonly string[]): string =>
+  `Already in the round (${ids.join(', ')}): name it by its subject, do not copy it.`
+
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message

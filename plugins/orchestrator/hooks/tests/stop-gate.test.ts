@@ -12,10 +12,11 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
+import { askTurnStarted, askedInTurn, parseAsked, questionBlock } from '../question.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
@@ -90,6 +91,71 @@ test('a question the operator answered from the pane, or a coordinator\'s turn, 
   const coordinator = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'the round is read.' }))
   expect(coordinator.answer).toBe(coordinator.passed)
   expect(coordinator.observed).toBeUndefined()
+})
+
+// --- a turn's end never restates an open question ------------------------------------------------
+
+// The block `ask` handed its asker, as the model would copy it into a later turn's message.
+const ASKED_BLOCK = questionBlock(parseAsked(ASKED_HERE)!, { i: 1, n: 1 })
+const RESTATED_REASON = 'Already in the round (q-a1b2c3-1): name it by its subject, do not copy it.'
+
+test('a block copied at a later turn, by its id line or by its question line, is told once', () => {
+  const entry = { id: 'q-a1b2c3-1', ask: 'Which one?' }
+  expect(restatedQuestions(`Still waiting.\n\n${ASKED_BLOCK}`, [entry])).toEqual(['q-a1b2c3-1'])
+  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-1)\nsomething else', [entry])).toEqual(['q-a1b2c3-1'])
+  expect(restatedQuestions('_Question_ : Which one?', [entry])).toEqual(['q-a1b2c3-1'])
+  // Another question's id is no copy of this one: the id is matched whole, in its parentheses.
+  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-12)', [entry])).toEqual([])
+})
+
+test('a mention of an open question by its subject, or by its id inside a sentence, is no copy', () => {
+  const entry = { id: 'q-a1b2c3-1', ask: 'Which one?' }
+  expect(restatedQuestions('The question on the report is still open.', [entry])).toEqual([])
+  expect(restatedQuestions('q-a1b2c3-1 is still open, nothing to add.', [entry])).toEqual([])
+  expect(restatedQuestions(ASKED_BLOCK, [])).toEqual([])
+})
+
+test('a stop whose message copies the block of a question asked in an earlier turn is told, and passes', async () => {
+  const { handlers } = mounted()
+  askTurnStarted()
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Still waiting.\n\n${ASKED_BLOCK}` }))
+  expect(told.observed).toBe(RESTATED_REASON)
+})
+
+test('the turn that asked the question may write its block once', async () => {
+  const { handlers } = mounted()
+  askTurnStarted()
+  askedInTurn('q-a1b2c3-1')
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Asking.\n\n${ASKED_BLOCK}` }))
+  expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
+  // The next turn's start empties the turn's questions: the same block is then a restatement.
+  askTurnStarted()
+  const later = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
+  expect(later.observed).toBe(RESTATED_REASON)
+})
+
+test('a question answered or withdrawn may be written again, as one by its subject only', async () => {
+  const { handlers } = mounted()
+  askTurnStarted()
+  const closed = [
+    askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } }),
+    askedHere({ status: 'withdrawn' }),
+  ]
+  for (const text of closed) {
+    const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': text } })
+    const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
+    expect(passed.observed).toBeUndefined()
+  }
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const bySubject = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'The question on the report is still open.' }))
+  expect(bySubject.observed).toBeUndefined()
+  // A question another session asked is not this session's to be told of.
+  const other = fakeDollar({ round: { 'q-ffffff-1.json': askedHere({ id: 'q-ffffff-1', sender: { session: 'ffffff', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
+  const elsewhere = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
+  expect(elsewhere.observed).toBeUndefined()
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
