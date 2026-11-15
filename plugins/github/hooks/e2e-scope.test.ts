@@ -1,7 +1,7 @@
 // When a pull request needs no E2E record: files that hold no runtime, and a repository's standing exemption.
 import { expect, test } from 'claude-code/testing'
 import {
-  covers, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, globMatches, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
+  covers, exemptingLabels, expired, expiryLine, exemptionLine, isExpiryLine, exemptionPath, globMatches, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
 } from './e2e-scope.ts'
 
 const VERSION_ONLY = '@@ -2,3 +2,3 @@\n   "name": "github",\n-  "version": "0.19.4",\n+  "version": "0.19.5",\n   "author": {'
@@ -146,4 +146,7 @@ test('the lines of an exemption with an expiry name it, the one that ran out say
   const limited = { ...EXEMPTION, until: '2026-11-15T22:00:00Z' }
   expect(exemptionLine(limited)).toBe('E2E exemption of acme/thing, 2026-11-13, until 2026-11-15T22:00:00Z: no E2E on thing, 2026-11-13')
   expect(expiryLine(limited)).toBe('E2E exemption of acme/thing expired at 2026-11-15T22:00:00Z: it no longer excuses E2E')
+  expect(isExpiryLine(expiryLine(limited))).toBe(true)
+  expect(isExpiryLine(exemptionLine(limited))).toBe(false)
+  expect(isExpiryLine('e2e: no record at 0123456')).toBe(false)
 })

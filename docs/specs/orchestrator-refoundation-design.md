@@ -102,8 +102,7 @@ waits on the operator's paid runs.
   verbatim when ported), the iTerm launch, the home session, `deck.json`'s format.
 - One implementation per rule, in core when another plugin needs it (`docs/conventions.md`).
   A port replaces its source in the same pull request.
-- A rule enters the kernel only when an eval shows it changes an outcome; a new rule
-  replaces one.
+- A new rule of the kernel replaces one.
 - Transitional compatibility where a format changes (the last-line wait is still read
   until `declare_wait` has shipped and the kernel teaches only the call).
 
