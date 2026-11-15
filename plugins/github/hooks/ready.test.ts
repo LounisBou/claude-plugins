@@ -2,8 +2,8 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords,
-  recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
+  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove,
   type Gate, type RecordFile,
 } from './ready.ts'
 import { acceptanceDetail, producersOf } from '../core/pr-record.ts'
@@ -373,6 +373,32 @@ test('the records guard refuses a write into the records or their writer, never 
   expect(writesRecords('git status')).toBe(false)
 })
 
+test('a deletion is a line that is no read and deletes: rm, unlink, find -delete, a move out, an interpreter\'s call', () => {
+  const names = (text: string) => text.includes('/d/')
+  for (const line of [
+    'rm /d/x', '/bin/rm /d/x', 'r""m /d/x', 'unlink /d/x', 'shred /d/x', 'find /d -delete', 'find /d -exec rm {} +', 'ls /d | xargs rm',
+    'cd /d && rm x', 'bash -c "rm /d/x"', 'mv /d/x /tmp/y', 'python3 -c "import os; os.remove(1)"', 'node -e "fs.rmSync(1)"',
+    'rm /d/x $(', 'rm${IFS}/d/x', 'mv -t /tmp /d/x', 'mv --target-directory=/tmp /d/x', 'find /d/x -exec mv {} /tmp \\;', 'ls /d | xargs mv -t /tmp',
+    'python3 -c "from pathlib import Path; Path(1).unlink()"', 'python3 -c "import os; os.rename(1, 2)"', 'ruby -e "FileUtils.rm_rf(1)"',
+    'git clean -fdx /d', 'rsync --remove-source-files /d/x /tmp', 'rsync -a --delete /tmp/e/ /d/', 'sh -c "bash -c \'rm /d/x\'"',
+    'ls {1..9}{1..9}{1..9}{1..9}; mv /d/x /tmp', 'ls {1..9}{1..9}{1..9}{1..9}; rm /d/x',
+    'git -C /d/x clean -fdx', 'git -c a=b clean -fdx /d/x', 'git --git-dir=/d/.git rm x', 'git clean -fdx /d/x', 'ls {1..9}{1..9}{1..9}{1..9}; git -C /d/x clean -fdx',
+    'rsync -a --delete-after /e/ /d/x/', 'rsync -a --del /e/ /d/x/', 'rsync -a --delete-excluded /e/ /d/x/', 'tar --remove-files -cf /tmp/a.tar /d/x',
+  ]) {
+    expect(deletes(line, names), line).toBe(true)
+  }
+  for (const line of [
+    'ls /d', 'cat /d/x | jq .', 'grep -rn rm /d', 'echo rm', 'echo x > /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x', 'sed -i s/a/b/ /d/x',
+    'git commit -m "docs: form the term"', 'find /d -name x', 'truncate -s0 /d/x', 'cp /dev/null /d/x', 'git status /d/x', 'git -C /d/x log', 'rsync -a /e/ /d/x/', 'tar -cf /tmp/a.tar /d/x', ': > /d/x', 'ls {1..9}{1..9}{1..9}{1..9}',
+  ]) {
+    expect(deletes(line, names), line).toBe(false)
+  }
+  expect(deletesRecords('rm ~/.claude/pr-records/x')).toBe(true)
+  expect(deletesRecords('rm /tmp/x')).toBe(false)
+  expect(deletesRecords('echo x > ~/.claude/pr-records/x')).toBe(false)
+  expect(deletesRecords('ls ~/.claude/pr-records')).toBe(false)
+})
+
 test('each producer plugin writes only its own kind, every other caller E2E', () => {
   expect(recordKindFor('pr-review')).toBe('review')
   expect(recordKindFor('orchestrator')).toBe('review')
@@ -385,7 +411,6 @@ test('each producer plugin writes only its own kind, every other caller E2E', ()
 test('the records refusals name only the producers the record contract declares', () => {
   for (const kind of ['review', 'norms']) {
     for (const producer of producersOf(kind)) {
-      expect(RECORDS_REFUSAL).not.toContain(producer.plugin)
       expect(kindRefusal(kind, 'engine', 'e2e')).toContain(producer.plugin + ', ' + producer.tool)
     }
   }
@@ -396,19 +421,10 @@ test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
     + ' What Ready needs is core\'s readiness contract (core/readiness.ts).')
-  expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
+  expect(autoMergeRefusal('o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
     + ' the pull request is ready, then asks them in the conversation.')
-})
-
-test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
-  expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
-    'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
-    + ' and Ready is put by the gate once the pull request is ready (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
-  expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
-  expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
-  expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
 })
 
 test('the gate moves the label: Ready when the three hold, Not Ready back when Ready no longer holds', () => {

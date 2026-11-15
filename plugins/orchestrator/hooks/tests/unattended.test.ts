@@ -148,6 +148,70 @@ test('a launcher listing that cannot be read takes every agent a line names for 
   expect((await readUnattended(other, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([7, 8, 9])
 })
 
+// The record's rows beside its ledger lines: one ready with nobody on it, and one each held by what the method says.
+const readyRecord = (rows: object[]) => `${rows.map(r => JSON.stringify(r)).join('\n')}\n${line(7, 'working', { agent: 'Agent: seven' })}\n`
+const ROW = (id: number, label: string, more: Record<string, unknown> = {}) => ({ id, state: 'open', label, blocker: 'none', ...more })
+const READY_ROWS = [
+  ROW(21, 'IDLEWORK: nobody on it'),
+  ROW(22, 'FIVEWORK: its agent runs'),
+  ROW(23, 'LATERWORK: waits', { blocker: 'row 4 closed' }),
+  ROW(24, 'PUTOFF: deferred', { deferred: 'later, 2026-11-14' }),
+  ROW(25, 'SEVEN: its pull request is open'),
+  ROW(26, 'DONEWORK: closed', { state: 'closed' }),
+]
+
+test('an open row with blocker none, no live agent and no open pull request is ready: named, and the others are not', async () => {
+  const { dollar, files } = world()
+  files.set(RECORD, readyRecord(READY_ROWS))
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.ready).toEqual([{ id: 21, keyword: 'IDLEWORK' }, { id: 22, keyword: 'FIVEWORK' }])
+  expect(reading?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK, 22 FIVEWORK')
+  // The agent of the second row is running: the launcher's listing says it so.
+  const { dollar: running, files: again } = world({ launcher: 'w1/t1 | /dev/ttys001 | ✳ Agent: fivework | Agent: fivework' })
+  again.set(RECORD, readyRecord(READY_ROWS))
+  expect((await readUnattended(running, 's-orch', NOW))?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
+})
+
+test('an open pull request in the ledger holds its row, with no agent running; the launcher is asked once, and only when a row may be ready', async () => {
+  // Line 7 names Agent: seven; the listing shows nobody running, so the pull request alone holds row 25.
+  const { dollar, files, runs } = world({ launcher: 'w1/t1 | /dev/ttys001 | zsh | zsh' })
+  files.set(RECORD, readyRecord([READY_ROWS[4]!]))
+  expect((await readUnattended(dollar, 's-orch', NOW))?.ready).toEqual([])
+  expect(runs.filter(r => r[0] === 'bash' && r[2] === 'list').length).toBe(1)
+  // No line names an agent and no row is ready: the launcher is never asked.
+  const { dollar: quiet, files: none, runs: asked } = world()
+  none.set(RECORD, `${JSON.stringify(READY_ROWS[2])}\n`)
+  expect((await readUnattended(quiet, 's-orch', NOW))?.readyLine).toBe(null)
+  expect(asked.filter(r => r[0] === 'bash' && r[2] === 'list')).toEqual([])
+})
+
+test('a launcher listing that cannot be read names no row ready, and a record with no ready row leaves no line', async () => {
+  const { dollar, files, logs } = world({ launcher: null })
+  files.set(RECORD, readyRecord(READY_ROWS))
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.ready).toEqual([])
+  expect(reading?.readyLine).toBe(null)
+  expect(logs.some(l => l.includes('the launcher\'s listing unread'))).toBe(true)
+  const { dollar: none } = world()
+  expect((await readUnattended(none, 's-orch', NOW))?.readyLine).toBe(null)
+})
+
+test('the turn end leaves the ready rows beside the unattended pull requests for the next prompt, once', async () => {
+  const { dollar, files } = world()
+  files.set(RECORD, readyRecord(READY_ROWS.slice(0, 1)))
+  const handlers = mounted()
+  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
+  const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] }, (x: any) => x)
+  expect(first.context[0]).toBe('before')
+  expect(first.context[1]).toContain('PR délaissées : acme/app#8')
+  expect(first.context.slice(2)).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
+  expect((await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  // Nothing ready, nothing unattended: no line at all.
+  const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
+  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+})
+
 test('a session that is no orchestrator reads nothing', async () => {
   const { dollar, files, runs } = world()
   files.set(`${MODULE}/store/sessions/s-orch`, row('agent', 'Agent: seven'))

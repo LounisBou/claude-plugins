@@ -32,10 +32,11 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, MACHINE_LINE, blocksNothing,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, MACHINE_LINE, blocksNothing, liveNames,
 } from './stop-gate.ts'
 import { machineLine } from '../core/method.ts'
 import { launcherOf } from '../core/orchestration.ts'
+import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
 import { asksTheMode } from './mode-dialog.ts'
@@ -524,8 +525,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     let sweepAtStop: (() => Promise<void>) | null = null
     // Observed, not refused: what the gate once refused the stop for is logged whole, the journal
     // holds one escape under the gate's code, and the stop passes, swept as any other.
-    const letThrough = async (reason: string): Promise<unknown> => {
-      await logLine($, 'guards', `stop gate: let through: ${reason.replace(/\s*\n\s*/g, ' ')}`)
+    // The open rows ready with nobody on them, once the launcher's listing is read: said in every line
+    // the gate writes for a stop it lets through, and a warning of its own for one that would pass.
+    let readiness: (() => Promise<string | null>) | null = null
+    const letThrough = async (reason: string | null): Promise<unknown> => {
+      const ready = await readiness?.() ?? null
+      const said = [reason, ready].flatMap(text => text ?? []).join('\n')
+      await logLine($, 'guards', `stop gate: let through: ${said.replace(/\s*\n\s*/g, ' ')}`)
       await observed($, STOP_GATE_CODE)
       await sweepAtStop?.()
       return next(e)
@@ -603,6 +609,19 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, 'guards', 'stop gate: ITERM_SESSION_ID is not set: no chain entry is counted')
       }
       const entries = chainEntries(String(chain))
+      let readyOnce: string | null | undefined
+      readiness = async () => {
+        if (readyOnce !== undefined) return readyOnce
+        try {
+          const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+          const texts = await readRecords($, records, until)
+          readyOnce = readyRowsLine(readyRows({ texts, lines: texts.flatMap(text => ledgerLines(text)), live: liveNames(rows) }))
+        } catch (err) {
+          await logLine($, 'guards', `stop gate: ready rows unread: ${String((err as Error)?.message ?? err)}`)
+          readyOnce = null
+        }
+        return readyOnce
+      }
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
@@ -688,11 +707,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await sweepAtStop?.()
         return next(e)
       }
-      const watches = await listCiWatches($, `${state}/ci-watch`, until)
-      if (watches === null) {
+      // A stop the checks let pass is still said when a ready row has nobody on it: a warning, as the others the gate measures.
+      const passing = async (): Promise<unknown> => {
+        // Measured, not refused: nothing held this stop, so no escape is journalled for it.
+        const ready = await readiness?.() ?? null
+        if (ready !== null) await logLine($, 'guards', `stop gate: warn ready-rows ${ready}`)
         await sweepAtStop?.()
         return next(e)
       }
+      const watches = await listCiWatches($, `${state}/ci-watch`, until)
+      if (watches === null) return await passing()
       // The universe of check 2 is this session's own watches: ci-watch wrote beside each
       // log its owner file, `<log>.session`, holding the id of the session that armed the
       // watch. A log is kept when its owner file, trimmed, is this session's id. A log with
@@ -739,8 +763,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       // The checks have let the stop pass: the sweep runs now, last and never part of
       // the decision (the design's « The sweep runs by itself »).
-      await sweepAtStop?.()
-      return next(e)
+      return await passing()
     } catch (err) {
       // A gate that cannot read lets the stop pass and says so — one line, already
       // written where the read failed; anything else the gate broke on is said here.

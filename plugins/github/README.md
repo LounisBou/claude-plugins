@@ -40,12 +40,11 @@ it. `/github:doctor` then confirms everything is ready.
   engine's `error:` line; exit codes 1–5 are documented in
   `engine/REFERENCE.md`. Calls follow the session's permission rules: a
   `deny` rule refuses, reads run unless a rule asks, and every write asks
-  first unless a rule or the permission mode allows it, leaving draft and a
-  merge excepted (below). The dialog offers
+  first unless a rule or the permission mode allows it, a merge excepted (below). The dialog offers
   « Allow for this session », which covers that one command on that one
   repository until the session ends; it is never offered for `pr-merge` or
   `comment-delete`, nor where an explicit rule asks.
-- **Writing rules enforced** — before a title, a description or a comment
+- **Writing rules observed** — before a title, a description or a comment
   leaves the machine, the mod checks the mechanical rules of
   `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
   URLs are not prose), no trailer of any kind (`Co-Authored-By`,
@@ -64,12 +63,13 @@ it. `/github:doctor` then confirms everything is ready.
   stdin (`--stdin-json`) is refused from Bash, as nothing on the line shows it.
   A `--body` read from stdin or made by a command substitution other than a
   `$(cat <<'EOF' … EOF)` heredoc is left unchecked, as the hook cannot see it.
-  A text that breaks one is refused with the rule, so it can be rewritten. A
-  text the user typed in the prompt passes, and the same text sent again is
-  put to the user. `pr-create` opens a draft unless the call says otherwise.
-  Outside a repository in auto-merge (below), leaving draft (`draft: false`,
-  `pr-ready`) is refused, never asked: it is the operator's, on GitHub after
-  their review, a CI undraft aside (« Ready pull requests »); a merge
+  A text that breaks one goes as it is and is observed (« Observed guards »).
+  A text the user typed in the prompt passes unobserved. `pr-create` opens a
+  draft unless the call says otherwise. Opening out of draft (`draft: false`)
+  is observed; outside a repository in auto-merge (below), so is leaving draft
+  (`pr-ready`), the operator's act on GitHub after their review, and it is asked
+  as any write no rule allows, the readiness gate refusing a pull request that is
+  not ready (« Ready pull requests »); a merge
   (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
   the pull request is ready. An existing
   description is replaced without asking, under the writing rules.
@@ -138,7 +138,7 @@ follows. There, opening a pull request out of draft, `pr-ready`, a merge
 and every other write run without a question, which ends agents held on a
 dialog nobody answers in a repository that merges on its own. A deny rule
 still refuses, an ask from an explicit rule still asks, and the writing
-rules still apply. Elsewhere leaving draft is refused and every other write
+rules still apply. Elsewhere leaving draft is observed and asked, and every other write
 is asked as before. An absent file
 lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
@@ -278,42 +278,61 @@ The act is refused before anyone is asked, and a pull request still carrying
 github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts).
 ```
 
-A pull request opened out of draft is refused with `github: <act> refused: open it
-as a draft, then leave draft once ready.`, and a readiness GitHub did not answer
-with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
+A pull request opened out of draft is not gated, only observed (`github.draft.open-out`), and a
+readiness GitHub did not answer is refused with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
 draft always passes, and `gh pr create --draft` and `gh pr ready --undo` put
 `Not Ready` on, as the tool does. A merge or an undraft in the
 shell names its repository, else it is refused with `github: <command> refused: name
 the repository with -R owner/name.`; a GraphQL merge or undraft names none and is
 always refused, with the tool call to run instead.
 
-**Auto-merge split.** In the shell, a merge or leaving draft runs only in a
+**Auto-merge split.** In the shell, a merge runs only in a
 repository listed in `auto-merge.json`, and the ready guard applies on top.
 Elsewhere it is refused, so the operator is asked in the
-conversation through the tool:
+conversation through the tool (leaving draft there is observed, and meets the ready guard):
 
 ```
-github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When they gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
+github: gh pr merge refused on <owner/name>: this repository is not in auto-merge, so a merge needs the operator's explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
 ```
 
 A CI undraft, as above, is the exception, through the shell and the tool alike.
 
 **Records.** The records are written by their producers alone. A Write, an Edit,
 a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
-a `pr-records/` path or `engine/record.py`, are refused with:
+a `pr-records/` path or `engine/record.py`, go through and are observed
+(`github.records.write`); a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
+of them, an interpreter's `os.remove`) stays refused, a deletion being irreversible:
 
 ```
 github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
 ```
 
 The command is read as text and word by word with the shell's quotes removed (so
-`rec""ord.py` is `record.py`), and a plain `ls` of the root is refused too; reading
-a record with the Read tool passes. `mcp__github__record` writes at the head the
+`rec""ord.py` is `record.py`); reading a record with the Read tool is not observed.
+`mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
 producer. The waiver's rule is in `engine/REFERENCE.md`, « Records ». Once a
 day at most, the start of a session prunes the head directories whose newest
 record is older than 90 days.
+
+## Observed guards
+
+The guards of this module refuse only what cannot be taken back: a merge, the auto-merge and deploy
+lists, a deploy, a deletion of the records, of the E2E exemptions or of the check plans, a pull request
+that is not ready (the gate every merge and undraft meets), a readiness that cannot be read. Every other guard observes: the call goes through and one refusal
+event is written into the module's journal (`<config dir>/github/journal/`, core's learning
+contract, under the guard's stable code), with no command or text in it. A journal that cannot be
+written is one line in the transcript, and the call still goes through.
+
+| Code | A call that |
+|---|---|
+| `github.records.write` | writes under the records root or runs `engine/record.py` |
+| `github.exemption.write` | writes an E2E exemption or a check plan by hand |
+| `github.exempt-label.move` | puts or takes off a label an E2E exemption names |
+| `github.draft.open-out` | opens a pull request out of draft |
+| `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
+| `github.writing.rule` | carries a text that breaks a writing rule |
 
 ## Tests
 
