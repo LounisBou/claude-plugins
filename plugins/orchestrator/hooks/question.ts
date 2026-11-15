@@ -16,6 +16,9 @@
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../core/orchestration.ts'
+import { answerEvent, answerGiven, subjectOf } from '../core/learning.ts'
+import { write, type Memory } from './observe.ts'
+import { PLUGIN } from './audit-events.ts'
 import { answersChoice, consentPath, leadingChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
@@ -28,7 +31,7 @@ import { scanTail } from './session-name.ts'
 import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, WORDS_WINDOW_MS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
-import { messageOf, type Host, type On } from './host.ts'
+import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'ui'>
@@ -700,6 +703,35 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
   }
 }
 
+// The journal's memory for the answers: pruned once per process, at its first write.
+const answering: Memory = { now: () => new Date(), pruned: false, pending: null }
+
+// The operator's answer to a question of the round, in the orchestrator's journal (core's
+// answerEvent): what was asked and how he answered, never his words, the entry's file under the
+// configuration directory as its ruling. A journal that cannot be written is one log line (observe.ts).
+async function journalAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, path: string, done: Plan): Promise<void> {
+  const config = await configDir($)
+  const ruling = path.startsWith(`${config}/`) ? path.slice(config.length + 1) : null
+  const entry = done.entry
+  const consent = parseConsentSubject(entry['consent']) ?? null
+  const choicesRead = entry['choices']
+  const choices = Array.isArray(choicesRead)
+    ? choicesRead.flatMap(c => (isRecord(c) && isText(c['letter']) && isText(c['text']) ? [{ letter: c['letter'], text: c['text'] }] : []))
+    : []
+  const recommendedRead = entry['v'] === ASK_VERSION ? entry['recommended'] : entry['recommendation']
+  const recommended = isText(recommendedRead) ? recommendedRead : null
+  await write($, answering, stamp => {
+    const event = answerEvent({
+      at: stamp.at, random: stamp.random(), plugin: PLUGIN,
+      subject: subjectOf(fieldsOf(entry['consent']) ?? {}),
+      context: { session: stamp.session, role: stamp.role },
+      given: answerGiven(done.consentText, { consent, choices, recommended }),
+      ruling,
+    })
+    return event === undefined ? [] : [event]
+  })
+}
+
 // The fields a consent record is written from, read off a closed entry: a relay's entry or an object
 // `ask` stored (its question in `ask`). Null when it asks no consent or a field is not of its type.
 function consentEntryOf(entry: Fields): ConsentEntry | null {
@@ -738,6 +770,7 @@ export async function closeRound(
   await written?.()
   const said: string[] = []
   if (done.consentBy !== null) {
+    await journalAnswer($, path, done)
     const entry = consentEntryOf(done.entry)
     const missed = entry === null ? null : await writeConsent($, entry, done.consentText, done.consentBy, at)
     if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)

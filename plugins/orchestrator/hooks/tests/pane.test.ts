@@ -1513,6 +1513,19 @@ test('questions recorded while no pane is open, one already presented in the tab
   expect(JSON.stringify(next)).toContain('Ship the second?')
 })
 
+test('a question the coordinator asked itself never wakes it; an orchestrator\'s beside it does', async () => {
+  const theirs = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([theirs], { paneClosed: true })
+  const own = entry('Coord: main', minutesAgo(2), { session: 's-one', blocks: 'its own ruling' })
+  fx.files.set(`${ROUND}/${own.id}.json`, JSON.stringify(askedOf(own)) + '\n')
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch: a')
+  expect(fx.submitted[0]).not.toContain('its own ruling')
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+})
+
 test('with the pane closed every open question is due at once; one answered in the pane before it is due wakes nothing', async () => {
   const fresh = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   const { fx, tick } = await wakingCoordinator([fresh], { paneClosed: true })
