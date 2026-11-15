@@ -21,7 +21,7 @@ node_ts_candidates() {
 node_ts_exec() {
   local label=$1 script=$2 candidate version major minor tried=""
   shift 2
-  while IFS= read -r candidate; do
+  while IFS= read -r candidate <&3; do
     case "$tried" in *"($candidate)"*) continue ;; esac
     version=$("$candidate" -p 'process.versions.node' 2>/dev/null) || version=unknown
     IFS=. read -r major minor _ <<<"$version"
@@ -33,7 +33,7 @@ node_ts_exec() {
         fi ;;
     esac
     tried="${tried:+$tried, }$version ($candidate)"
-  done < <(node_ts_candidates)
+  done 3< <(node_ts_candidates)
   if [ -n "$tried" ]; then
     echo "$label: no node able to run TypeScript: found $tried; needs node 22.18, 23.6 or later" >&2
   else

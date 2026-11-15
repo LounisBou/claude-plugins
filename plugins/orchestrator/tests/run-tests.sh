@@ -11817,6 +11817,7 @@ printf '#!/bin/sh\n[ "$1" = -p ] && { echo 24.1.0; exit 0; }\necho "new ran $*"\
 chmod +x "$NT/old/node" "$NT/new/node"
 ln -s "$(command -v bash)" "$NT/tools/bash"
 ln -s "$(command -v dirname)" "$NT/tools/dirname"
+ln -s "$(command -v cat)" "$NT/tools/cat"
 SC="$ROOT/skills/orchestrator/scripts"
 nt_ok=""; nt_old=""; nt_fb=""; nt_none=""
 for nt in "rhythm|$SC/rhythm.sh|rhythm.ts" "succession|$SC/succession.sh|succession.ts" "workspace|$SC/workspace.sh|workspace.ts" \
@@ -11831,6 +11832,21 @@ for nt in "rhythm|$SC/rhythm.sh|rhythm.ts" "succession|$SC/succession.sh|success
 done
 check "each launcher skips a node too old for TypeScript and runs the next one of PATH" \
   "new:rhythm.ts --help|new:succession.ts --help|new:workspace.ts --help|new:ci-watch.ts --help|new:dispatch-record.ts --help|new:short-commands.ts --help|new:coordinator.ts lookup|" "$nt_ok"
+# The node a launcher starts reads the launcher's own standard input.
+mkdir -p "$NT/cat"
+printf '#!/bin/sh\n[ "$1" = -p ] && { echo 24.1.0; exit 0; }\ncat\n' > "$NT/cat/node"
+chmod +x "$NT/cat/node"
+check "a launcher hands its standard input to the node it starts" "piped" \
+  "$(echo piped | PATH="$NT/cat:$NT/tools" NODE_TS_FALLBACKS= "$SC/rhythm.sh" 2>&1)"
+# The boundaries: 22.18 and 23.6 run it, the versions just below do not, nor does a version nobody can read.
+nt_edge=""
+for ntv in 22.17.9 22.18.0 23.5.9 23.6.0 25.0.0 garbage; do
+  mkdir -p "$NT/v$ntv"
+  printf '#!/bin/sh\n[ "$1" = -p ] && { echo %s; exit 0; }\necho ran\n' "$ntv" > "$NT/v$ntv/node"
+  chmod +x "$NT/v$ntv/node"
+  nt_edge="$nt_edge$(PATH="$NT/v$ntv:$NT/tools" NODE_TS_FALLBACKS= "$SC/rhythm.sh" >/dev/null 2>&1; echo $?)"
+done
+check "a launcher runs 22.18, 23.6 and 25, and refuses 22.17, 23.5 and an unreadable version" "101001" "$nt_edge"
 check "each launcher falls back to a known place when no node of PATH can" \
   "new ran |new ran |new ran |new ran |new ran |new ran |new ran |" "$nt_fb"
 check "each launcher names the version found and what is needed, and exits 1, when no node can" \
