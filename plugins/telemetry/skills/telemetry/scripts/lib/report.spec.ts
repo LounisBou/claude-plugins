@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { parseOptions, report, type Gh, type ReportInput } from './report.ts'
+import { parseOptions, report, type Check, type Gh, type ReportInput } from './report.ts'
 
 const WEEK = '2026-11-08'
 const NOW = Date.parse('2026-11-14T12:00:00Z')
@@ -55,8 +55,14 @@ const ghFor = (answers: { prs?: Record<string, string>; runs?: Record<string, st
   return answer === undefined ? { status: 1, stdout: '', stderr: `no access to ${repo}\nmore` } : { status: 0, stdout: answer, stderr: '' }
 }
 
+/** Stands in for the checkout's scripts: each script's answer by name, or a failure that printed nothing. */
+const checkFor = (answers: { prompts?: unknown; rules?: unknown }): Check => (checkout, script) => {
+  const answer = (answers as Record<string, unknown>)[script]
+  return answer === undefined ? { status: 1, stdout: '', stderr: `no ${script} in ${checkout}\nmore` } : { status: 0, stdout: typeof answer === 'string' ? answer : JSON.stringify(answer), stderr: '' }
+}
+
 function lines(config: string, over: Partial<ReportInput> = {}): string[] {
-  return report({ config, env: {}, now: NOW, week: WEEK, tools: ['acme/tool'], cwd: '/nowhere', gh: ghFor({}), repositoryAt: () => undefined, ...over })
+  return report({ config, env: {}, now: NOW, week: WEEK, tools: ['acme/tool'], cwd: '/nowhere', gh: ghFor({}), check: checkFor({}), repositoryAt: () => undefined, ...over })
 }
 const find = (out: string[], start: string): string => out.find(l => l.startsWith(start)) ?? `missing ${start}`
 
@@ -576,5 +582,86 @@ test('refusals by role: the five roles, each with its refusals and those of a pl
       ['agent', '2', '2'],
       ['other', '2', '1'],
     ])
+  })
+})
+
+const PROMPTS = { budgets: { alpha: { tokens: 800, budget: 900 }, beta: { tokens: 500, budget: 500 } }, duplicates: { count: 3, ceiling: 4 }, faults: [] }
+const RULES = { plugins: [{ plugin: 'alpha', rules: 10, byCode: 6, byEval: 1, left: 3 }, { plugin: 'beta', rules: 5, byCode: 5, byEval: 0, left: 0 }, { plugin: 'gamma', rules: 4, byCode: 0, byEval: 1, left: 3 }] }
+const lineOf = (out: string[], name: string): string => out.find(l => l.startsWith(`${name}:`)) ?? `missing ${name}`
+
+test('prompt budgets: every plugin at or under its budget, by plugin', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS, rules: RULES }) }), 'prompt budgets'), 'prompt budgets: all 2 plugins within their budget (alpha 800/900, beta 500/500)')
+  })
+})
+
+test('prompt budgets: the plugins over their budget, or with none, come first and the rest after', () => {
+  scratch({}, config => {
+    const prompts = { ...PROMPTS, budgets: { alpha: { tokens: 950, budget: 900 }, beta: { tokens: 500, budget: 500 }, gamma: { tokens: 10, budget: null } }, faults: ['x'] }
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts, rules: RULES }) }), 'prompt budgets'), 'prompt budgets: 2 of 3 plugins over their budget (alpha 950/900, gamma 10/no budget); within: (beta 500/500)')
+  })
+})
+
+test('prompt budgets: a script that fails but printed its figures is read, one that printed none is n/a with its reason', () => {
+  scratch({}, config => {
+    const failing: Check = () => ({ status: 1, stdout: JSON.stringify(PROMPTS), stderr: 'a fault' })
+    assert.match(lineOf(lines(config, { check: failing }), 'prompt budgets'), /^prompt budgets: all 2 plugins within/)
+    assert.equal(lineOf(lines(config), 'prompt budgets'), 'prompt budgets: n/a — npm run prompts in /nowhere printed no JSON: no prompts in /nowhere')
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: 'nope' }) }), 'prompt budgets'), /^prompt budgets: n\/a — npm run prompts in \/nowhere printed no JSON$/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: '[]' }) }), 'prompt budgets'), /n\/a — npm run prompts answered something else than an object/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: {} }) }), 'prompt budgets'), /n\/a — npm run prompts listed no plugin/)
+    assert.match(lineOf(lines(config, { check: checkFor({ prompts: { budgets: { a: {} } } }) }), 'prompt budgets'), /n\/a — npm run prompts listed no plugin or a plugin without its tokens/)
+  })
+})
+
+test('duplicates: the count against its ceiling, within at the ceiling and over above it', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS }) }), 'duplicates'), 'duplicates: 3 sentences said more than once, ceiling 4: within')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...PROMPTS, duplicates: { count: 4, ceiling: 4 } } }) }), 'duplicates'), 'duplicates: 4 sentences said more than once, ceiling 4: within')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...PROMPTS, duplicates: { count: 5, ceiling: 4 } } }) }), 'duplicates'), 'duplicates: 5 sentences said more than once, ceiling 4: over')
+  })
+})
+
+test('one plugin or one sentence is not plural', () => {
+  scratch({}, config => {
+    const one = { budgets: { alpha: { tokens: 1, budget: 2 } }, duplicates: { count: 1, ceiling: 1 } }
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'prompt budgets'), 'prompt budgets: all 1 plugin within their budget (alpha 1/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...one, budgets: { alpha: { tokens: 3, budget: 2 } } } }) }), 'prompt budgets'), 'prompt budgets: 1 of 1 plugin over their budget (alpha 3/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'duplicates'), 'duplicates: 1 sentence said more than once, ceiling 1: within')
+  })
+})
+
+test('duplicates: n/a with the reason when the script gave none or no figure', () => {
+  scratch({}, config => {
+    assert.match(lineOf(lines(config), 'duplicates'), /^duplicates: n\/a — npm run prompts in \/nowhere printed no JSON/)
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { budgets: PROMPTS.budgets } }) }), 'duplicates'), 'duplicates: n/a — npm run prompts gave no count or no ceiling')
+  })
+})
+
+test('rules held by prose alone: the totals and the plugins that have some', () => {
+  scratch({}, config => {
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: PROMPTS, rules: RULES }) }), 'rules held by prose alone'), 'rules held by prose alone: 6 of 19 (held by code 11, named by an eval 2); by plugin: alpha 3, gamma 3')
+    const none = { plugins: [{ plugin: 'alpha', rules: 2, byCode: 2, byEval: 0, left: 0 }] }
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: none }) }), 'rules held by prose alone'), 'rules held by prose alone: 0 of 2 (held by code 2, named by an eval 0)')
+  })
+})
+
+test('rules held by prose alone: n/a with the reason when the script gave none or no counts', () => {
+  scratch({}, config => {
+    assert.match(lineOf(lines(config), 'rules held by prose alone'), /^rules held by prose alone: n\/a — npm run rules in \/nowhere printed no JSON: no rules in \/nowhere$/)
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [{ plugin: 'a' }] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: {} }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+  })
+})
+
+test('the three lines come after the nine figures, and the scripts run in the report\'s working directory', () => {
+  scratch({}, config => {
+    const asked: string[] = []
+    const check: Check = (checkout, script) => { asked.push(`${script}@${checkout}`); return checkFor({ prompts: PROMPTS, rules: RULES })(checkout, script) }
+    const out = lines(config, { check, cwd: '/checkout' })
+    assert.deepEqual(asked, ['prompts@/checkout', 'rules@/checkout'])
+    assert.deepEqual(out.slice(-4).map(l => l.split(':')[0]), ['', 'prompt budgets', 'duplicates', 'rules held by prose alone'])
+    assert.ok(out.findIndex(l => l.startsWith('9 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
   })
 })

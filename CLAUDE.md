@@ -7,12 +7,14 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   anything another plugin reads.
 - Every change, run locally: `npm run typecheck`, `npm test`, and the suite of each plugin touched
   (`plugins/<name>/tests/run-tests.sh`) except the orchestrator's. CI runs the rest: `npm run deps`,
-  `npm run permissions`, `npm run marketplace -- --check`, `npm run core -- --check`,
-  `npm run -s prompts`, `npm run context`, `npm run rules`, and the orchestrator's suite.
+  `npm run permissions`, `npm run marketplace -- --check`, `npm run core -- --check`, and the
+  orchestrator's suite. `npm run -s prompts`, `npm run context` and `npm run rules` report, they do
+  not block: CI prints their figures and a warning; the weekly report has a line for the budgets, the
+  duplicates and the rules.
 - Shared code is edited in `packages/core/src` only, then `npm run core` rewrites each plugin's
   `core/` copy; never edit a copy. A plugin whose copy changed ships a change.
 - Prompt budgets (`ci/prompts.json`) are lowered by the release (`npm run release`), never in a pull
-  request; CI still refuses a budget exceeded.
+  request; a budget exceeded is a warning in CI and a line of the weekly report, not a refusal.
 - A pull request raises no version. One release pull request raises the version of every plugin
   changed since the last release, in `plugins/<name>/.claude-plugin/plugin.json`, then runs
   `npm run marketplace` (`npm run version-bump -- <last-release-ref>` checks it). Never edit the
