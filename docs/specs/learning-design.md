@@ -250,7 +250,8 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   and goes through the ready gate like any change.
 - **A prompt rule** carries an ablation: the case its incident becomes, run with the rule and
   without it, three runs each, on the host's evaluation command. It enters only when the eval
-  shows an outcome change, and replaces a rule (conventions, « Prompts »); the plugin's budget
+  shows an outcome change, this design's own condition, and replaces a rule (conventions,
+  « Prompts »); the plugin's budget
   in `ci/prompts.json` does not rise. A plugin with no behaviour suite (every one but the
   orchestrator) cannot take a learned prompt rule until it has one.
 - **Measure cadence (question 4, answered).** The free measure, from the telemetry's events,

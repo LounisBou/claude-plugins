@@ -300,7 +300,7 @@ its review and a `tests` pass at its head or its checks green; a failed run or c
 
 ### What the contract does not stop
 
-The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards stop a forgotten review, norms check or E2E, not a forger.
+The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards observe a forgotten review, norms check or E2E, and stop no forger.
 
 ## Pushing from the sandbox
 
@@ -312,14 +312,15 @@ Never « external terminal ».
 
 ## Guards
 
-**Ready.** These acts need the pull request ready at its head (core's readiness contract, « Records »
-above), CI included; the gate puts `Ready` just before the act, which runs on that label only: `pr-ready`,
+**Ready.** These acts meet the gate at the pull request's head (core's readiness contract, « Records »
+above), CI included; it puts `Ready` just before the act, which runs on that label, or without it, observed
+(`github.ready.no-record`), when only records are absent at the head (`<kind>: no record`): `pr-ready`,
 `pr-merge`; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
 `gh pr merge` (not `--disable-auto`), `gh api` `PUT`/`POST` on
 `repos/<o>/<r>/pulls/<n>/merge` (path or URL), `gh api graphql` naming `mergePullRequest`,
 `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the engine's same subcommands from Bash.
 A `--match-head-commit` or `pr-merge --sha` off that head is not ready; a `Ready` put by `label-add` or the
-shell is no act. Refused before any question with `github: <act> refused on <owner/name>#<n> at <head7>:
+shell is no act. Refused before any question, on CI not green or a record that failed, with `github: <act> refused on <owner/name>#<n> at <head7>:
 not ready. Missing: <item>, …`, `Ready` going back to `Not Ready`, or `github: readiness of
 <owner/name>#<n> unverified: <error>`. Refused too: a shell merge or undraft naming
 no repository (`-R`, `--repo`, a URL); a GraphQL merge or undraft (no pull request named; the tool call is

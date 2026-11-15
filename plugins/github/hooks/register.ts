@@ -13,7 +13,7 @@ import {
 import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
-  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
@@ -21,7 +21,7 @@ import { observe, OBSERVED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
-  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, stackedCi, unverifiedAnswer,
+  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   RECORDS_REFUSAL, deletes, deletesRecords,
@@ -700,9 +700,9 @@ export async function diagnose($: any, check = false): Promise<string> {
 
 /*
  * A pull request is ready as core's readiness contract defines it (readiness.ts). Taking it out of
- * draft and merging it need the Ready label, which the gate puts itself when the whole contract holds
- * at the head, CI included, through the tool and through Bash alike, and an act that is not ready
- * is refused. In a repository not in
+ * draft and merging it are refused while its CI is not green or a record failed at the head, through
+ * the tool and through Bash alike; a record only absent there is observed, and the act goes on without
+ * the Ready label, which the gate puts when the whole contract holds. In a repository not in
  * auto-merge, leaving draft is observed on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
@@ -1300,18 +1300,30 @@ async function heldNotReady($: any, name: string, repo: string, pr: number, r: R
   }
 }
 
+// An act (a merge, leaving draft) the gate lets through without a record: `noRecord` is set when it did.
+type Passage = { noRecord: boolean }
+
+// Whether a pull request misses only records absent at its head, the exemption's expiry line beside them.
+function missesOnlyRecords(missing: string[]): boolean {
+  return onlyAbsentRecords(missing.filter((item) => !isExpiryLine(item)))
+}
+
 /*
  * The one readiness check of every act that needs Ready (pr-ready, pr-merge, pr-readiness ready,
  * their shell forms), core's readiness contract read at the head: undefined when the gate put Ready
  * itself, the whole contract holding, CI included; else what is missing, or why that is unknown.
+ * An act (`act` given) goes through as well when only records are absent at the head, which its
+ * caller observes: CI, a record that failed and a readiness unread still refuse it.
  */
-async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness): Promise<Held | undefined> {
+async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness, act?: Passage): Promise<Held | undefined> {
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
-  if (r.missing.length > 0) return heldNotReady($, name, repo, pr, r)
+  const passes = (missing: string[]): boolean => missing.length === 0 || (act !== undefined && missesOnlyRecords(missing))
+  if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
-  if (followed.missing.length > 0) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
+  if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   if (followed.line) note($, followed.line)
+  if (act && followed.missing.length > 0) act.noRecord = true
   return undefined
 }
 
@@ -1378,6 +1390,13 @@ function toolReady($: any, e: any, act: Act) {
     return undefined
   }
   const gated = act.kind === 'merge' || act.kind === 'undraft'
+  // The gate's refusal of the act, or undefined once it lets it through, observed when a record is absent.
+  const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
+    const passage: Passage = { noRecord: false }
+    const held = await gateHeld($, act.name, repo, pr, r, passage)
+    if (!held && passage.noRecord) await observed($, OBSERVED.noRecord)
+    return held?.refusal
+  }
   return {
     async beforeAsk(): Promise<string | undefined> {
       if (act.kind === 'create') await observed($, OBSERVED.draftOpen)
@@ -1386,11 +1405,11 @@ function toolReady($: any, e: any, act: Act) {
       if (!found) {
         if (forCi || !read?.gate) return undefined
         const { repo, pr } = await repoPr()
-        return repo && pr !== undefined ? (await gateHeld($, act.name, repo, pr, read))?.refusal : undefined
+        return repo && pr !== undefined ? heldAct(repo, pr, read) : undefined
       }
       if (typeof found.pr !== 'number') return unverifiedRefusal(found.repo, found.pr, found.r.error ?? '')
       try {
-        return (await gateHeld($, act.name, found.repo, found.pr, found.r))?.refusal
+        return await heldAct(found.repo, found.pr, found.r)
       } catch (err: any) {
         return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
       }
@@ -1478,7 +1497,9 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     leaving = !listed
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
-  const held = (await gateHeld($, act.name, repo, pr, r))?.refusal
+  const passage: Passage = { noRecord: false }
+  const held = (await gateHeld($, act.name, repo, pr, r, passage))?.refusal
+  if (!held && passage.noRecord) observations.push(OBSERVED.noRecord)
   if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
 }

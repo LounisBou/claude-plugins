@@ -2,7 +2,8 @@
 // What a guard of this module no longer refuses, it observes: the call goes through and one
 // refusal event, under the guard's stable code, is written into the module's journal (core's
 // learning contract, the writer the orchestrator's guards already use). Only the irreversible
-// stays refused: a merge, a force push, a deletion, a production target. An observer: a journal
+// stays refused: a merge whose CI is not green or whose record failed, a force push, a deletion, a
+// production target. An observer: a journal
 // that cannot be written is one line in the log, and the call goes on.
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
 import { journalDir, learningEvent } from '../core/learning.ts'
@@ -17,6 +18,7 @@ export const OBSERVED = {
   draftOpen: 'github.draft.open-out',
   draftLeave: 'github.draft.leave',
   writing: 'github.writing.rule',
+  noRecord: 'github.ready.no-record',
 } as const
 
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
