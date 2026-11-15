@@ -258,7 +258,7 @@ succession_limit=9000
 oq_field() {  # $1 mode: `value` prints the open-questions value, `rest` the brief without it
     awk -v mode="$1" '
         function next_field(s) {
-            return s ~ /^- (Rows open|Pull requests open|Agents running|The operator.s open questions|The next step)/
+            return s ~ /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|To-do items|Project)/
         }
         f == 0 && /^- The operator.s open questions/ {
             f = 1; found = 1

@@ -5442,8 +5442,8 @@ check "the design carries the re-run of a red outside what the pull request touc
   "$(spells "$ROOT/docs/design.md" 'a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed')|$(spells "$ROOT/docs/design.md" 'a second red, or a red in what it touches, is reported and corrected')"
 check "a mechanical base merge goes to a rebase agent, never the orchestrator; one that decides behaviour is a correction" "yes|yes" \
   "$(spells "$ORCH_REFS/rebase.md" 'A rebase or merge of the base is never yours')|$(spells "$ORCH_REFS/rebase.md" 'one that decides behaviour to a correction session')"
-check "succession prunes the state file and archives the finished journal" "yes|yes" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/succession-predecessor.md" 'the finished journal, dated before it, moves to an archive file')"
+check "the takeover archives the rulings ended, and no state file is pruned any more" "yes|no" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" '`succession.sh takeover` moves both, and a `[for:]` whose rows the dispatch record closed, to the `-archive.md` beside it')|$(spells "$ORCH_REFS/succession-predecessor.md" 'Prune the state file')"
 check "the predecessor's prune says live archives the settled round" "yes" \
   "$(spells "$ORCH_REFS/succession-predecessor.md" "and archives the round's entries settled over a day ago")"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
@@ -5510,13 +5510,13 @@ check "the design names both figures and why: their gap is the takeover's verifi
   "$(spells "$ROOT/docs/design.md" 'its first turn and the turn that sends « takeover confirmed »')|$(spells "$ROOT/docs/design.md" "the gap between them is what the takeover's verification costs")"
 check "the design says why the takeover is measured in the « takeover confirmed » turn" "yes" \
   "$(spells "$ROOT/docs/design.md" 'so that its figures compare from one succession to the next')"
-# The predecessor fills the section before the spawn, and keeps the whole brief short. One owner
-# per succession rule: the lifecycle reference states the cap and the overwrite, the command points.
-check "succeed.md has the predecessor fill Live state, the lifecycle reference holds the brief to 9,000 characters, and the command does not say it again" "yes|yes|yes|no" \
-  "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ORCH_REFS/succession-predecessor.md" 'Live state')|$(spells "$ORCH_REFS/succession-predecessor.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')"
-# The brief is standing: after its first use the section holds the last handover, not placeholders.
-check "the lifecycle reference has the predecessor overwrite the previous Live state, never append, and the command does not say it again" "yes|no" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" "overwrites the previous handover's Live state")|$(spells "$ROOT/commands/succeed.md" "overwrites the previous handover's Live state")"
+# The predecessor writes no brief: the state lives in its owners and the successor's takeover
+# prints it. One owner per succession rule: the lifecycle reference says it, the command points.
+check "the predecessor writes no brief and the successor reads the state through the takeover; the command neither generates nor caps a Live state" "yes|yes|no|no" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" '**No brief is written.** The successor runs `succession.sh takeover <dispatch record> --mode <mode> --tty <your tty>`')|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF 'No brief is written: the successor reads the state through `succession.sh takeover`.' && echo yes || echo no)|$(spells "$ROOT/commands/succeed.md" 'succession.sh live')|$(spells "$ROOT/commands/succeed.md" '9,000 characters')"
+# Nothing is kept from one handover to the next: no Live state to overwrite or append to.
+check "the lifecycle reference keeps no Live state from one handover to the next" "no|no" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" "overwrites the previous handover's Live state")|$(spells "$ORCH_REFS/succession-predecessor.md" 'standing succession brief')"
 # The rest of the succession rules, said once, in the lifecycle reference: no asking, the tab left
 # to the successor, the successor named to the agents. The command carries the steps and points.
 check "the lifecycle reference owns not asking, not closing one's own tab and naming the successor; the command says none of them again" "yes|yes|yes|no|no|no" \
@@ -5540,14 +5540,14 @@ check "the lifecycle reference is read by the section a moment names" "yes|no" \
 # The coordinator's round points at the method for the question's rules; it does not restate them.
 check "coordinator-decide points at the method's « Questions to the operator » and does not restate one question per message" "yes|no" \
   "$(tr '\n' ' ' < "$ROOT/commands/coordinator-decide.md" | tr -s ' ' | grep -qF '`method:lifecycle`, « Questions to the operator »' && echo yes || echo no)|$(spells "$ROOT/commands/coordinator-decide.md" 'one question per message')"
-check "the lifecycle's step 3 points at the brief's first task, not at whole files" "no|yes|no" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" 'read the brief and its pointed state')|$(spells "$ORCH_REFS/succession-predecessor.md" "3. The successor's first task is its brief's, step by step")|$(spells "$ORCH_REFS/succession-predecessor.md" 'then its brief'"'"'s steps 3 to 5')"
+check "the lifecycle's step 3 points at the takeover's first task, not at whole files" "no|yes|no" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" 'read the brief and its pointed state')|$(spells "$ORCH_REFS/succession-predecessor.md" "3. The successor's first task is the takeover's, step by step: « Your first task, in this exact order »")|$(spells "$ORCH_REFS/succession-predecessor.md" 'then its brief'"'"'s steps 3 to 5')"
 # The never-implement rule left the succession brief's first paragraph: the design says where a
 # successor meets it now, and the rulebook it names still opens on it.
 check "the design says a successor meets the never-implement rule in the rulebook its first step reads" "0|yes|yes" \
   "$(grep -c "carried in the succession brief's first paragraph" "$ROOT/docs/design.md")|$(spells "$ROOT/docs/design.md" "A successor meets it before it acts: its brief's first step reads the rulebook, whose Overview opens on « You orchestrate; you never implement. »")|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'You orchestrate; you never implement.')"
 check "the design says what a successor reads at takeover, and why" "yes|yes" \
-  "$(spells "$ROOT/docs/design.md" 'the successor reads the rulebook and its brief'"'"'s live state, the rest by section on demand')|$(spells "$ROOT/docs/design.md" 'input and cache tokens of each assistant turn')"
+  "$(spells "$ROOT/docs/design.md" 'the successor reads the rulebook and what the takeover prints from the state, the rest by section on demand')|$(spells "$ROOT/docs/design.md" 'input and cache tokens of each assistant turn')"
 # The lint: a succession brief past 9,000 characters is a finding naming the count and the limit.
 SUCCFILL="$WORK/succession-filled.md"
 SUCCRULINGS="$WORK/r/rulings.md"; mkdir -p "$WORK/r"
@@ -5571,7 +5571,7 @@ oq_brief() {  # $1 out file, $2 the field's value, or the single word ABSENT to 
   while IFS= read -r l; do
     case "$l" in
       "- The operator's open questions"*) continue ;;
-      "- The next step"*) [ "$2" = ABSENT ] || printf '%s\n' "$label $2" ;;
+      "- To-do items"*) [ "$2" = ABSENT ] || printf '%s\n' "$label $2" ;;
     esac
     printf '%s\n' "$l"
   done < "$SUCCFILL" > "$1"
@@ -5641,7 +5641,7 @@ check "review and briefs split « Review on evidence » and « Standing rules »
 # A successor runs on its predecessor's live pair by --successor alone: the succession line
 # types no --inherit-model, which would read as a choice the successor's pair depends on.
 check "the succession line types --successor without --inherit-model" "0|0|yes|yes" \
-  "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/succession-predecessor.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt "Read and execute <brief path>"`' && echo yes || echo no)|$(spells "$ORCH_REFS/succession-predecessor.md" 'with the brief as startup prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
+  "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/succession-predecessor.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt '"'"'Load the skill orchestrator:orchestrator with the argument "<your mode>", then run <scripts>/succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty> and execute what it prints.'"'"'`' && echo yes || echo no)|$(spells "$ORCH_REFS/succession-predecessor.md" 'with that prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
 check "the lifecycle reference names the re-ask" "yes" \
   "$(spells "$ORCH_REFS/succession-successor.md" 'ask it again, verbatim')"
 # The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
@@ -5657,8 +5657,8 @@ OQ_PAD=$(( 9100 - $(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ') 
 { cat "$OQ_BIG"; printf '%s\n' "$(head -c "$OQ_PAD" /dev/zero | tr '\0' 'x')"; } > "$OQ_BIG_PLUS"
 check "a succession brief whose open-questions value is a 4,000-character block, the rest within the limit, lints clean" "yes|0" \
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
-check "the lifecycle reference says the open-questions value is outside the 9,000-character cap, once" "yes|no" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" '9,000 characters, the open-questions value not counted')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
+check "the lint says the open-questions value is outside the 9,000-character cap, and the succession texts do not say it again" "yes|no|no" \
+  "$(help_has "$LINT" "The open-questions field's value is not counted, its label is")|$(spells "$ORCH_REFS/succession-predecessor.md" '9,000 characters')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
 # His answer in the round is the module's record, which answers the same question asked again
 # (hooks/tests/relay.test.ts, « a successor asking a question its predecessor had answered »): the
 # decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
@@ -5670,11 +5670,11 @@ check "the decision round leaves his round answer to the module's record and wri
 # ruling carried out or superseded leaves the file in the same move: the step points at the
 # lifecycle item that holds all three, and that item holds them.
 check "the decision round's ruling step points at the lifecycle item giving the rulings file's path, entry and supersede rule" "1|yes|yes" \
-  "$(printf '%s' "$DECIDE42" | grep -cF "\`references/succession-predecessor.md\` item 0")|$(spells "$ORCH_REFS/succession-predecessor.md" '0. **Prune the state file before you hand over.**')|$(sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF '`<briefs dir>/rulings.md`' && sed -n '/0\. \*\*Prune the state file before you hand over\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF 'is marked in the same move as the ruling that ends it' && echo yes || echo no)"
+  "$(printf '%s' "$DECIDE42" | grep -cF "\`references/succession-predecessor.md\` item 0")|$(spells "$ORCH_REFS/succession-predecessor.md" '0. **The state lives in its owners, and only there.**')|$(sed -n '/0\. \*\*The state lives in its owners, and only there\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF '`<record'"'"'s directory>/rulings.md`' && sed -n '/0\. \*\*The state lives in its owners, and only there\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF 'is marked in the same move as the ruling that ends it' && echo yes || echo no)"
 check "succeed.md checks the rulings file among its preconditions" "yes" \
-  "$(spells "$ROOT/commands/succeed.md" "the rulings marked (lifecycle item 0)")"
-check "the lifecycle gives the rulings file's entry and says a ruling ended leaves it" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" '`- <YYYY-MM-DDThh:mm:ssZ> « <his words, verbatim> » — <what it binds> (row N)`')|$(spells "$ORCH_REFS/succession-predecessor.md" 'is marked in the same move as the ruling that ends it')|$(spells "$ORCH_REFS/succession-predecessor.md" 'outside every brief')"
+  "$(spells "$ROOT/commands/succeed.md" "each to-do item names its rows, the rulings are marked.")"
+check "the lifecycle gives the rulings file's entry and says a ruling ended leaves it for an archive no takeover reads" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" '`- <YYYY-MM-DDThh:mm:ssZ> « <his words, verbatim> » — <what it binds> (row N)`')|$(spells "$ORCH_REFS/succession-predecessor.md" 'is marked in the same move as the ruling that ends it')|$(spells "$ORCH_REFS/succession-predecessor.md" 'to the `-archive.md` beside it, never read at takeover')"
 # The design gives the filled brief's cap the lint enforces (the operator's ruling of 2026-11-04,
 # 9,000 characters) and sends the reader to a lifecycle heading that exists, the section holding
 # the steps' how whatever its subsections are called. A hand-started predecessor is closed on the
@@ -5823,8 +5823,8 @@ check "a close with no expected title is still the finding" "1" "$(bash "$LINT" 
 SUCCFROM="$WORK/handed-over-from.md"
 printf '# scratch: audit\n\nWait for « takeover confirmed », answer it with « handed over » as your last message.\n' > "$SUCCFROM"
 check "a brief whose reader is handed over from is not held to the close" "0" "$(bash "$LINT" "$SUCCFROM" >/dev/null 2>&1; echo $?)"
-check "succeed.md has the brief from the template, never by hand, and « handed over » sent with SendMessage" "yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'never a brief written by hand')|$(spells "$ROOT/commands/succeed.md" 'with `SendMessage` to the name it confirmed from')|$(spells "$ROOT/commands/succeed.md" 'a line written in your own tab reaches no one')"
+check "succeed.md writes no brief, the takeover printing the template from the state, and « handed over » sent with SendMessage" "no|yes|yes|yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'brief written by hand')|$(spells "$ROOT/commands/succeed.md" 'and execute what it prints.')|$(spells "$ROOT/commands/succeed.md" 'with `SendMessage` to the name it confirmed from')|$(spells "$ROOT/commands/succeed.md" 'a line written in your own tab reaches no one')"
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"
