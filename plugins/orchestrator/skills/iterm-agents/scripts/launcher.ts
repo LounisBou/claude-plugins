@@ -6,6 +6,7 @@
 // for a refusal, `<command>: error: <why>` and exit 2 for a malformed line. A rotation whose spawn
 // words are malformed is refused in the rotation's words.
 //
+// `resolve-tier` is answered here (tier.ts). A spawn, or a rotation's spawn, is prepared before (spawn-prep.ts): its refusals said the same way.
 // With ORCHESTRATOR_PRINT_REQUEST set, the request is printed on stdout instead (the suite's
 // cases that drive the adapter in its own process read it so).
 //
@@ -14,11 +15,15 @@
 // SIGTERM and SIGHUP sent to this process are passed on; SIGINT is not, since the terminal sends
 // it to the whole group and the adapter handles its own.
 import { spawn } from 'node:child_process'
+import { readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { constants } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LauncherArgsError, parseLauncherArgs, type LauncherRequest } from '../../../core/launcher.ts'
-import { isEntry, processIo, type Io } from '../../orchestrator/scripts/lib/process.ts'
+import { isEntry, processIo, run, type Io } from '../../orchestrator/scripts/lib/process.ts'
+import { prepared, type PrepDeps } from './spawn-prep.ts'
+import { modelsMapOf, Refused, resolveTier } from './tier.ts'
 
 /*
  * The directory as `iterm-agent.sh` names it (ORCHESTRATOR_ADAPTER_DIR): node resolves a module's
@@ -26,6 +31,25 @@ import { isEntry, processIo, type Io } from '../../orchestrator/scripts/lib/proc
  */
 const HERE = process.env['ORCHESTRATOR_ADAPTER_DIR'] || dirname(fileURLToPath(import.meta.url))
 const ADAPTER = join(HERE, 'iterm_agent.py')
+const LINT = join(HERE, '..', '..', 'orchestrator', 'scripts', 'brief-lint.sh')
+
+const kindOf = (path: string): 'dir' | 'file' | null => {
+  try {
+    const stat = statSync(path)
+    return stat.isDirectory() ? 'dir' : stat.isFile() ? 'file' : null
+  } catch {
+    return null
+  }
+}
+
+/** What a spawn's preparation reads, from this process. */
+export function prepDeps(env: NodeJS.ProcessEnv, io: Io): PrepDeps {
+  return {
+    env, cwd: process.cwd(), run, lint: LINT, warn: line => io.err(`${line}\n`), home: homedir(),
+    read: path => (kindOf(path) === 'file' ? readFileSync(path, 'utf8') : null),
+    isDir: path => kindOf(path) === 'dir', isFile: path => kindOf(path) === 'file',
+  }
+}
 
 /** The request the line makes, or the line to say and the exit code. */
 export function requestOf(argv: readonly string[]): { request: LauncherRequest } | { said: string; code: number } {
@@ -67,17 +91,29 @@ export function runAdapter(python: string, request: LauncherRequest, adapter: st
   })
 }
 
-export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, io: Io): Promise<number> {
+export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, io: Io, deps: PrepDeps = prepDeps(env, io)): Promise<number> {
   const read = requestOf(argv)
   if ('said' in read) {
     io.err(`${read.said}\n`)
     return read.code
   }
+  let request: LauncherRequest
+  try {
+    if (read.request.command === 'resolve-tier') {
+      io.out(`${resolveTier(read.request.words?.[0] ?? '', modelsMapOf(deps.env, deps.home), deps)}\n`)
+      return 0
+    }
+    request = await prepared(read.request, deps)
+  } catch (error) {
+    if (!(error instanceof Refused)) throw error
+    io.err(`ERROR: ${error.message}\n`)
+    return 1
+  }
   if (env['ORCHESTRATOR_PRINT_REQUEST']) {
-    io.out(`${JSON.stringify(read.request)}\n`)
+    io.out(`${JSON.stringify(request)}\n`)
     return 0
   }
-  return runAdapter(env['ORCHESTRATOR_ADAPTER_PYTHON'] || 'python3', read.request)
+  return runAdapter(env['ORCHESTRATOR_ADAPTER_PYTHON'] || 'python3', request)
 }
 
 /* node:coverage ignore next */

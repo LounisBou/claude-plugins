@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { parseLauncherArgs } from '../../../core/launcher.ts'
-import { main, requestOf, runAdapter } from './launcher.ts'
+import { main, prepDeps, requestOf, runAdapter } from './launcher.ts'
 
 const io = (): { out: string[]; err: string[]; io: { out: (t: string) => void; err: (t: string) => void } } => {
   const out: string[] = []
@@ -36,6 +36,19 @@ describe('the launcher entry', () => {
     const refused = io()
     assert.equal(await main(['pair', 'x'], {}, refused.io), 1)
     assert.match(refused.err[0] ?? '', /^ERROR: pair: takes no argument/)
+  })
+
+  it('reads the files a spawn names from this process, and refuses a spawn before running anything', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launcher-'))
+    writeFileSync(join(dir, 'f'), '')
+    const shown = io()
+    const deps = prepDeps({}, shown.io)
+    assert.deepEqual([deps.isDir(dir), deps.isFile(dir), deps.isFile(join(dir, 'f')), deps.isDir(join(dir, 'none'))], [true, false, true, false])
+    deps.warn('w')
+    assert.deepEqual(shown.err, ['w\n'])
+    const refused = io()
+    assert.equal(await main(['spawn', '--dir', dir], {}, refused.io), 1)
+    assert.deepEqual(refused.err, ["ERROR: spawn: refused: no startup prompt: the host writes no transcript before a first prompt, so the session's mode cannot be read; give the brief with --prompt or --prompt-file\n"])
   })
 
   it('hands the adapter the request and answers its exit code, or a signal\'s', async () => {

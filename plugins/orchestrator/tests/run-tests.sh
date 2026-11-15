@@ -7670,7 +7670,7 @@ class Out(io.StringIO):
     def flush(self):
         if mode == "closed-pipe" and "closed 1 session" in self.getvalue():
             raise BrokenPipeError(32, "Broken pipe")
-rotate = ["--old-tty", "/dev/ttys901", "--dir", "/x", "--title", "T", "--tier", "light"]
+rotate = ["--old-tty", "/dev/ttys901", "--dir", "/", "--title", "Agent: t", "--tier", "light", "--prompt", "p"]
 if len(sys.argv) > 3:
     rotate = ["--old-tty", "/dev/ttys901", "--dir", sys.argv[3], "--title", "Agent: two",
               "--tier", "light", "--prompt", "p"]
