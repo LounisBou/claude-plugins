@@ -1887,8 +1887,8 @@ const RULES_MAX = 50
 const isRule = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
 
-// An instant written as an exemption's expiry is, anywhere in a question.
-const STATES_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/
+// What a question says of a limit, in words (French or English), a date or a time of day, or as the instant `until` takes.
+const NAMES_LIMIT = /jusqu|until|ce soir|tonight|expir|valable|\d{4}-\d{2}-\d{2}T|\d{1,2}\/\d{1,2}|\b\d{1,2}\s?h\b/i
 
 // The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
 // requests from E2E (all, or those a rule names), or revokes it, in their words.
@@ -1914,13 +1914,13 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     if (!(Date.parse(until) > now)) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
   }
   const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  // A question that states an expiry asks a limited exemption: it grants no other, so an exemption with none needs a question that states none.
-  const stated = until === undefined ? (question: string) => !STATES_INSTANT.test(question) : (question: string) => question.includes(until)
+  // A question that names a limit asks a limited exemption: it grants no other, so an exemption with no `until` needs a question that names none.
+  const stated = until === undefined ? (question: string) => !NAMES_LIMIT.test(question) : (question: string) => question.includes(until)
   if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given), stated))) {
     return {
       deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
         + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
-        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? ', to a question that states no expiry' : ', to a question that states its expiry ' + until)
+        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? ', to a question that names no limit' : ', to a question that states its expiry ' + until)
         + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
     }
   }

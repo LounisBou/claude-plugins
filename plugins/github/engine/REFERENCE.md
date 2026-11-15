@@ -285,7 +285,8 @@ Both routes are `hooks/e2e-scope.ts`'s.
   `exempt: true` only and still ahead, ends it at that instant: the question of the consent record states the
   same `until`, and `detail` quotes the operator's answer to it; past it the exemption excuses nothing (its
   labels are free again) and the gate adds one line, `E2E exemption of <repo> expired at <until>`, beside the
-  missing `e2e` item. Without `until` it stands until revoked.
+  missing `e2e` item. Without `until` it stands until revoked, and its question then names no limit (no
+  `until`, date, time of day or « jusqu'à »): a question that limits it asks a limited exemption only.
 
 ### Light CI
 
