@@ -2,10 +2,11 @@
 // What a close of a round question writes, decided without the host: the `settle` call validated,
 // and the entry it closes — answered here (in the asker's tab, or in the coordinator's), answered by a
 // message that reached its asker, or withdrawn with its reason — whichever wrote the entry: an object
-// `ask` stored (question.ts, `v` 2) or an entry the relay wrote out of a turn's text (round.ts). The
-// one closure function that writes it, under the entry's lock, and then records the consent, tells
-// the asker and records the work asked, is question.ts's `settle`: the host's `$` cannot be handed
-// through this strict file, which imports no file that is not.
+// `ask` stored (question.ts, `v` 2) or an entry the relay wrote out of a turn's text (round.ts) —
+// and the closes the module makes itself: an answer in the pane, the words typed in the asker's tab,
+// a withdrawal at its session's end. The one closure function that writes each, under the entry's
+// lock, then records the consent and tells the asker, is question.ts's `closeRound`: the host's `$`
+// cannot be handed through this strict file, which imports no file that is not.
 import type { Answerer } from '../core/consent-record.ts'
 
 export const SETTLE_TOOL = 'settle'
@@ -50,6 +51,8 @@ export type Plan = {
   /** The answer sent to its asker now, or to its owner's machine from a replica. */
   deliver: 'now' | 'remote' | null
   consentBy: Answerer | null
+  /** The words its consent is recorded from. */
+  consentText: string
   /** The relay's entry: its fingerprint forgotten, and the coordinator told when the module closed it. */
   relayed: boolean
   told: boolean
@@ -73,7 +76,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
   if (entry['origin'] !== undefined) {
     return {
       entry: { ...entry, status: answered ? 'answered' : 'withdrawn', answer, delivery: { state: 'pending', at, attempts: 0 } },
-      asker: { ...asker, remote: true }, deliver: 'remote', consentBy: null, relayed: false, told: false,
+      asker: { ...asker, remote: true }, deliver: 'remote', consentBy: null, consentText: request.text, relayed: false, told: false,
     }
   }
   return {
@@ -82,6 +85,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
     consentBy: !answered || request.outcome === 'answered-by-message' ? null : own ? 'tab' : 'coordinator',
+    consentText: request.text,
     relayed: false,
     told: false,
   }
@@ -105,7 +109,7 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
       ...(request.outcome === 'answered-here' ? { typed: request.text } : {}),
     }
     const status = shown ? 'closed' : request.outcome === 'withdrawn' ? 'withdrawn' : 'answered'
-    return { entry: { ...entry, status, answer }, asker, deliver: null, consentBy: null, relayed: true, told: shown }
+    return { entry: { ...entry, status, answer }, asker, deliver: null, consentBy: null, consentText: request.text, relayed: true, told: shown }
   }
   if (me.role !== 'coordinator') return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
   if (entry['status'] === 'closed') return { error: `${request.id} is closed already: nothing to settle.` }
@@ -119,9 +123,56 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
     asker,
     deliver: null,
     consentBy: request.outcome === 'answered-here' ? 'coordinator' : null,
+    consentText: request.text,
     relayed: true,
     told: false,
   }
+}
+
+// His answer given in the coordinator's pane to an object `ask` stored, open and not claimed in its
+// asker's tab (null leaves it): sent to its asker at once, or to its owner's machine from a replica,
+// whose seq stays the owner's.
+export function planPane(entry: Fields, text: string, me: Me, at: string): Plan | null {
+  if (entry['status'] !== 'open' || entry['claimed']) return null
+  const sender = fields(entry['sender'])
+  const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
+  const answer = { text, by: 'pane', at, settler: me.name }
+  const close = (written: Fields, deliver: 'now' | 'remote'): Plan => (
+    { entry: written, asker, deliver, consentBy: deliver === 'now' ? 'pane' : null, consentText: text, relayed: false, told: false }
+  )
+  return entry['origin'] !== undefined
+    ? close({ ...entry, status: 'answered', answer, delivery: { state: 'pending', at, attempts: 0 } }, 'remote')
+    : close({ ...entry, status: 'answered', answer, seq: Number(entry['seq'] ?? 0) + 1 }, 'now')
+}
+
+// An object `ask` stored that his prompt claimed in its asker's tab, its turn ended: answered there
+// with his words, its consent recorded from `chosen`, the choice they name, when there is one.
+export function planClaimed(entry: Fields, chosen: string | null, at: string): Plan {
+  const { claimed, ...rest } = entry
+  const sender = fields(entry['sender'])
+  const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
+  const answer = { text: String(fields(claimed)?.['typed'] ?? ''), by: 'tab', at, settler: asker.name }
+  return {
+    entry: { ...rest, status: 'answered', answer, seq: Number(entry['seq'] ?? 0) + 1 },
+    asker, deliver: null, consentBy: chosen === null ? null : 'tab', consentText: chosen ?? '', relayed: false, told: false,
+  }
+}
+
+// An entry its asker's session withdraws, as it ends or hands over: an object `ask` stored is
+// withdrawn by it; the relay's entry too, or closed when the coordinator here was shown it, which
+// its caller then tells.
+export function planWithdrawal(entry: Fields, why: string, at: string, shown: boolean): Plan {
+  const sender = fields(entry['sender'])
+  if (sender !== null) {
+    const asker: Asker = { session: String(sender['session'] ?? ''), name: String(sender['name'] ?? ''), remote: false }
+    return {
+      entry: { ...entry, status: 'withdrawn', answer: { text: why, by: 'sender', at, settler: asker.name }, seq: Number(entry['seq'] ?? 0) + 1 },
+      asker, deliver: null, consentBy: null, consentText: why, relayed: false, told: false,
+    }
+  }
+  const asker: Asker = { session: String(entry['session'] ?? ''), name: String(entry['from'] ?? ''), remote: fields(entry['origin']) !== null }
+  const answer = { text: shown ? `withdrawn: ${why}` : why, by: 'sender', at }
+  return { entry: { ...entry, status: shown ? 'closed' : 'withdrawn', answer }, asker, deliver: null, consentBy: null, consentText: why, relayed: true, told: false }
 }
 
 /** The message an asker receives when another session settled its question asked with `ask`. */

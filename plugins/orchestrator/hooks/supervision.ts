@@ -35,7 +35,8 @@ import {
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
-import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { planWithdrawal } from './settle.ts'
+import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, toldText, type RoundAnswer, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -2327,15 +2328,15 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open' || entry.id === current || kept?.(entry)) continue
     try {
-      const closed = await closesItself($, entry.id)
-      const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: 'sender', at: new Date().toISOString() }
+      const shown = await closesItself($, entry.id)
+      const at = new Date().toISOString()
       // Read again under the lock: a move to a successor or an answer in between is never overwritten.
-      const written = await changeEntry($, path, fresh =>
-        !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, status: closed ? 'closed' : 'withdrawn', answer })
-      if (!written) continue
-      await logLine($, 'supervision', `round: withdrawn by the sender: ${entry.id}`)
-      await forgetRelayed($, entry)
-      if (closed) settled.push({ entry, answer })
+      const done = await closeRound($, path, current => {
+        const fresh = parseRoundEntry(current ?? '')
+        return !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : planWithdrawal(fresh as never, why, at, shown)
+      }, { session: sessionId, name: entry.from, role: 'orchestrator' }, at, () => logLine($, 'supervision', `round: withdrawn by the sender: ${entry.id}`))
+      if (done === null || 'error' in done) continue
+      if (shown) settled.push({ entry, answer: done.plan.entry['answer'] as RoundAnswer })
     } catch (err) {
       await logLine($, 'supervision', `round: ${(err as Error).message}`)
     }
