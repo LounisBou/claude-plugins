@@ -4,9 +4,9 @@
 
 The module says when a gate trips; this is what you do then.
 
-Rotation = you write a **resume prompt** (`agent-rotation-brief.md`) for a fresh session: phase state, branch state, remaining scope, decisions already taken (marked non-reopenable), same protocol. Below the threshold, prefer REUSING the same agent session across phases: it keeps the interfaces it built in mind and a continuation prompt costs a fraction of a cold start — « reuse » names an agent with a NEXT phase to start now; a tab kept in case is a forbidden standing-by tab. The same rule applies to you: hand over with a resume brief before degrading, with the traps this session paid for, not only the state.
+Rotation = a **resume brief** (`agent-rotation-brief.md`) for a fresh session, written by the agent you stand down, which holds the state: your stand-down message names the template, the path to write and the tier line, and its acknowledgment answers that path. You neither read nor retype it: the launcher lints it. Below the threshold, prefer REUSING the same agent session across phases: it keeps the interfaces it built in mind and a continuation prompt costs a fraction of a cold start — « reuse » names an agent with a NEXT phase to start now; a tab kept in case is a forbidden standing-by tab. The same rule applies to you: hand over with a resume brief before degrading, with the traps this session paid for, not only the state.
 
-**Execute the rotation yourself where the platform allows** (macOS + iTerm2): once the dispatch gate trips and the resume brief is written, use the `orchestrator:iterm-agents` skill, « Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`, its lines the proof. Without such tooling, stop and say why.
+**Execute the rotation yourself where the platform allows** (macOS + iTerm2): once the dispatch gate trips and the agent answered its resume brief's path, use the `orchestrator:iterm-agents` skill, « Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`, its lines the proof. Without such tooling, stop and say why.
 
 ## Your own context (the orchestrator is not exempt)
 
