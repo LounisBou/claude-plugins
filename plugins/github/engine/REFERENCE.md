@@ -50,8 +50,8 @@ draft-time run skips its jobs again: push a new commit.
 
 `pr-merge --sha <full sha>` pins the verified head: GitHub refuses the merge if it moved. Take
 the sha (as for `--match-head-commit`) from `git rev-parse` or `headRefOid`, never a short form.
-A PR in a stack refuses the synchronous merge (403): `pr-merge` then uses the asynchronous merge
-endpoint, same method and `--sha`, and waits for the merge at most `GH_MERGE_WAIT` seconds
+A PR in a stack refuses the synchronous merge (403): `pr-merge` then uses the
+asynchronous merge endpoint, same method and `--sha`, and waits for the merge at most `GH_MERGE_WAIT` seconds
 (default 60), printing the merge commit sha, or exiting 3 with the request's uuid.
 
 ### Review threads and comments
@@ -179,8 +179,8 @@ nothing and reports `reused`. It prints the URL,
 `https://github.com/<owner>/<repo>/blob/<branch>/<blob>?raw=true`, and ready-to-paste markdown.
 
 `--title T`, one per file in order, puts the screenshot's title in bold above its image and as
-its alt text (`writing/pull-requests.md` « Pull request descriptions »): one line, 100 characters
-or fewer, no colon at its end, asterisks and closing brackets taken out. A title the description
+its alt text (`writing/pull-requests.md` « Pull request descriptions »): one line,
+100 characters or fewer, no colon at its end, asterisks and closing brackets taken out. A title the description
 rules refuse is refused too. With several files, `markdown` joins the blocks with a horizontal
 rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 
