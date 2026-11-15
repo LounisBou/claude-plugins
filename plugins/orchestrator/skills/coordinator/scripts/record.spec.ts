@@ -156,8 +156,8 @@ describe('lookup and clear', () => {
     assert.equal(main(f.ctx, ['bogus']), 1)
     assert.equal(main(f.ctx, []), 1)
     assert.deepEqual(f.err, [
-      'coordinator: unknown subcommand: bogus (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round or round-archive)',
-      'coordinator: usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-archive} ... (see header)',
+      'coordinator: unknown subcommand: bogus (expected register, clear, lookup, facts, owners, check, sleep, sleeping, wake-done, drop, round or round-archive)',
+      'coordinator: usage: coordinator.sh {register|clear|lookup|facts|owners|check|sleep|sleeping|wake-done|drop|round|round-archive} ... (see header)',
     ])
   })
 })

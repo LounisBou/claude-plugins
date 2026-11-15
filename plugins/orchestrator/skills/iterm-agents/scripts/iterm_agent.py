@@ -226,6 +226,9 @@ ORCH_TOOLS_KEPT = (ORCH, COORD, AUDIT)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
 ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
+# What a coordinator or an auditor never calls beyond those: they review, fix and record nothing.
+WATCHER_UNUSED = ORCH_UNUSED + ("mcp__pr-review", "mcp__orchestrator__review",
+                                "mcp__github__light_ci", "mcp__github__record")
 # The host's own switches for what it adds to a session's context on its own. The first is
 # internal and undocumented, the second too: a probe proves each on the host version that
 # ships with a change to this list, and a launcher test keeps the keys passed.
@@ -4188,10 +4191,10 @@ def title_role(title):
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
-    agent loses the four an orchestrator alone calls, and an orchestrator also loses the
-    servers it never calls."""
+    agent loses the four an orchestrator alone calls, an orchestrator also loses the
+    servers it never calls, and a coordinator or an auditor those and the review tools."""
     return (LEAN_REMOVED + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS)
-            + (ORCH_UNUSED if role == ORCH else ()))
+            + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED if role in (COORD, AUDIT) else ()))
 
 
 def removed_tools(title, keep=(), drop=()):

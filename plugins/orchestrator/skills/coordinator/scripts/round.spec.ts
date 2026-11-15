@@ -140,7 +140,8 @@ describe('round', () => {
       'round a-one | operator | from Orch: a | since 2026-10-18T10:03:00.000Z | blocks: - | open',
       'round gone | operator | from Orch: a | since 2026-10-18T10:04:00.000Z | blocks: phase 3 | open | sender gone',
     ])
-    assert.deepEqual(JSON.parse(readFileSync(join(f.state, 'round-listed.json'), 'utf8')), ['a-one', 'b-early', 'b-late', 'c-done', 'gone', 'u'])
+    // The entries printed as their header alone are the pane's: not recorded as shown.
+    assert.deepEqual(JSON.parse(readFileSync(join(f.state, 'round-listed.json'), 'utf8')), ['c-done', 'u'])
   })
 
   it('prints with --all the answered and the withdrawn entries with their close, every question whole', () => {
