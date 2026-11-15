@@ -1693,6 +1693,19 @@ test('a host the machine lists as exiting or a zombie, or on another tty than th
   expect(await listed('  501 Ss ttys001\n')).toBe(0)
 })
 
+test('a record rewritten by an open while the reconciliation ran is the pane\'s and stays', async () => {
+  const { fx, handlers } = await wakingCoordinator([], { paneClosed: true })
+  fx.files.set(PANE_FILE, staleRecord())
+  const panes = fx.dollar.ui.panes
+  fx.dollar.ui.panes = async () => {
+    const shown = await panes()
+    fx.files.set(PANE_FILE, staleRecord({ at: '2026-11-15T09:00:00.000Z' }))
+    return shown
+  }
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(JSON.parse(String(fx.files.get(PANE_FILE))).at).toBe('2026-11-15T09:00:00.000Z')
+})
+
 test('a turn that starts, and a start, drop the record of a pane that is gone before the round is read', async () => {
   const { fx, handlers } = await wakingCoordinator([], { paneClosed: true })
   for (const at of ['turn.start', 'session.start']) {

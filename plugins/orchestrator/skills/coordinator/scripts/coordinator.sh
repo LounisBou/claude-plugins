@@ -65,8 +65,8 @@
 # sender on another machine whose remote row is in the store, « sender gone » one with neither a row
 # nor a session. « due » marks an open question
 # the coordinator presents in its tab: its sender marked it urgent, or no pane of the
-# coordinator is open (<state>/pane.json, written by the hooks module while it is, names a pid
-# that is not running, or is absent); any other open question is the pane's alone, however long
+# coordinator is open (<state>/pane.json, written by the hooks module while it is; pane_open
+# below says when its record counts); any other open question is the pane's alone, however long
 # it waits. COORDINATOR_NOW, when the suite pins one, must be a UTC time. The entries are read from
 # <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
@@ -601,13 +601,10 @@ pane_open() {
     fi
     tty=$(jq -r 'select(type == "object") | .tty // empty | tostring' "$STATE/pane.json" 2>/dev/null) || tty=''
     info=$(ps -p "$pid" -o stat=,tty= 2>/dev/null) || return 1
-    # shellcheck disable=SC2086
-    set -- $info
-    stat=${1:-}
+    read -r stat listed <<< "$info"
     [ -n "$stat" ] || return 1
     stat=${stat#"${stat%%[!?]*}"}
     case "$stat" in Z*|*E*) return 1 ;; esac
-    listed=${2:-}
     tty=${tty#/dev/}
     [ -z "$tty" ] || [ -z "$listed" ] || [ "$listed" = "$tty" ]
 }

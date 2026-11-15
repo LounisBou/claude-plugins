@@ -942,16 +942,21 @@ async function paneIsOpen($: any): Promise<boolean> {
 // a pane that is not there.
 async function reconcilePaneRecord($: any): Promise<void> {
   let record: { session?: unknown; pid?: unknown } | null
+  let text: string
   try {
-    record = JSON.parse(String(await $.fs.read(await panePath($))))
+    text = String(await $.fs.read(await panePath($)))
+    record = JSON.parse(text)
   } catch {
     return
   }
   if (!record || typeof record !== 'object') return
   try {
     if (await paneShown($)) return
-    const own = record.session === await $.session.id() || String((await recordedCoordinator($))?.pid ?? '') === String(record.pid ?? '')
+    const pid = String(record.pid ?? '')
+    const own = record.session === await $.session.id() || (pid !== '' && String((await recordedCoordinator($))?.pid ?? '') === pid)
     if (!own) return
+    // An open that finished while this ran wrote a new record: it is the pane's, not removed.
+    if (String(await $.fs.read(await panePath($)).catch(() => '')) !== text) return
     const done = await $.process.run(['rm', '-f', await panePath($)], { timeoutMs: 5000 }).catch(() => null)
     if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
     else await logLine($, 'supervision', 'pane: the record said open while the host shows no pane; removed')
