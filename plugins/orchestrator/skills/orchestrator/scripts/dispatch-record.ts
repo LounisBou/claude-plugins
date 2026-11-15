@@ -559,9 +559,9 @@ function review(ctx: Context, id: string, args: readonly string[]): void {
   // none, `none`, and nothing else: `none` is a fact about the PROJECT.
   if (norms !== '' && norms !== 'tool' && norms !== 'none') die(ctx, `review: unknown norms value: ${norms} (expected tool, or none when the project ships no norms check)`)
   // Only the LAST review is kept: the question `ready` asks is about the head in front of it now.
+  // It raises no `rounds`: the review verdict tool counts the round, once, on the row naming the pull request.
   const at = stamp(ctx)
   rewrite(ctx, id, row => {
-    row['rounds'] = asNumber(row['rounds']) + 1
     row['review'] = { head, norms, at }
   })
   noteStep(ctx, 'review', id, 'review', 'end', head)

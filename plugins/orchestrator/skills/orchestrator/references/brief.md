@@ -1,12 +1,12 @@
 # Brief
 
-Read before planning phases or writing a brief — a phase brief, a correction round's, a review or comments session's, a rotation's or your own succession's: how it is built, the standing rules every prompt carries, the lint it passes before its spawn, and the tier its dispatch names.
+Read before writing any brief: how it is built, the standing rules every prompt carries, the lint it passes before its spawn, and the tier its dispatch names.
 
 ## Agent prompt recipe
 
-Write it to a file named by its subject (`<briefs dir>/<subject>.md`), then let `iterm-agent.sh spawn --brief <path> --orchestrator "<your exact ListAgents name and reference>"` build the startup prompt and spawn the fresh session in the same move (see « The agents' lifecycle is yours » in `references/agents.md`). Start from `${CLAUDE_PLUGIN_ROOT}/templates/agent-phase-brief.md`; a rotation resume brief starts from `agent-rotation-brief.md`, your own succession brief from `orchestrator-succession-brief.md`. **The path must be one the fresh session can open on the machine it runs on, and it must survive until the phase is reviewed** — never only in your context, never only in a container's temporary directory. Whether the file is committed follows the repository's own policy on workflow artifacts (see standing rules); state that policy in the prompt, do not let the agent pick.
+Write it to `<briefs dir>/<subject>.md`, then let `iterm-agent.sh spawn --brief <path> --orchestrator "<your exact ListAgents name and reference>"` build the startup prompt and spawn the fresh session in the same move (`references/agents.md`, « The agents' lifecycle is yours »). Start from `${CLAUDE_PLUGIN_ROOT}/templates/agent-phase-brief.md`; a rotation resume brief starts from `agent-rotation-brief.md`, your own succession brief from `orchestrator-succession-brief.md`. **The path must be one the fresh session can open on the machine it runs on, and it must survive until the phase is reviewed** — never only in your context or a container's temporary directory. The repository's policy on workflow artifacts (standing rules) says whether it is committed; state it in the prompt.
 
-**`spawn --brief` lints the brief before any tab exists, and a finding warns on stderr — the launch goes on.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <path>` flags what a script can see: an unfilled placeholder, an unexpanded variable, a path absent from this machine, a second session reference, a background run, an over-long succession brief, and an implementer brief with no address, non-goals list or STOP-and-ask clause.
+**`spawn --brief` lints the brief before any tab exists, and a finding warns on stderr — the launch goes on.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <path>` flags what a script can see: an unfilled placeholder, an unexpanded variable, a path absent from this machine, a second session reference, a background run, an over-long succession brief, an implementer brief lacking address, non-goals or STOP-and-ask.
 
 Its parts, in order:
 
@@ -21,4 +21,6 @@ Its parts, in order:
 
 ## Every dispatch names its tier
 
-At the dispatch gate you read the agent's fill on `/orchestrator-status` against the gate the module reports, then choose the model/effort pair the work needs. `orchestrator:model-routing` is the aid to that decision: the table informs, you decide, and you write your choice and its reason in the brief. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them; the brief names the servers the session was given where it names the tier, so an agent never reaches for a tool it was not given.
+At the dispatch gate you read the agent's fill on `/orchestrator-status` against the gate the module reports, then choose the model/effort pair the work needs. `orchestrator:model-routing` is the aid to that decision: the table informs, you decide and write your choice, its reason and the reading that chose it in the brief, so the agent can tell you when the work outgrew it; it names the servers the session was given, so an agent never reaches for a tool it was not given.
+
+**Route by size.** A small task (one plugin, prose or a small fix, a few files) goes to one session that writes, self-reviews, fixes the kept findings and merges where allowed; its review is the one pass `review-round.md` sizes by risk, the full multi-lens round being for risk alone.

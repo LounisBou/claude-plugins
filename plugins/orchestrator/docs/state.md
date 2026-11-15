@@ -25,7 +25,7 @@ Python launcher.
 | `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |
-| `measure/<id>.json` | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at session end and compaction; read as unmeasured when empty or partial |
+| `measure/<id>.json` | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at compaction, kept at session end and pruned by `install.sh` past 90 days; read as unmeasured when empty or partial |
 | module log, `close.log` | every process | appends |
 | `<config dir>/consents/<owner>/<name>/<entry>.json`, outside the state root: the consent record contract the github plugin reads (the repository's contracts document) | the hooks of the session whose pane takes the operator's answer to a question that asked his consent, or the `settle` of the session it answered in | one file per question, one rename |
 

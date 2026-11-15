@@ -17,8 +17,8 @@ _Recommendation_ : A — <why it beats the others>
 - Two to five choices, A to E, each a different piece of work, not shades of one.
 - The free answer is always open, never opening on a lone letter.
 - The recommendation argues its letter against the others; a bare letter is none.
-- Name every item in plain words (what breaks, for whom, what it costs him) and by its pull
-  request with the repository name; a tracking-table row number may follow, never alone.
+- Name every item by a speaking keyword and what it does (what breaks, for whom) and by its
+  pull request with the repository name, never by a bare row or line number.
 - A host dialog, only for a session nobody waits on (`SKILL.md`): the recommended option first
   and marked, « Other » for the free answer.
 - Record the answer, dated, where answers are kept.

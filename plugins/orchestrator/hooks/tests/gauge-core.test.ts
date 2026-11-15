@@ -138,7 +138,7 @@ test('a compaction removes the measure file, and a measure without figures forge
   takeDrift()
 })
 
-test('a session end removes its measure file, and one never measured leaves none: no empty file is ever written', async () => {
+test('a session end keeps its measure file, and one never measured leaves none: no empty file is ever written', async () => {
   const handlers: Record<string, Function> = {}
   registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
     handlers[args[0]] = args[args.length - 1] as Function
@@ -156,8 +156,12 @@ test('a session end removes its measure file, and one never measured leaves none
   await handlers['session.end']($('s-end'), { sessionId: 's-end' }, (x: unknown) => x)
   // A subagent, or a session that ended before its first answer, was never measured.
   await handlers['session.end']($('s-never'), { sessionId: 's-never' }, (x: unknown) => x)
-  expect([...d.files.keys()]).toEqual([])
+  // The closed session's last figures stay: the series of closed sessions is what shows whether a change of method helped.
+  expect([...d.files.keys()]).toEqual([`${MEASURES}/s-end.json`])
   expect(emptied(d)).toEqual([])
+  // A compaction still removes it: the gate reads that file, and the conversation no longer has those figures.
+  await handlers['session.compact']($('s-end'), {}, (x: unknown) => x)
+  expect([...d.files.keys()]).toEqual([])
 })
 
 test('a measure before the first answer writes nothing and logs nothing', async () => {
@@ -256,8 +260,8 @@ test('on 533,000 the words name the token gate, not the percentage', () => {
   expect(tripGate(57, 304000, 533000).words).toBe('304,000 tokens (gate 300,000 on a 533,000 window)')
 })
 
-test('a session end that cannot remove the measure file is said, and blocks nothing', async () => {
-  // The every-handler-logs rule: the end is never held on the store's own
+test('a compaction that cannot remove the measure file is said, and blocks nothing', async () => {
+  // The every-handler-logs rule: the compaction is never held on the store's own
   // failure, but the failure is not swallowed either — one line, the gauge's
   // own stamp naming the half that failed.
   const handlers: Record<string, Function> = {}
@@ -270,6 +274,7 @@ test('a session end that cannot remove the measure file is said, and blocks noth
     session: { id: async () => 's1' },
     env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
     fs: { read: async () => '' },
+    ui: { toast: () => undefined, invalidate: () => undefined },
     plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
     process: {
       run: async (argv: readonly string[]) => {
@@ -279,8 +284,8 @@ test('a session end that cannot remove the measure file is said, and blocks noth
       },
     },
   }
-  const e = { sessionId: 's1' }
-  const answer = await handlers['session.end']($, e, (x: unknown) => x)
+  const e = { trigger: 'manual', messages: [] }
+  const answer = await handlers['session.compact']($, e, (x: unknown) => x)
   expect(answer).toBe(e)
   expect(written.length).toBe(1)
   expect(written[0]).toContain('| gauge |')
