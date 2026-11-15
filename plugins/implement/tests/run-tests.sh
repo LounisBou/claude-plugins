@@ -464,7 +464,7 @@ check "the module's tests pass in the host's kit" "0" \
 check "close and phase point at the method's self-review" "1|1" \
   "$(grep -c 'self-review comes after the last step below and before the pull request opens' "$ROOT/skills/close/SKILL.md")|$(grep -c 'the self-review before the pull request, consent, ready' "$ROOT/skills/phase/SKILL.md")"
 check "phase says its lens readers run, one journal line each" "1" \
-  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'Its lens readers are read-only subagents that run when the self-review asks for them; the journal keeps one line for each, which is not a refusal.')"
+  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'Its lens readers run when the self-review asks, each noted in the journal.')"
 
 echo
 echo "$pass passed, $fail failed"

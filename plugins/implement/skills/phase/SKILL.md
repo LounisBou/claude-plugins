@@ -189,14 +189,12 @@ NEVER mark a phase done while its check is red or its gate is untested
 
 Read-only subagents (search, the self-review's lens readers) are the exceptions: they only read.
 
-With the hooks module loaded, the first line is also watched at the call: a subagent other
-than `Explore` runs, and the module's journal keeps one line for it. Nothing is refused and
-nobody is asked. The watch lasts from this skill's start until another implement skill
-starts, the turn is interrupted, or `/implement:release-guard`.
+With the hooks module loaded, a subagent other than `Explore` runs and is noted in the
+journal; nothing is refused. The note lasts until another implement skill starts, the turn
+is interrupted, or `/implement:release-guard`.
 
 This skill's own steps end at the branch; the self-review before the pull request, consent, ready
-and merge are `method:lifecycle`'s. Its lens readers are read-only subagents that run when the self-review
-asks for them; the journal keeps one line for each, which is not a refusal.
+and merge are `method:lifecycle`'s. Its lens readers run when the self-review asks, each noted in the journal.
 
 ---
 
