@@ -1,6 +1,6 @@
 # Standing rules
 
-## Standing rules (put in every prompt, enforce in every review)
+## Standing rules (the brief templates carry them, never retyped; enforce in every review)
 
 ### Workflow artifacts
 
