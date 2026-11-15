@@ -61,7 +61,7 @@ test('the spec: its Goals items, continued lines joined, and the first paragraph
 })
 
 test('the usage, an unknown command, and a file that is not there', () => {
-  assert.match(cli(), /^1\|\|ERROR: usage: goals\.py \{init\|status\|line\|unplanned\|plan\|met\|rule-out\|defer\|reopen\|check\}/)
+  assert.match(cli(), /^1\|\|ERROR: usage: goals\.sh \{init\|status\|line\|unplanned\|plan\|met\|rule-out\|defer\|reopen\|check\}/)
   assert.match(cli('bogus', 'g.md'), /^1\|\|ERROR: usage/)
   const absent = join(dir, 'g.md')
   assert.equal(cli('status', absent), `1||ERROR: no goals file at ${absent}: dispatch-record.sh goals <record> init --spec <path>|none\n`)
