@@ -1,6 +1,6 @@
 # Design — correcting the method's drift: pull requests no longer go all the way
 
-Date: 2026-11-13. Author: `Coord : general [76269c]`, after a brainstorming with the operator. Status: to be validated by the operator, then handed to `Orch: Claude plugins` as a work item of `LounisBou/claude-plugins`.
+Date: 2026-11-13. Author: `Coord : general [76269c]`, after a brainstorming with the operator. Status: sections 2 and 4 validated by the operator on 13 November 2026; section 9 is the coordinator's.
 
 ## 1. Intent and why
 
@@ -50,7 +50,7 @@ Their words, rephrased and validated by them on 13 November 2026. Each decision 
 - **O1 — Follow-up to the merge.** Each open pull request has, at every moment, a written and durable state: owner (the orchestrator), next step, what it is waiting for. A pull request in conflict, with a red CI or without proof is taken up again by the orchestrator without waiting to be told. No pull request stays in draft more than one day without work in progress.
 - **O2 — Judgment against the design.** A review's verdict no longer blocks by itself. Each point is classed critical or not against the feature's design; only the critical ones are fixed. The others are set aside, not turned into work items. The Ready gate counts the orchestrator's decision (already made possible by claude-plugins#141 and claude-plugins#143).
 - **O3 — Verification plan per pull request.** At framing, a written plan sets for the pull request: E2E required / not necessary (with its one-line reason) / replaced by desktop and mobile screenshots; norms yes/no; full review or one pass. The Ready gate reads this plan. The plan is visible in the pull request and survives relays.
-- **O4 — Rare and durable waivers.** A waiver covers only a verification that the plan declared required. It is recorded durably, attached to the pull request (not to a session's words), and survives relays.
+- **O4 — Rare and durable waivers.** A waiver covers only a verification that the plan declared required. It is recorded durably, attached to the pull request (not to a session's words), and survives relays. On `main`, partly: the gate reads the operator's recorded answer to the pull request's waiver question, and `mcp__github__record` still writes a waiver on their words quoted in `detail` (`docs/conventions.md`, « Guards and consent »).
 - **O5 — Questions to the operator limited to the real doubts.** The method's rules that send the orchestrator's decisions up are removed: « review failed after a correction: ask », « waiver: only the operator's words, typed in the session », « everything waits for the answer ». A pending question blocks only what it concerns (claude-plugins#137).
 - **O6 — An orchestrator that holds.** It keeps the decisions and hands the execution (update on `main`, version raise, recording of proofs, CI watching, move to Ready) to agents that send it back one line. Reports reach it as a short verdict (work item 92). A relay rereads little and loses nothing (work item 93).
 - **O7 — Precondition to launch.** The orchestrator does not launch a feature without its design validated by the operator; this is where the questions of substance are asked, not during the work.
@@ -101,7 +101,7 @@ In two weeks:
 - **What the Ready gate does**: it applies the plan. A required verification with neither proof nor waiver blocks; a verification declared not necessary, with its reason, is satisfied. A pull request without a plan (existing pull requests, projects without framing) keeps today's behaviour. The orchestrator's decision to set aside a non-critical point is recorded (mechanism of claude-plugins#141), the gate does not judge it.
 - **Who does the framing**: a dedicated agent, launched by the orchestrator before development, which reads the design and the scope; the orchestrator validates its plan.
 - **Follow-up of blocked pull requests** (O1): it is part of the orchestrator's loop, from its state file and CI watching; each pull request's state is written in this file so that a successor takes the follow-up over without losing anything.
-- **Version raises**: stop raising the version in each pull request. It is raised automatically at the merge, once, on `main`; the test that checks that the two manifests agree remains.
+- **Version raises**: stop raising the version in each pull request. One release pull request raises the version of every plugin changed since the last release (`docs/architecture.md`, « Release »).
 - **CI**: run on a pull request only the suites of the plugins it touches (today the orchestrator suite, about 8 minutes, runs on all of them); the branch protection's required checks are adapted so that a suite not launched does not block.
 
 ## 10. Left to the builder
