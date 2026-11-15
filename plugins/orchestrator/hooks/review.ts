@@ -6,6 +6,9 @@
 // at the head of the clean checkout it reads: the caller's plugin, a session that did not push
 // that head, and no pass over a failed review there. In place of a verdict, the same tool writes the pull
 // request's check plan (github's check-plan.ts), which github takes from this plugin only.
+// Given the dispatch record and its row, the same call then writes level 1 of the review into the
+// row (dispatch-record.sh verdict): the verdict, a few words and the path of the review session's
+// findings index, the one reading the orchestrator makes of a round.
 import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
@@ -35,6 +38,62 @@ export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review v
 export const needsOf = (check: keyof typeof PLAN_NEEDS): string => PLAN_NEEDS[check].join(', ')
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+
+// The few words of level 1: dispatch-record.ts's VERDICT_WORDS_MAX, which refuses longer ones.
+const WORDS_MAX = 120
+const ROW_RUN_MS = 10_000
+
+type RowTarget = { record: string; row: number; findings: string }
+
+// The dispatch record's row a verdict writes level 1 into: null with no record named, or the line
+// that says what the input lacks.
+export function rowTarget(input: Record<string, unknown>): RowTarget | null | string {
+  const record = text(input['record'])
+  const row = input['row']
+  const findings = text(input['findings'])
+  if (record === '' && row === undefined && findings === '') return null
+  if (input['plan'] !== undefined) return 'a check plan names no row: record, row and findings go with a verdict'
+  if (!record.startsWith('/')) return 'record is the absolute path of the dispatch record, with row'
+  if (!(typeof row === 'number' && Number.isInteger(row) && row >= 1)) return 'row is the id of the dispatch record\'s row, with record'
+  if (findings !== '' && !findings.startsWith('/')) return 'findings is the absolute path of the review session\'s findings index'
+  return { record, row, findings }
+}
+
+// A verdict's few words: its line's first, or what it decided counted.
+export function wordsOf(input: Record<string, unknown>): string {
+  const count = (raw: unknown): number => (Array.isArray(raw) ? raw.length : 0)
+  const verdict = text(input['verdict'])
+  const said = verdict === ACCEPTANCE.result ? '' : text(input['detail']).split('\n')[0]?.trim() ?? ''
+  const words = said || (verdict === ACCEPTANCE.result ? `${count(input['set_asides'])} point(s) set aside`
+    : verdict === 'fail' ? `${count(input['kept'])} kept` : 'clean')
+  return words.slice(0, WORDS_MAX).trimEnd()
+}
+
+// Level 1 written into the row, at the checkout's head: the record script's line, or why not.
+async function writeRow($: Held, input: Record<string, unknown>, target: RowTarget): Promise<{ line: string; ok: boolean }> {
+  const dir = text(input['dir'])
+  const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { ...(dir ? { cwd: dir } : {}), timeoutMs: ROW_RUN_MS })
+  const sha = head.stdout.trim()
+  if (head.exitCode !== 0 || sha === '') return { line: `no head read in ${dir || 'the session\'s directory'}: ${head.stderr.trim()}`, ok: false }
+  // What the record script reads of the session's environment: its owner, its registry, its state.
+  const read: Record<string, string | undefined> = {
+    PATH: await $.env.get('PATH'),
+    HOME: await $.env.get('HOME'),
+    CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
+    ORCHESTRATOR_STATE_DIR: await $.env.get('ORCHESTRATOR_STATE_DIR'),
+    ORCHESTRATOR_JOURNAL_DIR: await $.env.get('ORCHESTRATOR_JOURNAL_DIR'),
+  }
+  const env: Record<string, string> = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
+  for (const [key, value] of Object.entries(read)) if (value !== undefined) env[key] = value
+  const argv = [
+    'bash', `${$.plugin.root}/skills/orchestrator/scripts/dispatch-record.sh`, 'verdict', target.record, String(target.row),
+    '--head', sha, '--result', text(input['verdict']), '--words', wordsOf(input), ...(target.findings ? ['--findings', target.findings] : []),
+  ]
+  const run = await $.process.run(argv, { env, timeoutMs: ROW_RUN_MS })
+  // A warning of a write that succeeded (a row no review touched) rides the line.
+  const said = [run.stdout.trim(), run.stderr.trim()].filter(Boolean).join('\n')
+  return run.exitCode === 0 ? { line: said, ok: true } : { line: said || `dispatch-record.sh exited ${run.exitCode}`, ok: false }
+}
 
 // The record tool's call for a verdict, or the line that says what the input lacks.
 export function verdictCall(input: Record<string, unknown>): { tool: string } & Record<string, unknown> | string {
@@ -128,6 +187,9 @@ export function register(on: On<Held>): void {
               items: { type: 'object', properties: FINDING, required: ['point'] },
             },
             detail: { type: 'string', description: 'pass or fail: one line on what was reviewed or found' },
+            record: { type: 'string', description: 'with row: the dispatch record\'s absolute path; the verdict, a few words and findings go into that row' },
+            row: { type: 'integer', description: 'with record: the row\'s id' },
+            findings: { type: 'string', description: 'with record: the absolute path of the review session\'s findings index' },
             plan: {
               type: 'object',
               description: 'in place of the verdict: each "<need>" or "<need>: <reason>"; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap + '; the review is never skipped, "one-pass" for a mechanical pull request is one round with no correction round',
@@ -154,12 +216,19 @@ export function register(on: On<Held>): void {
     if (e.agentId) return { result: "only the session's main thread records a review verdict", isError: true }
     const call = verdictCall(e)
     if (typeof call === 'string') return { result: call, isError: true }
+    const target = rowTarget(e)
+    if (typeof target === 'string') return { result: target, isError: true }
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
     const answer = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
     if (answer.isError === true || !('result' in call)) return answer
     const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}) })
-    return { result: `${answer.result}\n${counted}` }
+    if (target === null) return { result: `${answer.result}\n${counted}` }
+    // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
+    // fails is a warning on a success, never an error, so the audit trail keeps the verdict
+    // (audit-events.ts answerText) and nobody writes the record twice.
+    const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
+    return { result: `${answer.result}\n${counted}\n${row.ok ? row.line : `WARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}`}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }

@@ -70,9 +70,9 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | The final verification phase (spec conformity, norms over the full diff, E2E) | `final-verification` | `deep` | nobody |
 | A behaviour phase with the contract already fixed | `behaviour-phase` | `standard` | the test suite, then the review round |
 | A conversion phase (move, rename, extract) | `conversion-phase` | `standard` | « nothing observable changed »: the suite judges |
-| A corrective phase on a findings list | `corrective` | `standard` | you, on the artifact: the diff, the decisive tests |
-| A review collector, a comments agent | `review-collector`, `comments` | `standard` | you verify every finding |
-| The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector, then you |
+| A corrective phase on a findings list | `corrective` | `standard` | the gate and a reader at its head: the diff, the decisive tests |
+| A review collector, a comments agent | `review-collector`, `comments` | `standard` | its line, by you; a comments agent's tree too |
+| The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector |
 | The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
@@ -139,7 +139,7 @@ dispatch-record.sh cost <record> <id> --session <session id>         # after eac
 dispatch-record.sh summary <record>
 ```
 
-`review` records the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the correction round (rounds: `review-thresholds.md`, « Thresholds a verdict never crosses ») at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
+`review` records the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the correction round (rounds: `review-thresholds.md`, « Thresholds a verdict never crosses ») at the head its reader verified; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
 
 The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed rows whose cost is complete, and prints `frozen=<class>` and `promote=<class> <pair>` for the explorations above.
 
