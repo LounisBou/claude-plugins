@@ -198,7 +198,10 @@ test('verdict: the row carries the verdict, its few words and the findings index
   // A new review round voids the verdict of the previous one; a correction keeps it; rounds never move.
   await cli(['review', r, '1', '--head', 'abc1234'])
   assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', '1 critical', '--findings', '/b/review-1.md']), '0|row 1: fail — 1 critical — findings: /b/review-1.md\n|')
+  const before = (rows()[0]?.['review'] as Record<string, unknown>)['verdict']
+  assert.deepEqual(before, { head: 'abc1234', result: 'fail', words: '1 critical', findings: '/b/review-1.md', rounds: 1, at: '2026-11-08T10:11:12Z' })
   await cli(['fixed', r, '1', '--head', 'def5678'])
+  assert.deepEqual((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], before)
   assert.equal(await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', '2 set aside']), '0|row 1: accepted — 2 set aside — findings: none\n|')
   assert.deepEqual(rows()[0]?.['review'], {
     head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z', fixed: { head: 'def5678', at: '2026-11-08T10:11:12Z' },

@@ -220,9 +220,10 @@ export function register(on: On<Held>): void {
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
     const answer = answerOf(await $.tool.call(call))
     if (answer.isError || target === null) return answer
-    // The gate's record is written: a run that throws is the row's failure, never the record's.
+    // The gate's record is written: a row that fails is a warning on a success, never an error, so the
+    // audit trail keeps the verdict (audit-events.ts answerText) and nobody writes the record twice.
     const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
-    return row.ok ? { result: `${answer.result}\n${row.line}` } : { result: `${answer.result}\nthe gate's record is written, never call this tool again for it; write the row with dispatch-record.sh verdict: ${row.line}`, isError: true }
+    return { result: row.ok ? `${answer.result}\n${row.line}` : `${answer.result}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }
