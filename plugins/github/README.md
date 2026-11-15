@@ -199,7 +199,9 @@ readiness contract (`core/readiness.ts`); the gate computes it there (`missingEv
 records are small JSON files under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by the producers
 core's `pr-record.ts` declares; a review record written by the session that pushed the head is
-refused. `engine/REFERENCE.md` « Records » holds the record contract.
+refused (the pushed heads are kept on disk, `pushed-heads/`); an E2E pass or fail is computed from a
+run the record tool performs (`run`) or observed in the session's Bash calls (`ran`); with neither it
+is written marked `stated, not computed`, and observed. `engine/REFERENCE.md` « Records » holds the record contract.
 
 The module puts `Ready` itself: after a record is written, and after a
 `pr-gate` or `pr-checks` read through the tool, it reads readiness at the head, CI included,
@@ -336,6 +338,13 @@ written is one line in the transcript, and the call still goes through.
 | `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
 | `github.writing.rule` | carries a text that breaks a writing rule |
 | `github.ready.no-record` | merges or takes out of draft a pull request that misses only records absent at its head |
+| `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
+
+A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
+`hooks/observe.ts`): `github.ready.held` (the Ready gate), `github.auto-merge.*` and `github.auto-deploy.*`
+(the lists and their tools), `github.deploy.unlisted`, `github.records.delete`, `github.exemption.delete`,
+`github.net.blocked`, and `github.record.*` for each refusal of `mcp__github__record`. A refusal that only
+asks for a missing or malformed argument writes none.
 
 ## Tests
 
