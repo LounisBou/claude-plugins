@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { lint, main, openQuestions, SUCCESSION_LIMIT, USAGE, type Context } from './brief-lint.ts'
+import { CHANGED_SHOWN, changedLine, lint, main, openQuestions, SUCCESSION_LIMIT, USAGE, type Context } from './brief-lint.ts'
 
 const context = (over: Partial<Context> = {}): Context => ({ expected: [], shortNames: new Set(), exists: () => true, ...over })
 const texts = (text: string, over: Partial<Context> = {}): string[] => lint(text, context(over)).map(f => `${f.line}: ${f.text}`)
@@ -138,4 +139,30 @@ test('the command line: one brief, a path after --expect-created, a file', () =>
   assert.deepEqual(cli('a', '--expect-created'), { code: 1, out: '', err: `brief-lint: --expect-created needs a path (${USAGE})\n` })
   assert.deepEqual(cli(join(dir, 'absent.md')), { code: 1, out: '', err: `brief-lint: not a file: ${join(dir, 'absent.md')}\n` })
   assert.equal(cli(dir).err, `brief-lint: not a file: ${dir}\n`)
+})
+
+test('a brief that names its checkout and its base head gets the files the base changed since, as information, never a finding', () => {
+  const repo = join(dir, 'repo')
+  mkdirSync(repo)
+  const git = (...args: string[]): string => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim()
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.ts'), 'a\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'one')
+  const printed = git('rev-parse', '--short=12', 'HEAD')
+  writeFileSync(join(repo, 'a.ts'), 'a2\n')
+  writeFileSync(join(repo, 'b.ts'), 'b\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'two')
+  const brief = join(dir, 'b.md')
+  writeFileSync(brief, `# p\nCheckout: \`${repo}\`\nBranch: \`feat/x\`, from \`main\`, which stood at ${printed} when this brief was printed.\n`)
+  assert.deepEqual(cli(brief), { code: 0, out: `brief-lint: ${brief}: 2 file(s) changed on main since ${printed}: a.ts, b.ts\nbrief-lint: ${brief}: 0 findings\n`, err: '' })
+  // Git that cannot tell, a brief that names no head: nothing said.
+  writeFileSync(brief, `# p\nCheckout: \`${repo}\`\nBranch: \`feat/x\`, from \`gone\`, which stood at ${printed} when this brief was printed.\n`)
+  assert.equal(cli(brief).out, `brief-lint: ${brief}: 0 findings\n`)
+  const text = 'Checkout: `/w`\nfrom `origin/main`, which stood at abc1234 when'
+  assert.equal(changedLine('Checkout: `/w`\n', () => []), undefined)
+  assert.equal(changedLine(text, () => []), 'nothing changed on origin/main since abc1234')
+  const many = Array.from({ length: CHANGED_SHOWN + 2 }, (_, i) => `f${i}`)
+  assert.match(changedLine(text, () => many) ?? '', new RegExp(`^${CHANGED_SHOWN + 2} file\\(s\\) changed on origin/main since abc1234: f0, .*f${CHANGED_SHOWN - 1}, and 2 more$`))
 })
