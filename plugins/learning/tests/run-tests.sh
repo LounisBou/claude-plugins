@@ -65,6 +65,9 @@ check "a judged candidate waits no more" "learning retrospective: 0 of 1 candida
 printf '%s' '{"signature":"refusal:github.writing.rule","cause":{"resolved":true},"remedy":null}' | retro judge >/dev/null 2>&1; code=$?
 check "a judgment of a candidate that does not wait exits 1" "1" "$code"
 
+check "with no escape and no learned guard, the outcomes ask no forge" "learning outcomes: no guard in warn left a would-be refusal, and no learned guard is kept." "$("${NODE[@]}" "$SCRIPTS/outcomes.ts" --config "$CONFIG")"
+check "a proposed remedy is no merged one to check" "learning forget: no merged remedy to check." "$("${NODE[@]}" "$SCRIPTS/forget.ts" --config "$CONFIG")"
+
 "${NODE[@]}" "$SCRIPTS/health.ts" >/dev/null 2>&1; code=$?
 check "a call with no configuration directory exits 2" "2" "$code"
 

@@ -95,7 +95,7 @@ mkdir -p "$CONFIG/claude-orchestrator/round"
 printf '{"v":2,"id":"q-suite","sender":{"session":"%s","name":"Orch: suite"},"choices":[{"letter":"A","text":"one"},{"letter":"B","text":"two"}],"recommended":"A","status":"answered","at":"%s","answer":{"text":"b","by":"pane","at":"%s"}}\n' \
   "$SESSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CONFIG/claude-orchestrator/round/q-suite.json"
 check "sweep records a settled round question, once" \
-  "sweep: 0 session(s) without an end summarized, 1 round question(s) recorded|sweep: 0 session(s) without an end summarized, 0 round question(s) recorded|[\"B\"]" \
+  "sweep: 0 session(s) without an end summarized, 1 round question(s) recorded, 0 dispatch(es) recorded|sweep: 0 session(s) without an end summarized, 0 round question(s) recorded, 0 dispatch(es) recorded|[\"B\"]" \
   "$(cli sweep)|$(cli sweep)|$(grep -h '"id":"q-suite"' "$CONFIG"/telemetry/events/*.jsonl | node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(0, "utf8")).chosen))')"
 
 # The weekly report, from a directory that is no repository (so no call to gh): the first line, the
