@@ -42,7 +42,7 @@ test('session.start registers the gh tool and the three commands', async ($, on)
 })
 
 test('the record tool\'s plan schema names the needs core\'s readiness contract gives each check', async ($, on) => {
-  const schemas: Record<string, any> = {}
+  const schemas: Record<string, unknown> = {}
   on('session.start', () => ({ cwd: '/work' }))
   on('tool.register', (_$, e) => {
     schemas[e.name] = e.inputSchema
@@ -52,13 +52,14 @@ test('the record tool\'s plan schema names the needs core\'s readiness contract 
 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 
-  const plan = schemas['record'].properties.plan.properties
+  const planOf = fieldsOf(fieldsOf(fieldsOf(schemas['record'])?.['properties'])?.['plan'])
+  const plan = fieldsOf(planOf?.['properties']) ?? {}
   expect(Object.keys(plan)).toEqual(Object.keys(PLAN_NEEDS))
-  for (const check of Object.keys(PLAN_NEEDS) as Array<keyof typeof PLAN_NEEDS>) expect(plan[check].description).toBe(PLAN_NEEDS[check].join(', '))
+  for (const [check, needs] of Object.entries(PLAN_NEEDS)) expect(fieldsOf(plan[check])?.['description']).toBe(needs.join(', '))
 })
 
 test('the record tool\'s plan schema says a required review takes its rounds, up to core\'s cap', async ($, on) => {
-  const schemas: Record<string, any> = {}
+  const schemas: Record<string, unknown> = {}
   on('session.start', () => ({ cwd: '/work' }))
   on('tool.register', (_$, e) => {
     schemas[e.name] = e.inputSchema
@@ -68,7 +69,7 @@ test('the record tool\'s plan schema says a required review takes its rounds, up
 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 
-  expect(schemas['record'].properties.plan.description).toContain('"required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap)
+  expect(String(fieldsOf(fieldsOf(fieldsOf(schemas['record'])?.['properties'])?.['plan'])?.['description'])).toContain('"required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap)
 })
 
 test('a command name another plugin owns passes through to next', async ($, on) => {
