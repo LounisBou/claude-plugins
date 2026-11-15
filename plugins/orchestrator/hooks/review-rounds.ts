@@ -73,7 +73,7 @@ async function raise($: any, path: string, id: number): Promise<number> {
 /**
  * Raises the `rounds` of a row, and answers the line the verdict's answer carries: which row was
  * raised, or why none was. The row the call names (`at`: its record and id) is the row, whatever the
- * labels say; one the record does not hold falls to the search. Without one, the row of `pr` is
+ * labels say; one the record does not hold falls to the search; a write that fails is said, never moved to another row. Without one, the row of `pr` is
  * found in the records of this orchestration by the reference its label or verdict names; open rows
  * come before closed ones and two rows left naming it are not guessed between. The verdict is the
  * one writer of `rounds` for a review round: `dispatch-record.sh review` records the head and
@@ -83,9 +83,11 @@ export async function countRound($: any, input: { pr: number; repo: string; dir?
   try {
     if (input.at !== undefined) {
       const { record, row: id } = input.at
-      // A row the record does not hold, or a write that fails, falls to the search: it says the same failure, or finds the row naming the pull request.
-      const raisedNamed = await raise($, record, id).catch(() => 0)
-      if (raisedNamed > 0) return `rounds: row ${id} of ${record} raised to ${raisedNamed}`
+      // A row the record holds is raised or its failure said, never swapped for another row; a row it does not hold falls to the search.
+      if (rowsOf(await readOr($, record)).some(r => r.row['id'] === id)) {
+        const raisedNamed = await raise($, record, id)
+        if (raisedNamed > 0) return `rounds: row ${id} of ${record} raised to ${raisedNamed}`
+      }
     }
     const cwd = input.dir ?? input.cwd
     const repo = await repositoryOf($, input.repo, cwd)

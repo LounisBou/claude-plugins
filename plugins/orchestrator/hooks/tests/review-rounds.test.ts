@@ -231,3 +231,12 @@ test('with no row named, the repository of a label is read whatever its case, an
   expect(roundsOf(fx.files)).toEqual({ 1: 0, 2: 0, 3: 0, 4: 1 })
   expect(out.result).toContain('row 4')
 })
+
+test('a named row whose write fails says so and raises no other row', async () => {
+  const fx = fake({ readOnly: true, rows: [line({ id: 1, label: 'acme/app#12' }), line({ id: 2, label: 'a label naming none' })].join('\n') + '\n' })
+  const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 2 })
+  expect(roundsOf(fx.files)).toEqual({ 1: 0, 2: 0 })
+  expect(out.result).toContain('rounds: none raised, ')
+  expect(out.result).toContain('disk full')
+  expect(fx.logged.length).toBe(1)
+})
