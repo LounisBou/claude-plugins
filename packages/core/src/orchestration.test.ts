@@ -82,6 +82,8 @@ describe('the launcher', () => {
       [`/o/${LAUNCHER}`, 'spawn', '--dir', '/repo', '--title', 'Agent: x', '--prompt', 'go'])
     assert.deepEqual(spawnArgv(launcherOf('/o'), { dir: '/repo', title: 'Bugs: x', promptFile: '/p.md', rightOf: 'self', resident: true }),
       [`/o/${LAUNCHER}`, 'spawn', '--dir', '/repo', '--title', 'Bugs: x', '--prompt-file', '/p.md', '--right-of', 'self', '--resident'])
+    assert.deepEqual(spawnArgv('/l', { dir: '/w', title: 'Agent: r', prompt: 'p', keepTools: ['mcp__pr-review', 'Artifact'] }).slice(-4),
+      ['--keep-tool', 'mcp__pr-review', '--keep-tool', 'Artifact'])
   })
 })
 

@@ -161,7 +161,7 @@ async function launchReviewer($: ImplementHost): Promise<string> {
   }
   if (launcher !== null) {
     const title = reviewerTitle(codenameOf(branch.out))
-    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt }), { cwd: top.out, timeoutMs: 120_000 })
+    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt, keepTools: ['mcp__pr-review'] }), { cwd: top.out, timeoutMs: 120_000 })
     const tty = lastLine(spawned.stdout)
     if (spawned.exitCode === 0 && tty.startsWith('/dev/')) return `Reviewer « ${title} » launched in iTerm on ${tty}. Its review record is the ready gate's; nothing more to do here.`
     return `The launcher refused the reviewer (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Nothing was launched another way.`

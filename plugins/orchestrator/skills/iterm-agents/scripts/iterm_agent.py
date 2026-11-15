@@ -225,10 +225,24 @@ ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
 ORCH_TOOLS_KEPT = (ORCH, COORD, AUDIT)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
-ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
-# What a coordinator or an auditor never calls beyond those: they review, fix and record nothing.
-WATCHER_UNUSED = ORCH_UNUSED + ("mcp__pr-review", "mcp__orchestrator__review",
-                                "mcp__github__light_ci", "mcp__github__record")
+PR_REVIEW_SERVER = "mcp__pr-review"
+ORCH_SERVERS_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
+ORCH_UNUSED = ORCH_SERVERS_UNUSED + (PR_REVIEW_SERVER, "ReadNotifications")
+# What a coordinator or an auditor never calls beyond those servers: they review, fix and record
+# nothing.
+WATCHER_UNUSED = ORCH_SERVERS_UNUSED + (PR_REVIEW_SERVER, "mcp__orchestrator__review",
+                                        "mcp__github__light_ci", "mcp__github__record")
+# What an implementer never calls: it asks its orchestrator, never the operator by dialog, and
+# deploys, triages bugs and runs pr-review's loop nowhere. The spawns that do keep theirs: the
+# bugs-bot agent `mcp__bugs-bot`, a review or comments agent `mcp__pr-review`.
+AGENT_UNUSED = ("AskUserQuestion", "mcp__cloudflare", "mcp__bugs-bot", PR_REVIEW_SERVER)
+# The plugins a role never uses, by name, set false in the launch's own --settings
+# `enabledPlugins` under each key the host's install record holds for that name: their skills,
+# commands, agent types and hooks leave that session, and the operator's settings are not touched
+# (probed on host 2.1.325: pr-review and pr-review-toolkit off took 2,995 tokens off the first
+# call). A spawn that keeps `mcp__pr-review` keeps both pr-review plugins too.
+PR_REVIEW_PLUGINS = ("pr-review", "pr-review-toolkit")
+ROLE_PLUGINS_OFF = {AGENT: PR_REVIEW_PLUGINS, ORCH: PR_REVIEW_PLUGINS + ("superpowers", "norms")}
 # The host's own switches for what it adds to a session's context on its own. The first is
 # internal and undocumented, the second too: a probe proves each on the host version that
 # ships with a change to this list, and a launcher test keeps the keys passed.
@@ -4140,11 +4154,33 @@ def title_role(title):
 
 
 def default_removed(role):
-    """The tools a session of this role is not given unless its spawn keeps them. Only an
-    agent loses the four an orchestrator alone calls, an orchestrator also loses the
-    servers it never calls, and a coordinator or an auditor those and the review tools."""
-    return (LEAN_REMOVED + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS)
-            + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED if role in (COORD, AUDIT) else ()))
+    """The tools a session of this role is not given unless its spawn keeps them. An agent
+    (or a title of no role) loses the four an orchestrator alone calls and what an
+    implementer never calls, an orchestrator the servers it never calls, and a coordinator or
+    an auditor those and the review tools."""
+    if role not in ORCH_TOOLS_KEPT:
+        return LEAN_REMOVED + ORCH_TOOLS + AGENT_UNUSED
+    return LEAN_REMOVED + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED)
+
+
+def plugins_off(role, keep=()):
+    """The `enabledPlugins` entries that turn off what this role never uses, one per key of the
+    host's install record; a spawn that keeps `mcp__pr-review` keeps the pr-review plugins. A
+    record that cannot be read turns nothing off: a spawn is never refused for it."""
+    names = ROLE_PLUGINS_OFF.get(role, ())
+    if PR_REVIEW_SERVER in keep:
+        names = tuple(name for name in names if name not in PR_REVIEW_PLUGINS)
+    if not names:
+        return {}
+    try:
+        with open(os.path.join(host_config_dir(), "plugins", "installed_plugins.json")) as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    plugins = record.get("plugins") if isinstance(record, dict) else None
+    if not isinstance(plugins, dict):
+        return {}
+    return {key: False for key in plugins if key.partition("@")[0] in names}
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -4334,11 +4370,13 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         settings["enableAllProjectMcpServers"] = True
     if not keep_synced_skills:
         settings[SYNCED_SKILLS_SETTING] = False
-    # The caller's enabledPlugins, so the tested plugin stays the one that loads (or, for an
-    # auditor's successor, the plugin set its predecessor ran on). Under the launcher's own
-    # entries for the same plugin, and no other key of the caller's settings.
-    if caller_plugins:
-        settings["enabledPlugins"] = dict(caller_plugins, **settings.get("enabledPlugins", {}))
+    # The plugins this role never uses, off; then the caller's enabledPlugins, so the tested
+    # plugin stays the one that loads (or, for an auditor's successor, the plugin set its
+    # predecessor ran on). Both under a settings file's entries for the same plugin, and no
+    # other key of the caller's settings.
+    plugins = dict(plugins_off(title_role(title), keep_tools), **(caller_plugins or {}))
+    if plugins:
+        settings["enabledPlugins"] = dict(plugins, **settings.get("enabledPlugins", {}))
     settings.update(host_cuts(title_role(title)))
     cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
