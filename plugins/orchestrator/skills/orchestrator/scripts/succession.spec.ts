@@ -193,6 +193,10 @@ test('the command line: takeover, a record and the mode, flags checked', () => {
   assert.deepEqual(parseArgs(['takeover', 'r.jsonl', '--mode', 'investigate', '--tty', '/dev/ttys1'], '/w'), { record: '/w/r.jsonl', mode: 'investigate', tty: '/dev/ttys1', name: '', session: '', worktree: '/w' })
   assert.match((parseArgs(['live', 'b.md'], '/w') as { error: string }).error, /^usage:/)
   assert.match((parseArgs(['takeover'], '/w') as { error: string }).error, /^usage:/)
+  const fromPlugin = '/Users/x/.claude/deploys/lounisbou/' + 'a'.repeat(40) + '/plugins/orchestrator/skills/orchestrator'
+  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], fromPlugin) as { error: string }).error, /from the project's directory/)
+  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], '/Users/x/.claude/plugins/cache/lounisbou/orchestrator/1.0.0') as { error: string }).error, /from the project's directory/)
+  assert.equal((parseArgs(['takeover', 'r.jsonl', '--mode', 'build', '--worktree', '/w'], fromPlugin) as { worktree: string }).worktree, '/w')
   assert.match((parseArgs(['takeover', 'r', '--mode', 'other'], '/w') as { error: string }).error, /--mode build\|investigate is required/)
   assert.match((parseArgs(['takeover', 'r', '--mode'], '/w') as { error: string }).error, /--mode needs a value/)
   assert.match((parseArgs(['takeover', 'r', '--next', 'x'], '/w') as { error: string }).error, /unknown argument: --next/)
@@ -311,7 +315,7 @@ test('the successor\'s prompt names no script directory of the predecessor: it r
   const succeed = readFileSync(join(import.meta.dirname, '..', '..', '..', 'commands', 'succeed.md'), 'utf8')
   const prompt = /--prompt '([^']*)'/.exec(succeed)?.[1] ?? ''
   assert.ok(prompt.includes('succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>'), prompt)
-  assert.ok(prompt.includes('in the base directory that skill load printed'), prompt)
+  assert.ok(prompt.includes('from your working directory (do not cd), run <the base directory that skill load printed>/scripts/succession.sh'), prompt)
   assert.ok(!/<scripts>|CLAUDE_PLUGIN_ROOT|\/skills\/orchestrator\/scripts/.test(prompt), prompt)
   const w = world()
   assert.equal(w.run(), 0)

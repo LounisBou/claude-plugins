@@ -489,3 +489,15 @@ test('the pane\'s answer to a question asked here sends its asker the answer and
   expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'pane' } })
   expect(m.sent.map(s => s.text)).toEqual([expect.stringMatching(/^\[module\] The operator answered your question/)])
 })
+
+test('an answer of the operator is kept in the journal as what was asked and how he answered, never his words; a withdrawal keeps none', async () => {
+  const m = machine()
+  const chosen = await asked(m)
+  await settle(m.coordinator, request(chosen, { text: 'B : acme/app#2 first' }), AT)
+  const moot = await asked(m)
+  await settle(m.coordinator, request(moot, { outcome: 'withdrawn', text: 'moot' }), AT)
+  const events = [...m.files.entries()].filter(([p]) => p.startsWith(`${HOME}/.claude/orchestrator/`) && p.endsWith('.json')).map(([, text]) => JSON.parse(text))
+  expect(events.map(event => [event.kind, event.trust, event.source.code])).toEqual([['answer', 'operator', 'orchestrator.answer.other']])
+  expect(events[0].evidence).toEqual([{ type: 'ruling', path: `claude-orchestrator/round/${chosen}.json`, line: 1 }])
+  expect(JSON.stringify(events)).not.toContain('acme/app#2 first')
+})

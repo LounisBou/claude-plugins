@@ -36,7 +36,7 @@ import {
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, type RoundAnswer, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -49,9 +49,42 @@ import {
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
-import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
+import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
+import { isDeckUsage, parseDeck } from '../core/deck.ts'
+import { ROUND_DIR } from '../core/orchestration.ts'
+import { messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
+
+// The host's nouns this file calls.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui' | 'tool' | 'prompt'>
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const isText = (value: unknown): value is string => typeof value === 'string'
+const isTextOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string'
+const isFigure = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+const ROLES: Record<NonNullable<SessionRow['role']>, true> = { orchestrator: true, agent: true, auditor: true, coordinator: true }
+const isRole = (value: unknown): value is NonNullable<SessionRow['role']> => typeof value === 'string' && Object.hasOwn(ROLES, value)
+// Every kind a session's wait takes (relay.ts), the type holding the list whole.
+const WAITS: Record<WaitKind, true> = { operator: true, done: true, delivered: true, blocked: true, question: true, waiting: true }
+const isWaitKind = (value: unknown): value is WaitKind => typeof value === 'string' && Object.hasOwn(WAITS, value)
+
+// A record of the host's session registry (`<config>/sessions/<pid>.json`), its session id set.
+type RegistryRecord = { sessionId: string; name: unknown; pid: unknown; startedAt: unknown }
+function registryRecord(text: string): RegistryRecord | null {
+  const read: unknown = JSON.parse(text)
+  if (!isRecord(read) || !isText(read['sessionId']) || read['sessionId'] === '') return null
+  return { sessionId: read['sessionId'], name: read['name'], pid: read['pid'], startedAt: read['startedAt'] }
+}
+
+// A price the cost rule (usage.ts COST_RULE) reads: every rate a finite number, and a tier's threshold one too.
+const RATE_NAMES = COST_RULE.terms.map(term => term.rate)
+function isPrice(value: unknown): value is Price {
+  if (!isRecord(value) || !RATE_NAMES.every(name => isFigure(value[name]))) return false
+  const above = value['above']
+  return above === undefined || above === null
+    || (isRecord(above) && isFigure(above['tokens']) && RATE_NAMES.every(name => above[name] === undefined || isFigure(above[name])))
+}
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -151,13 +184,11 @@ export function livePidsArgv(pids: readonly string[]): string[] | null {
 // Null is « unknown », never « none alive »: a caller deletes nothing on it. A
 // line carrying the pid alone (a listing asked for `pid=` only) has no state.
 export function livePids(result: unknown): Map<string, ProcessState> | null {
-  if (typeof result !== 'object' || result === null) return null
-  const { exitCode, stdout } = result as { exitCode?: unknown; stdout?: unknown }
-  if (exitCode !== 0) return null
+  if (!isRecord(result) || result['exitCode'] !== 0) return null
   const table = new Map<string, ProcessState>()
-  for (const line of String(stdout ?? '').split('\n')) {
+  for (const line of String(result['stdout'] ?? '').split('\n')) {
     const [pid, stat, tty] = line.trim().split(/\s+/)
-    if (/^\d+$/.test(pid ?? '')) table.set(pid, { stat: stat ?? null, tty: tty ?? null })
+    if (pid !== undefined && /^\d+$/.test(pid)) table.set(pid, { stat: stat ?? null, tty: tty ?? null })
   }
   return table.size === 0 ? null : table
 }
@@ -318,7 +349,7 @@ export function wrapWords(text: string, width: number): string[] {
 }
 
 // The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
-export async function storeOf($: any): Promise<string> {
+export async function storeOf($: Host<'env'>): Promise<string> {
   return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
 }
 
@@ -335,12 +366,45 @@ export function sessionKey(id: string): string {
 // is no row either — staleness cannot be judged of it, and what the end
 // handler truncates must not outlive its session as a phantom.
 export function parseSessionRow(text: string): SessionRow | null {
+  let read: unknown
   try {
-    const row = JSON.parse(text) as SessionRow
-    if (!row || typeof row !== 'object' || typeof row.updated_at !== 'string') return null
-    return row
+    read = JSON.parse(text)
   } catch {
     return null
+  }
+  if (!isRecord(read) || !isText(read['updated_at'])) return null
+  // Each field read through its type: a field of another type reads as the empty row's.
+  const field = <T>(key: string, check: (value: unknown) => value is T, fallback: T): T => {
+    const value = read[key]
+    return check(value) ? value : fallback
+  }
+  const optional = <K extends keyof SessionRow>(key: K, check: (value: unknown) => value is NonNullable<SessionRow[K]> | null): Partial<SessionRow> => {
+    const value = read[key]
+    return check(value) ? { [key]: value } : {}
+  }
+  const isUnattended = (value: unknown): value is UnattendedView | null => value === null || (isRecord(value) && isText(value['at']) && isTextOrNull(value['line'])
+    && Array.isArray(value['prs']) && value['prs'].every(pr => isRecord(pr) && isText(pr['repo']) && isFigure(pr['pr']) && isTextOrNull(pr['since']))
+    && Array.isArray(value['unread']) && value['unread'].every(isText))
+  return {
+    role: field('role', isRole, null),
+    name: field('name', isText, null),
+    repo: field('repo', isText, null),
+    context_percent: field('context_percent', isFigure, 0),
+    context_tokens: field('context_tokens', isFigure, 0),
+    window: field('window', isFigure, 0),
+    model: field('model', isText, ''),
+    busy: read['busy'] === true,
+    updated_at: read['updated_at'],
+    ...(isTextOrNull(read['pid']) ? { pid: read['pid'] } : isFigure(read['pid']) ? { pid: String(read['pid']) } : {}),
+    ...optional('tty', isTextOrNull),
+    ...optional('tmux', isTextOrNull),
+    ...optional('waiting', (value): value is WaitKind | null => value === null || isWaitKind(value)),
+    ...optional('blocks', isTextOrNull),
+    ...optional('waiting_since', isTextOrNull),
+    ...optional('relayed', isTextOrNull),
+    ...optional('machine', isTextOrNull),
+    ...optional('usage', (value): value is DeckUsage | null => value === null || isDeckUsage(value)),
+    ...optional('unattended', isUnattended),
   }
 }
 
@@ -384,10 +448,32 @@ export function successorKey(id: string): string {
 
 export function parseWaitRecord(text: string): WaitRecord | null {
   try {
-    const record = JSON.parse(text) as WaitRecord
-    return record && typeof record === 'object' ? record : null
+    return waitRecordOf(JSON.parse(text))
   } catch {
     return null
+  }
+}
+
+// A wait file's value, each field read through its type.
+function waitRecordOf(read: unknown): WaitRecord | null {
+  if (!isRecord(read)) return null
+  // A field kept only when the file holds it, of its type: the merge (mergeWait) tells a field absent from one null.
+  const kept = <K extends keyof WaitRecord>(key: K, check: (value: unknown) => value is WaitRecord[K]): Partial<WaitRecord> => {
+    const value = read[key]
+    return Object.hasOwn(read, key) && check(value) ? { [key]: value } : {}
+  }
+  const kind = (value: unknown): value is WaitKind | null => value === null || isWaitKind(value)
+  return {
+    name: isText(read['name']) ? read['name'] : null,
+    pid: isText(read['pid']) ? read['pid'] : isFigure(read['pid']) ? String(read['pid']) : null,
+    ...kept('waiting', kind),
+    ...kept('last_waiting', kind),
+    ...kept('blocks', isTextOrNull),
+    ...kept('waiting_since', isTextOrNull),
+    ...kept('relayed', isTextOrNull),
+    ...kept('pending', isTextOrNull),
+    ...kept('pending_key', isTextOrNull),
+    ...kept('relayed_id', isTextOrNull),
   }
 }
 
@@ -396,11 +482,12 @@ export function withWait(row: SessionRow, waitText: string): SessionRow {
   const wait = parseWaitRecord(waitText)
   if (!wait) return row
   // A cleared wait keeps its blocks and start for the next same wait; readers see none.
-  const on = wait.waiting === 'operator' || wait.waiting === 'done'
-  return { ...row, waiting: on ? wait.waiting : null, blocks: on ? wait.blocks ?? null : null, waiting_since: on ? wait.waiting_since ?? null : null, relayed: wait.relayed ?? null }
+  const waiting = wait.waiting === 'operator' || wait.waiting === 'done' ? wait.waiting : null
+  const on = waiting !== null
+  return { ...row, waiting, blocks: on ? wait.blocks ?? null : null, waiting_since: on ? wait.waiting_since ?? null : null, relayed: wait.relayed ?? null }
 }
 
-async function readWait($: any, id: string): Promise<WaitRecord | null> {
+async function readWait($: Host<'env' | 'fs'>, id: string): Promise<WaitRecord | null> {
   const read = parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(id)}`).catch(() => '')))
   seenWaits.set(id, read)
   return read
@@ -418,20 +505,20 @@ export function mergeWait(seen: WaitRecord | null | undefined, now: WaitRecord |
   if (!seen || !now) return record
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
   const merged: Record<string, unknown> = { ...record }
-  const fields = (r: WaitRecord) => r as unknown as Record<string, unknown>
+  const [wasOf, isOf, mineOf] = [seen, now, record].map(r => new Map<string, unknown>(Object.entries(r)))
   for (const key of new Set([...Object.keys(record), ...Object.keys(now), ...Object.keys(seen)])) {
-    const [was, is, mine] = [fields(seen)[key], fields(now)[key], fields(record)[key]]
+    const [was, is, mine] = [wasOf?.get(key), isOf?.get(key), mineOf?.get(key)]
     if (same(mine, was) && !same(is, was)) {
       if (is === undefined) delete merged[key]
       else merged[key] = is
     }
   }
-  return merged as WaitRecord
+  return waitRecordOf(merged) ?? record
 }
 
 // Written under the file's lock, merged (mergeWait), through a temporary file and one rename —
 // $.fs.write is not atomic, and a wait caught mid-write would read as none.
-async function writeWait($: any, id: string, record: WaitRecord): Promise<void> {
+async function writeWait($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string, record: WaitRecord): Promise<void> {
   const path = `${await storeOf($)}/${waitKey(id)}`
   const io = storeIo($)
   await withLockOver(io, path, async () => {
@@ -446,7 +533,7 @@ async function writeWait($: any, id: string, record: WaitRecord): Promise<void> 
 // closing it — never write over each other's change: `change` is handed the entry as it stands
 // (null when there is none, or it does not parse) and answers the entry to write, or null to
 // leave it. Answers what was written.
-async function changeEntry($: any, path: string, change: (entry: RoundEntry | null) => RoundEntry | null | Promise<RoundEntry | null>): Promise<RoundEntry | null> {
+async function changeEntry($: Host<'clock' | 'fs' | 'process'>, path: string, change: (entry: RoundEntry | null) => RoundEntry | null | Promise<RoundEntry | null>): Promise<RoundEntry | null> {
   const io = storeIo($)
   return withLockOver(io, path, async () => {
     const next = await change(parseRoundEntry((await io.read(path)) ?? ''))
@@ -464,7 +551,7 @@ async function changeEntry($: any, path: string, change: (entry: RoundEntry | nu
 // The row is written atomically (writeAtomic), its temporary file named and its line
 // spelled as the launcher's row_write does (iterm_agent.py): a reader never meets a
 // row caught mid-write.
-export async function writeSession($: any, id: string, patch: Partial<SessionRow>): Promise<void> {
+export async function writeSession($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string, patch: Partial<SessionRow>): Promise<void> {
   await onOwnRow(async () => {
     const path = `${await storeOf($)}/${sessionKey(id)}`
     const base: SessionRow = parseSessionRow(String(await $.fs.read(path).catch(() => ''))) ?? {
@@ -490,7 +577,7 @@ function onOwnRow<T>(work: () => Promise<T>): Promise<T> {
 // The usage read's answer, into the session's own row: the row's stamp is the measure's and
 // stays; a row gone meanwhile (the session ended) is not written again, nor one that carries
 // no usage and gets none (the deck reads both as null).
-async function publishUsage($: any, id: string, usage: DeckUsage | null): Promise<void> {
+async function publishUsage($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string, usage: DeckUsage | null): Promise<void> {
   await onOwnRow(async () => {
     const path = `${await storeOf($)}/${sessionKey(id)}`
     const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
@@ -500,7 +587,7 @@ async function publishUsage($: any, id: string, usage: DeckUsage | null): Promis
 
 // The turn end's reading of the pull requests nobody attends, into the session's own row: the
 // row's stamp is the measure's and stays; a row gone meanwhile (the session ended) is not written again.
-export async function publishUnattended($: any, id: string, view: UnattendedView): Promise<void> {
+export async function publishUnattended($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string, view: UnattendedView): Promise<void> {
   await onOwnRow(async () => {
     const path = `${await storeOf($)}/${sessionKey(id)}`
     const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
@@ -513,14 +600,14 @@ export async function publishUnattended($: any, id: string, view: UnattendedView
 // files of the dead and the empty ones are removed as they are met — $.fs has
 // no remove, rm does — so the store does not grow with every session the
 // machine ever ran.
-export async function readSessions($: any): Promise<Record<string, SessionRow>> {
+export async function readSessions($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<Record<string, SessionRow>> {
   return (await readStore($)).rows
 }
 
 // The same read, with what the pane traces beside the rows: each file it left out, by its key,
 // with the reason (`dropped`), and the process table it judged them by (`alive`, null when that
 // read failed, and no table at all when no row named a pid and none was read).
-export type StoreRead = { rows: Record<string, SessionRow>; dropped: Map<string, string>; alive: ProcessTable | null | Set<string> }
+export type StoreRead = { rows: Record<string, SessionRow>; dropped: Map<string, string>; alive: ProcessTable | null | undefined }
 
 // Why a row the read met is no live row: empty, caught mid-write, or stale by the rule above.
 function droppedReason(text: string, row: SessionRow | null, alive: StoreRead['alive']): string {
@@ -532,13 +619,13 @@ function droppedReason(text: string, row: SessionRow | null, alive: StoreRead['a
   return listed ? `stale pid ${row.pid}: exiting, or no longer${where}` : `stale pid ${row.pid}: not running${where}`
 }
 
-async function readStore($: any): Promise<StoreRead> {
+async function readStore($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<StoreRead> {
   const dir = `${await storeOf($)}/sessions`
   let entries: { name: string; kind: string; mtimeMs?: number }[]
   try {
     entries = await $.fs.list(dir)
   } catch {
-    return { rows: {}, dropped: new Map(), alive: new Set() }   // no store yet: nothing was ever written
+    return { rows: {}, dropped: new Map(), alive: undefined }   // no store yet: nothing was ever written
   }
   const read: [string, string, SessionRow | null][] = []
   // A temporary file is a row write in flight (writeAtomic): no second row, and removed only once
@@ -552,7 +639,7 @@ async function readStore($: any): Promise<StoreRead> {
     read.push([entry.name, text, row && withWait(row, String(await $.fs.read(waits).catch(() => '')))])
   }
   const argv = livePidsArgv(read.map(([, , row]) => String(row?.pid ?? '')))
-  const alive = argv ? livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)) : new Set<string>()
+  const alive = argv ? livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)) : undefined
   const rows: Record<string, SessionRow> = {}
   const dropped = new Map<string, string>()
   const dead: string[] = []
@@ -592,7 +679,7 @@ async function readStore($: any): Promise<StoreRead> {
 // session not yet measured (a successor an entry was moved to) has no row and is not gone. An
 // entry naming no session, or from another machine, is not judged. A sweep that fails is one log
 // line and the read goes on.
-async function sweepGoneSenders($: any, removed: ReadonlyMap<string, LearntSuccessor | null>): Promise<void> {
+async function sweepGoneSenders($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, removed: ReadonlyMap<string, LearntSuccessor | null>): Promise<void> {
   try {
     const senders = new Set<string>()
     for (const { entry } of await readRound($)) {
@@ -606,13 +693,13 @@ async function sweepGoneSenders($: any, removed: ReadonlyMap<string, LearntSucce
       await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
     }
   } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${messageOf(err)}`)
   }
 }
 
 // The session's own row goes with it: removed, or — rm failing — truncated to
 // empty, which the row parser reads as no row and the next read removes.
-export async function deleteSession($: any, id: string): Promise<void> {
+export async function deleteSession($: Host<'env' | 'fs' | 'process'>, id: string): Promise<void> {
   const path = `${await storeOf($)}/${sessionKey(id)}`
   const store = await storeOf($)
   const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`, `${store}/${answeredKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
@@ -721,7 +808,7 @@ export function agentPaneRows(agents: readonly AgentView[]): { label: string; na
 // owner, no entry counted: a recycled tty's occupant would be), each read
 // through the process on the agent's tty to the host's record of it, and that
 // session's store row. An entry no live session answers for is an agent gone.
-async function agentViews($: any, tty: string): Promise<AgentView[]> {
+async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promise<AgentView[]> {
   const config = await configDir($)
   const state = await stateDir($)
   const owner = await chainOwner($)
@@ -749,7 +836,7 @@ async function agentViews($: any, tty: string): Promise<AgentView[]> {
 // inside the ten seconds a handler owns, so a read that cannot answer in time
 // is quietly no name (no repository), never a late row or a held measure. The
 // operator's env knob turns it, milliseconds like its name says.
-async function sideReadBoundMs($: any): Promise<number> {
+async function sideReadBoundMs($: Host<'env'>): Promise<number> {
   const raw = await $.env.get('ORCHESTRATOR_SIDE_READ_MS')
   const n = raw === undefined ? NaN : Number(raw)
   return Number.isFinite(n) && n > 0 ? n : 2000
@@ -761,7 +848,7 @@ async function sideReadBoundMs($: any): Promise<number> {
 // names — and its host pid, the row's life. Every read carries the bound as its
 // timeout, so a walk that loses the race stops with it instead of running on
 // behind the next one; `known` false then, and the row keeps the name it had.
-async function walkWithinBound($: any, sessionId: string):
+async function walkWithinBound($: Host<'env' | 'fs' | 'process'>, sessionId: string):
 Promise<{ tty: string | null; name: string | null; pid: string | null; known: boolean }> {
   const bound = await sideReadBoundMs($)
   const until = Date.now() + bound
@@ -821,7 +908,7 @@ export type PaneMemory = {
 
 // The pane opened, by the command or by the module: the role it lists, its title, its clock,
 // and, for a coordinator's, its record.
-async function openPane($: any, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null): Promise<{ isPlaced?: boolean; reason?: string } | undefined> {
+async function openPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null): Promise<UiOpenResult | undefined> {
   pane.opened = { role, tty }
   // With the keys, so the picker answers at once: the host grants them only over an empty
   // prompt, never taking text the operator is typing.
@@ -831,14 +918,14 @@ async function openPane($: any, pane: PaneMemory, role: 'coordinator' | 'orchest
   pane.roundSeen = null
   pane.ticker?.cancel()
   pane.ticker = $.clock.every(PANE_ROUND_POLL_MS, () => paneTick($, pane))
-  if (role === 'coordinator') await recordPaneOpen($, pid, tty).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
+  if (role === 'coordinator') await recordPaneOpen($, pid, tty).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
   return placed
 }
 
 // One tick of the pane's clock: a pane never drawn, or drawn PANE_REFRESH_MS ago, is redrawn;
 // a coordinator's is also redrawn when its round's directory moved since the last draw, the move
 // recorded at once, so a draw that fails is retried once per move, never at every tick.
-function paneTick($: any, pane: PaneMemory): void {
+function paneTick($: Host<'env' | 'fs' | 'ui'>, pane: PaneMemory): void {
   if (pane.ticksSinceDraw === undefined || ++pane.ticksSinceDraw * PANE_ROUND_POLL_MS >= PANE_REFRESH_MS) {
     $.ui.invalidate('ui.render')
     return
@@ -852,9 +939,9 @@ function paneTick($: any, pane: PaneMemory): void {
 }
 
 // The round directory's mtime, or null when it cannot be read (never written, or gone).
-async function roundMtime($: any): Promise<number | null> {
+async function roundMtime($: Host<'env' | 'fs'>): Promise<number | null> {
   try {
-    const stat = await $.fs.stat(`${await stateDir($)}/round`)
+    const stat = await $.fs.stat(`${await stateDir($)}/${ROUND_DIR}`)
     return typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null
   } catch {
     return null
@@ -863,16 +950,16 @@ async function roundMtime($: any): Promise<number | null> {
 
 // The pane open at the host, and its close by the command or the tool: the clock stops and a
 // coordinator's record goes with it.
-async function paneShown($: any): Promise<boolean> {
+async function paneShown($: Host<'ui'>): Promise<boolean> {
   const panes: readonly { id: string }[] = await $.ui.panes()
   return panes.some(open => open.id === PANE_ID)
 }
 
-async function closeShown($: any, pane: PaneMemory): Promise<void> {
+async function closeShown($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory): Promise<void> {
   pane.ticker?.cancel()
   pane.ticker = null
   await $.ui.close({ id: PANE_ID })
-  await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
+  await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
 }
 
 // The coordinator's pane as `coordinator.sh round` reads it, `<state>/pane.json`: the session
@@ -881,12 +968,12 @@ async function closeShown($: any, pane: PaneMemory): Promise<void> {
 // there being no pane to answer it in.
 export type PaneRecord = { session: string; pid: string; tty?: string | null; at: string }
 
-async function panePath($: any): Promise<string> {
+async function panePath($: Host<'env'>): Promise<string> {
   return `${await stateDir($)}/pane.json`
 }
 
 // A pane whose pid is unknown is not recorded: a record naming none is no pane to the script.
-async function recordPaneOpen($: any, pid: string | null, tty: string | null): Promise<void> {
+async function recordPaneOpen($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, pid: string | null, tty: string | null): Promise<void> {
   if (!pid) {
     await logLine($, 'supervision', 'pane: no host pid read for this session; the pane is not recorded open')
     return
@@ -896,16 +983,19 @@ async function recordPaneOpen($: any, pid: string | null, tty: string | null): P
 }
 
 // The record of this session's pane, when it is this session's: another coordinator's is left.
-async function readPaneRecord($: any): Promise<PaneRecord | null> {
+async function readPaneRecord($: Host<'env' | 'fs' | 'session'>): Promise<PaneRecord | null> {
   try {
-    const record = JSON.parse(String(await $.fs.read(await panePath($)))) as PaneRecord
-    return record && typeof record === 'object' && record.session === await $.session.id() ? record : null
+    const read: unknown = JSON.parse(String(await $.fs.read(await panePath($))))
+    if (!isRecord(read) || !isText(read['session']) || !isText(read['pid']) || !isText(read['at']) || !isTextOrNull(read['tty'] ?? null)) return null
+    const tty = read['tty']
+    const record: PaneRecord = { session: read['session'], pid: read['pid'], at: read['at'], ...(isTextOrNull(tty) ? { tty } : {}) }
+    return record.session === await $.session.id() ? record : null
   } catch {
     return null
   }
 }
 
-async function recordPaneClosed($: any): Promise<void> {
+async function recordPaneClosed($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<void> {
   if (!(await readPaneRecord($))) return
   const done = await $.process.run(['rm', '-f', await panePath($)], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
@@ -917,13 +1007,13 @@ async function recordPaneClosed($: any): Promise<void> {
 // exiting or a zombie, or on another tty than the record's (a host whose tab was closed stays
 // listed for days under the terminal's session-keeping daemon: runsLive's rule), or a listing that
 // failed, as the script's own ps failing is.
-async function paneIsOpen($: any): Promise<boolean> {
+async function paneIsOpen($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
   let pid: string
   let tty: string | null = null
   try {
-    const record = JSON.parse(String(await $.fs.read(await panePath($)))) as { pid?: unknown; tty?: unknown } | null
-    pid = String(record?.pid ?? '')
-    if (typeof record?.tty === 'string') tty = record.tty
+    const record: unknown = JSON.parse(String(await $.fs.read(await panePath($))))
+    pid = String(isRecord(record) ? record['pid'] ?? '' : '')
+    if (isRecord(record) && isText(record['tty'])) tty = record['tty']
   } catch {
     return false
   }
@@ -940,8 +1030,8 @@ async function paneIsOpen($: any): Promise<boolean> {
 // coordinator's is its own; a host that cannot say which panes it shows leaves the record, said in
 // the log. Read at each wake, each turn and each start, so that `coordinator.sh round` never reads
 // a pane that is not there.
-async function reconcilePaneRecord($: any): Promise<void> {
-  let record: { session?: unknown; pid?: unknown } | null
+async function reconcilePaneRecord($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<void> {
+  let record: unknown
   let text: string
   try {
     text = String(await $.fs.read(await panePath($)))
@@ -949,11 +1039,11 @@ async function reconcilePaneRecord($: any): Promise<void> {
   } catch {
     return
   }
-  if (!record || typeof record !== 'object') return
+  if (!isRecord(record)) return
   try {
     if (await paneShown($)) return
-    const pid = String(record.pid ?? '')
-    const own = record.session === await $.session.id() || (pid !== '' && String((await recordedCoordinator($))?.pid ?? '') === pid)
+    const pid = String(record['pid'] ?? '')
+    const own = record['session'] === await $.session.id() || (pid !== '' && String((await recordedCoordinator($))?.pid ?? '') === pid)
     if (!own) return
     // An open that finished while this ran wrote a new record: it is the pane's, not removed.
     if (String(await $.fs.read(await panePath($)).catch(() => '')) !== text) return
@@ -961,7 +1051,7 @@ async function reconcilePaneRecord($: any): Promise<void> {
     if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
     else await logLine($, 'supervision', 'pane: the record said open while the host shows no pane; removed')
   } catch (err) {
-    await logLine($, 'supervision', `pane: the record could not be checked: ${(err as Error).message}`)
+    await logLine($, 'supervision', `pane: the record could not be checked: ${messageOf(err)}`)
   }
 }
 
@@ -969,15 +1059,15 @@ async function reconcilePaneRecord($: any): Promise<void> {
 // the state directory, not the host's state of one session, so that neither a reload of the
 // module nor a successor coordinator wakes twice for one entry. A file absent or unreadable is
 // none woken for.
-async function wokenPath($: any): Promise<string> {
+async function wokenPath($: Host<'env'>): Promise<string> {
   return `${await stateDir($)}/round-woken.json`
 }
 
-async function readWoken($: any): Promise<string[]> {
+async function readWoken($: Host<'env' | 'fs'>): Promise<string[]> {
   return readIds($, await wokenPath($))
 }
 
-async function readIds($: any, path: string): Promise<string[]> {
+async function readIds($: Host<'fs'>, path: string): Promise<string[]> {
   try {
     const ids: unknown = JSON.parse(String(await $.fs.read(path)))
     return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
@@ -989,7 +1079,7 @@ async function readIds($: any, path: string): Promise<string[]> {
 // Ids added to a list file under its lock, the list read again first: two coordinators at a
 // succession write the same lists, and a list written from an older read lost the other's ids.
 // Only the ids `keep` holds stay (the round's present entries), so the list never outgrows it.
-async function addIds($: any, path: string, ids: readonly string[], keep: (id: string) => boolean): Promise<void> {
+async function addIds($: Host<'clock' | 'fs' | 'process'>, path: string, ids: readonly string[], keep: (id: string) => boolean): Promise<void> {
   const io = storeIo($)
   await withLockOver(io, path, async () => {
     let listed: string[] = []
@@ -1006,7 +1096,7 @@ async function addIds($: any, path: string, ids: readonly string[], keep: (id: s
 // (`<state>/round-listed.json`, the script's own record) or one the module woke it for. Read by
 // the files, never by its model's memory: a question it presented and then saw settled
 // elsewhere was asked a second time (the operator's report of 2026-10-25).
-async function shownToCoordinator($: any, id: string): Promise<boolean> {
+async function shownToCoordinator($: Host<'env' | 'fs'>, id: string): Promise<boolean> {
   return (await readWoken($)).includes(id) || (await readIds($, `${await stateDir($)}/round-listed.json`)).includes(id)
 }
 
@@ -1040,24 +1130,28 @@ export function settledText(entry: RoundEntry, answer: RoundAnswer): string {
 
 // Whether the entry is closed by the module when settled: the coordinator on this machine was
 // shown it. A coordinator elsewhere never reads this round.
-export async function closesItself($: any, id: string): Promise<boolean> {
+export async function closesItself($: Host<'env' | 'fs'>, id: string): Promise<boolean> {
   return !!(await coordinatorAddress($))?.local && await shownToCoordinator($, id)
 }
 
 // The settled entries told to the coordinator on this machine, one message each, while time is
 // left before `until`: a notice that does not fit, is refused or throws is one log line.
-export async function tellSettled($: any, settled: readonly Settled[], until = Infinity): Promise<void> {
+export async function tellSettled($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, settled: readonly Settled[], until = Infinity): Promise<void> {
   if (settled.length === 0) return
   let to: CoordinatorTo
+  let name: string
   try {
     const coordinator = await coordinatorAddress($)
     if (!coordinator?.local) return
     to = coordinator.to
+    name = coordinator.name
   } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${messageOf(err)}`)
     return
   }
   for (const { entry, answer } of settled) {
+    // A question the coordinator asked itself: its answer reaches it as the asker, never as a notice.
+    if ((typeof to !== 'string' && entry.session === to.sessionId) || entry.from === name) continue
     try {
       // No bound given, the caller's own deadline holds the sends.
       const left = until - Date.now()
@@ -1066,7 +1160,7 @@ export async function tellSettled($: any, settled: readonly Settled[], until = I
       if (!sent || isDegradedPass(sent)) await logLine($, 'supervision', `round: no time left to tell ${addressLabel(to)} that ${entry.id} is settled`)
       else if (!sent.isDelivered) await logLine($, 'supervision', `round: the settled notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent.reason ?? 'no answer'}`)
     } catch (err) {
-      await logLine($, 'supervision', `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${messageOf(err)}`)
     }
   }
 }
@@ -1076,10 +1170,14 @@ export async function tellSettled($: any, settled: readonly Settled[], until = I
 // already running then arms no next one.
 export type WakeMemory = { timer: { cancel(): void } | null; generation: number }
 
-function armWake($: any, wake: WakeMemory): void {
+function armWake($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>, wake: WakeMemory): void {
   if (wake.timer) return
   const generation = wake.generation
-  const timer = $.clock.after(ROUND_WAKE_MS, () => wakeTick($, wake, timer, generation))
+  // A host whose clock answers no timer leaves one that cancels nothing: the reading still runs once.
+  let timer: Timer = { cancel: () => undefined }
+  const armed = $.clock.after(ROUND_WAKE_MS, () => wakeTick($, wake, timer, generation))
+  const cancel = isRecord(armed) ? armed['cancel'] : undefined
+  if (typeof cancel === 'function') timer = { cancel: () => { Reflect.apply(cancel, armed, []) } }
   wake.timer = timer
 }
 
@@ -1092,25 +1190,25 @@ function stopWake(wake: WakeMemory): void {
 // One reading: the questions just due, then the answers to send again to another machine. A
 // failure of either is one log line, and the next reading still comes. A timer no longer the one
 // armed reads nothing.
-async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
+async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
   if (wake.timer !== timer) return
   wake.timer = null
   try {
     await wakeForDue($)
   } catch (err) {
-    await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round wake: ${messageOf(err)}`)
   }
   try {
     await resendReplies($)
   } catch (err) {
-    await logLine($, 'supervision', `round resend: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round resend: ${messageOf(err)}`)
   }
   if (wake.generation === generation) armWake($, wake)
 }
 
 // The host's clock, read through $ so a render's duration is the host's measure; a $ that carries
 // no clock reading (an older host) reads the process's own.
-async function clockNow($: any): Promise<number> {
+async function clockNow($: Host<'clock'>): Promise<number> {
   try {
     const now = Number(await $.clock.now())
     return Number.isFinite(now) ? now : Date.now()
@@ -1127,14 +1225,14 @@ async function clockNow($: any): Promise<number> {
 // successor's name, other than its predecessor's, stands for it. A process table that could not be
 // read judges no record dead, as the store's read keeps its rows. One moved by name alone that no
 // live record takes is closed (closeUnhosted). The answer is the entries' ids.
-async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive'], asked: ReadonlySet<string> = new Set()): Promise<Set<string>> {
+async function hostedSuccessors($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, entries: readonly RoundEntry[], rows: Record<string, SessionRow>, alive: StoreRead['alive'], asked: ReadonlySet<string> = new Set()): Promise<Set<string>> {
   const wanted = entries.filter(entry => entry.status === 'open' && entry.movedFrom && !entry.origin && !(entry.session !== '' && sessionKey(entry.session) in rows))
   const hosted = new Set<string>()
   if (wanted.length === 0) return hosted
   // A question asked with `ask` moved by name alone takes the session of the record that hosts it.
   const named = new Map<string, string>()
   const sessionOf = new Map<string, string>()
-  const takes = (entry: RoundEntry, record: { sessionId: string; name?: unknown }) => entry.session !== ''
+  const takes = (entry: RoundEntry, record: RegistryRecord) => entry.session !== ''
     ? record.sessionId === entry.session
     : record.name === entry.from && record.sessionId !== entry.movedFrom
   const dir = `${await configDir($)}/sessions`
@@ -1143,23 +1241,26 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
   for (const file of listed ?? []) {
     if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
     try {
-      const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
-      if (typeof record?.sessionId !== 'string' || record.sessionId === '' || !/^\d+$/.test(String(record.pid ?? ''))) continue
+      const record = registryRecord(String(await $.fs.read(`${dir}/${file.name}`)))
+      if (record === null || !/^\d+$/.test(String(record.pid ?? ''))) continue
       const ids = wanted.filter(entry => takes(entry, record)).map(entry => entry.id)
       for (const id of ids) if (asked.has(id)) sessionOf.set(id, record.sessionId)
       if (ids.length > 0) pids.set(String(record.pid), [...(pids.get(String(record.pid)) ?? []), ...ids])
     } catch { /* a record being written, or gone: not this one */ }
   }
-  const table = alive instanceof Map ? alive
-    : alive === null ? null
-    : pids.size === 0 ? new Map()
-    : livePids(await $.process.run(livePidsArgv([...pids.keys()])!, { timeoutMs: 5000 }).catch(() => null))
+  const argv = livePidsArgv([...pids.keys()])
+  const table = alive !== undefined ? alive
+    : argv === null ? new Map<string, ProcessState>()
+    : livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null))
   for (const [pid, ids] of pids) if (table === null || runsLive(table, pid)) for (const id of ids) hosted.add(id)
-  for (const entry of wanted) if (entry.session === '' && hosted.has(entry.id) && sessionOf.has(entry.id)) named.set(entry.id, sessionOf.get(entry.id) as string)
+  for (const entry of wanted) {
+    const session = sessionOf.get(entry.id)
+    if (entry.session === '' && hosted.has(entry.id) && session !== undefined) named.set(entry.id, session)
+  }
   try {
     await nameMovedAsked($, named)
   } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${messageOf(err)}`)
   }
   if (listed !== null) await closeUnhosted($, wanted.filter(entry => entry.session === '' && !hosted.has(entry.id)), asked)
   return hosted
@@ -1170,7 +1271,7 @@ async function hostedSuccessors($: any, entries: readonly RoundEntry[], rows: Re
 // withdrawn here, by the sender, as a gone sender's are. Judged only on a registry listed: a
 // listing that failed closes nothing, and a process table that could not be read takes every
 // record of that name as live.
-async function closeUnhosted($: any, orphans: readonly RoundEntry[], asked: ReadonlySet<string> = new Set()): Promise<void> {
+async function closeUnhosted($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, orphans: readonly RoundEntry[], asked: ReadonlySet<string> = new Set()): Promise<void> {
   if (orphans.length === 0) return
   try {
     const ids = new Set(orphans.map(entry => entry.id))
@@ -1179,13 +1280,13 @@ async function closeUnhosted($: any, orphans: readonly RoundEntry[], asked: Read
     const gone = await withdrawAskedIds($, orphans.filter(entry => asked.has(entry.id)).map(entry => entry.id), why)
     await tellSettled($, [...settled, ...await shownAsked($, gone, why)], Date.now() + RELAY_BOUND_MS)
   } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
+    await logLine($, 'supervision', `round: ${messageOf(err)}`)
   }
 }
 
 // The questions asked with `ask` withdrawn by their asker that the coordinator here was shown,
 // as the settled notices tell them: each closed by its asker, why.
-async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Promise<Settled[]> {
+async function shownAsked($: Host<'env' | 'fs'>, withdrawn: readonly Asked[], why: string): Promise<Settled[]> {
   const told: Settled[] = []
   for (const entry of withdrawn) {
     if (await closesItself($, entry.id)) told.push({ entry: askedAsEntry(entry), answer: { text: `withdrawn: ${why}`, by: 'sender', at: entry.answer?.at ?? new Date().toISOString() } })
@@ -1199,7 +1300,7 @@ async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Pro
 // before the submit, another session may have woken for some meanwhile, and recorded only once
 // the host took it: a submit that fails or is dropped is tried again at the next reading. The
 // ids kept are those the round still holds, so the list never outgrows it.
-async function wakeForDue($: any): Promise<void> {
+async function wakeForDue($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>): Promise<void> {
   await reconcilePaneRecord($)
   const store = await readStore($)
   const local = store.rows
@@ -1216,8 +1317,10 @@ async function wakeForDue($: any): Promise<void> {
   const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
   const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
+  // A question the coordinator asked itself is never due to it: it holds it in its own turn already.
+  const own = await $.session.id()
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
-    (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
+    entry.session !== own && (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
   if (!read.some(dueBeside(await readWoken($)))) return
   const woken = (await readWoken($)).filter(id => present.has(id))
   const due = read.filter(dueBeside(woken))
@@ -1241,7 +1344,7 @@ export function olderQuestionText(id: string, done: 'not entered' | 'withdrawn')
 // this machine by a message, one of another machine by an answer on the line its ask came by,
 // which clears its wait there. Written before it is told, so a notice is never sent twice; a
 // notice not delivered, or a failure, is one log line.
-async function withdrawOlder($: any, round: readonly { path: string; entry: RoundEntry }[]): Promise<void> {
+async function withdrawOlder($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, round: readonly { path: string; entry: RoundEntry }[]): Promise<void> {
   for (const { path, entry } of round) {
     if (entry.kind !== 'operator' || entry.status !== 'open') continue
     try {
@@ -1250,7 +1353,7 @@ async function withdrawOlder($: any, round: readonly { path: string; entry: Roun
       const me = { session: await $.session.id(), name: '', role: 'coordinator' }
       const closed = await closeRound($, path, current => {
         const fresh = current === undefined ? null : parseRoundEntry(current)
-        return fresh === null ? null : planOlder(fresh as never, text, at)
+        return fresh === null ? null : planOlder(fresh, text, at)
       }, me, at)
       if (closed === null || 'error' in closed) continue
       await logLine($, 'supervision', `round: an operator question of an older release withdrawn: ${entry.id}`)
@@ -1260,7 +1363,7 @@ async function withdrawOlder($: any, round: readonly { path: string; entry: Roun
         : await $.session.send({ to: { sessionId: entry.session }, text: `[module] ${text}` })
       if (!sent?.isDelivered) await logLine($, 'supervision', `round: the withdrawal of ${entry.id} was not delivered: ${sent?.reason ?? 'no answer'}`)
     } catch (err) {
-      await logLine($, 'supervision', `round: ${entry.id}: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${entry.id}: ${messageOf(err)}`)
     }
   }
 }
@@ -1268,7 +1371,7 @@ async function withdrawOlder($: any, round: readonly { path: string; entry: Roun
 // The pane is never opened here: it opens on his word alone (the command, the tool). What the end
 // of a turn does for a coordinator is check the pane's record against the host (reconcilePaneRecord)
 // and report whether the session is the recorded coordinator's, which arms its round's wake.
-async function atTurnEnd($: any): Promise<boolean> {
+async function atTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<boolean> {
   const self = await recordedCoordinator($)
   if (!self) return false
   await reconcilePaneRecord($)
@@ -1279,7 +1382,7 @@ async function atTurnEnd($: any): Promise<boolean> {
 // record names one, else null. The role is the row's; a first turn can end before the first
 // measure writes the row, and then the name is walked, bounded. A row that carries no pid has
 // its pid walked the same way, its role kept.
-async function recordedCoordinator($: any): Promise<{ tty: string | null; pid: string | null } | null> {
+async function recordedCoordinator($: Host<'env' | 'fs' | 'process' | 'session'>): Promise<{ tty: string | null; pid: string | null } | null> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let role = row?.role ?? null
@@ -1308,12 +1411,12 @@ let wake: WakeMemory = { timer: null, generation: 0 }
 // older than core's STALE_MS are removed in one process, none when there are none. The readers of
 // the store and of the round sweep their own directory at each read the same way.
 export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
-export async function sweepTemporaries($: any): Promise<string[]> {
+export async function sweepTemporaries($: Host<'env' | 'fs' | 'process'>): Promise<string[]> {
   const store = await storeOf($)
   const state = await stateDir($)
   const now = Date.now()
   const stale: string[] = []
-  for (const dir of [...WRITTEN_DIRS.map(name => `${store}/${name}`), store, state, `${state}/round`]) {
+  for (const dir of [...WRITTEN_DIRS.map(name => `${store}/${name}`), store, state, `${state}/${ROUND_DIR}`]) {
     stale.push(...staleTemporaries(dir, await $.fs.list(dir).catch(() => []), now))
   }
   if (stale.length > 0) await $.process.run(removeArgv(...stale), { timeoutMs: 5000 })
@@ -1324,13 +1427,13 @@ export async function sweepTemporaries($: any): Promise<string[]> {
 // too — so a reload with no turn after it still wakes the coordinator. Mounted beside the
 // supervision rather than in it, whose register holds no start handler: nothing is opened at a
 // start. Bounded, as the first start is awaited.
-export function registerWake(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+export function registerWake(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
     try {
       const swept = await withDeadline(sweepTemporaries($), RELAY_BOUND_MS)
       if (isDegradedPass(swept)) await logLine($, 'supervision', `sweep: did not finish within ${RELAY_BOUND_MS} ms`)
     } catch (err) {
-      await logLine($, 'supervision', `sweep: ${(err as Error).message}`)
+      await logLine($, 'supervision', `sweep: ${messageOf(err)}`)
     }
     try {
       const self = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
@@ -1340,10 +1443,10 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
         armWake($, wake)
       }
     } catch (err) {
-      await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round wake: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1352,8 +1455,8 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
 // a registration, never an open. Every session gets it, the tool.call refusing those that
 // supervise nothing, so a role read later than the start is never missed.
-export function registerPaneTool(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+export function registerPaneTool(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
     try {
       await $.tool.register({
         name: SUPERVISION_TOOL,
@@ -1367,16 +1470,16 @@ export function registerPaneTool(on: (...args: [event: string, handler: Function
       })
     } catch (err) {
       // A start never fails on the tool: the commands still open the pane.
-      await logLine($, 'supervision', `supervision tool not registered: ${(err as Error).message}`)
+      await logLine($, 'supervision', `supervision tool not registered: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Held>): void {
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
@@ -1402,7 +1505,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // field named, so every measure and every end reaches the store. The chain
   // still answers in registration order, which register pins (the gauge
   // first, or the row runs one measure behind).
-  on('session.measure', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('session.measure', {}, async ($, e, next) => {
     try {
       // The gauge mounted before this domain answers first in the chain, so
       // the reading is this measure's own — fresh, never one measure behind
@@ -1452,12 +1555,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     } catch (err) {
       // A row that cannot be written, or a gate report that failed, never blocks the
       // measure: the next one writes it.
-      await logLine($, 'supervision', (err as Error).message)
+      await logLine($, 'supervision', messageOf(err))
     }
     // The deck follows the row just written (writeDeck): a new fill is what its keys draw.
     await refreshDeck($)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the measure is let through, the state dir says why, and next is
     // replay-safe in a catch, called or not.
@@ -1465,7 +1568,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
-  on('session.end', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('session.end', {}, async ($, e, next) => {
     const sessionId = e.sessionId ?? await $.session.id()
     // Read before the row goes: the successor's file goes with it.
     let successor: LearntSuccessor | null = null
@@ -1476,7 +1579,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       await recordPaneClosed($)
     } catch (err) {
       // The end is never held on the store's own failure; it is said.
-      await logLine($, 'supervision', (err as Error).message)
+      await logLine($, 'supervision', messageOf(err))
     }
     // What the host's end bound leaves, shared by the round and the deck after it.
     let until = Date.now() + Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
@@ -1496,13 +1599,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
     } catch (err) {
-      await logLine($, 'supervision', `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${messageOf(err)}`)
     }
     // The ended session leaves the deck, in what the round left of the bound.
     const left = until - Date.now()
     if (left > 0) await refreshDeck($, left)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1514,7 +1617,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // the message a stop carries is not always the turn's last word, and the gate's own
   // deadline is not this report's to spend; turn.complete fires once the turn is over,
   // with its final answer. Bounded, and never holds the turn's end.
-  on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.complete', {}, async ($, e, next) => {
     try {
       if (!e.agentId && e.reason === 'answer') {
         const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId), RELAY_BOUND_MS)
@@ -1524,7 +1627,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
       }
     } catch (err) {
-      await logLine($, 'supervision', `relay: ${(err as Error).message}`)
+      await logLine($, 'supervision', `relay: ${messageOf(err)}`)
     }
     // The wait the relay just wrote, or none, is what the window's tab shows.
     if (!e.agentId) await showTurnEnd($)
@@ -1535,22 +1638,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         else if (done) armWake($, wake)
       }
     } catch (err) {
-      await logLine($, 'supervision', `pane: ${(err as Error).message}`)
+      await logLine($, 'supervision', `pane: ${messageOf(err)}`)
     }
     // The wait the relay just wrote, or cleared, is what the deck's keys show.
     if (!e.agentId) await refreshDeck($)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // A turn starts: the session works again, and a wait its row carried is over.
-  on('turn.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.start', {}, async ($, e, next) => {
     if (!e.agentId) await showTabState($, 'busy')
     // The model's turn may run `coordinator.sh round`, which reads the pane's record: a record of a
     // pane that is gone is dropped before it does.
-    if (!e.agentId) await reconcilePaneRecord($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
+    if (!e.agentId) await reconcilePaneRecord($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
     try {
       const sessionId = await $.session.id()
       const wait = await readWait($, sessionId)
@@ -1559,10 +1662,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await refreshDeck($)
       }
     } catch (err) {
-      await logLine($, 'supervision', `relay: ${(err as Error).message}`)
+      await logLine($, 'supervision', `relay: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1570,18 +1673,18 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The model's own « handed over » to its successor, the predecessor's last word in a
   // succession: the work is the successor's now, and the session's open questions with it.
   // The message is sent all the same.
-  on('session.send', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('session.send', {}, async ($, e, next) => {
     const handedOver = !e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text)
     const sent = await next(e)
     try {
       // Only a hand-over that was not refused closes the questions: a refused one leaves
       // the sender in charge of them.
-      if (handedOver && sent?.isDelivered !== false) await handOver($, await $.session.id())
+      if (handedOver && !(isRecord(sent) && sent['isDelivered'] === false)) await handOver($, await $.session.id())
     } catch (err) {
-      await logLine($, 'supervision', `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${messageOf(err)}`)
     }
     return sent
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1594,7 +1697,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
-  on('session.receive', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('session.receive', {}, async ($, e, next) => {
     let passed = e
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
@@ -1649,10 +1752,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (successor) await learnSuccessor($, successor)
       }
     } catch (err) {
-      await logLine($, 'supervision', `receive: ${(err as Error).message}`)
+      await logLine($, 'supervision', `receive: ${messageOf(err)}`)
     }
     return next(passed)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1663,7 +1766,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // Anywhere else the command says so and opens nothing. Every form of the
   // command answers, the same toggle on the same pane; a bare short name only when its user
   // command is this plugin's copy, the operator's own command of that name run as he wrote it.
-  for (const command of SUPERVISION_COMMANDS) on('command.run', { command }, async ($: any, e: any, next: any) => {
+  for (const command of SUPERVISION_COMMANDS) on('command.run', { command }, async ($, e, next) => {
     if (isBare(String(e?.command ?? ''))) {
       const dir = commandsDirOf(await $.env.get('ORCHESTRATOR_COMMANDS_DIR'), await configDir($))
       if (!isOwnCopy(String(await $.fs.read(`${dir}/${e.command}.md`).catch(() => '')))) return next(e)
@@ -1681,21 +1784,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     }
     await openPane($, pane, role, tty, pid)
     return { text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // The same pane on the operator's plain words: the model calls the tool with `open` or
   // `close` where he types no command. Not a toggle — the word says which.
-  on('tool.call', { tool: `mcp__orchestrator__${SUPERVISION_TOOL}` }, async ($: any, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${SUPERVISION_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: PANE_MAIN_THREAD_ONLY, isError: true }
-    if (e.action !== 'open' && e.action !== 'close') return { result: 'action is "open" or "close"', isError: true }
+    const action = e['action']
+    if (action !== 'open' && action !== 'close') return { result: 'action is "open" or "close"', isError: true }
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (role !== 'coordinator' && role !== 'orchestrator') return { result: PANE_ROLES_ONLY, isError: true }
     const shown = await paneShown($)
-    if (e.action === 'close') {
+    if (action === 'close') {
       if (shown) await closeShown($, pane)
       return { result: shown ? 'Supervision pane closed.' : 'The supervision pane is not open.' }
     }
@@ -1703,43 +1807,43 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (shown) return { result: 'The supervision pane is already open.' }
     if (placed && placed.isPlaced === false) return { result: `Supervision pane opened, not drawn yet: ${placed.reason ?? 'no reason given'}.` }
     return { result: 'Supervision pane opened.' }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: "the supervision pane could not be opened or closed; the module's log says why", isError: true }
   })
 
   // The pane closed, by its ✕ or its key or by the module: its clock stops with it and its record
   // goes. Nothing is kept of who closed it: no later start opens it again.
-  on('ui.close', { id: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
+  on('ui.close', { id: PANE_ID }, async ($, e, next) => {
     stopTicker()
-    await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
+    await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // The body's window moving at the person's wheel or keys: the host's measure of the tree is
   // kept for the track, with the content it measured. A plugin's own move never reaches here.
-  on('ui.scroll', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
+  on('ui.scroll', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     if (pane.drawn) pane.measure = { contentRows: e.contentRows, drawn: pane.drawn }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // The pane's ring leaving the text field, for the picker or off the pane: the field goes
   // with it, so that Tab from a choice never reaches it, until « Other answer » is picked again.
-  on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
+  on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     const result = await next(e)
-    if (pane.writing !== null && !result?.deny && e.element !== answerKey(pane.writing)) {
+    if (pane.writing !== null && !(isRecord(result) && result['deny']) && e.element !== answerKey(pane.writing)) {
       pane.typed?.delete(pane.writing)
       pane.writing = null
       $.ui.invalidate('ui.render')
     }
     return result
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -1747,7 +1851,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The pane's own render: the matcher names the render envelope's component
   // and requestId — the pane's id — so the rows are drawn in this plugin's pane
   // alone and never in another plugin's.
-  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     const started = await clockNow($)
     try {
       // The store at draw time: the gauge's invalidate after every measure and
@@ -1771,7 +1875,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         blocks = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
-        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...((row as { prs?: unknown }).prs instanceof Array ? (row as { prs: string[] }).prs : [])])])
+        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : [])])])
         none = WORDS.noOrchestrator
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
@@ -1898,7 +2002,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // has the ring, where a focused pane taller than its body scrolls on them, and a click only
       // gives it the ring — a stray click answers nothing. Its last option leads to the text
       // field. Elsewhere (mobile, a tap the only way) one Button per choice.
-      const picker = typeof el.Select === 'function'
+      const Select = el.Select
+      const picker = Select !== undefined
       // The first question asked with `ask` takes the controls: its picker, its choices, its field.
       const answering: Asked | null = asked[0] ?? null
       const answeringPick = answering === null ? null : (answering.choices.find(c => c.letter === answering.recommended) ?? answering.choices[0])?.letter ?? null
@@ -1969,7 +2074,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           forgetDraft(pane, id)
           if (shown) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
         })()
-          .catch(err => logLine($, 'supervision', `round: ${(err as Error).message}`))
+          .catch(err => logLine($, 'supervision', `round: ${messageOf(err)}`))
           .finally(() => {
             pane.answering.delete(id)
             $.ui.invalidate('ui.render')
@@ -1983,9 +2088,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const pick = (letter: string) => answerAsked(entry.id, `${letter} : ${entry.choices.find(c => c.letter === letter)!.text}`)
         const choosingAsked = entry.choices.length > 0
         const controls: Drawn[] = []
-        if (choosingAsked && picker) {
+        if (choosingAsked && Select) {
           controls.push({
-            node: el.Select({
+            node: Select({
               key: `choices:${entry.id}`,
               label: WORDS.choose,
               options: [
@@ -2104,14 +2209,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       })
     } catch (err) {
       // A pane that fails to draw never blocks the render: the engine draws its own.
-      await logLine($, 'supervision', (err as Error).message)
+      await logLine($, 'supervision', messageOf(err))
       return next(e)
     } finally {
       const took = await clockNow($) - started
       if (took > PANE_RENDER_BOUND_MS && !renderSlow) await logLine($, 'supervision', `pane: the render took ${took} ms, past its bound of ${PANE_RENDER_BOUND_MS} ms`)
       renderSlow = took > PANE_RENDER_BOUND_MS
     }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -2142,7 +2247,7 @@ export function entersRound(role: string | null): boolean {
 // on it. The row itself is never written here: the measure is its one writer.
 // An operator wait waits on questions asked with `ask`, already in the round as their own objects:
 // its wait is written, so its row shows it waiting, and no entry is entered or sent.
-export async function relayTurnEnd($: any, answer: string, turnId: unknown): Promise<void> {
+export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2235,7 +2340,7 @@ export async function relayTurnEnd($: any, answer: string, turnId: unknown): Pro
 
 // The session's open entries moved to the successor it learnt, or, none learnt, withdrawn by its
 // hand-over, every write first, then the notices in what is left of the bound.
-async function handOver($: any, sessionId: string): Promise<void> {
+async function handOver($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string): Promise<void> {
   const until = Date.now() + RELAY_BOUND_MS
   const successor = await readSuccessor($, sessionId)
   const done = await withDeadline(successor
@@ -2258,7 +2363,7 @@ async function handOver($: any, sessionId: string): Promise<void> {
 // 2026-11-10). A moved entry that asks another question stays open. None found, nothing is written and the
 // log says so; one that cannot be written throws, and the next typed prompt tries again, and so
 // does the turn's end.
-async function withdrawEntry($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }): Promise<Settled[]> {
+async function withdrawEntry($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }): Promise<Settled[]> {
   const settled: Settled[] = []
   const open = (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open')
   const direct = open.filter(({ entry }) => entry.since === held.since && entry.blocks === held.blocks)
@@ -2284,7 +2389,9 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
 // record (core's consent-record.ts), the contract github reads in place of the round. An entry
 // that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
 // is: an entry that asked a consent and records none says why in one log line.
-export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<string | null> {
+// What a consent record is written from: the entry's id, question and choices, and the subject it asks.
+export type ConsentEntry = Pick<RoundEntry, 'id' | 'question' | 'choices' | 'consent'>
+export async function writeConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, entry: ConsentEntry, text: string, by: Answerer, at: string): Promise<string | null> {
   if (!entry.consent) return null
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
   if (!record) {
@@ -2303,8 +2410,8 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
     await writeAtomic($, path, JSON.stringify(record) + '\n')
     return null
   } catch (err) {
-    await logLine($, 'supervision', `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
-    return (err as Error).message
+    await logLine($, 'supervision', `round: the consent of ${entry.id} was not recorded: ${messageOf(err)}`)
+    return messageOf(err)
   }
 }
 
@@ -2314,7 +2421,7 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
 // core's grants): the record's answer is its text. A prompt typed there can be any instruction,
 // and a refusal is no consent: free prose, an ambiguous answer and a refusing choice leave no
 // record, and the log says so once.
-async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string): Promise<void> {
+async function writeTabConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, entry: RoundEntry, typed: string, at: string): Promise<void> {
   if (!entry.consent) return
   const chosen = answersChoice(typed, entry.choices)
   if (!chosen || !grants(chosen.text)) {
@@ -2332,14 +2439,14 @@ function forgetDraft(pane: PaneMemory, key: string): void {
 }
 
 // Whether the round holds the entry of that id, open: a file absent, or in any other status, is not.
-async function entryIsOpen($: any, id: string): Promise<boolean> {
-  return parseRoundEntry(String(await $.fs.read(`${await stateDir($)}/round/${id}.json`).catch(() => '')))?.status === 'open'
+async function entryIsOpen($: Host<'env' | 'fs'>, id: string): Promise<boolean> {
+  return parseRoundEntry(String(await $.fs.read(roundPath(await stateDir($), id)).catch(() => '')))?.status === 'open'
 }
 
 // A settled entry's fingerprint forgotten in its sender's wait file, so the same question asked
 // again is entered again: the file is re-read and written back with `relayed` null only when it
 // still holds that entry's own fingerprint (a later wait may have replaced it).
-export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
+export async function forgetRelayed($: Host<'clock' | 'env' | 'fs' | 'process'>, entry: RoundEntry): Promise<void> {
   const now = await readWait($, entry.session)
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
@@ -2348,19 +2455,19 @@ export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
 // the name of a session whose row is not written yet, or was written by a walk that did not finish.
 // `known` is false when the walk did not finish, the whole of it (the transcript's place included)
 // held to the side-read bound, and a name null with `known` true is a session found unnamed.
-export async function walkedName($: any, sessionId: string): Promise<{ known: boolean; name: string | null }> {
+export async function walkedName($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ known: boolean; name: string | null }> {
   const walked = await withDeadline(walkWithinBound($, sessionId), await sideReadBoundMs($))
   return isDegradedPass(walked) ? { known: false, name: null } : { known: walked.known, name: walked.name }
 }
 
 // The role of the session: the name its row holds, else the name its walk reads.
-export async function sessionRole($: any, sessionId: string): Promise<string | null> {
+export async function sessionRole($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null)
 }
 
 // Whether the session is an orchestrator.
-export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
+export async function isOrchestratorSession($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<boolean> {
   return (await sessionRole($, sessionId)) === 'orchestrator'
 }
 
@@ -2374,7 +2481,7 @@ export async function isOrchestratorSession($: any, sessionId: string): Promise<
 // coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
 // every write is done. Each withdrawal is one log line; one that cannot be written is one too,
 // and the relay goes on.
-async function withdrawStale($: any, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
+async function withdrawStale($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
   const settled: Settled[] = []
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open' || entry.id === current || kept?.(entry)) continue
@@ -2384,12 +2491,13 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
       // Read again under the lock: a move to a successor or an answer in between is never overwritten.
       const done = await closeRound($, path, current => {
         const fresh = parseRoundEntry(current ?? '')
-        return !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : planWithdrawal(fresh as never, why, at, shown)
+        return !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : planWithdrawal(fresh, why, at, shown)
       }, { session: sessionId, name: entry.from, role: 'orchestrator' }, at, () => logLine($, 'supervision', `round: withdrawn by the sender: ${entry.id}`))
       if (done === null || 'error' in done) continue
-      if (shown) settled.push({ entry, answer: done.plan.entry['answer'] as RoundAnswer })
+      const answer = done.plan.entry['answer']
+      if (shown && isRoundAnswer(answer)) settled.push({ entry, answer })
     } catch (err) {
-      await logLine($, 'supervision', `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${messageOf(err)}`)
     }
   }
   return settled
@@ -2399,13 +2507,13 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
 // does not parse to an entry is skipped, never repaired; a temporary file is no entry yet. A
 // directory that exists and cannot be listed is said in the log and read as empty; one never
 // written is no failure — nothing was ever asked.
-export async function readRound($: any): Promise<{ path: string; entry: RoundEntry }[]> {
-  const dir = `${await stateDir($)}/round`
+export async function readRound($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<{ path: string; entry: RoundEntry }[]> {
+  const dir = `${await stateDir($)}/${ROUND_DIR}`
   let listed: readonly { name: string; kind: string; mtimeMs?: number }[]
   try {
     listed = await $.fs.list(dir)
   } catch (err) {
-    if (await $.fs.exists(dir).catch(() => true)) await logLine($, 'supervision', `round: cannot list ${dir}: ${(err as Error).message}`)
+    if (await $.fs.exists(dir).catch(() => true)) await logLine($, 'supervision', `round: cannot list ${dir}: ${messageOf(err)}`)
     return []
   }
   const stale = staleTemporaries(dir, listed, Date.now())
@@ -2419,41 +2527,95 @@ export async function readRound($: any): Promise<{ path: string; entry: RoundEnt
   return read
 }
 
-const ROUND_STATUSES: readonly string[] = ['open', 'answered', 'withdrawn', 'closed']
+const ROUND_STATUSES: readonly RoundEntry['status'][] = ['open', 'answered', 'withdrawn', 'closed']
 
 // An entry file read back: the JSON of one entry, each field of its type, or nothing.
 export function parseRoundEntry(text: string): RoundEntry | null {
   try {
-    const e = JSON.parse(text)
-    if (!e || typeof e !== 'object') return null
-    const texts = [e.id, e.from, e.session, e.since, e.question, e.at].every(field => typeof field === 'string')
-    const choices = Array.isArray(e.choices) && e.choices.every((c: any) => typeof c?.letter === 'string' && typeof c?.text === 'string')
-    const nullable = [e.blocks, e.recommendation].every(field => field === null || typeof field === 'string')
-    const known = (e.kind === 'operator' || e.kind === 'done') && ROUND_STATUSES.includes(e.status)
-    const consent = e.consent === undefined || parseConsentSubject(e.consent) !== undefined
-    return texts && choices && nullable && known && consent && deliveryRead(e) ? e as RoundEntry : null
+    return roundEntryOf(JSON.parse(text))
   } catch {
     return null
   }
 }
 
+const ANSWER_BYS: readonly RoundAnswer['by'][] = ['pane', 'coordinator', 'tab', 'sender', 'message']
+const isStatus = (value: unknown): value is RoundEntry['status'] => ROUND_STATUSES.some(status => status === value)
+
+// An entry's answer, each field of its type, or undefined when it is none.
+function roundAnswerOf(read: unknown): RoundAnswer | undefined {
+  if (!isRecord(read)) return undefined
+  const { text, by, at } = { text: read['text'], by: ANSWER_BYS.find(known => known === read['by']), at: read['at'] }
+  if (!isText(text) || by === undefined || !isText(at)) return undefined
+  const extra: Partial<RoundAnswer> = {}
+  for (const key of ['author', 'evidence', 'typed', 'record'] as const) {
+    const value = read[key]
+    if (value === undefined) continue
+    if (!isText(value)) return undefined
+    extra[key] = value
+  }
+  return { text, by, at, ...extra }
+}
+
+export function isRoundAnswer(value: unknown): value is RoundAnswer {
+  return roundAnswerOf(value) !== undefined
+}
+
+// An entry's value, each field of its type, or nothing.
+function roundEntryOf(e: unknown): RoundEntry | null {
+  if (!isRecord(e)) return null
+  const { id, from, session, since, question, at, blocks, recommendation, kind, status } = {
+    id: e['id'], from: e['from'], session: e['session'], since: e['since'], question: e['question'], at: e['at'],
+    blocks: e['blocks'], recommendation: e['recommendation'], kind: e['kind'], status: e['status'],
+  }
+  if (!isText(id) || !isText(from) || !isText(session) || !isText(since) || !isText(question) || !isText(at)) return null
+  if (!isTextOrNull(blocks) || !isTextOrNull(recommendation) || !isRoundKind(kind) || !isStatus(status)) return null
+  const choicesRead = e['choices']
+  if (!Array.isArray(choicesRead)) return null
+  const choices: RoundEntry['choices'] = []
+  for (const c of choicesRead) {
+    if (!isRecord(c) || !isText(c['letter']) || !isText(c['text'])) return null
+    choices.push({ letter: c['letter'], text: c['text'] })
+  }
+  const answer = e['answer'] === null || e['answer'] === undefined ? null : roundAnswerOf(e['answer'])
+  if (answer === undefined) return null
+  const consent = e['consent'] === undefined ? undefined : parseConsentSubject(e['consent'])
+  if (e['consent'] !== undefined && consent === undefined) return null
+  const originRead = e['origin']
+  const origin = originRead === undefined ? undefined
+    : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address']) && (originRead['line'] === undefined || originRead['line'] === 'q')
+      ? { machine: originRead['machine'], address: originRead['address'], ...(originRead['line'] === 'q' ? { line: 'q' as const } : {}) }
+      : null
+  if (origin === null) return null
+  const delivery = deliveryOfEntry(e['delivery'], origin !== undefined)
+  if (delivery === null) return null
+  const movedFrom = e['movedFrom']
+  if (movedFrom !== undefined && !isText(movedFrom)) return null
+  return {
+    id, from, session, kind, since, blocks, question, choices, recommendation, status, at, answer,
+    ...(e['urgent'] === true ? { urgent: true as const } : {}),
+    ...(movedFrom !== undefined ? { movedFrom } : {}),
+    ...(origin !== undefined ? { origin } : {}),
+    ...(delivery !== undefined ? { delivery } : {}),
+    ...(consent !== undefined ? { consent } : {}),
+  }
+}
+
 // An entry's delivery, when it carries one, its fields of their type and no other, the reason a
 // text: beside an origin, its state one of a remote answer's and no answer stamp; without one, its
-// state one of an answer's on this machine and the stamp of the answer it carries.
-const DELIVERY_STATES: readonly string[] = ['pending', 'sent', 'acked', 'failed']
-const LOCAL_DELIVERY_STATES: readonly string[] = ['pending', 'delivered', 'failed']
-function deliveryRead(e: any): boolean {
-  if (e.delivery === undefined) return true
-  const d = e.delivery
-  if (!d || typeof d !== 'object' || Array.isArray(d)) return false
-  const remote = e.origin !== undefined
-  if (remote && (!e.origin || typeof e.origin !== 'object')) return false
-  const keys = Object.keys(d)
-  const shaped = remote
-    ? DELIVERY_STATES.includes(d.state) && d.answerAt === undefined
-    : LOCAL_DELIVERY_STATES.includes(d.state) && typeof d.answerAt === 'string'
-  return shaped && typeof d.at === 'string' && Number.isInteger(d.attempts) && d.attempts >= 0
-    && (d.reason === undefined || typeof d.reason === 'string') && keys.every(key => ['state', 'at', 'attempts', 'answerAt', 'reason'].includes(key))
+// state one of an answer's on this machine and the stamp of the answer it carries. Undefined when
+// it carries none, null when it is malformed.
+const DELIVERY_STATES: readonly RoundDelivery['state'][] = ['pending', 'sent', 'acked', 'failed']
+const LOCAL_DELIVERY_STATES: readonly RoundDelivery['state'][] = ['pending', 'delivered', 'failed']
+function deliveryOfEntry(d: unknown, remote: boolean): RoundDelivery | null | undefined {
+  if (d === undefined) return undefined
+  if (!isRecord(d)) return null
+  const state = (remote ? DELIVERY_STATES : LOCAL_DELIVERY_STATES).find(known => known === d['state'])
+  const { at, attempts, answerAt, reason } = { at: d['at'], attempts: d['attempts'], answerAt: d['answerAt'], reason: d['reason'] }
+  const shaped = state !== undefined && (remote ? answerAt === undefined : isText(answerAt))
+  if (!shaped || !isText(at) || typeof attempts !== 'number' || !Number.isInteger(attempts) || attempts < 0) return null
+  if (reason !== undefined && !isText(reason)) return null
+  if (!Object.keys(d).every(key => ['state', 'at', 'attempts', 'answerAt', 'reason'].includes(key))) return null
+  return { state, at, attempts, ...(isText(answerAt) ? { answerAt } : {}), ...(reason !== undefined ? { reason } : {}) }
 }
 
 // Where an orchestrator's reports go: the coordinator registered on this machine first
@@ -2463,7 +2625,7 @@ function deliveryRead(e: any): boolean {
 // say, and the host refuses a send to a name several carry: the coordinator on this machine is
 // then addressed by the session id the host's registry gives it.
 export type CoordinatorTo = string | { sessionId: string }
-export async function coordinatorAddress($: any): Promise<{ to: CoordinatorTo; name: string; local: boolean } | null> {
+export async function coordinatorAddress($: Host<'env' | 'fs'>): Promise<{ to: CoordinatorTo; name: string; local: boolean } | null> {
   const recordText = String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => ''))
   const local = coordinatorOf(recordText)
   if (local) return { to: REFERENCED.test(local) ? local : (await registeredSession($, local, recordText)) ?? local, name: local, local: true }
@@ -2479,10 +2641,11 @@ export const REFERENCED = / \[[^\]\s]+\]$/
 // several do; null when none or several, or when the registry cannot be read. `exclude` is a
 // session id left out of the candidates, and `pid` the process to choose among several, over
 // the record's own.
-async function registeredSession($: any, name: string, recordText: string, options: { exclude?: string; pid?: string | null } = {}): Promise<{ sessionId: string } | null> {
+async function registeredSession($: Host<'env' | 'fs'>, name: string, recordText: string, options: { exclude?: string; pid?: string | null } = {}): Promise<{ sessionId: string } | null> {
   let pid: string | null = options.pid ?? null
   try {
-    const recorded = JSON.parse(recordText)?.pid
+    const read: unknown = JSON.parse(recordText)
+    const recorded = isRecord(read) ? read['pid'] : undefined
     if (pid === null && recorded !== undefined && recorded !== null && String(recorded) !== '') pid = String(recorded)
   } catch { /* coordinatorOf read it already */ }
   const dir = `${await configDir($)}/sessions`
@@ -2491,24 +2654,26 @@ async function registeredSession($: any, name: string, recordText: string, optio
     for (const file of await $.fs.list(dir)) {
       if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
       try {
-        const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
-        if (record?.name === name && typeof record.sessionId === 'string' && record.sessionId !== '' && record.sessionId !== options.exclude) named.push({ pid: String(record.pid ?? ''), sessionId: record.sessionId })
+        const record = registryRecord(String(await $.fs.read(`${dir}/${file.name}`)))
+        if (record !== null && record.name === name && record.sessionId !== options.exclude) named.push({ pid: String(record.pid ?? ''), sessionId: record.sessionId })
       } catch { /* a record being written, or gone: not this one */ }
     }
   } catch {
     return null
   }
   const chosen = named.length > 1 && pid !== null ? named.filter(record => record.pid === pid) : named
-  return chosen.length === 1 ? { sessionId: chosen[0].sessionId } : null
+  const [only] = chosen
+  return chosen.length === 1 && only ? { sessionId: only.sessionId } : null
 }
 
 // A send to the coordinator. A name the host refuses as several sessions' is sent once more to
 // the one the refusal places on this machine, by its reference, when it names exactly one.
-export async function sendToCoordinator($: any, to: CoordinatorTo, text: string): Promise<any> {
+export async function sendToCoordinator($: Host<'session'>, to: CoordinatorTo, text: string): Promise<SessionSendResult> {
   const sent = await $.session.send({ to, text })
   if (sent?.isDelivered || typeof to !== 'string') return sent
-  const here = String(sent?.reason ?? '').split('\n').map(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1]).filter(Boolean)
-  return here.length === 1 && here[0] !== to ? $.session.send({ to: here[0], text }) : sent
+  const here = String(sent.reason ?? '').split('\n').flatMap(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1] ?? [])
+  const [only] = here
+  return here.length === 1 && only !== undefined && only !== to ? $.session.send({ to: only, text }) : sent
 }
 
 // A consent subject as a log line names it: the pull request of a waiver, the repository of auto-merge.
@@ -2521,7 +2686,7 @@ function addressLabel(to: CoordinatorTo): string {
   return typeof to === 'string' ? to : `session ${to.sessionId}`
 }
 
-async function learnCoordinator($: any, learnt: { name: string; from: string | null; at: string }): Promise<void> {
+async function learnCoordinator($: Host<'clock' | 'env' | 'fs' | 'process'>, learnt: { name: string; from: string | null; at: string }): Promise<void> {
   const path = `${await storeOf($)}/coordinator-learnt`
   const known = parseLearnt(String(await $.fs.read(path).catch(() => '')))
   if (known && known.name === learnt.name && known.from === learnt.from) return
@@ -2533,7 +2698,7 @@ async function learnCoordinator($: any, learnt: { name: string; from: string | n
 // and address. At « takeover confirmed » the predecessor and its successor carry one name, so
 // the receiving session's own record is left out of the candidates, and the process id the
 // reply address carries (`uds:/…/<pid>.sock`) chooses among the several that remain.
-async function learnSuccessor($: any, learnt: LearntSuccessor): Promise<void> {
+async function learnSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, learnt: LearntSuccessor): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   if (roleOf(row?.name ?? null) !== 'orchestrator') return
@@ -2547,7 +2712,7 @@ function successorPid(successor: LearntSuccessor): string | null {
   return successor.from?.match(/\/(\d+)\.sock$/)?.[1] ?? null
 }
 
-async function readSuccessor($: any, sessionId: string): Promise<LearntSuccessor | null> {
+async function readSuccessor($: Host<'env' | 'fs'>, sessionId: string): Promise<LearntSuccessor | null> {
   return parseSuccessor(String(await $.fs.read(`${await storeOf($)}/${successorKey(sessionId)}`).catch(() => '')))
 }
 
@@ -2555,7 +2720,7 @@ async function readSuccessor($: any, sessionId: string): Promise<LearntSuccessor
 // theirs and the status stays open. The successor's own fingerprint is left as it is. Each move
 // is one log line; one that cannot be written is one too, and the others go on. Nothing is
 // settled: the coordinator is told nothing.
-async function moveToSuccessor($: any, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
+async function moveToSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
   // A successor the registry did not name alone at its « takeover confirmed » is looked up again:
   // its record may have landed since. One still unnamed is drawn on its name (hostedSuccessors).
   const session = successor.session ?? (await registeredSession($, successor.name, '', { exclude: sessionId, pid: successorPid(successor) }))?.sessionId ?? ''
@@ -2566,7 +2731,7 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
         !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, session, from: successor.name, movedFrom: sessionId })
       if (written) await logLine($, 'supervision', `round: moved to the successor ${successor.name}: ${entry.id}`)
     } catch (err) {
-      await logLine($, 'supervision', `round: ${(err as Error).message}`)
+      await logLine($, 'supervision', `round: ${messageOf(err)}`)
     }
   }
   // The questions asked with `ask` follow, their asker now the successor.
@@ -2576,7 +2741,7 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
 
 // The host name, read once per module load: the machine label a row carries.
 let machine: string | null = null
-async function machineOf($: any): Promise<string> {
+async function machineOf($: Host<'process'>): Promise<string> {
   if (machine === null) {
     const run = await $.process.run(['hostname', '-s'], { timeoutMs: 2000 }).catch(() => null)
     machine = machineLabel(run?.exitCode === 0 ? String(run.stdout ?? '') : '')
@@ -2591,7 +2756,7 @@ async function machineOf($: any): Promise<string> {
 // never a failure.
 const CI_WATCH_LIST_CAP = 4096
 const CI_WATCH_READ_CAP = 256
-async function prsOf($: any, sessionId: string, repo: string | null): Promise<string[]> {
+async function prsOf($: Host<'env' | 'fs'>, sessionId: string, repo: string | null): Promise<string[]> {
   const dir = `${await stateDir($)}/ci-watch`
   const entries: { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(dir).catch(() => [])
   const files = entries.slice(0, CI_WATCH_LIST_CAP).filter(entry => entry?.kind === 'file')
@@ -2612,7 +2777,7 @@ async function prsOf($: any, sessionId: string, repo: string | null): Promise<st
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
 // is nobody to send to. What was sent is kept only once delivered; a failure is one log
 // line, tried again at the next measure or turn end.
-export async function sendRow($: any, sessionId: string): Promise<void> {
+export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string): Promise<void> {
   const store = await storeOf($)
   const read = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
   if (read?.role !== 'orchestrator') return
@@ -2636,7 +2801,7 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
 // acknowledged to its sender. The same entry sent again, its wait's start unchanged, is never
 // entered twice, whatever became of it since: it is acknowledged again, its first acknowledgment
 // having been lost. Anything else is one log line.
-async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
+async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
     await logLine($, 'supervision', `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
@@ -2685,7 +2850,7 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
     const sent = await $.session.send({ to: from, text: ack })
     if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
-    await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${messageOf(err)}`)
   }
   return { consumed: 'orchestrator: a remote question, entered' }
 }
@@ -2695,7 +2860,7 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
 // a delivery's, and clears it. An older ask's, late, matches nothing: the newer one stays pending
 // and is sent again. The wait is read again just before, a turn's end may have written it. Any
 // other is one log line.
-async function receiveAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
+async function receiveAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the wait read'
   try {
     const sessionId = await $.session.id()
@@ -2707,7 +2872,7 @@ async function receiveAck($: any, ack: QAck | null): Promise<{ consumed: string 
     step = 'the wait write'
     await writeWait($, sessionId, { ...now, relayed: now.pending_key, relayed_id: now.pending, pending: null, pending_key: null })
   } catch (err) {
-    await logLine($, 'supervision', `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${messageOf(err)}`)
     return { consumed: 'orchestrator: an acknowledgment, failed' }
   }
   return { consumed: 'orchestrator: an acknowledgment, recorded' }
@@ -2722,7 +2887,7 @@ async function receiveAck($: any, ack: QAck | null): Promise<{ consumed: string 
 // one part a model reads. The last one taken is kept (answeredKey): the same answer sent again, its
 // acknowledgment lost, is acknowledged again and passed nowhere. A throw is one log line and the
 // readable line still passes. A refused one is one log line, passed nowhere, never acknowledged.
-async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<typeof parseAnswer>, byEvent: boolean): Promise<{ consumed: string } | { readable: string }> {
+async function receiveAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, delivery: Delivery, answer: ReturnType<typeof parseAnswer>, byEvent: boolean): Promise<{ consumed: string } | { readable: string }> {
   if (!answer) {
     await logLine($, 'supervision', `receive: an answer was refused (${delivery.body.length} characters)`)
     return { consumed: 'orchestrator: a malformed answer, refused' }
@@ -2756,7 +2921,7 @@ async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<type
     if (already) return { consumed: 'orchestrator: an answer to a question answered in its tab first, said already answered' }
     if (again) return { consumed: 'orchestrator: an answer received already, acknowledged again' }
   } catch (err) {
-    await logLine($, 'supervision', `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an answer failed at ${step} (${answer.id}): ${messageOf(err)}`)
   }
   return { readable: answer.readable }
 }
@@ -2764,8 +2929,10 @@ async function receiveAnswer($: any, delivery: Delivery, answer: ReturnType<type
 // The last answer taken, as answeredKey's file holds it: null when it holds no id and start.
 function parseAnswered(text: string): { id: string; since: string; by?: 'tab' } | null {
   try {
-    const read = JSON.parse(text)
-    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since, ...(read.by === 'tab' ? { by: 'tab' as const } : {}) } : null
+    const read: unknown = JSON.parse(text)
+    if (!isRecord(read)) return null
+    const [id, since] = [read['id'], read['since']]
+    return isText(id) && isText(since) ? { id, since, ...(read['by'] === 'tab' ? { by: 'tab' as const } : {}) } : null
   } catch {
     return null
   }
@@ -2774,7 +2941,7 @@ function parseAnswered(text: string): { id: string; since: string; by?: 'tab' } 
 // A remote sender's acknowledgment of the answer sent to it, consumed whatever it holds: the
 // entry of that id and start, its answer pending, sent or failed, is acknowledged and closed, and
 // the pane drawn again. Any other is one log line.
-async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: string }> {
+async function receiveAnswerAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'ui'>, ack: QAck | null): Promise<{ consumed: string }> {
   let step = 'the entry read'
   try {
     if (!ack) {
@@ -2799,13 +2966,13 @@ async function receiveAnswerAck($: any, ack: QAck | null): Promise<{ consumed: s
     step = 'the pane redraw'
     $.ui.invalidate('ui.render')
   } catch (err) {
-    await logLine($, 'supervision', `receive: an answer's acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: an answer's acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${messageOf(err)}`)
   }
   return { consumed: "orchestrator: an answer's acknowledgment, recorded" }
 }
 
 // An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
-async function receiveQAck($: any, ack: QAck | null, from: string | null): Promise<{ consumed: string }> {
+async function receiveQAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, ack: QAck | null, from: string | null): Promise<{ consumed: string }> {
   if (ack?.of === 'asked') return receiveAskedAck($, from, ack)
   if (ack?.of === 'reply') return receiveReplyAck($, from, ack)
   return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
@@ -2826,7 +2993,7 @@ function peerAddress(delivery: Delivery): string | null {
 
 // This session's role, by the name its row carries, else by a walk of its own.
 
-async function ownRole($: any): Promise<SessionRow['role']> {
+async function ownRole($: Host<'env' | 'fs' | 'process' | 'session'>): Promise<SessionRow['role']> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   if (row?.name) return roleOf(row.name)
@@ -2836,7 +3003,7 @@ async function ownRole($: any): Promise<SessionRow['role']> {
 
 // A marked delivery: consumed whatever it holds — the marker is the module's own, never a
 // message for the model — and written as a remote row only when it passes every check.
-async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
+async function receiveRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, body: string): Promise<{ consumed: string }> {
   const row = parseRemoteRow(body)
   if (!row) {
     await logLine($, 'supervision', `receive: a marked row was refused (${body.length} characters)`)
@@ -2848,7 +3015,7 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
     await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(row) + '\n'))
   } catch (err) {
     // The lock stayed held, or the write failed: the next row the sender sends is stored instead.
-    await logLine($, 'supervision', `receive: a remote row of ${row.name} was not stored: ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: a remote row of ${row.name} was not stored: ${messageOf(err)}`)
     return { consumed: 'orchestrator: a supervision row, not stored' }
   }
   return { consumed: 'orchestrator: a supervision row, stored' }
@@ -2860,7 +3027,7 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
 // changes. Only the peer whose address the entry came from (origin.address) can withdraw it, and
 // the words the message quotes are a peer's, never the operator's consent: they are not passed on.
 // Consumed whatever it holds, the line being the module's own.
-async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<typeof parseWithdrawal>>, from: string | null): Promise<{ consumed: string } | null> {
+async function receiveWithdrawal($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, withdrawal: NonNullable<ReturnType<typeof parseWithdrawal>>, from: string | null): Promise<{ consumed: string } | null> {
   if (await ownRole($) !== 'coordinator') return null
   try {
     const blocks = cleanBlocks(withdrawal.blocks)
@@ -2870,7 +3037,7 @@ async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<type
     }
     $.ui.invalidate('ui.render')
   } catch (err) {
-    await logLine($, 'supervision', `receive: a withdrawal failed (${withdrawal.name}): ${(err as Error).message}`)
+    await logLine($, 'supervision', `receive: a withdrawal failed (${withdrawal.name}): ${messageOf(err)}`)
   }
   return { consumed: 'coordinator: a remote withdrawal, applied' }
 }
@@ -2881,7 +3048,7 @@ async function receiveWithdrawal($: any, withdrawal: NonNullable<ReturnType<type
 // sender's newer row landing between the first read and the removal, or a read that failed once,
 // never loses a live row.
 const REMOTE_READ_CAP = 64
-export async function readRemoteRows($: any): Promise<RemoteRow[]> {
+export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>): Promise<RemoteRow[]> {
   const dir = `${await storeOf($)}/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
@@ -2915,7 +3082,7 @@ export async function readRemoteRows($: any): Promise<RemoteRow[]> {
 // the stamp's refresh (DECK_REFRESH_MS) is the machine's, not each session's. Bounded by its
 // callers and never a failure of theirs: a deck that cannot be written is one log line, and the
 // next change writes it.
-export async function writeDeck($: any): Promise<void> {
+export async function writeDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<void> {
   const state = await stateDir($)
   const local = await readSessions($)
   const chainDir = `${state}/chains`
@@ -2946,13 +3113,9 @@ export async function writeDeck($: any): Promise<void> {
 
 // The deck a file holds, with the time it was generated, or null when it holds none of this version.
 function writtenDeck(text: string): { deck: Deck; at: number } | null {
-  try {
-    const deck = JSON.parse(text) as Deck
-    const at = Date.parse(String(deck?.generated_at))
-    return deck && deck.version === DECK_VERSION && Number.isFinite(at) ? { deck, at } : null
-  } catch {
-    return null
-  }
+  const deck = parseDeck(text)
+  const at = Date.parse(deck?.generated_at ?? '')
+  return deck && Number.isFinite(at) ? { deck, at } : null
 }
 
 // The session's own usage (usage.ts): its transcript and its subagents', never another
@@ -2973,11 +3136,11 @@ const USAGE_ROLES: ReadonlySet<string> = new Set(['coordinator', 'orchestrator',
 
 // Starts the read when none runs, and answers the running one: its promise never rejects. A
 // hook never awaits it; a test does, with its own clock.
-export function refreshUsage($: any, clock: () => number = Date.now): Promise<void> {
+export function refreshUsage($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, clock: () => number = Date.now): Promise<void> {
   if (!usageRead) {
     usageRead = readOwnUsage($, clock)
       .then(async published => { if (published) await writeDeck($) })
-      .catch(err => logLine($, 'supervision', `deck: usage: ${(err as Error).message}`))
+      .catch(err => logLine($, 'supervision', `deck: usage: ${messageOf(err)}`))
       .finally(() => { usageRead = null })
   }
   return usageRead
@@ -2986,7 +3149,7 @@ export function refreshUsage($: any, clock: () => number = Date.now): Promise<vo
 // One read: the session's row says whether the deck lists it (its role); its transcript is
 // found once, and a miss is looked for again at most once per TRANSCRIPT_RETRY_MS, so a read
 // in between never lists the projects directory. True when the row was written.
-async function readOwnUsage($: any, clock: () => number): Promise<boolean> {
+async function readOwnUsage($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, clock: () => number): Promise<boolean> {
   const id = String(await $.session.id())
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(id)}`).catch(() => '')))
   if (!row || !USAGE_ROLES.has(String(row.role))) return false
@@ -3005,14 +3168,14 @@ async function readOwnUsage($: any, clock: () => number): Promise<boolean> {
 // The appended lines of the main transcript and of every subagent's, booked. A main
 // transcript that cannot be read (deleted, unreadable) is usage null: its book and its path
 // are dropped, and the next read looks for it again.
-async function bookOwn($: any, own: OwnBook, main: string): Promise<DeckUsage | null> {
+async function bookOwn($: Host<'env' | 'fs' | 'plugin' | 'process'>, own: OwnBook, main: string): Promise<DeckUsage | null> {
   const now = Date.now()
   const { prices, text } = await readPrices($)
   try {
     const size = (await $.fs.stat(main)).size
     if (typeof size !== 'number') throw new Error('no size')
   } catch (err) {
-    await logOnce($, `main ${own.id}`, main, `deck: the transcript ${main} cannot be read (${(err as Error).message}): its usage is null`)
+    await logOnce($, `main ${own.id}`, main, `deck: the transcript ${main} cannot be read (${messageOf(err)}): its usage is null`)
     own.main = undefined
     own.book = newBook()
     return null
@@ -3029,7 +3192,7 @@ async function bookOwn($: any, own: OwnBook, main: string): Promise<DeckUsage | 
       await readAppended($, book, path)
       logged.delete(`file ${path}`)
     } catch (err) {
-      const message = (err as Error).message
+      const message = messageOf(err)
       await logOnce($, `file ${path}`, message, `deck: usage of ${path}: ${message}`)
     }
   }
@@ -3039,7 +3202,7 @@ async function bookOwn($: any, own: OwnBook, main: string): Promise<DeckUsage | 
 
 // routing/prices.json under the state directory. Missing or no JSON object: no prices, every
 // period's cost null and its tokens still counted, said once per text the file holds.
-async function readPrices($: any): Promise<{ prices: Prices; text: string }> {
+async function readPrices($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<{ prices: Prices; text: string }> {
   const path = `${await stateDir($)}/routing/prices.json`
   let text: string | null = null
   try {
@@ -3050,10 +3213,11 @@ async function readPrices($: any): Promise<{ prices: Prices; text: string }> {
     return { prices: {}, text: '' }
   }
   try {
-    const parsed = JSON.parse(text)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const parsed: unknown = JSON.parse(text)
+    if (isRecord(parsed)) {
       logged.delete('prices')
-      return { prices: parsed, text }
+      // An entry the rule cannot price prices nothing, as usage.ts prices it.
+      return { prices: Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, Price] => isPrice(entry[1]))), text }
     }
   } catch { /* said below */ }
   await logOnce($, 'prices', text, `deck: ${path} is no JSON object: every cost is null`)
@@ -3063,7 +3227,7 @@ async function readPrices($: any): Promise<{ prices: Prices; text: string }> {
 // What the usage read last said per topic: a condition is logged when it starts or changes,
 // never again on every read while it lasts, and forgotten when it ends.
 const logged = new Map<string, string>()
-async function logOnce($: any, topic: string, fingerprint: string, message: string): Promise<void> {
+async function logOnce($: Host<'env' | 'plugin' | 'process'>, topic: string, fingerprint: string, message: string): Promise<void> {
   if (logged.get(topic) === fingerprint) return
   logged.set(topic, fingerprint)
   await logLine($, 'supervision', message)
@@ -3071,7 +3235,7 @@ async function logOnce($: any, topic: string, fingerprint: string, message: stri
 
 // The lines appended to one transcript since the book's offset; a file shorter than it was
 // rewritten and is read again from its first byte.
-async function readAppended($: any, book: UsageBook, path: string): Promise<void> {
+async function readAppended($: Host<'fs' | 'process'>, book: UsageBook, path: string): Promise<void> {
   const size = (await $.fs.stat(path)).size
   if (typeof size !== 'number') throw new Error('no size')
   if (size < (book.files.get(path)?.offset ?? 0)) rewind(book, path)
@@ -3083,14 +3247,14 @@ async function readAppended($: any, book: UsageBook, path: string): Promise<void
   ingest(book, path, offset, read.text, read.consumed)
 }
 
-async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
+async function refreshDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, bound = RELAY_BOUND_MS): Promise<void> {
   // Detached: the hook goes on, and the read writes the row and the deck again when it is done.
   void refreshUsage($)
   try {
     const done = await withDeadline(writeDeck($), bound)
     if (isDegradedPass(done)) await logLine($, 'supervision', `deck: did not finish within ${bound} ms`)
   } catch (err) {
-    await logLine($, 'supervision', `deck: ${(err as Error).message}`)
+    await logLine($, 'supervision', `deck: ${messageOf(err)}`)
   }
 }
 
@@ -3103,7 +3267,7 @@ async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
 // that chain's tty, the latest if two; a chain whose owner tty holds no live orchestrator
 // leaves the entry orphaned, one log line. A pid the process table cannot be read for is never
 // judged dead. Null when neither path finds one.
-export async function orchestratorOn($: any, tty: string | null, agent: string, what: string): Promise<CoordinatorTo | null> {
+export async function orchestratorOn($: Host<'env' | 'fs' | 'plugin' | 'process'>, tty: string | null, agent: string, what: string): Promise<CoordinatorTo | null> {
   const dir = `${await stateDir($)}/chains`
   const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = tty ? await $.fs.list(dir).catch(() => []) : []
   const chains = []
@@ -3125,8 +3289,8 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
     for (const file of await $.fs.list(registry).catch(() => [])) {
       if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
       try {
-        const record = JSON.parse(String(await $.fs.read(`${registry}/${file.name}`)))
-        if (record?.name !== bare || typeof record.sessionId !== 'string' || record.sessionId === '') continue
+        const record = registryRecord(String(await $.fs.read(`${registry}/${file.name}`)))
+        if (record === null || record.name !== bare) continue
         const startedAt = Number(record.startedAt) || 0
         if ((!chosen || startedAt > chosen.startedAt) && await live(record.pid)) chosen = { sessionId: record.sessionId, startedAt }
       } catch { /* a record being written, or gone: not this one */ }
@@ -3161,7 +3325,7 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
 // An agent's measure against the gate its session runs under (the gauge's thresholds,
 // read from this session's environment): past it and not yet reported, its orchestrator
 // is sent the figures once; back under it, the mark is cleared for the next crossing.
-export async function reportGate($: any, sessionId: string, name: string, tty: string,
+export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, name: string, tty: string,
   reading: { context_tokens: number; context_percent: number; context_window: number }): Promise<void> {
   const path = `${await storeOf($)}/${gateKey(sessionId)}`
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, await gateEnv($)).tripped
@@ -3192,7 +3356,7 @@ const tabs = new Map<string, TabMemory>()
 // without the mark, the one read. A read that fails is said once and tried again at the next
 // change; a second failure marks the window not-home for the session's life, so a hung or
 // absent tmux costs two processes, not one per event. The hook goes on.
-async function tabOf($: any): Promise<{ target: TabTarget; bin: string; memory: TabMemory } | null> {
+async function tabOf($: Host<'env' | 'plugin' | 'process'>): Promise<{ target: TabTarget; bin: string; memory: TabMemory } | null> {
   const target = targetOf(await $.env.get('TMUX'), await $.env.get('TMUX_PANE'))
   if (!target) return null
   const bin = (await $.env.get('ORCHESTRATOR_TMUX')) || 'tmux'
@@ -3212,21 +3376,21 @@ async function tabOf($: any): Promise<{ target: TabTarget; bin: string; memory: 
     } catch (err) {
       memory.misses += 1
       if (memory.misses >= 2) memory.home = false
-      await tabFailure($, memory, (err as Error).message)
+      await tabFailure($, memory, messageOf(err))
       return null
     }
   }
   return memory.home ? { target, bin, memory } : null
 }
 
-async function tabFailure($: any, memory: TabMemory, message: string): Promise<void> {
+async function tabFailure($: Host<'env' | 'plugin' | 'process'>, memory: TabMemory, message: string): Promise<void> {
   if (memory.said) return
   memory.said = true
   await logLine($, 'supervision', `tab-state: ${message}`)
 }
 
 // The state written on the window, only when it is not the one already shown.
-async function showTabState($: any, state: TabState): Promise<void> {
+async function showTabState($: Host<'env' | 'plugin' | 'process'>, state: TabState): Promise<void> {
   const tab = await tabOf($).catch(() => null)
   if (!tab || tab.memory.shown === state) return
   try {
@@ -3236,12 +3400,12 @@ async function showTabState($: any, state: TabState): Promise<void> {
     tab.memory.said = false
   } catch (err) {
     tab.memory.shown = null
-    await tabFailure($, tab.memory, (err as Error).message)
+    await tabFailure($, tab.memory, messageOf(err))
   }
 }
 
 // The address of this session's window when it runs in a home session, else null.
-async function windowAddress($: any): Promise<string | null> {
+async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<string | null> {
   try {
     return (await tabOf($))?.memory.window ?? null
   } catch {
@@ -3250,19 +3414,19 @@ async function windowAddress($: any): Promise<string | null> {
 }
 
 // A turn ended: the wait it left in the session's wait file, else the gate, else rest.
-async function showTurnEnd($: any): Promise<void> {
+async function showTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<void> {
   try {
     const tab = await tabOf($)
     if (!tab) return
     const wait = await readWait($, await $.session.id())
     await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past))
   } catch (err) {
-    await logLine($, 'supervision', `tab-state: ${(err as Error).message}`)
+    await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
 }
 
 // A measure: the gate's side remembered for the turn's end, and shown at once on a window at rest.
-async function showGate($: any, reading: { context_percent: number; context_tokens: number; context_window: number }): Promise<void> {
+async function showGate($: Host<'env' | 'fs' | 'plugin' | 'process'>, reading: { context_percent: number; context_tokens: number; context_window: number }): Promise<void> {
   try {
     const tab = await tabOf($)
     if (!tab) return
@@ -3270,7 +3434,7 @@ async function showGate($: any, reading: { context_percent: number; context_toke
     const next = stateAfterMeasure(tab.memory.shown, tab.memory.past)
     if (next) await showTabState($, next)
   } catch (err) {
-    await logLine($, 'supervision', `tab-state: ${(err as Error).message}`)
+    await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
 }
 
@@ -3281,7 +3445,7 @@ async function showGate($: any, reading: { context_percent: number; context_toke
 // own over its own $. A caller in another file hands its $ in as an argument,
 // as it does to every other function of this file it calls (question.ts's
 // settleWords reads the transcript so).
-export async function readBlock($: any, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
+export async function readBlock($: Host<'process'>, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)
   return bytesOfBase64(String(stdout ?? ''))
@@ -3290,7 +3454,7 @@ export async function readBlock($: any, path: string, index: number, timeoutMs: 
 // The transcript, found the gauge's own way (the guards' reader, spelled over
 // this file's $): by session id under the projects directory. A miss returns
 // '': the rename fallback then names nothing, and the launch name stands alone.
-export async function transcriptPathOf($: any, sessionId: string): Promise<string> {
+export async function transcriptPathOf($: Host<'env' | 'fs'>, sessionId: string): Promise<string> {
   try {
     const projects = `${await configDir($)}/projects`
     for (const entry of await $.fs.list(projects)) {
@@ -3312,7 +3476,7 @@ export async function transcriptPathOf($: any, sessionId: string): Promise<strin
 // Undefined when git gave no answer — it could not run, or was ended at its bound
 // before it said anything — a value the render does not keep. No origin, or no checkout, is git's
 // own answer: its `error:` or `fatal:` line.
-async function repoRead($: any): Promise<string | null | undefined> {
+async function repoRead($: Host<'process'>): Promise<string | null | undefined> {
   try {
     const remote = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: REPO_READ_MS })
     if (remote.exitCode !== 0) return /^(?:error|fatal):/m.test(String(remote.stderr ?? '')) ? null : undefined
