@@ -338,13 +338,12 @@ const pluginForms = (file: string, short: string): string[] => commandForms(file
 
 export function register(on: On<Held>): void {
   // Each matcher names one form the host hands the hook (short-names.ts, measured live): the
-  // plugin's command as `orchestrator:<file>`, the 0.80.0
-  // `orchestrator:<short>`, and the bare `<short>` of the user command the installer writes,
-  // answered only when that copy is this plugin's — the operator's own command of the same name
-  // runs as he wrote it. A command the model is offered has no short name (short-names.tsv), so
-  // no bare form. The envelope's
-  // own command field is the key a matcher narrows on, so each hook answers its command's run
-  // alone, never another plugin's and never the host's own commands. The engine validates
+  // plugin's command as `orchestrator:<file>`, the 0.80.0 `orchestrator:<short>`, and the bare
+  // `<short>` of the user command the installer writes, answered only when that copy is this
+  // plugin's — the operator's own command of the same name runs as he wrote it. A command the
+  // model is offered has no short name (short-names.tsv), so no bare form. The envelope's own
+  // command field is the key a matcher narrows on, so each hook answers its command's run alone,
+  // never another plugin's and never the host's own commands. The engine validates
   // neither key nor field; the wiring tests pin the exact objects.
   for (const command of pluginForms('status', 'orchestrator-status')) {
     on('command.run', { command }, async ($, e, next) => {

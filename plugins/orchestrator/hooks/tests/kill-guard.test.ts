@@ -269,13 +269,14 @@ test('a pid kept in a file is a recorded pid, any other substitution is a lookup
   expect(detectPatternKills('bash -c \'kill $(cat f.pid)\'')).toEqual([])
 })
 
-// The children of a pid the session recorded: `pkill -P` with that pid, typed or read back from its
-// file, and at most a signal, reaches only what that process started.
+// The children of a pid the session recorded: `pkill -P` with that pid read back from its file, in
+// quotes so the reader keeps where it stood, and at most a signal, reaches only what that process
+// started. A typed pid proves nothing: `-P 1` is every detached process.
 test('pkill -P of a recorded pid passes, any other pkill is a kill by pattern', () => {
-  for (const c of ['pkill -P 1234', 'pkill -9 -P 1234', 'pkill -TERM -P 1234', 'pkill -P $(cat server.pid)', 'pkill -P "$(cat /tmp/x.pid)"', 'pkill -P 1234; kill 1234']) {
+  for (const c of ['pkill -P "$(cat /tmp/x.pid)"', 'pkill -9 -P "$(cat server.pid)"', 'pkill -TERM -P "$(cat x.pid)"', 'pkill -SIGKILL -P "$(cat x.pid)"', 'pkill -P "$(cat x.pid)"; kill $(cat x.pid)']) {
     expect(detectPatternKills(c), c).toEqual([])
   }
-  for (const c of ['pkill -P 1234 -f vite', 'pkill -P 1234 node', 'pkill -P $(pgrep node)', 'pkill -P $$', 'pkill -P', 'pkill -P 1 -P 2', 'pkill -f -P 1234', 'killall -P 1234', 'pkill -P 12a']) {
+  for (const c of ['pkill -P 1', 'pkill -P 1234', 'pkill -P $(cat x.pid)', 'pkill $(cat x.pid) -P', 'pkill -9 $(cat x.pid) -P', 'pkill "$(cat x.pid)" -P', 'pkill -U -P "$(cat x.pid)"', 'pkill -P "$(cat x.pid)" -f vite', 'pkill -P $(cat a.pid) $(cat b.pid)', 'pkill -P 1234 -f vite', 'pkill -P 1234 node', 'pkill -P $(pgrep node)', 'pkill -P $$', 'pkill -P', 'pkill -P 1 -P 2', 'pkill -f -P 1234', 'killall -P 1234', 'pkill -P 12a']) {
     expect(detectPatternKills(c), c).not.toEqual([])
   }
 })

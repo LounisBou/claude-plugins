@@ -266,8 +266,8 @@ test('the module hooks every form of the four commands and registers on nothing 
   // spellings live here. Measured live, the host hands the plugin's command (no `name:`) as
   // `orchestrator:<file>` and the installer's user command as its bare short name; the 0.80.0
   // `orchestrator:<short>` stays. A registered copy is refused (a built-in's name, a colon
-  // outside the charset), so no session event registers anything here. A command the model is offered
-  // has no short name, so no bare form: only sleeping keeps one.
+  // outside the charset), so no session event registers anything here. A command the model is
+  // offered has no short name, so no bare form: only sleeping keeps one.
   const { registrations } = mounted()
   expect(registrations.map(r => [r.event, r.matcher])).toEqual([
     ['command.run', { command: 'orchestrator:orchestrator-status' }],
