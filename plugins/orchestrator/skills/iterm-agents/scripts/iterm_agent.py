@@ -175,11 +175,6 @@ def current_name(name):
 # through the host's `enableArtifact` setting, which also drops the « Scratchpad
 # directory » line every agent brief relies on.
 LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "ReportFindings")
-# The module registers these in every session, and only a session that moves an orchestrator
-# between machines calls them: an orchestrator, or the coordinator that orders the move.
-MOVE_TOOLS = ("mcp__orchestrator__move_send", "mcp__orchestrator__move_probe",
-              "mcp__orchestrator__end_session")
-MOVE_ROLES = (ORCH, COORD)
 # The tools only an orchestrator calls, registered in every session too: an implementer agent
 # is never given them, a title of no role being read as an agent's.
 ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
@@ -4189,11 +4184,10 @@ def title_role(title):
 
 def default_removed(role):
     """The tools a session of this role is not given unless its spawn keeps them. Only an
-    orchestrator and the coordinator keep the three that move an orchestrator, only an agent
-    loses the four an orchestrator alone calls, and an orchestrator also loses the servers it
-    never calls."""
-    return (LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS)
-            + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS) + (ORCH_UNUSED if role == ORCH else ()))
+    agent loses the four an orchestrator alone calls, and an orchestrator also loses the
+    servers it never calls."""
+    return (LEAN_REMOVED + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS)
+            + (ORCH_UNUSED if role == ORCH else ()))
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -5883,7 +5877,7 @@ def rotated_session(tty):
 def cmd_pair(argv):
     """The calling session's model and effort now, read on its transcript (read_pair):
     `model=<m> effort=<e>`, or exit 1 with the reason. Read-only: an orchestrator answers a
-    pause with it, and a move's record is filled from it, rather than declaring either."""
+    pause with it, rather than declaring either."""
     if argv:
         die("pair: takes no argument; it reads the calling session's own transcript")
     try:
@@ -6746,8 +6740,7 @@ def read_offered(path):
 def tool_rows(offered, catalogue):
     """The listing, one `kind | name | characters | tokens | roles` row per item. A `?` is a
     figure this transcript cannot give: a name the default removes from at least one role
-    (the five unused tools from every role, the three that move an orchestrator from every
-    role but `Orch` and `Coord`, the four only an orchestrator calls from `Agent`) is listed even when the reader's own session lacks it (a
+    (the five unused tools from every role, the four only an orchestrator calls from `Agent`) is listed even when the reader's own session lacks it (a
     lean caller never received it), and a catalogue server has no size unless this session
     loaded it. The last field names the roles whose default removes the item, `-` when none
     does."""
@@ -6769,7 +6762,7 @@ def tool_rows(offered, catalogue):
     for kind in ("loaded", "deferred", "skills", "agent-types"):
         items = dict(offered[kind])
         if kind == "loaded":
-            every = set().union(*removed.values()) | set(MOVE_TOOLS) | set(ORCH_TOOLS)
+            every = set().union(*removed.values()) | set(ORCH_TOOLS)
             missing = sorted(every - set(offered["loaded"]) - set(offered["deferred"]))
         else:
             missing = []

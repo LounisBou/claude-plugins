@@ -37,7 +37,7 @@ operator works.
 1. Every machine-wide fact of the orchestrator is kept by core's store, and `deck.json` is a view of it whose format is unchanged.
 2. A wait is declared by a structured tool call, `declare_wait({kind, blocks})`, and the stop gate decides on it deterministically.
 3. The hooks module is strict TypeScript on core, and every bash script is ported to TypeScript; Python remains only as a thin iTerm2 API adapter.
-4. The machine-to-machine move works end to end on core's store.
+4. The machine-to-machine move works end to end on core's store. **Withdrawn**: deleted on 2026-11-14.
 5. The local command-text push guard is removed once the program's forge protection has shipped.
 6. Deadlines cancel their work, and no temporary file outlives the write that made it.
 7. The suite blocks on macOS and Linux.
@@ -79,8 +79,8 @@ Read from the code at orchestrator 0.99.3. Pull requests are this repository's.
 |---|---|---|---|
 | 1 | met | the hooks' store on core (`core/store.ts`, `store-io.ts`); `deck.json` (version 3) a view held byte for byte by `hooks/tests/golden-deck.ts`, written only when it differs or is a minute old (#66, #70) | `round/` and `chains/` sit outside `store/`, written under the store's lock convention |
 | 2 | met, with its transition | `declare_wait` (`hooks/wait.ts`), taught in place of the last line (#57, #60) | the stop gate still reads the last line of a turn that declared nothing (`stop-gate.ts`), as « Constraints » allows; removing it is the transition's end |
-| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | eight hook files are under the strict check; `supervision.ts`, `stop-gate.ts`, `guards.ts`, `moving.ts`, `wait.ts` and others are not. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`, `calibration.py` |
-| 4 | met in code | `hooks/move.ts`, `hooks/moving.ts` on core's store; the dispatch record kept outside the briefs directory travels; the source is cleaned once the target acknowledged it (#59, #76, #80, #81) | proved over a simulated pair of machines (`hooks/tests/move-e2e.test.ts`); no run between two real machines is recorded |
+| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | eight hook files are under the strict check; `supervision.ts`, `stop-gate.ts`, `guards.ts`, `wait.ts` and others are not. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`, `calibration.py` |
+| 4 | withdrawn | the machine-to-machine move (`hooks/move.ts`, `hooks/moving.ts`) was deleted on the operator's order of 2026-11-14 | — |
 | 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
 | 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
 | 7 | met | the suite blocks on Linux, as root and as a normal user (#65), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
@@ -112,7 +112,7 @@ waits on the operator's paid runs.
 1. State: goal 1, once core's store exists (program phase 2), with a measured cut in processes spawned per measure event.
 2. `declare_wait`: goal 2.
 3. Strict TypeScript and ports: goals 3 and 6, one script per pull request, `workspace.sh` last.
-4. Move: goal 4, on core's store; the operator lists what fails today.
+4. Move: goal 4, withdrawn: the machine-to-machine move was deleted on the operator's order of 2026-11-14.
 5. Push guard: goal 5, after the program's forge protection.
 6. Platforms: goal 7.
 7. Outcome evals: goal 9; six to ten merged pull requests replayed, a spend cap per measure stated before any run, the cap the operator's.
@@ -126,7 +126,7 @@ waits on the operator's paid runs.
 1. Moving orchestrators, coordinators or auditors out of iTerm sessions.
 2. Any new permission prompt, approval step or operator chore.
 3. Changing `deck.json`'s format or the Stream Deck contract.
-4. Removing the machine-to-machine move, the cost accounting or the home session.
+4. Removing the cost accounting or the home session.
 5. New features outside the goals above.
 
 ## Review notes (2026-11-11)
