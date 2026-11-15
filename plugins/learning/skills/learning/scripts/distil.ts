@@ -10,7 +10,7 @@
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  CANDIDATE_CONTRACT, CANDIDATE_VERSION, LEARNING_WINDOW_DAYS, parseCandidate, signatureFrom, signaturePartsOf,
+  CANDIDATE_CONTRACT, CANDIDATE_VERSION, countsInCluster, LEARNING_WINDOW_DAYS, parseCandidate, signatureFrom, signaturePartsOf,
   type Candidate, type LearningEvent, type SignatureParts,
 } from '../../../core/learning.ts'
 import { readJournals } from './health.ts'
@@ -23,8 +23,8 @@ const iso = (ms: number): string => `${new Date(ms).toISOString().slice(0, 19)}Z
 const rising = (values: Iterable<string>): string[] => [...new Set(values)].sort()
 
 /**
- * The candidates of `events` at `now`: per signature, the events inside the window whose trust forms
- * a cluster, kept when they are enough and name enough pull requests. A pull request is named by an
+ * The candidates of `events` at `now`: per signature, the events inside the window that count toward
+ * a cluster (`countsInCluster`), kept when they are enough and name enough pull requests. A pull request is named by an
  * event that holds both its repository and its number. In the order of the signatures, whatever the
  * order the events come in.
  */
@@ -32,7 +32,7 @@ export function distil(events: readonly LearningEvent[], now: number): Candidate
   const clusters = new Map<string, { readonly parts: SignatureParts; readonly events: LearningEvent[] }>()
   for (const event of events) {
     if (now - Date.parse(event.at) > LEARNING_WINDOW_DAYS * DAY_MS) continue
-    if (!CANDIDATE_CONTRACT.trusts.some(trust => trust === event.trust)) continue
+    if (!countsInCluster(event)) continue
     const parts = signaturePartsOf(event)
     const signature = signatureFrom(parts)
     const cluster = clusters.get(signature) ?? { parts, events: [] }

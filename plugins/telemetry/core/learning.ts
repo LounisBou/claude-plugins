@@ -472,14 +472,28 @@ export function foldDropped(dropped: ReadonlyArray<{ readonly id: string; readon
 // repositories they name) and nothing a session judges: the cause, the remedy and its scope are the
 // retrospective's.
 
+/**
+ * The code of a reviewer's thread that /norms:learn hands to the distiller: written only for a thread
+ * code showed acted on (resolved, its lines changed after it) whose author can write to the repository.
+ */
+export const THREAD_CODE = 'norms.thread'
+
 export const CANDIDATE_CONTRACT = {
   version: 1,
   // A cluster becomes a candidate at this many events, from this many pull requests, within the window.
   min_events: 3,
   min_prs: 2,
-  // The trusts whose events form a cluster: an `external` event is a pointer, never a count.
+  // The trusts whose events form a cluster: an `external` event is a pointer, never a count, except
+  // under a code whose writer checked it in code first (a thread acted on, by an author who can write).
   trusts: ['computed', 'operator', 'review'],
+  counted_external: [THREAD_CODE],
 } as const
+
+/** Whether an event counts toward a cluster: a trust that forms one, or an external event its writer checked. */
+export function countsInCluster(event: Pick<LearningEvent, 'trust' | 'source'>): boolean {
+  if (CANDIDATE_CONTRACT.trusts.some(trust => trust === event.trust)) return true
+  return event.trust === 'external' && CANDIDATE_CONTRACT.counted_external.some(code => code === event.source.code)
+}
 
 export const CANDIDATE_VERSION = CANDIDATE_CONTRACT.version
 

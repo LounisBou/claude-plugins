@@ -109,7 +109,7 @@ export type Events = {
   // A skill's text as it loads: its name, and the text the handler may rewrite.
   'skill.prompt': { readonly skill?: string; readonly text?: string; readonly args?: string }
   // A subagent about to start: its type and the prompt it is handed.
-  'agent.spawn': { readonly subagent_type?: string; readonly prompt?: string; readonly [field: string]: unknown }
+  'agent.spawn': { readonly subagentType?: string; readonly fork?: boolean; readonly prompt?: string }
   // A surface to draw: the pane `requestId` names, its props as the host gives them.
   'ui.render': { readonly requestId?: string; readonly props?: { readonly bodyColumns?: number } }
 }

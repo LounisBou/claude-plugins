@@ -21,9 +21,10 @@ in the existing codebase. No evidence, no finding.
 ## Commands and skills
 
 - `/norms:check` — runs the eight agents above in parallel against the current diff
-- `/norms:learn` — after a PR is merged or reviewed, reads its resolved review
-  threads and turns the generalizable ones into rules in the project's own
-  `CONTRIBUTING.md`
+- `/norms:learn` — after a PR is merged or reviewed, hands its resolved review
+  threads to the `learning` plugin's distiller as evidence; a rule comes from a
+  candidate its retrospective judges, and enters the project's `CONTRIBUTING.md`
+  only after the person says « add »
 - `find-pattern` skill — pre-implementation pattern discovery for a given file type
 - `validate` skill — validates `CONTRIBUTING.md` structure before `/norms:check` relies on it
 
@@ -58,9 +59,15 @@ mechanical work the markdown would otherwise hand the model:
   `<norms-scope>` block after the arguments.
 - Each `norms-*` agent receives, when it starts, the diff of its own files and
   the CONTRIBUTING.md sections it applies, as a `<norms-context>` block.
-- `/norms:learn`: with no PR number the usage answers at once; otherwise each
-  PR's resolved threads come from the `github` plugin's tool, with the rules
-  CONTRIBUTING.md already holds, as a `<norms-learn>` block.
+- `/norms:learn` is answered by the module, with no model turn: with no PR number
+  the usage; otherwise each PR's resolved threads come from the `github` plugin's
+  tool, and each thread code shows acted on (resolved and outdated: its lines
+  changed after it) whose first comment's author can write to the repository
+  (`OWNER`, `MEMBER` or `COLLABORATOR`) is one `finding` line of the journal,
+  trust `external`, code `norms.thread`, its pull request and its path as
+  pointers. No reviewer's word is kept or handed to a model. The distiller counts
+  these lines (core's `countsInCluster`). A thread whose author's association the
+  `github` plugin does not hand counts as one whose author cannot write.
 - The walkthrough rules are watched: no code edit on the report turn or after a
   "pass" or "discuss" answer, no CONTRIBUTING.md edit before "add" or after
   "skip", under `/norms:check` no commit message naming the check or its
