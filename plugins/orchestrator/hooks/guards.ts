@@ -1029,7 +1029,7 @@ async function readRecords($: Held, records: readonly string[], until: number): 
   return texts
 }
 
-// The spec's goals beside each registered record, read by goals.sh check — the grammar's one
+// The spec's goals beside each registered record, read by goals.py check — the grammar's one
 // implementation, shared with dispatch-record.sh. A record with no goals.md is a legacy one,
 // opened before the file existed (open refuses without it now): it passes, said once. A
 // check that cannot run, runs out of time, or cannot read its file lets the stop pass on
