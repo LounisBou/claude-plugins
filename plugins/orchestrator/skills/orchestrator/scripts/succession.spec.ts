@@ -492,17 +492,40 @@ test('the takeover prints the answers to apply and the withdrawn questions to as
   const w = world({ round: [asked('q-a', 'answered'), asked('q-w', 'withdrawn', { ask: 'Which later?' }), asked('q-o', 'open', { ask: 'Which third?' }), asked('q-v', 'withdrawn', { ask: 'Which third?' })] })
   assert.equal(w.run(), 0)
   const text = w.text()
-  assert.match(text, /- Questions the operator answered, to apply \(subject, answer\), or `none`: merge order: B\n/)
-  assert.ok(text.includes('`none`; the takeover left out every one whose key an open, answered or closed entry holds: [q-w] the sender\'s session ended\n_Subject_ : merge order'))
+  assert.ok(text.includes('merge order: B\n'))
+  assert.ok(text.includes('[q-w] the sender\'s session ended\n_Subject_ : merge order\n_Context_ : Two pull requests touch one file.\n_Question_ : Which later?'))
   assert.ok(text.includes('[q-o] _Subject_ : merge order'))
   assert.ok(!text.includes('[q-v]') && !text.includes('[q-a]'))
+})
+
+test('the archive is read for the keys: a question answered a day ago, or withdrawn since, still holds its key', () => {
+  const w = world({ round: [storedAsk('q-w', 'withdrawn', { ask: 'Which later?' }), storedAsk('q-x', 'withdrawn', { ask: 'Which third?' })] })
+  mkdirSync(join(w.state, 'round', 'archive', 'withdrawn'), { recursive: true })
+  writeFileSync(join(w.state, 'round', 'archive', 'q-old.json'), JSON.stringify(storedAsk('q-old', 'answered', { ask: 'Which later?' })))
+  writeFileSync(join(w.state, 'round', 'archive', 'withdrawn', 'q-older.json'), JSON.stringify(storedAsk('q-older', 'withdrawn', { ask: 'Which third?', at: '2026-11-14T09:30:00.000Z' })))
+  assert.equal(w.run(), 0)
+  assert.ok(!w.text().includes('[q-w]'))
+  assert.ok(w.text().includes('[q-x]'))
+})
+
+test('an entry is its orchestration\'s by the name alone or by the session alone, the relay\'s too; the newest relay withdrawal of a question speaks for the others', () => {
+  const sender = (session: string, name: string) => ({ session, name, role: 'orchestrator', machine: 'mbp' })
+  const byName = roundSettled(texts(storedAsk('q-1', 'withdrawn', { sender: sender('gone', NAME) })), [], NAME, '')
+  const bySession = roundSettled(texts(storedAsk('q-2', 'withdrawn', { sender: sender(SESSION, 'Orch: renamed') })), [], NAME, SESSION)
+  assert.deepEqual([byName.reask.map(q => q.id), bySession.reask.map(q => q.id)], [['q-1'], ['q-2']])
+  assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn', { sender: sender('x', 'Orch: other') })), [], NAME, SESSION).reask, [])
+  assert.deepEqual(roundSettled(texts(storedAsk('q-4', 'withdrawn', { sender: sender('x', 'Orch: renamed') })), [], NAME, '').reask, [])
+  const relayed = (id: string, since: string, over: Record<string, unknown> = {}) => ({ id, kind: 'operator', status: 'withdrawn', question: 'Later?', since, answer: { text: 'moot' }, from: 'Orch: renamed', session: SESSION, ...over })
+  assert.deepEqual(roundSettled(texts(relayed('r-1', '2026-11-15T08:00:00Z'), relayed('r-2', '2026-11-15T09:00:00Z')), [], NAME, SESSION).reask.map(q => q.id), ['r-2'])
+  assert.deepEqual(roundSettled(texts(relayed('r-3', '2026-11-15T08:00:00Z', { from: NAME, session: 'gone' })), [], NAME, '').reask.map(q => q.id), ['r-3'])
+  assert.deepEqual(roundSettled(texts(relayed('r-4', '2026-11-15T08:00:00Z', { from: 'Orch: other', session: 'x' })), [], NAME, SESSION).reask, [])
 })
 
 test('with nothing settled in the round, the takeover says none of both', () => {
   const empty = world({ round: [] })
   assert.equal(empty.run(), 0)
-  assert.match(empty.text(), /- Questions the operator answered, to apply [^\n]*: none\n/)
-  assert.match(empty.text(), /- Questions withdrawn, to ask again under step 2[^\n]*: none\n/)
+  assert.match(empty.text(), /^- Questions the operator answered[^\n]*: none$/m)
+  assert.match(empty.text(), /^- Questions withdrawn[^\n]*: none$/m)
 })
 
 test('the successor\'s prompt names no script directory of the predecessor: it runs the takeover from its own copy of the plugin, which the takeover prints as the one every script is in', () => {
