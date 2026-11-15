@@ -5,8 +5,7 @@
 // it: the next turn's start makes it stale, and a stale one is never read.
 //
 // The gate's decisions live in stop-gate.ts and its handler in guards.ts, which reads the
-// declaration itself. The turn's end (supervision.ts) still receives it as the one machine line
-// the declaration spells (waitLine), written last in its answer. The model's own line decides nothing.
+// declaration itself, as the turn's end does (supervision.ts). The model's own line decides nothing.
 import {
   checkWakeDone, deferredRows, goalsPaths, isDegradedPass, isOwnRecord, openRows, orchestrationOf, ownerOf, parseGoalsCheck,
   recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
@@ -99,11 +98,6 @@ export class Declarations {
 
 // The declarations of this session's main thread, which the turn's end reads too (question.ts).
 export const DECLARATIONS = new Declarations()
-
-// The message as the gate and the turn's end read it: the declaration's line written last.
-export function withDeclaredWait(message: string, wait: DeclaredWait | null): string {
-  return wait === null ? message : `${message.replace(/\s+$/, '')}\n\n${waitLine(wait)}`
-}
 
 // The session's own open questions asked with `ask`, in the order asked; none when they cannot be read.
 async function openAsked($: Held): Promise<{ id: string; blocks: string }[]> {
@@ -280,12 +274,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   on('turn.complete', {}, async ($, e, next) => {
     const wait = e.agentId === undefined ? declarations.current() : null
-    if (wait === null) return next(e)
-    const handed = withDeclaredWait(String(e.answer ?? ''), wait)
-    const result = await next({ ...e, answer: handed })
-    if (wait.kind === 'done') await startRetrospective($)
-    // The line is the readers' beneath, never shown: a text the chain left as handed is the answer's own.
-    return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: String(e.answer ?? '') } : result
+    const result = await next(e)
+    if (wait?.kind === 'done') await startRetrospective($)
+    return result
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)

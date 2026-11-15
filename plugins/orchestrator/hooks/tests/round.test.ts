@@ -6,7 +6,7 @@ import { expect, test } from 'claude-code/testing'
 import { textSpans, plainText, prReferences, prPieces, repositoryOwners, roundEntry, roundEntryId, roundPath, isDue, type RoundEntry } from '../round.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS } from './fixtures.ts'
 import { parseChoices } from '../../core/method.ts'
-import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
+import { declaredWait, fingerprint, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
   'Question 1 of 1 — merge the scraper pull request now?',
@@ -43,8 +43,8 @@ test('an operator wait becomes an open entry: its sender, its question, its choi
 })
 
 test('an urgent wait becomes an urgent entry, a plain one does not, and both land on the same id', () => {
-  const urgent = roundEntry('s-one', 'Orch: belt', parseWait('Prod is down.\nwaiting: operator (urgent) — blocks: x')!, SINCE, AT)
-  const plain = roundEntry('s-one', 'Orch: belt', parseWait('Prod is down.\nwaiting: operator — blocks: x')!, SINCE, AT)
+  const urgent = roundEntry('s-one', 'Orch: belt', declaredWait({ kind: 'operator', blocks: 'x', urgent: true }, 'Prod is down.')!, SINCE, AT)
+  const plain = roundEntry('s-one', 'Orch: belt', declaredWait({ kind: 'operator', blocks: 'x' }, 'Prod is down.')!, SINCE, AT)
   expect(urgent.urgent).toBe(true)
   expect(plain.urgent).toBeUndefined()
   expect(urgent.id).toBe(plain.id)
