@@ -52,10 +52,9 @@ All of them, each with its evidence:
    existing state directories, both without loss.
 6. No stale reference left in the configuration's `next` branch (below).
 
-The 1.0 of `specs/program-design.md` (« The finish line — 1.0 ») does not close criteria 2 and 3:
-the goals beyond it stay open, and the outcome evals are not measured (goal 15). Criterion 4 is
-replaced by the 1.0's 24 hours of the operator's own use on a product project, a different scope
-from the one to two weeks of daily work in the `next` profile.
+Criteria 2, 3 and 4 follow the 1.0 of `specs/program-design.md` (« The finish line — 1.0 »), decided
+B: its 24 hours of the operator's own use on a product project replace the one to two weeks of
+criterion 4, and the goals beyond it stay open.
 
 ## What the operator's configuration must follow
 
