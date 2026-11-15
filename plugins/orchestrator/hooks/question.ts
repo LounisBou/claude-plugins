@@ -555,6 +555,21 @@ export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promis
   return found
 }
 
+/**
+ * The oldest question of this machine's round still open and asking the same as `entry`, an asker's
+ * own (a replica is its owner's); null when none. Its session is not compared: a successor asks as
+ * the project does.
+ */
+export async function openAsked($: Host<'env' | 'fs'>, entry: Asked): Promise<Asked | null> {
+  const key = askedKey(entry)
+  let found: Asked | null = null
+  for (const other of await readAsked($)) {
+    if (other.status !== 'open' || other.origin !== undefined || askedKey(other) !== key) continue
+    if (found === null || other.at < found.at) found = other
+  }
+  return found
+}
+
 /** What the tool answers to one call; `now` is the instant it records. */
 export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'tool'>, e: Record<string, unknown>, now: Date = new Date()): Promise<Answer> {
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
@@ -572,6 +587,11 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const entry: Asked = record?.answer
     ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
     : made
+  // A question still open in the round is not stored twice: the entry already there is the one he answers.
+  const twin = record?.answer ? null : await openAsked($, made).catch(() => null)
+  if (twin !== null) {
+    return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
+  }
   const path = roundEntryPath(await stateDir($), entry.id)
   let taken = false
   try {
