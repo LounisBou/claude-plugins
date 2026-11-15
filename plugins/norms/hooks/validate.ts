@@ -5,6 +5,7 @@
 // land as a table appended to the skill's prompt. Checks 1 and 4, and the
 // prose-paragraph part of 6, still need the model's judgment. A failure, or no
 // CONTRIBUTING.md, leaves the skill's text as it was.
+import { fieldsOf, type Host, type On } from '../core/host.ts'
 
 export type Finding = { check: 2 | 3 | 5 | 6; severity: 'ERROR' | 'WARNING'; line: number | null; section: string; detail: string }
 
@@ -111,12 +112,12 @@ export function scanBlock(findings: Finding[], lineCount: number): string {
   return out.join('\n')
 }
 
-export function register(on: any): void {
-  on('skill.prompt', { skill: 'norms:validate' }, async ($: any, e: any, next: any) => {
+export function register(on: On<Host<'fs'>>): void {
+  on('skill.prompt', { skill: 'norms:validate' }, async ($, e, next) => {
     if (!(await $.fs.exists('CONTRIBUTING.md'))) return next(e)
     const text = String(await $.fs.read('CONTRIBUTING.md'))
     const block = scanBlock(lintContributing(text), text.split('\n').length)
-    const r = await next(e)
-    return { ...r, text: `${r.text}\n\n${block}` }
-  }).catch(($: any, e: any, next: any) => next(e))
+    const r = fieldsOf(await next(e)) ?? {}
+    return { ...r, text: `${String(r['text'] ?? '')}\n\n${block}` }
+  }).catch((_$, e, next) => next(e))
 }

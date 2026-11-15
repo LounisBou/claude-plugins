@@ -78,7 +78,7 @@ type Nouns = {
   state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
-  clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): Timer; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
+  clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
@@ -95,10 +95,11 @@ export type Events = {
   'turn.start': { readonly agentId?: string }
   'command.run': { readonly command: string; readonly args: string }
   // A prompt as the turn takes it: who typed it (`origin.kind`), and the lines a handler adds beside it.
-  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[] }
+  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[]; readonly turnId?: string }
   // A peer's delivery; `origin` is the host's own description of where it came from.
   'session.receive': { readonly agentId?: string; readonly origin: unknown; readonly text: string }
-  // `reason` says why the turn ended (`answer` for a turn that answered), `turnId` names it.
+  // `reason` is why the turn ended (`answer` for a turn that answered, `aborted` when the person
+  // interrupted it), `turnId` names it.
   'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean; readonly reason?: string; readonly turnId?: unknown }
   // The settings payload's own fields, as far as the stop gate reads them; the host's lists of the
   // work in flight are read through a validator.
@@ -116,6 +117,10 @@ export type Events = {
   // A call of a tool: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
   'ui.close': { readonly id: string }
+  // A skill's text as it loads: its name, and the text the handler may rewrite.
+  'skill.prompt': { readonly skill?: string; readonly text?: string; readonly args?: string }
+  // A subagent about to start: its type and the prompt it is handed.
+  'agent.spawn': { readonly subagentType?: string; readonly fork?: boolean; readonly prompt?: string }
   // A surface to draw: the pane `requestId` names, its props as the host gives them: its width, its
   // body's window over the tree (`scroll`), and whether it holds the keys.
   'ui.render': {

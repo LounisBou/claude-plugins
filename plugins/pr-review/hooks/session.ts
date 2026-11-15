@@ -8,12 +8,15 @@ import { walkthrough, startWalkthrough, endWalkthrough, preflight } from './stat
 import { OPEN_COMMENTS, OPEN_COMMENTS_DESCRIPTION, OPEN_COMMENTS_SCHEMA } from './triage.ts'
 import { LOOP_TOOL, LOOP_DESCRIPTION, LOOP_SCHEMA, agentEnded, releaseLoop } from './loop.ts'
 import { PASSED_NOTE, failedText } from './commands.ts'
+import { fieldsOf, type Host, type On } from '../core/host.ts'
+
+export type SessionHost = Host<'tool' | 'ui' | 'process' | 'plugin'>
 
 // The prompts that are the user's own words: typed at the terminal or sent
 // through the Remote Control bridge.
 const USER_ORIGINS = new Set(['composer', 'bridge'])
 
-function redraw($: any): void {
+function redraw($: Host<'ui'>): void {
   try {
     $.ui.invalidate('ui.render')
   } catch {
@@ -21,8 +24,8 @@ function redraw($: any): void {
   }
 }
 
-export function register(on: any): void {
-  on('session.start', async ($: any, e: any, next: any) => {
+export function register(on: On<SessionHost>): void {
+  on('session.start', async ($, e, next) => {
     // Each tool on its own: one that fails to register leaves the other listed.
     // In the tool list from the start (isDeferred false): the skills call them
     // first thing, and behind tool search the model would reach for Bash.
@@ -37,12 +40,12 @@ export function register(on: any): void {
       }
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
   // A skill of this plugin starts: its rules hold from now on, and the
   // preflight runs once per session (the skill reads that it passed, or why
   // it stops). A hook that fails passes the skill's own text through.
-  on('skill.prompt', async ($: any, e: any, next: any) => {
+  on('skill.prompt', async ($, e, next) => {
     const skill = SKILL_KEYS[String(e.skill)]
     if (!skill) return next(e)
     startWalkthrough(skill)
@@ -54,11 +57,11 @@ export function register(on: any): void {
       if (run.exitCode !== 0) return { text: failedText(run) }
       preflight.hasPassed = true
     }
-    return { text: PASSED_NOTE + String(computed?.text ?? '') }
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+    return { text: PASSED_NOTE + String(fieldsOf(computed)?.['text'] ?? '') }
+  }).catch(async (_$, e, next) => next(e))
 
   // Never refuses a prompt: it only reads the user's words.
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+  on('prompt.submit', async ($, e, next) => {
     const text = String(e.text ?? '')
     if (USER_ORIGINS.has(String(e.origin?.kind))) {
       // The user's own prompt takes the session back from a running loop.
@@ -73,9 +76,9 @@ export function register(on: any): void {
       walkthrough.lastPrompt = ''
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('turn.complete', async ($: any, e: any, next: any) => {
+  on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
       // A subagent's turn: a review agent the host ran in the background may have ended there.
       agentEnded(String(e.agentId), String(e.reason ?? ''), String(e.answer ?? ''))
@@ -91,11 +94,11 @@ export function register(on: any): void {
       }
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('session.end', async ($: any, e: any, next: any) => {
+  on('session.end', async ($, e, next) => {
     releaseLoop()
     endWalkthrough()
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 }

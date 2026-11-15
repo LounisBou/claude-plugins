@@ -54,7 +54,7 @@ import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './m
 import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
-import { messageOf, type Host, type On, type SessionSendResult, type UiOpenResult } from './host.ts'
+import { messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
 
 // The host's nouns this file calls.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui' | 'tool' | 'prompt'>
@@ -1173,7 +1173,11 @@ export type WakeMemory = { timer: { cancel(): void } | null; generation: number 
 function armWake($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>, wake: WakeMemory): void {
   if (wake.timer) return
   const generation = wake.generation
-  const timer = $.clock.after(ROUND_WAKE_MS, () => wakeTick($, wake, timer, generation))
+  // A host whose clock answers no timer leaves one that cancels nothing: the reading still runs once.
+  let timer: Timer = { cancel: () => undefined }
+  const armed = $.clock.after(ROUND_WAKE_MS, () => wakeTick($, wake, timer, generation))
+  const cancel = isRecord(armed) ? armed['cancel'] : undefined
+  if (typeof cancel === 'function') timer = { cancel: () => { Reflect.apply(cancel, armed, []) } }
   wake.timer = timer
 }
 

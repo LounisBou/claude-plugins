@@ -14,14 +14,18 @@ import {
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
+import type { Host, On } from '../core/host.ts'
 import { REPORT_REQUEST } from './findings.ts'
-import { branchPull, markScope, markedDir, openPullAt, repositoryDir, repositoryOf, type Lookup } from './record.ts'
+import { branchPull, markScope, markedDir, openPullAt, repositoryDir, repositoryOf, type Lookup, type RecordHost } from './record.ts'
+
+// The nouns the check's hooks hold: the record's, and the plugin's root for its resolver.
+export type CheckHost = RecordHost & Host<'plugin'>
 
 const GIT_TIMEOUT_MS = 30_000
 // Agents spawned in one message reuse the scope the command computed.
 const SCOPE_TTL_MS = 10 * 60_000
 
-async function run($: any, argv: string[], dir?: string): Promise<string> {
+async function run($: Host<'process'>, argv: string[], dir?: string): Promise<string> {
   const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS, ...(dir ? { cwd: dir } : {}) })
   if (r.exitCode !== 0) throw new Error(`${argv.slice(0, 3).join(' ')}: ${String(r.stderr).trim() || 'exit ' + r.exitCode}`)
   return String(r.stdout)
@@ -58,7 +62,7 @@ const PASS_BASE = 'pass the base, /norms:check base=<branch>'
 // by the default branch, which would hand the agents files the pull request does not change: a
 // pull request that cannot be read, several at a detached head, none there. A checkout whose origin
 // is no GitHub repository has no pull request to read: the default branch.
-async function defaultBase($: any, dir?: string): Promise<string | undefined> {
+async function defaultBase($: Host<'process' | 'tool'>, dir?: string): Promise<string | undefined> {
   const repo = await repositoryOf($, dir).catch(() => undefined)
   const branch = (await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim()
   if (branch !== 'HEAD') {
@@ -74,7 +78,7 @@ async function defaultBase($: any, dir?: string): Promise<string | undefined> {
   return found.base
 }
 
-export async function computeScope($: any, baseArg?: string, dir?: string): Promise<Scope> {
+export async function computeScope($: Host<'plugin' | 'process' | 'fs'>, baseArg?: string, dir?: string): Promise<Scope> {
   const resolver = `${$.plugin.root}/scripts/resolve_base.sh`
   const base = (await run($, ['bash', resolver, ...(baseArg ? [baseArg] : [])], dir)).trim()
   const head = (await run($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
@@ -82,13 +86,13 @@ export async function computeScope($: any, baseArg?: string, dir?: string): Prom
   const files = classifyAll(lines(await run($, ['git', 'diff', '--name-only', `${base}...HEAD`], dir)))
   const tracked = lines(await run($, ['git', 'ls-files'], dir))
   const hasTestInfra = classifyAll(tracked).test.length > 0
-  const root = ((await $.fs.list(dir ?? '.').catch(() => [])) as { name: string }[]).map(e => e.name)
+  const root = (await $.fs.list(dir ?? '.').catch(() => [])).map(e => e.name)
   const hasContributing = await $.fs.exists(at(dir, 'CONTRIBUTING.md')).catch(() => false)
   return { base, baseArg, head, branch, files, types: projectTypes(root), hasContributing, hasTestInfra }
 }
 
 // The reference paths the words name, a relative one read from the repository the check reads.
-async function checkPaths($: any, paths: string[], dir?: string): Promise<ReferencePaths> {
+async function checkPaths($: Host<'env' | 'fs'>, paths: string[], dir?: string): Promise<ReferencePaths> {
   const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
   const found: string[] = []
   const missing: string[] = []
@@ -108,7 +112,7 @@ let cached: { scope: Scope; at: number; dir?: string | undefined } | undefined
 
 // The repository is the one the check marked, so a shell `cd` into another repository between the
 // check and its agents is not taken for the reviewed one.
-async function scopeForSpawn($: any): Promise<{ scope: Scope; dir?: string | undefined }> {
+async function scopeForSpawn($: CheckHost): Promise<{ scope: Scope; dir?: string | undefined }> {
   const dir = (await markedDir($)) ?? await repositoryDir($)
   const head = (await run($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
   if (cached && cached.dir === dir && cached.scope.head === head && Date.now() - cached.at < SCOPE_TTL_MS) return cached
@@ -127,7 +131,7 @@ export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
 
 // Steps 1 to 3 for one run of /norms:check: the scope is computed, cached for
 // the agents and marked for the record, and its block appended to the words.
-async function withScope($: any, words: string): Promise<string> {
+async function withScope($: CheckHost, words: string): Promise<string> {
   const args = parseCheckArgs(words)
   const typed = words.trim()
   // The session's directory, or its project root's repository when a shell cd left the checkout.
@@ -153,19 +157,19 @@ async function withScope($: any, words: string): Promise<string> {
   return (typed ? typed + '\n\n' : '') + block
 }
 
-export function register(on: any): void {
+export function register(on: On<CheckHost>): void {
   // Typed by the person: the host runs command.run.
-  on('command.run', { command: 'norms:check' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'norms:check' }, async ($, e, next) => {
     return next({ ...e, args: await withScope($, String(e.args ?? '')) })
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   // Run by a session through the Skill tool: the host runs no command.run, so
   // the same steps run at the tool call, its args carrying the block.
-  on('tool.call', SKILL_MATCHER, async ($: any, e: any, next: any) => {
-    return next({ ...e, args: await withScope($, String(e.args ?? '')) })
-  }).catch(($: any, e: any, next: any) => next(e))
+  on('tool.call', SKILL_MATCHER, async ($, e, next) => {
+    return next({ ...e, args: await withScope($, String(e['args'] ?? '')) })
+  }).catch((_$, e, next) => next(e))
 
-  on('agent.spawn', async ($: any, e: any, next: any) => {
+  on('agent.spawn', async ($, e, next) => {
     const type = String(e.subagentType ?? '')
     if (!type.startsWith('norms:') || e.fork || String(e.prompt).includes('<norms-context>')) return next(e)
     const agent = type.slice('norms:'.length)
@@ -187,5 +191,5 @@ export function register(on: any): void {
     }
     const block = contextBlock({ agent, dir, base: scope.base, head: scope.head, files, diff, diffPath, diffStat, contributing })
     return next({ ...e, prompt: `${e.prompt}\n\n${block}${REPORT_REQUEST}` })
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch((_$, e, next) => next(e))
 }
