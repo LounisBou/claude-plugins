@@ -36,6 +36,7 @@ export type Mounted = {
 // The test's `$`: each event raised through the engine, the module's hooks answering first.
 export type Engine = {
   tool: { call(input: { readonly tool: string } & Fields): Promise<Reply>; check(input: { readonly tool: string; readonly input: unknown }): Promise<Reply> }
+  config: { set(e: { readonly key: string; readonly value?: unknown }): Promise<Reply> }
   command: { run(input: { readonly command: string; readonly args?: string } & Fields): Promise<Reply> }
   session: { start(e: Fields): Promise<Reply>; end(e: Fields): Promise<Reply>; receive(e: Fields): Promise<Reply>; root(): Promise<string> }
   skill: { prompt(e: Fields): Promise<Reply> }

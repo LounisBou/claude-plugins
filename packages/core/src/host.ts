@@ -90,6 +90,9 @@ export type Noun = keyof Nouns
 
 export type Host<N extends keyof Nouns> = { [K in N]: Nouns[K] }
 
+// A file read as bytes, for a file that reads one (`Host<'fs'> & Bytes` holds both reads).
+export type Bytes = { readonly fs: { read(path: string, options: { readonly as: 'bytes' }): Promise<{ readonly base64: string }> } }
+
 // The plugin's manifest name beside its root, for a file that reads it (`Host<'plugin'> & Named`).
 export type Named = { readonly plugin: { readonly name: string } }
 
