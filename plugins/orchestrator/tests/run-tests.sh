@@ -372,8 +372,6 @@ lcr="$ROOT/skills/orchestrator/references/rotation.md"
 check "the rotation closes by tty with the acknowledgment as its guard" "1|1|1" \
   "$(grep -c '« Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`' "$lcr")|$(grep -c 'In a rotation this acknowledgment IS the guard' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'Do not pass `--expect-title` to a rotation' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "no title guard left on a rotation" "0" "$(grep -c 'tty + title guard' "$lcr")"
-# The launcher proves a close on its own (rule 96 of the rules review); the orchestrator still reads it.
-check "a close is verified with list and ps, not the exit code" "1" "$(grep -c 'Verify a close with `list` + `ps`, not with the exit code' "$lc")"
 check "a project's instantiation rule no longer carves out succession" "0" \
   "$(grep -c 'governs the FIRST instantiation, never the succession' "$lc")"
 
@@ -474,8 +472,8 @@ check "the comments brief keeps the subject-only commit and reads a backgrounded
 # standing order): nothing is asked of him, and where the host refuses the close of a tab the
 check "the succession brief closes every predecessor and asks nothing" "1|1|yes|0" \
   "$(succ4_has 'you ALWAYS close your predecessor')|$(succ4_has 'one the launcher did not open included, and ask him nothing')|$(spells "$ORCH_REFS/succession-successor.md" 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
-check "the end_session fallback is proved on the tty, not on list" "yes|yes|no|1" \
-  "$(spells "$ORCH_REFS/succession-successor.md" '`verify --tty <its tty>` fails (no host on it)')|$(spells "$ORCH_REFS/succession-successor.md" '`ps -t <that tty without /dev/>` shows no host CLI')|$(spells "$ORCH_REFS/succession-successor.md" 'and `list` shows it gone; then tell')|$(succ4_has 'prove its end on its tty')"
+check "the end_session fallback is proved on the tty, not on list" "yes|no|1" \
+  "$(spells "$ORCH_REFS/succession-successor.md" 'prove that end on its tty, `verify --tty <its tty>` failing')|$(spells "$ORCH_REFS/succession-successor.md" 'and `list` shows it gone; then tell')|$(succ4_has 'its success line the proof')"
 # The successor waits for « handed over » on a subscription the stop gate counts: without it,
 # live, the gate refused that wait « Nothing will wake you ».
 check "the successor subscribes to its predecessor's idle notice with « takeover confirmed »" "1" \
@@ -3902,11 +3900,11 @@ check "the end checks this session is the recorded coordinator before it clears"
 # The successor's brief: register refuses while the predecessor runs, so the order is fixed —
 # close by title, prove on ps, THEN register. Filled, it lints clean like every template.
 check "the successor closes its predecessor's tab by title before it registers" "yes|1|yes" \
-  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
+  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" 'Its `closed 1 session` line is the')"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
 check "the coordinator's successor closes a hand-started predecessor, with the end_session fallback" "yes|yes|yes|yes" \
-  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` fails')"
+  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` failing')"
 check "the coordinator calls end_session when its successor asks" "yes" \
   "$(spells "$COORDSKILL" 'mcp__orchestrator__end_session » (the host refused it the close), you call it and end the')"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
@@ -4003,7 +4001,7 @@ check "the auditor's succession brief exists, with its placeholders" \
   "{{ITERM_AGENT_SH}} {{OPERATOR_WORK}} {{PREDECESSOR_TTY}} {{PREDECESSOR}} {{PROJECT}} {{REPORT_PATH}} {{REPOSITORY}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
   "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDSUCCTPL" 2>/dev/null | sort -u | paste -sd' ' -)"
 check "it makes the successor confirm, wait for « handed over », close the tab by title, prove it, tell the operator" "1|1|1|1|1" \
-  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'ps -t ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
+  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'closed 1 session' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
 check "and keeps the audit's terms: one report, not rewritten, nothing applied, no session messaged but the predecessor" "1|1|1" \
   "$(grep -c 'not to rewrite' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'apply nothing' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'no session messaged' "$AUDSUCCTPL" 2>/dev/null)"
 # A successor can succeed again: it restates the spawn line in full and finds its own name,

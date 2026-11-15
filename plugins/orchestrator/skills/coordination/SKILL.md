@@ -258,8 +258,8 @@ Then, on its `paused-ready`:
    pull requests and checkouts from `coordinator.sh owners` and `facts`.
 2. **You close it**, as a successor closes its predecessor: `iterm-agent.sh close --tty <its
    tty> --expect-title "<the title list printed>"`; where the host refuses the close, message
-   it « call mcp__orchestrator__end_session ». The proof is the tty: `verify --tty` fails, or
-   `ps -t` shows no host CLI. A tab that shows a home session takes its whole server with it,
+   it « call mcp__orchestrator__end_session » and prove its end on the tty, `verify --tty`
+   failing. The close's `closed 1 session` line is otherwise the proof. A tab that shows a home session takes its whole server with it,
    agents included (which is why an orchestrator stands its agents down before it
    answers `paused-ready`), and the close's `home:` line names the session window 0 ran.
 3. **Record it sleeping**, its name without its reference:
@@ -291,7 +291,7 @@ you ask the operator for.
 right of yours; it joins no chain, comes up under remote control under its name, and with
 the record's session the same conversation resumes. Its agents will be windows of that
 session.
-Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch: <subject>` —
+The spawn's success line is its proof:
 then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
 
@@ -315,8 +315,7 @@ by the installed path, is the one every `install.sh` run allows in `settings.jso
 (a model alone is refused), the host's default for the session applying otherwise — his to
 change, never yours — and `--trust` for a checkout prepared for it. The orchestrator
 opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`
-change that set for this one (`iterm-agent.sh tools` lists what exists and what each costs). Verify it
-(`iterm-agent.sh list`, `ListAgents` naming `Orch: <subject>`), then announce yourself to it
+change that set for this one (`iterm-agent.sh tools` lists what exists and what each costs). On the spawn's success line, announce yourself to it
 as to any newcomer.
 
 On another machine, send that machine's orchestrator (the one he named, else one that
@@ -351,7 +350,7 @@ after; an open round passes to the successor with its round file. The host compa
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --coordinator-successor --title "Coord: <subject>" --dir <your working directory> --permission-mode auto --prompt "Read and execute <brief path>"
    ```
 
-   and verify it: `iterm-agent.sh list`, `verify --tty`, `ListAgents`.
+   Its success line is the proof.
 3. From then on you only forward, verbatim, what still reaches you — « forwarded from
    <sender>: <message> » — and on its « takeover confirmed » you answer « handed over ». You
    never close your own tab: the successor does, then registers. Asked « call
