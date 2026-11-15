@@ -10,6 +10,8 @@ index of identifiers and paths, and refuses a succession whose brief misses an o
 model adds only notes of judgment, under a fixed ceiling; each note carries the generation it
 was written in and, at the next succession, is promoted into an artifact (a decision, a ruling,
 a dispatch row) or dropped. The operator's rulings are a register by project, loaded by topic.
+Amended 2026-11-15: that register is removed, since sessions wrote it in their own words; his
+answers are read in the round's entries and his requests in the to-do list, by the item at hand.
 The brief's size, the successor's starting context and the questions it asks after the takeover
 are measured at every generation.
 
