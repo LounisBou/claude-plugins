@@ -911,9 +911,10 @@ export function writesRecords(line: string, root?: string): boolean {
 // program. A deletion is irreversible: a command line that deletes the records, the E2E exemptions or
 // the check plans is refused, where any other write to them is observed.
 const DELETER_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?(?:rm|rmdir|unlink|shred|srm|trash)(?=$|[\s;&|(){}`'"$])/
-const DELETE_OPTION = /(?:^|\s)(?:-delete|--delete|--remove-source-files)(?=\s|$)/
+const DELETE_OPTION = /(?:^|\s)(?:-delete|--(?:delete[\w-]*|del|remove-files|remove-source-files))(?=\s|=|$)/
 const DELETE_CALL = /\b(?:os\.(?:remove|removedirs|unlink|rmdir|rename|replace)|shutil\.(?:rmtree|move)|rmtree|rmSync|rmdirSync|unlinkSync|renameSync|fs\.(?:rm|rmdir|unlink|rename)|File\.(?:delete|unlink|rename)|FileUtils\.(?:rm|mv|remove)\w*)\b|\.(?:unlink|rmdir)\s*\(/
-const GIT_DELETE = /\bgit\s+(?:clean|rm)\b/
+const GIT_DELETERS: ReadonlySet<string> = new Set(['clean', 'rm'])
+const GIT_TEXT = /\bgit\b[^;&|]*\b(?:clean|rm)\b/
 const MOVE_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?mv(?=$|[\s;&|(){}`'"$])/
 const DELETERS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
 const MAX_NESTING = 4
@@ -927,19 +928,21 @@ function movesOut(argv: readonly string[], names: (text: string) => boolean, fed
 }
 
 function deletesIn(line: string, names: (text: string) => boolean, depth: number): boolean {
-  if (DELETER_WORD.test(line) || DELETE_OPTION.test(line) || DELETE_CALL.test(line) || GIT_DELETE.test(line)) return true
+  if (DELETER_WORD.test(line) || DELETE_OPTION.test(line) || DELETE_CALL.test(line)) return true
   let commands
   try {
     commands = readCommands(line)
   } catch {
     // A line that cannot be read: a move is judged on its text.
-    return MOVE_WORD.test(line) && names(line)
+    return (MOVE_WORD.test(line) || GIT_TEXT.test(line)) && names(line)
   }
   // The reader gives nothing for a line it cannot close (`$(`): that is no read either.
-  if (commands.length === 0) return line.trim() !== '' && MOVE_WORD.test(line) && names(line)
+  if (commands.length === 0) return line.trim() !== '' && (MOVE_WORD.test(line) || GIT_TEXT.test(line)) && names(line)
   return commands.some(({ argv, wrappers }) => {
     const program = (argv[0] ?? '').split('/').pop() ?? ''
     if (argv.some((word) => DELETERS.has(word.split('/').pop() ?? ''))) return true
+    const git = gitSubcommand(argv)
+    if (git && GIT_DELETERS.has(argv[git.at] ?? '')) return true
     if (program === 'mv') return movesOut(argv, names, wrappers.includes('xargs'))
     if (argv.slice(1).includes('mv') && argv.some(names)) return true
     const inner = innerLine(argv)

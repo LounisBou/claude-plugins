@@ -382,12 +382,14 @@ test('a deletion is a line that is no read and deletes: rm, unlink, find -delete
     'python3 -c "from pathlib import Path; Path(1).unlink()"', 'python3 -c "import os; os.rename(1, 2)"', 'ruby -e "FileUtils.rm_rf(1)"',
     'git clean -fdx /d', 'rsync --remove-source-files /d/x /tmp', 'rsync -a --delete /tmp/e/ /d/', 'sh -c "bash -c \'rm /d/x\'"',
     'ls {1..9}{1..9}{1..9}{1..9}; mv /d/x /tmp', 'ls {1..9}{1..9}{1..9}{1..9}; rm /d/x',
+    'git -C /d/x clean -fdx', 'git -c a=b clean -fdx /d/x', 'git --git-dir=/d/.git rm x', 'git clean -fdx /d/x', 'ls {1..9}{1..9}{1..9}{1..9}; git -C /d/x clean -fdx',
+    'rsync -a --delete-after /e/ /d/x/', 'rsync -a --del /e/ /d/x/', 'rsync -a --delete-excluded /e/ /d/x/', 'tar --remove-files -cf /tmp/a.tar /d/x',
   ]) {
     expect(deletes(line, names), line).toBe(true)
   }
   for (const line of [
     'ls /d', 'cat /d/x | jq .', 'grep -rn rm /d', 'echo rm', 'echo x > /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x', 'sed -i s/a/b/ /d/x',
-    'git commit -m "docs: form the term"', 'find /d -name x', 'truncate -s0 /d/x', 'cp /dev/null /d/x', ': > /d/x', 'ls {1..9}{1..9}{1..9}{1..9}',
+    'git commit -m "docs: form the term"', 'find /d -name x', 'truncate -s0 /d/x', 'cp /dev/null /d/x', 'git status /d/x', 'git -C /d/x log', 'rsync -a /e/ /d/x/', 'tar -cf /tmp/a.tar /d/x', ': > /d/x', 'ls {1..9}{1..9}{1..9}{1..9}',
   ]) {
     expect(deletes(line, names), line).toBe(false)
   }

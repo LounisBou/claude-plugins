@@ -979,6 +979,19 @@ test('a Bash pull request opened out of draft is observed and gets Not Ready fro
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 
+for (const [name, labels, line] of [
+  ['an opening out of draft', ['Not Ready'], 'gh pr create -t "fix: x" -b "Adds the reset." && gh pr merge 12 -R acme/thing'],
+  ['a pull request left out of draft', ['Ready'], 'gh pr ready 12 -R acme/thing && gh pr merge 12 -R acme/thing'],
+] as const) {
+  test('a Bash line whose first act is observed and whose second is refused leaves no line: ' + name, async ($, on) => {
+    const seen = await world($, on, { labels: [...labels] })
+    const out: any = await $.tool.call(bash(line))
+    expect(out.deny).toContain('refused')
+    expect(seen.journal).toEqual([])
+    expect(seen.bash).toEqual([])
+  })
+}
+
 test('a call a later check refuses leaves no observation: the journal is written just before the command runs', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS })
   const out: any = await $.tool.call(bash('echo x > ~/.claude/pr-records/o/r/x.json && gh pr merge 12 -R acme/thing'))
@@ -1160,6 +1173,12 @@ const RECORDS_DELETIONS = [
   'bash -c "rm ~/.claude/pr-records/o/r/x.json"',
   '/bin/rm ~/.claude/pr-records/o/r/x.json',
   'rm ~/.claude/pr-records/o/r/x.json $(',
+  'git -C ~/.claude/pr-records clean -fdx',
+  'git -c core.x=y clean -fdx ~/.claude/pr-records/o',
+  'git --git-dir=/tmp/g rm -r ~/.claude/pr-records/o',
+  'rsync -a --delete-after /tmp/empty/ ~/.claude/pr-records/',
+  'rsync -a --del /tmp/empty/ ~/.claude/pr-records/',
+  'tar --remove-files -cf /tmp/a.tar ~/.claude/pr-records/o',
   'rm${IFS}~/.claude/pr-records/o/r/x.json',
   'mv -t /tmp ~/.claude/pr-records/o/r/x.json',
   'find ~/.claude/pr-records -name "*.json" -exec mv {} /tmp \\;',

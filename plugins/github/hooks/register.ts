@@ -1379,11 +1379,12 @@ function engineName(act: Act): string | undefined {
   return act.name.startsWith('gh.py ') ? act.name : undefined
 }
 
-// The Bash act's refusal, or undefined; what must follow its success goes in after.
-async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>): Promise<string | undefined> {
+// The Bash act's refusal, or undefined; what must follow its success goes in after, what is observed in observations
+// (journaled by the caller once no act of the line is refused).
+async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>, observations: string[]): Promise<string | undefined> {
   if (act.stdin) return STDIN_REFUSAL
   if (act.kind === 'create' || act.kind === 'create-draft') {
-    if (act.kind === 'create') await observed($, OBSERVED.draftOpen)
+    if (act.kind === 'create') observations.push(OBSERVED.draftOpen)
     after.push(async (result) => {
       const made = createdPr(stdoutOf(result))
       if (made) await labelNotReady($, made.repo, made.pr)
@@ -1441,7 +1442,7 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
   const held = (await gateHeld($, act.name, repo, pr, r))?.refusal
-  if (!held && leaving) await observed($, OBSERVED.draftLeave)
+  if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
 }
 
@@ -2291,14 +2292,14 @@ export function register(on: any): void {
     try {
       for (const act of bashActs(String(e.command))) {
         current = act
-        const refused = await bashReady($, act, after)
+        const refused = await bashReady($, act, after, observations)
         if (refused) return { deny: refused }
       }
     } catch (err) {
       // The ready guard failed on its own: its readiness reads as unverified, never as a pass.
       return { deny: guardThrew(current, err) }
     }
-    for (const code of observations) await observed($, code)
+    for (const code of new Set(observations)) await observed($, code)
     await bashLint($, line)
     const result = await next(e)
     if (!failed(result)) {
