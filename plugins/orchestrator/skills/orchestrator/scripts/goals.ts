@@ -466,7 +466,7 @@ export function main(argv: readonly string[], io: Io = processIo, env: NodeJS.Pr
   try {
     const [command = '', path = '', ...rest] = argv
     const run = COMMANDS[command]
-    if (argv.length < 2 || run === undefined) die(ctx, `usage: goals.py {${Object.keys(COMMANDS).join('|')}} <goals.md> [...] (see header)`)
+    if (argv.length < 2 || run === undefined) die(ctx, `usage: goals.sh {${Object.keys(COMMANDS).join('|')}} <goals.md> [...] (see header)`)
     if (command !== 'init' && !existsSync(path)) {
       if (command === 'check') cmdCheck(ctx, path, rest)
       die(ctx, `no goals file at ${path}: dispatch-record.sh goals <record> init --spec <path>|none`)
