@@ -52,6 +52,10 @@ All of them, each with its evidence:
    existing state directories, both without loss.
 6. No stale reference left in the configuration's `next` branch (below).
 
+Criteria 2, 3 and 4 follow the 1.0 of `specs/program-design.md` (« The finish line — 1.0 »): its
+24 hours of the operator's own use on a product project replace the one to two weeks of
+criterion 4, and the general goals stay open beyond it.
+
 ## What the operator's configuration must follow
 
 The configuration repository stays outside this one; it is adapted on its `next` branch. The
