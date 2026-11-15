@@ -526,6 +526,26 @@ test('every turn without a status line is reported with its own text, a status t
   expect(fx.sent[3]).toEqual({ to: ORCH, text: silent('Back at it.') })
 })
 
+test('a turn without a status line that ends on subagents or background work still running wakes no one', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const stop = (tasks: unknown[], crons: unknown[] = []) => drive(chains, 'classic.Stop', fx.dollar, { last_assistant_message: 'Lenses running.', background_tasks: tasks, session_crons: crons })
+  await stop([{ type: 'local_agent', description: 'lens: tests', status: 'running' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Lenses running.', 'turn-1'))
+  await stop([{ type: 'local_bash', command: 'npm test', status: 'pending' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Suite running.', 'turn-2'))
+  await stop([], [{ schedule: '*/10 * * * *' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back in ten minutes.', 'turn-3'))
+  expect(fx.sent).toEqual([])
+  // Its work settled, the agent idle with no status line: the orchestrator is told.
+  await stop([{ type: 'local_agent', description: 'lens: tests', status: 'completed' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Lenses done.', 'turn-4'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent('Lenses done.') }])
+  // A turn whose stop carried no task list at all is reported, as before.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('No stop seen.', 'turn-5'))
+  expect(fx.sent.length).toBe(2)
+})
+
 test('the final report written without a status line still reaches the orchestrator after earlier silent turns', async () => {
   const chains = mounted()
   const fx = fake()
