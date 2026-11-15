@@ -14,7 +14,7 @@ const HB = 'b'.repeat(40)
 const HM = 'c'.repeat(40)
 const HN = 'd'.repeat(40)
 
-/** What the fake `gh` and `draft_guard.py` answer; a list answers one entry per call, its last repeated. */
+/** What the fake `gh` and the draft guard answer; a list answers one entry per call, its last repeated. */
 interface Script {
   view?: string[]
   viewFails?: string
@@ -63,7 +63,7 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
     io: { out: text => out.push(text), err: () => {} },
     now: () => clock,
     sleep: async seconds => { clock += seconds * 1000 },
-    draftGuard: '/plugin/draft_guard.py',
+    draftGuard: ['node', '/plugin/draft-guard.ts'],
     gate: async (repo, pr) => {
       gates.push(`${repo}#${pr}`)
       if (gates.length > 50) throw new Error('the gate is read without end: the bound is ignored')
@@ -77,7 +77,7 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
       const line = argv.join(' ')
       calls.push(line)
       if (options.log !== undefined) logs.set(line, options.log)
-      if (argv[0] === 'python3') {
+      if (argv[0] === 'node') {
         if (script.guardFails !== undefined) return failed(script.guardFails)
         return ok(argv.includes('--dependents') ? script.dependents ?? '' : script.guard ?? '')
       }
@@ -363,10 +363,10 @@ test('a draft: a red of guards alone settles, and its green needs a check behind
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', guard: 'tests\n' }), `red 7 ${HA} tests|1`)
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `unread 7 gh pr checks --watch exited 1 with no failing check named (log: ${join(state, 'ci-watch', 'here-pr7.log')})|5`)
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: '' }), 'unread 7 draft_guard.py failed|5')
+  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: '' }), 'unread 7 draft guard failed|5')
   const named = fake({ view: [draft], reg: ['2'], watchCodes: [1], guard: 'tests\n' })
   await watch(options(['7', '--repo', 'acme/x']), named).catch(() => undefined)
-  assert.ok(named.calls.includes('python3 /plugin/draft_guard.py acme/x 7'))
+  assert.ok(named.calls.includes('node /plugin/draft-guard.ts acme/x 7'))
 })
 
 test('auto-merge: the merge is waited for, bounded, and followed', async () => {

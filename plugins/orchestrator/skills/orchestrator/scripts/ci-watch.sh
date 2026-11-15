@@ -23,7 +23,7 @@
 # no limit on how long a run may take: it bounds how long a run already watched may stay listed
 # unfinished (the listing's lag), restarts at each run watched, and past it the watch is unread.
 # A draft pull request may carry a draft guard: a job that fails on purpose while the pull request
-# is a draft, recognised by its definition testing the draft flag (`draft_guard.py`). A red whose
+# is a draft, recognised by its definition testing the draft flag (`draft-guard.ts`). A red whose
 # every failing check is one is no red, so on a draft the watch runs without `--fail-fast` (it
 # would stop on the guard before the real checks finish) and the failing names are classified
 # when it returns: none left, the rest of the green path; some left, `red` naming only those. A
@@ -33,7 +33,7 @@
 # conditioned out — had nothing run, and says `no-checks` with the count skipped, never green.
 # The count leaves the guards out, so a draft whose only checks are its guards says `skipped=0`.
 # On a draft the watch settled on its guards, a check that depends on no guard (a secret scanner)
-# is no evidence either: only a passed check whose job needs a guard counts (`draft_guard.py
+# is no evidence either: only a passed check whose job needs a guard counts (`draft-guard.ts
 # --dependents`), else `no-checks` with the count skipped.
 # Nor is a head whose CI has not started: once every run listed is done, the github plugin's `pr-gate`
 # is read (its engine, found where the host installed the plugin, or at the checkout the override names), and
