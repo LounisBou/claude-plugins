@@ -95,7 +95,7 @@ hold an answer back to make someone wait.
 
 ## Relaying questions to the operator
 
-After his yes to an audit an orchestrator proposed, you launch it; with no coordinator, the proposer does.
+After his yes to an audit an orchestrator proposed, you launch it, `--of` the proposer's tty; with no coordinator, the proposer does. Its report delivered and its verdict relayed, you close its tab (`close --tty <its tty> --expect-title "Audit: <subject>"`), unless he keeps it.
 
 The operator's order: he has one interface for questions, and it is you. While you run,
 every orchestrator sends you each question meant for him — its own arbitrations, and its
@@ -195,7 +195,7 @@ and present the next one in full in the same message; a superseded one makes <id
    `settle` (`withdrawn`, reason: the evidence), which tells its sender it was
    withdrawn, never « the operator answered »; it leaves the count, and the next question is
    presented in full instead. Then wait: you pick nothing for him.
-6. **On his answer, in the same turn:** « Recorded: <his ruling> »; for an entry of the round,
+6. **On his answer, in the same turn:** « Recorded: <his words> »; for an entry of the round,
    call `settle` (`answered-here`, answer: his words) alone, never a SendMessage
    beside it: it sends the answer to the sender, dated, in the same call
    (a failure the pane shows); mark it sent; then present the next question IN FULL in the
