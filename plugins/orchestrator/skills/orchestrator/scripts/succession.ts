@@ -238,15 +238,21 @@ export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[]
   const repos = [...new Set([...seed, ...ledger.map(line => line.repo), ...full].filter((repo): repo is string => typeof repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(repo)))]
   const forge: ForgePr[] = []
   const unread: string[] = []
+  const readRepos = new Set<string>()
   for (const repo of repos) {
     const read = open(repo)
     if (read === undefined) unread.push(repo)
-    else forge.push(...read)
+    else {
+      readRepos.add(repo)
+      forge.push(...read)
+    }
   }
   const standing = (key: string): string | undefined => {
+    const onForge = forge.some(pr => prKey(pr.repo, pr.pr) === key)
     const line = ledger.find(l => prKey(l.repo, l.pr) === key)
-    if (line !== undefined) return `${key} ${statusText(line)}`
-    return forge.some(pr => prKey(pr.repo, pr.pr) === key) ? `${key} open, no agent` : undefined
+    // A repository the forge was read for no longer lists a merged or closed pull request: its ledger line says nothing of it.
+    if (line !== undefined && (onForge || !readRepos.has(line.repo))) return `${key} ${statusText(line)}`
+    return onForge ? `${key} open, no agent` : undefined
   }
   const described = new Map<string, string>()
   const linked = rows.map(row => {
@@ -343,10 +349,12 @@ export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () =
       return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
     })
     if (agent !== undefined) return `${row.id} ${agent.replace(/^Agent:\s*/, '')}`
+    // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
+    const fell = row.blocker === undefined ? undefined : fall(row.blocker)
+    if (fell === 'standing') return `${row.id} blocked: ${row.blocker}`
     if ((row.linked ?? []).length > 0) return `${row.id} ${(row.linked ?? []).join(', ')}`
     if (row.blocker === undefined) return `${row.id} NO OWNER`
-    const fell = fall(row.blocker)
-    return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : fell === 'standing' ? `blocked: ${row.blocker}` : `blocker unread: ${row.blocker}`}`
+    return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
   })
 }
 
@@ -489,7 +497,9 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const owner = orchForm((readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() ?? '')
   // An owner file that names no orchestration (empty, torn, a note) leaves the session's own: the
   // successor's name is the predecessor's, the host's reference left off.
-  const name = parsed.name !== '' ? orchForm(parsed.name) : parseSessionName(owner)?.role === 'orchestrator' ? owner : sessionOrchestration(env)
+  const named = parsed.name !== '' || parseSessionName(owner)?.role === 'orchestrator'
+  const name = parsed.name !== '' ? orchForm(parsed.name) : named ? owner : sessionOrchestration(env)
+  if (!named && name !== '') io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration, using this session's: ${name}\n`)
   if (name === '') {
     io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration: pass --name "<Orch: x>" (this session is no orchestration either)\n`)
     return 2
