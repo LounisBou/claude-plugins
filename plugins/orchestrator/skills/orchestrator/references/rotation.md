@@ -2,7 +2,7 @@
 
 ## Context rotation
 
-The module says when a gate trips; this is what you do then. It says the same when a newer version of the plugins is installed: hand over at the end of the step in progress, at once when a defect of the running version blocks you.
+The module says when a gate trips; this is what you do then. It also tells the agent itself, which cannot read its own figure, but that line does not stand it down: send the stand-down below at once, never leave it to the brief's gate line. It says the same when a newer version of the plugins is installed: hand over at the end of the step in progress, at once when a defect of the running version blocks you.
 
 Rotation = a **resume brief** (`agent-rotation-brief.md`) for a fresh session, written by the agent you stand down, which holds the state: your stand-down message names the template, the path to write and the tier line, and its acknowledgment answers that path. You neither read nor retype it: the launcher lints it. Below the threshold, prefer REUSING the same agent session across phases: it keeps the interfaces it built in mind and a continuation prompt costs a fraction of a cold start — « reuse » names an agent with a NEXT phase to start now; a tab kept in case is a forbidden standing-by tab. The same rule applies to you: hand over with a resume brief before degrading, with the traps this session paid for, not only the state.
 

@@ -30,7 +30,7 @@ import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentReco
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
@@ -3349,26 +3349,43 @@ export async function orchestratorOn($: Host<'env' | 'fs' | 'plugin' | 'process'
 }
 
 // An agent's measure against the gate its session runs under (the gauge's thresholds,
-// read from this session's environment): past it and not yet reported, its orchestrator
-// is sent the figures once; back under it, the mark is cleared for the next crossing.
-export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, name: string, tty: string,
+// read from this session's environment): past it, the agent is told in its own session once
+// (mark `told`) and its orchestrator is sent the figures once (mark `sent`), both done marked
+// `reported`; what was not delivered is tried again at the next measure. Back under it, the mark
+// is cleared for the next crossing.
+export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
   reading: { context_tokens: number; context_percent: number; context_window: number }): Promise<void> {
   const path = `${await storeOf($)}/${gateKey(sessionId)}`
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, await gateEnv($)).tripped
-  const reported = String(await $.fs.read(path).catch(() => '')).trim() === 'reported'
-  if (past === reported) return
+  const mark = String(await $.fs.read(path).catch(() => '')).trim()
   if (!past) {
-    await $.fs.write(path, '')
+    if (mark !== '') await $.fs.write(path, '')
     return
   }
+  let told = mark === 'told' || mark === 'reported'
+  let sent = mark === 'sent' || mark === 'reported'
+  if (told && sent) return
+  if (!told) {
+    const taken = await $.prompt.submit({ text: gateSelfText(reading.context_tokens, reading.context_percent) })
+    told = !(taken && typeof taken === 'object' && 'drop' in taken && taken.drop)
+    if (!told) await logLine($, 'supervision', `gate: the host dropped ${name}'s own line: ${String((taken as { drop: unknown }).drop)}`)
+  }
+  if (!sent) sent = await sendGate($, tty, name, reading)
+  const next = told && sent ? 'reported' : told ? 'told' : sent ? 'sent' : ''
+  if (next !== mark) await $.fs.write(path, next === '' ? '' : `${next}\n`)
+}
+
+// The orchestrator's line of an agent's gate crossing; whether it was delivered.
+async function sendGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, tty: string, name: string,
+  reading: { context_tokens: number; context_percent: number }): Promise<boolean> {
   const to = await orchestratorOn($, tty, name, 'gate')
   if (!to) {
     await logLine($, 'supervision', `gate: no orchestrator found for ${name} on ${tty}`)
-    return
+    return false
   }
   const sent = await $.session.send({ to, text: gateText(name, reading.context_tokens, reading.context_percent) })
-  if (sent?.isDelivered) await $.fs.write(path, 'reported\n')
-  else await logLine($, 'supervision', `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+  if (!sent?.isDelivered) await logLine($, 'supervision', `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+  return sent?.isDelivered === true
 }
 
 // What each window of a home session shows, kept by the window it is written on (the server's
