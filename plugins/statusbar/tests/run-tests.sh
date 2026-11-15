@@ -22,7 +22,7 @@ strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 # config_with FLAG=VAL ... -> path to a settings file
 config_with() {
   local f
-  f=$(mktemp "$WORK/config.XXXXXX")
+  f=$(mktemp "$WORK/config.XXXXXX") || { echo "config_with: mktemp failed" >&2; exit 1; }
   printf '%s\n' "$@" > "$f"
   printf '%s' "$f"
 }
@@ -42,13 +42,16 @@ check() {
   fi
 }
 
-# Both helpers hand out a path that is theirs alone. A name drawn from $RANDOM repeats: bash seeds
-# it again in each command substitution, so two calls can draw the same number, and the later
-# file then overwrites the earlier one, silently turning another case's settings into its own. Here the draw is forced equal, outside any
-# command substitution, to show the paths do not depend on it.
+# Both helpers hand out a path that is theirs alone. A name drawn from $RANDOM can repeat across
+# two calls, as bash 3.2 does not reseed it in a subshell and bash 5 reseeds it at random. The
+# later file then overwrites the earlier one, silently turning another case's settings into its
+# own. Here the draw is forced equal, outside any command substitution, and each path must still
+# exist and keep the content written to it.
 check_distinct() {
-  local name="$1" first="$2" second="$3"
-  if [ -n "$first" ] && [ "$first" != "$second" ]; then
+  local name="$1" first="$2" second="$3" want_first="$4" want_second="$5"
+  if [ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ] &&
+     [ "$(cat "$first" 2>/dev/null)" = "$want_first" ] &&
+     [ "$(cat "$second" 2>/dev/null)" = "$want_second" ]; then
     printf '  ok   %s\n' "$name"; pass=$((pass + 1))
   else
     printf '  FAIL %s\n       first:  %s\n       second: %s\n' "$name" "$first" "$second"
@@ -58,10 +61,10 @@ check_distinct() {
 
 echo "== helpers: no two files share a name =="
 
-RANDOM=7; config_with SHOW_USAGE=1 > "$WORK/first.path"
-RANDOM=7; config_with SHOW_USAGE=0 > "$WORK/second.path"
+RANDOM=7; config_with SHOW_USAGE=1 > "$WORK/config.first.path"
+RANDOM=7; config_with SHOW_USAGE=0 > "$WORK/config.second.path"
 check_distinct "config_with hands out a file of its own when the random draw repeats" \
-  "$(cat "$WORK/first.path")" "$(cat "$WORK/second.path")"
+  "$(cat "$WORK/config.first.path")" "$(cat "$WORK/config.second.path")" "SHOW_USAGE=1" "SHOW_USAGE=0"
 
 NOW=$(date +%s)
 IN_2H=$((NOW + 8010))     # 2h13m30: 30 s of slack keeps the render at "2h13"
@@ -444,17 +447,17 @@ UNINSTALL="$HERE/../uninstall.sh"
 # pre-seeded with $1 as settings.json when given.
 fresh_config() {
   local dir
-  dir=$(mktemp -d "$WORK/cfg.XXXXXX")
+  dir=$(mktemp -d "$WORK/cfg.XXXXXX") || { echo "fresh_config: mktemp failed" >&2; exit 1; }
   [ -n "${1:-}" ] && printf '%s' "$1" > "$dir/settings.json"
   printf '%s' "$dir"
 }
 
 dest_for() { printf '%s/statusbar/statusline.sh' "$1"; }
 
-RANDOM=7; fresh_config > "$WORK/first.path"
-RANDOM=7; fresh_config > "$WORK/second.path"
+RANDOM=7; fresh_config '{"n":1}' > "$WORK/cfg.first.path"
+RANDOM=7; fresh_config '{"n":2}' > "$WORK/cfg.second.path"
 check_distinct "fresh_config hands out a directory of its own when the random draw repeats" \
-  "$(cat "$WORK/first.path")" "$(cat "$WORK/second.path")"
+  "$(cat "$WORK/cfg.first.path")/settings.json" "$(cat "$WORK/cfg.second.path")/settings.json" '{"n":1}' '{"n":2}'
 
 # check_json <name> <config-dir> <jq filter> <expected>
 check_json() {
