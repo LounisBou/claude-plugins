@@ -1,5 +1,5 @@
 // hooks/tests/background.test.ts
-// No Claude session runs in the background: every launch of one is refused from any session, the
+// No session of the host runs in the background: every launch of one is refused from any session, the
 // tool never asked, and a session the host started as a background one ends at start, its own
 // process signalled once proved by its host record.
 import { expect, test } from 'claude-code/testing'
@@ -10,84 +10,83 @@ import { capture, hookOf, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type ProcessRunResult } from '../../core/host.ts'
 
 type World = Host<Noun>
+const HOSTS = ['hostcli']
 const denyOf = (answer: unknown) => fieldsOf(answer)?.['deny']
 
 const refused: [string, string][] = [
-  ['claude --bg', 'claude --bg'],
-  ['claude --background "fix the build"', 'claude --bg'],
-  ['claude --bg=1 -n x', 'claude --bg'],
-  ['claude --resume 0f3c --bg', 'claude --bg'],
-  ['claude -r abc --background', 'claude --bg'],
-  ['claude --model opus --bg "do it"', 'claude --bg'],
-  ['/Users/me/.local/bin/claude --bg', 'claude --bg'],
-  ['env FOO=1 claude --bg', 'claude --bg'],
-  ['nohup claude --bg &', 'claude --bg'],
-  ['/usr/bin/env claude --bg', 'claude --bg'],
-  ['cd /tmp && claude --bg', 'claude --bg'],
-  ['echo "$(claude --bg)"', 'claude --bg'],
-  ["sh -c 'claude --bg'", 'claude --bg'],
-  ["bash -lc 'cd x; claude --background'", 'claude --bg'],
-  ["eval 'claude --bg'", 'claude --bg'],
-  ["echo 'claude --bg' | sh", 'claude --bg'],
-  ['npx @anthropic-ai/claude-code --bg', 'claude --bg'],
-  ['npx -y @anthropic-ai/claude-code@latest --bg', 'claude --bg'],
-  ['claude attach 3fa2', 'claude attach'],
-  ['claude attach "Agent: x"', 'claude attach'],
-  ['claude --name n attach 3fa2', 'claude attach'],
-  ['claude respawn --all', 'claude respawn'],
-  ['claude respawn 3fa2', 'claude respawn'],
-  ['claude daemon run', 'claude daemon run'],
-  ['claude daemon run ~/.claude/daemon.json', 'claude daemon run'],
-  ['claude daemon --log-file /tmp/d.log run', 'claude daemon run'],
-  ['claude daemon', 'claude daemon run'],
-  ['echo {} | claude daemon', 'claude daemon run'],
+  ['hostcli --bg', '--bg'],
+  ['hostcli --background "fix the build"', '--bg'],
+  ['hostcli --bg=1 -n x', '--bg'],
+  ['hostcli --resume 0f3c --bg', '--bg'],
+  ['hostcli -r abc --background', '--bg'],
+  ['hostcli --model m1 --bg "do it"', '--bg'],
+  ['/opt/bin/hostcli --bg', '--bg'],
+  ['env FOO=1 hostcli --bg', '--bg'],
+  ['nohup hostcli --bg &', '--bg'],
+  ['/usr/bin/env hostcli --bg', '--bg'],
+  ['cd /tmp && hostcli --bg', '--bg'],
+  ['echo "$(hostcli --bg)"', '--bg'],
+  ["sh -c 'hostcli --bg'", '--bg'],
+  ["bash -lc 'cd x; hostcli --background'", '--bg'],
+  ["eval 'hostcli --bg'", '--bg'],
+  ["echo 'hostcli --bg' | sh", '--bg'],
+  ['hostcli attach 3fa2', 'attach'],
+  ['hostcli attach "Agent: x"', 'attach'],
+  ['hostcli --name n attach 3fa2', 'attach'],
+  ['hostcli respawn --all', 'respawn'],
+  ['hostcli respawn 3fa2', 'respawn'],
+  ['hostcli daemon run', 'daemon run'],
+  ['hostcli daemon run ~/d.json', 'daemon run'],
+  ['hostcli daemon --log-file /tmp/d.log run', 'daemon run'],
+  ['hostcli daemon', 'daemon run'],
+  ['echo {} | hostcli daemon', 'daemon run'],
 ]
 
 const passed = [
-  'claude -p "say hi"',
-  'claude -p attach',
-  'claude --print "respawn the worker" --model haiku',
-  'claude plugin test plugins/orchestrator',
-  'claude plugin test "$ROOT"',
-  'claude --version',
-  'claude --help',
-  'claude --bg --help',
-  'claude attach --help',
-  'claude agents --json',
-  'claude logs 3fa2',
-  'claude stop 3fa2',
-  'claude rm 3fa2',
-  'claude daemon status',
-  'claude daemon stop --any',
-  'claude daemon logs',
-  'claude daemon uninstall',
-  'claude --resume 0f3c',
-  'claude -n "Agent: x" "read the brief"',
-  'command -v claude',
-  'git commit -m "refuse claude --bg"',
-  'grep -rn "claude --bg" plugins',
-  'echo claude --bg',
-  'cat <<EOF\nclaude --bg\nEOF',
+  'hostcli -p "say hi"',
+  'hostcli -p attach',
+  'hostcli --print "respawn the worker" --model m2',
+  'hostcli plugin test plugins/orchestrator',
+  'hostcli plugin test "$ROOT"',
+  'hostcli --version',
+  'hostcli --help',
+  'hostcli --bg --help',
+  'hostcli attach --help',
+  'hostcli agents --json',
+  'hostcli logs 3fa2',
+  'hostcli stop 3fa2',
+  'hostcli rm 3fa2',
+  'hostcli daemon status',
+  'hostcli daemon stop --any',
+  'hostcli daemon logs',
+  'hostcli daemon uninstall',
+  'hostcli --resume 0f3c',
+  'hostcli -n "Agent: x" "read the brief"',
+  'command -v hostcli',
+  'git commit -m "refuse hostcli --bg"',
+  'grep -rn "hostcli --bg" plugins',
+  'echo hostcli --bg',
+  'cat <<EOF\nhostcli --bg\nEOF',
   'ls --bg',
 ]
 
 test('every background launch is read as one, with its form', () => {
-  for (const [line, form] of refused) expect(backgroundLaunches(line), line).toEqual([form])
+  for (const [line, form] of refused) expect(backgroundLaunches(line, HOSTS), line).toEqual([form])
 })
 
 test('a foreground run, a print run, a viewer, a stop and every word that is data pass', () => {
-  for (const line of passed) expect(backgroundLaunches(line), line).toEqual([])
+  for (const line of passed) expect(backgroundLaunches(line, HOSTS), line).toEqual([])
 })
 
-test('a line the reader cannot read is a launch when it names claude, and nothing when it does not', () => {
+test('a line the reader cannot read is a launch when it names the CLI, and nothing when it does not', () => {
   const wide = `${'{a,b}'.repeat(12)}`
-  expect(backgroundLaunches(`claude ${wide}`)).toEqual(['a line the reader cannot read'])
-  expect(backgroundLaunches(`echo ${wide}`)).toEqual([])
+  expect(backgroundLaunches(`hostcli ${wide}`, HOSTS)).toEqual(['a line the reader cannot read'])
+  expect(backgroundLaunches(`echo ${wide}`, HOSTS)).toEqual([])
 })
 
 test('a background session is the one the host marks with its kind or its job directory', () => {
   expect(isBackgroundSession('bg', undefined)).toBe(true)
-  expect(isBackgroundSession(undefined, '/Users/me/.claude/jobs/3fa2')).toBe(true)
+  expect(isBackgroundSession(undefined, '/u/me/jobs/3fa2')).toBe(true)
   expect(isBackgroundSession(undefined, undefined)).toBe(false)
   expect(isBackgroundSession('', '  ')).toBe(false)
 })
@@ -99,7 +98,7 @@ function world(fake: Fake): { dollar: World; runs: string[][]; logs: string[]; t
   const logs: string[] = []
   const toasts: string[] = []
   const dollar = hostOf({
-    env: { get: async (name: string) => ({ HOME: '/home/me', ...fake.env })[name] },
+    env: { get: async (name: string) => ({ CLAUDE_CONFIG_DIR: '/u/cfg', ORCHESTRATOR_HOST_CLI: 'hostcli', ...fake.env })[name] },
     fs: { exists: async (path: string) => (fake.records ?? []).includes(path) },
     process: {
       run: async (argv: readonly string[]): Promise<ProcessRunResult> => {
@@ -138,7 +137,7 @@ test('a background launch is denied in any session, the tool never asked, the or
 
 test('a print run and the plugin test reach the tool untouched', async () => {
   const { dollar } = world({})
-  for (const line of ['claude -p "say hi"', 'claude plugin test plugins/orchestrator']) {
+  for (const line of ['hostcli -p "say hi"', 'hostcli plugin test plugins/orchestrator']) {
     const e = bash(line)
     const { answer, passedThrough } = await callBash(dollar, e)
     expect(passedThrough, line).toBe(e)
@@ -146,15 +145,15 @@ test('a print run and the plugin test reach the tool untouched', async () => {
   }
 })
 
-test('the guard that could not finish denies a line that names claude and lets any other through', async () => {
+test('the guard that could not finish denies a line that names the CLI and lets any other through', async () => {
   const { dollar } = world({})
   const net = hookOf(hooks(), 'tool.call', { tool: 'Bash' }).net!
   const failed = Object.assign(async (x: unknown) => x, { error: { message: 'budget' }, called: false })
-  expect(String(denyOf(await net(dollar, bash('claude -p x'), failed)))).toContain(BACKGROUND_DENY)
+  expect(String(denyOf(await net(dollar, bash('hostcli -p x'), failed)))).toContain(BACKGROUND_DENY)
   const e = bash('ls')
   expect(await net(dollar, e, failed)).toBe(e)
   const ran = Object.assign(async (x: unknown) => x, { error: { message: 'late' }, called: true })
-  const again = bash('claude --bg')
+  const again = bash('hostcli --bg')
   expect(await net(dollar, again, ran)).toBe(again)
 })
 
@@ -166,8 +165,8 @@ async function start(dollar: World) {
 }
 
 test('a background session ends at start: its own process, proved by its host record, is signalled', async () => {
-  for (const env of [{ CLAUDE_CODE_SESSION_KIND: 'bg' }, { CLAUDE_JOB_DIR: '/home/me/.claude/jobs/3fa2' }]) {
-    const { dollar, runs, logs, toasts } = world({ env, ppid: '4242', records: ['/home/me/.claude/sessions/4242.json'] })
+  for (const env of [{ CLAUDE_CODE_SESSION_KIND: 'bg' }, { CLAUDE_JOB_DIR: '/u/me/jobs/3fa2' }]) {
+    const { dollar, runs, logs, toasts } = world({ env, ppid: '4242', records: ['/u/cfg/sessions/4242.json'] })
     const { passedThrough, e } = await start(dollar)
     expect(runs).toContainEqual(['kill', '-TERM', '4242'])
     expect(logs.some(line => line.endsWith(`| background | ${BACKGROUND_END}`))).toBe(true)
@@ -177,7 +176,7 @@ test('a background session ends at start: its own process, proved by its host re
 })
 
 test('a background session whose process is not proved is never signalled, and the log says so', async () => {
-  for (const fake of [{ ppid: '4242', records: [] }, { ppid: '1', records: ['/home/me/.claude/sessions/1.json'] }, { ppid: 'x' }]) {
+  for (const fake of [{ ppid: '4242', records: [] }, { ppid: '1', records: ['/u/cfg/sessions/1.json'] }, { ppid: 'x' }]) {
     const { dollar, runs, logs } = world({ env: { CLAUDE_CODE_SESSION_KIND: 'bg' }, ...fake })
     await start(dollar)
     expect(runs.filter(argv => argv[0] === 'kill')).toEqual([])
@@ -186,7 +185,7 @@ test('a background session whose process is not proved is never signalled, and t
 })
 
 test('an interactive session starts untouched: nothing run, nothing signalled', async () => {
-  const { dollar, runs, toasts } = world({ env: { CLAUDE_CODE_SESSION_ATTENDED: '1' }, ppid: '4242', records: ['/home/me/.claude/sessions/4242.json'] })
+  const { dollar, runs, toasts } = world({ env: { TERM: 'xterm' }, ppid: '4242', records: ['/u/cfg/sessions/4242.json'] })
   const { passedThrough, e } = await start(dollar)
   expect(runs).toEqual([])
   expect(toasts).toEqual([])

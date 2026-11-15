@@ -318,7 +318,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
