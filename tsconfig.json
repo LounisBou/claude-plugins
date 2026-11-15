@@ -16,7 +16,7 @@
     "plugins/github/types/*.d.ts",
     "plugins/implement/hooks/*.ts",
     "plugins/implement/types/*.d.ts",
-    "plugins/norms/hooks/*.ts",
+    "plugins/norms/hooks/**/*.ts",
     "plugins/norms/types/*.d.ts",
     "plugins/pr-review/hooks/*.ts",
     "plugins/statusbar/hooks/**/*.ts",

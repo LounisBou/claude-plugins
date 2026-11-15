@@ -4,14 +4,16 @@
 import { expect, test } from 'claude-code/testing'
 import { parseJournalEvent } from '../../core/learning.ts'
 import { register, resetGuards } from '../guards.ts'
-import { fakeDollar, hook, mount, nextOf } from './fakes.ts'
+import { fakeDollar, hook, mount, nextOf, type World } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
+import { hostOf } from '../../core/capture.ts'
 import { observedAs, watchJournal } from './journal.ts'
 
-async function walkthrough($: any) {
+async function walkthrough($: World) {
   resetGuards()
   const hooks = mount(register)
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
-  return async (e: any) => {
+  return async (e: { tool: string } & Readonly<Record<string, unknown>>) => {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: e.tool }).handler($, e, next)
     return { out, ran: seen.length === 1 }
@@ -37,7 +39,7 @@ test('a journal that cannot be written is one line in the log, and the call goes
   $.fs.write = async () => { throw new Error('disk full') }
   const call = await walkthrough($)
   const { out, ran } = await call(editCall)
-  expect(out.deny).toBeUndefined()
+  expect(fieldsOf(out)?.['deny']).toBeUndefined()
   expect(ran).toBe(true)
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('the journal could not be written or pruned')
@@ -46,10 +48,10 @@ test('a journal that cannot be written is one line in the log, and the call goes
 
 test('a session with no log and no journal still lets the call through', async () => {
   const { $ } = fakeDollar({})
-  delete $.ui
+  $.ui = hostOf().ui
   $.env = { get: async () => { throw new Error('no env') } }
   const call = await walkthrough($)
   const { out, ran } = await call(editCall)
-  expect(out.deny).toBeUndefined()
+  expect(fieldsOf(out)?.['deny']).toBeUndefined()
   expect(ran).toBe(true)
 })
