@@ -7,6 +7,7 @@
     "plugins/bugs-bot/hooks/*.ts",
     "plugins/cloudflare/hooks/register.ts",
     "plugins/cloudflare/types/*.d.ts",
+    "plugins/github/hooks/observe.ts",
     "plugins/implement/hooks/core.ts",
     "plugins/implement/hooks/observe.ts",
     "plugins/implement/hooks/register.ts",
