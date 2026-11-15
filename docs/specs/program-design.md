@@ -240,7 +240,8 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 - Every guard ends in `.catch(… next(e))` (`register.ts:1435,1450`): fails open. **Fixed** (#15).
 - `auto-merge.json` is read-modify-write without a lock. **Fixed** (#36).
 - `register.ts:254`, `guards.ts:278`: WRITING.md (about 3.3k tokens) is read whole once per session and once per subagent before any authoring call.
-  **Partly** (#41): split into one file per kind under `engine/writing/`, each still read whole.
+  **Fixed** (#41): one file per kind under `engine/writing/`, named by the tool's description (`hooks/register.ts:2177`), and no guard asks for a read
+  before a call any more; a commit reads 514 tokens, a comment 380, a pull request 2,004 (`npm run context`).
 - Suspected: `image-upload` pushes any local file to a `pr-assets` branch once allowed for the session. **Fixed** (#31): images only.
 
 **norms**
