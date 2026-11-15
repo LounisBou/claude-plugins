@@ -45,7 +45,26 @@ graded » with its reason, never a figure that measures the bench rather than th
 - a stopped arm is still graded on what it left, and reported as stopped.
 
 `retrospective` is the eval spend of one learning retrospective: `runUsd` for the whole of it,
-`promptRules` the prompt-rule candidates it may prove. No harness reads it yet.
+`promptRules` the prompt-rule candidates it may prove. A rule's ablation reads it: each of its two
+variants gets `runUsd / promptRules / 2` as its cost ceiling.
+
+## A prompt rule's ablation
+
+A learned prompt rule enters only with an ablation that shows an outcome change
+(`docs/specs/learning-design.md`, section 5 and review note 5): the plugin's behaviour cases run
+with the rule and without it, on the host's plugin evaluation command, paired by case. The effect
+(mean over cases of the pass rate with the rule less without) is compared with the smallest effect
+the runs detect; under it the result is « inconclusive », and an inconclusive or harmful rule does
+not enter, and is proposed for removal where it is already in. Paid, on the operator's machine:
+
+```bash
+npm run ablation -- --plugin plugins/<name> --file <path in the plugin> --rule-file <file holding the rule's text> \
+  --case '<glob>' --out <dir outside the checkout> --model <agent model> --judge-model <judge model> \
+  [--runs <n>] [--host <binary>] [--allow-tools Write]
+```
+
+`<dir>/ablation.json` holds the figures. The comparison, the staging and the command line are
+tested with fakes (`scripts/lib/outcome/ablation.test.ts`); no paid run is recorded.
 
 ## Running it
 
