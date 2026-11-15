@@ -2340,6 +2340,14 @@ export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
 
+// The session's own name by its walk alone (its host's record, its launch name, its last rename),
+// null when the walk did not finish or found none: the name of a session whose row is not written
+// yet, or was written by a walk that did not finish.
+export async function walkedName($: any, sessionId: string): Promise<string | null> {
+  const walked = await walkWithinBound($, sessionId)
+  return walked.known ? walked.name : null
+}
+
 // The role of the session: the name its row holds, else the name its walk reads.
 export async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))

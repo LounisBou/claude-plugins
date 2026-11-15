@@ -11,7 +11,8 @@ import {
   addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
-import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf } from './supervision.ts'
+import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
+import { roleOf } from './session-name.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -28,11 +29,19 @@ type Answer = { result: string; isError?: true }
 
 const refuse = (result: string): Answer => ({ result, isError: true })
 
-// The session itself: its name and role, from the row the module keeps for it. Null when the name is
-// not known yet or the session keeps no list.
+// The session itself: its name and role, from the row the module keeps for it, else from its own
+// walk. The row is written when a turn ends (session.measure), so a session in its first turn has
+// none, a woken orchestrator's first turn included, and a row written while the walk did not finish
+// carries no name: the name the host already holds for the session (its record, its launch title)
+// answers then. A row that names a role other than a keeper's is an agent's: no walk. Null when the
+// name is not known or the session keeps no list.
 export async function whoAmI($: Held): Promise<{ name: string; role: string } | null> {
-  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(await $.session.id())}`).catch(() => '')))
-  return row?.name && row.role && KEEPERS.includes(row.role) ? { name: row.name, role: row.role } : null
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (row?.name && row.role) return KEEPERS.includes(row.role) ? { name: row.name, role: row.role } : null
+  const name = await walkedName($, sessionId)
+  const role = roleOf(name)
+  return name && role && KEEPERS.includes(role) ? { name, role } : null
 }
 
 /** The items a holder's list keeps, open or closed; none when there is no list. */
