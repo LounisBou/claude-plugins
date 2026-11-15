@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -435,6 +435,74 @@ test('the open questions asked with ask are printed as their block made from the
     '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
     '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
   ].join('\n'))
+})
+
+/** An object `ask` stored, as the round holds it, whatever its status. */
+const storedAsk = (id: string, status: 'open' | 'answered' | 'withdrawn', over: Record<string, unknown> = {}) => ({
+  v: 2, id, sender: { session: SESSION, name: NAME, role: 'orchestrator', machine: 'mbp' }, subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which first?',
+  choices: [{ letter: 'A', text: 'acme/app#1' }, { letter: 'B', text: 'acme/app#2' }], recommended: 'A', why: 'no rebase', blocks: 'row 2',
+  status, at: '2026-11-15T08:00:00.000Z', seq: 1,
+  answer: status === 'open' ? null : { text: status === 'answered' ? 'B' : 'the sender\'s session ended', by: status === 'answered' ? 'tab' : 'sender', at: '2026-11-15T09:00:00.000Z', settler: NAME },
+  ...over,
+})
+const texts = (...entries: object[]): string[] => entries.map(entry => JSON.stringify(entry))
+
+test('a successor asks again only what its predecessor never had answered: each status of the round, and each key', () => {
+  const none = { answered: [], reask: [] }
+  // Open: the question moved to the successor stays where it is, listed by roundOpen and not again.
+  assert.deepEqual(roundSettled(texts(storedAsk('q-1', 'open')), [], NAME, SESSION), none)
+  // Answered: applied with its answer, never asked again.
+  const answered = roundSettled(texts(storedAsk('q-2', 'answered')), [], NAME, SESSION)
+  assert.deepEqual(answered, { answered: [{ id: 'q-2', label: 'merge order', text: '_Subject_ : merge order\n_Context_ : Two pull requests touch one file.\n_Question_ : Which first?\n_Choices_ :\n- **A** : acme/app#1\n- **B** : acme/app#2\n_Recommendation_ : A — no rebase', said: 'B' }], reask: [] })
+  // Withdrawn alone: asked again, once, with the reason it was withdrawn for.
+  const withdrawn = roundSettled(texts(storedAsk('q-3', 'withdrawn')), [], NAME, SESSION)
+  assert.deepEqual(withdrawn.reask.map(q => [q.id, q.said]), [['q-3', 'the sender\'s session ended']])
+  assert.deepEqual(withdrawn.answered, [])
+  // Withdrawn while an open entry with its key exists, under any session: not asked again.
+  assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn'), storedAsk('q-4', 'open', { sender: { session: 'other', name: NAME, role: 'orchestrator', machine: 'mbp' } })), [], NAME, SESSION).reask, [])
+  // Withdrawn after the operator answered the same question, in the round or its archive: not asked again.
+  assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn'), storedAsk('q-5', 'answered')), [], NAME, SESSION).reask, [])
+  assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn')), texts(storedAsk('q-6', 'answered')), NAME, SESSION).reask, [])
+  // The same question withdrawn twice: the newest alone is asked again, once.
+  assert.deepEqual(roundSettled(texts(storedAsk('q-7', 'withdrawn'), storedAsk('q-8', 'withdrawn', { at: '2026-11-15T08:30:00.000Z' })), [], NAME, SESSION).reask.map(q => q.id), ['q-8'])
+  // A different question is its own key.
+  assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn'), storedAsk('q-9', 'open', { ask: 'Which later?' })), [], NAME, SESSION).reask.map(q => q.id), ['q-3'])
+  // Another orchestration's entries, and what is no entry, are none of its business.
+  assert.deepEqual(roundSettled([...texts(storedAsk('q-3', 'withdrawn', { sender: { session: 'x', name: 'Orch: other', role: 'orchestrator', machine: 'mbp' } }), storedAsk('q-2', 'answered', { sender: { session: 'x', name: 'Orch: other', role: 'orchestrator', machine: 'mbp' } })), 'not json', undefined as unknown as string], [], NAME, SESSION), none)
+})
+
+test('an entry `ask` stored malformed is ignored, and a consent asked keys the question apart', () => {
+  const none = { answered: [], reask: [] }
+  assert.deepEqual(roundSettled(texts(storedAsk('q-1', 'withdrawn', { choices: [{ letter: 'A' }] }), storedAsk('q-2', 'withdrawn', { why: 3 }), storedAsk('q-3', 'withdrawn', { sender: 'x' }), storedAsk('q-4', 'withdrawn', { consent: { kind: 'nope' } })), [], NAME, SESSION), none)
+  const consent = { kind: 'auto-merge', repo: 'acme/app' }
+  const asked = roundSettled(texts(storedAsk('q-5', 'withdrawn', { consent }), storedAsk('q-6', 'open')), [], NAME, SESSION)
+  assert.deepEqual(asked.reask.map(q => q.id), ['q-5'])
+})
+
+test('the relay\'s entries follow the same rule: answered or closed is applied, a withdrawn one asked again unless its question is open or answered', () => {
+  const relayed = (id: string, status: string, question = 'Which schema?') => ({ id, session: SESSION, from: NAME, kind: 'operator', status, question, answer: status === 'open' ? null : { text: status === 'withdrawn' ? 'moot' : 'the second' } })
+  const settled = roundSettled(texts(relayed('r-1', 'answered'), relayed('r-2', 'closed', 'Done?'), relayed('r-3', 'withdrawn', 'Later?')), [], NAME, SESSION)
+  assert.deepEqual(settled.answered.map(q => [q.id, q.label, q.said]), [['r-1', 'Which schema?', 'the second'], ['r-2', 'Done?', 'the second']])
+  assert.deepEqual(settled.reask.map(q => [q.id, q.text, q.said]), [['r-3', 'Later?', 'moot']])
+  assert.deepEqual(roundSettled(texts(relayed('r-3', 'withdrawn', 'Later?'), relayed('r-4', 'open', 'Later?')), [], NAME, SESSION).reask, [])
+})
+
+test('the takeover prints the answers to apply and the withdrawn questions to ask again, and none once an open entry holds the key', () => {
+  const asked = (id: string, status: 'open' | 'answered' | 'withdrawn', over: Record<string, unknown> = {}) => storedAsk(id, status, over)
+  const w = world({ round: [asked('q-a', 'answered'), asked('q-w', 'withdrawn', { ask: 'Which later?' }), asked('q-o', 'open', { ask: 'Which third?' }), asked('q-v', 'withdrawn', { ask: 'Which third?' })] })
+  assert.equal(w.run(), 0)
+  const text = w.text()
+  assert.match(text, /- Questions the operator answered, to apply \(subject, answer\), or `none`: merge order: B\n/)
+  assert.ok(text.includes('`none`; the takeover left out every one whose key an open, answered or closed entry holds: [q-w] the sender\'s session ended\n_Subject_ : merge order'))
+  assert.ok(text.includes('[q-o] _Subject_ : merge order'))
+  assert.ok(!text.includes('[q-v]') && !text.includes('[q-a]'))
+})
+
+test('with nothing settled in the round, the takeover says none of both', () => {
+  const empty = world({ round: [] })
+  assert.equal(empty.run(), 0)
+  assert.match(empty.text(), /- Questions the operator answered, to apply [^\n]*: none\n/)
+  assert.match(empty.text(), /- Questions withdrawn, to ask again under step 2[^\n]*: none\n/)
 })
 
 test('the successor\'s prompt names no script directory of the predecessor: it runs the takeover from its own copy of the plugin, which the takeover prints as the one every script is in', () => {
