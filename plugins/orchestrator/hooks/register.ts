@@ -9,6 +9,7 @@
 import { register as registerAudit } from './audit.ts'
 import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
+import { endIfBackground, register as registerBackground } from './background.ts'
 import { register as registerWait } from './wait.ts'
 import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
@@ -29,8 +30,9 @@ type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' 
 export function register(on: On<Mod>): void {
   // The scaffold's own passthrough, now under the every-handler law the four
   // domains below already carry: the net names what the bare handler cannot
-  // catch itself, the start is let through, and the state dir says why.
-  on('session.start', async (_$, e, next) => next(e))
+  // catch itself, the start is let through, and the state dir says why. A
+  // background session ends here, before anything else starts (background.ts).
+  on('session.start', async ($, e, next) => { await endIfBackground($); return next(e) })
     .catch(async ($, e, next) => {
       await logLine($, 'register', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
@@ -41,6 +43,7 @@ export function register(on: On<Mod>): void {
   // Before the guards and the supervision: the stop gate and the turn's end read the declared wait it hands on.
   registerWait(on)
   registerGuards(on)
+  registerBackground(on)
   registerSupervision(on)
   registerWake(on)
   registerPaneTool(on)

@@ -5861,6 +5861,36 @@ if command -v tmux >/dev/null 2>&1; then
 else
   echo "  skip a home server's end is not checked: no tmux"
 fi
+echo "== iterm-agents: a session a takeover moved to window 0 ends with the tab =="
+# A takeover kills the predecessor's window 0 and moves the successor's window there, the tab still
+# attached (cmd_takeover's move-window). The server stays armed: closing the tab then ends the moved
+# session too, and every process the server held. A server and a client of the suite's own.
+if command -v tmux >/dev/null 2>&1; then
+  MVSRV="suite-move-$$"
+  MVMARK=$((5600 + $$ % 1000))
+  mvsrv() { env -u TMUX -u TMUX_PANE tmux -L "$MVSRV" "$@"; }
+  mvalive() { n=0; for p in $1; do ps -p "$p" >/dev/null 2>&1 && n=$((n+1)); done; echo "$n"; }
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$MVSRV', 'Orch: old', '$WORK', 'sleep $MVMARK', 'suite')" >/dev/null 2>&1
+  mvsrv new-window -d -t home: -n 'Orch: new' "sleep $MVMARK" 2>/dev/null
+  mvsrv new-window -d -t home: -n 'Agent: a' "sleep $MVMARK" 2>/dev/null
+  TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$MVSRV" attach -t home >/dev/null 2>&1 &
+  mvclient=$!
+  i=0; while [ "$(mvsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$MVSRV', 'suite')" >/dev/null 2>&1
+  mvsrv kill-window -t home:0 2>/dev/null
+  mvsrv move-window -d -s "home:1" -t "home:0" 2>/dev/null
+  mvpids=$(mvsrv list-panes -s -t home -F '#{pane_pid}' 2>/dev/null | tr '\n' ' ')
+  check "the successor's window is window 0, and the server still runs it beside the agent" "Orch: new|2" \
+    "$(mvsrv display-message -p -t home:0 '#W' 2>/dev/null)|$(mvalive "$mvpids")"
+  { kill "$mvclient"; wait "$mvclient"; } 2>/dev/null
+  i=0; while mvsrv has-session -t home 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  sleep 0.5
+  check "closing the tab ends the server, the moved session and every window it held" "down|0" \
+    "$(mvsrv has-session -t home 2>/dev/null && echo up || echo down)|$(mvalive "$mvpids")"
+  mvsrv kill-server 2>/dev/null
+else
+  echo "  skip a moved session's end is not checked: no tmux"
+fi
 echo "== iterm-agents: every end of a home server is traced =="
 # A home server's end writes one dated line in close.log with the socket, the cause and the tty,
 # whoever ends it: the tab closed (the server exits by itself, so a watcher says it), a close
