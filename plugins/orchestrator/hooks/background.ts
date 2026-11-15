@@ -11,10 +11,10 @@
 import { innerLine, readCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 import type { Host, On } from './host.ts'
 import { configDir, logLine } from './module-io.ts'
-import { hostBasenames } from './session-name.ts'
+import { hostBasenames, hostRecordOf } from './session-name.ts'
 
 // The nouns the guards hold.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'ui'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui'>
 
 // The refusal of a background launch, and the end of a background session: one line, why, and
 // what to do instead.
@@ -29,6 +29,8 @@ const VALUED = new Set([
 ])
 // The daemon's subcommands that run nothing in the background: they read it or stop it.
 const DAEMON_HARMLESS = new Set(['status', 'logs', 'stop', 'uninstall'])
+// The daemon's options whose value is the next word.
+const DAEMON_VALUED = new Set(['--json-path', '--log-file'])
 // How many strings may sit inside one another and still be read as command lines.
 const STRING_DEPTH = 4
 
@@ -82,7 +84,7 @@ export function backgroundForm(args: readonly string[]): string | undefined {
   if (sub === 'attach') return 'attach'
   if (sub === 'respawn') return 'respawn'
   if (sub === 'daemon' && at !== undefined) {
-    const next = args.slice(at + 1).find(word => !word.startsWith('-'))
+    const next = args.slice(at + 1).find((word, k, rest) => !word.startsWith('-') && !DAEMON_VALUED.has(rest[k - 1] ?? ''))
     if (next === undefined || !DAEMON_HARMLESS.has(next)) return 'daemon run'
   }
   return undefined
@@ -100,24 +102,38 @@ function subcommandAt(args: readonly string[]): number | undefined {
 }
 
 // Whether the host started this session as a background one, by the variables its daemon sets
-// on every session it starts: the session's kind, and its job directory.
+// on every session it starts: the kind `bg`, and its job directory. Another kind is no background
+// session: a session that still has its terminal is never ended.
 export function isBackgroundSession(kind: string | undefined, jobDir: string | undefined): boolean {
-  return Boolean(kind?.trim()) || Boolean(jobDir?.trim())
+  return kind?.trim() === 'bg' || Boolean(jobDir?.trim())
 }
 
-// The basenames the host's CLI goes by: the name ORCHESTRATOR_HOST_CLI spells, its default the launcher's.
+// The basenames the host's CLI goes by: the name ORCHESTRATOR_HOST_CLI spells (empty is unset), and the launcher's default beside it.
 async function hostNames($: Held): Promise<string[]> {
-  return hostBasenames((await $.env.get('ORCHESTRATOR_HOST_CLI')) ?? 'claude', null)
+  return [...new Set([...hostBasenames((await $.env.get('ORCHESTRATOR_HOST_CLI')) || 'claude', null), 'claude'])] // ORCHESTRATOR_HOST_CLI's default
 }
 
-// The session's own process: the parent of a shell this very session starts, proved by the host
-// record the host keeps for each live session (`<config>/sessions/<pid>.json`). Null when either
-// fails: a process not proved the session's is never signalled.
+// How many parents the walk climbs from a shell of this session to the session's own process.
+const ANCESTORS = 6
+
+// The session's own process: the first ancestor of a shell this very session starts that has a host
+// record (`<config>/sessions/<pid>.json`) and whose record names this session or no session at all.
+// Null when none does, or the first recorded one names another session: a process not proved the
+// session's is never signalled.
 async function ownPid($: Held): Promise<string | null> {
-  const out = await $.process.run(['sh', '-c', 'echo $PPID'], { timeoutMs: 5_000 })
-  const pid = out.stdout.trim()
-  if (out.exitCode !== 0 || !/^\d+$/.test(pid) || Number(pid) <= 1) return null
-  return (await $.fs.exists(`${await configDir($)}/sessions/${pid}.json`)) ? pid : null
+  const records = `${await configDir($)}/sessions`
+  const sessionId = await $.session.id()
+  let out = await $.process.run(['sh', '-c', 'echo $PPID'], { timeoutMs: 5_000 })
+  for (let i = 0; i < ANCESTORS; i++) {
+    const pid = out.stdout.trim()
+    if (out.exitCode !== 0 || !/^\d+$/.test(pid) || Number(pid) <= 1) return null
+    if (await $.fs.exists(`${records}/${pid}.json`)) {
+      const record = hostRecordOf(String(await $.fs.read(`${records}/${pid}.json`).catch(() => '')))
+      return record !== null && (record.sessionId === null || record.sessionId === sessionId) ? pid : null
+    }
+    out = await $.process.run(['ps', '-o', 'ppid=', '-p', pid], { timeoutMs: 5_000 })
+  }
+  return null
 }
 
 export function register(on: On<Held>): void {
@@ -149,5 +165,6 @@ export async function endIfBackground($: Held): Promise<void> {
     await logLine($, 'background', 'the background session could not be ended: its own process was not proved')
     return
   }
-  await $.process.run(['kill', '-TERM', pid], { timeoutMs: 5_000 })
+  const killed = await $.process.run(['kill', '-TERM', pid], { timeoutMs: 5_000 })
+  if (killed.exitCode !== 0) await logLine($, 'background', `the background session could not be ended: kill ${pid} answered ${killed.exitCode}`)
 }

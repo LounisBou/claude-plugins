@@ -60,6 +60,7 @@ const passed = [
   'hostcli daemon stop --any',
   'hostcli daemon logs',
   'hostcli daemon uninstall',
+  'hostcli daemon --log-file /tmp/d.log status',
   'hostcli --resume 0f3c',
   'hostcli -n "Agent: x" "read the brief"',
   'command -v hostcli',
@@ -89,9 +90,10 @@ test('a background session is the one the host marks with its kind or its job di
   expect(isBackgroundSession(undefined, '/u/me/jobs/3fa2')).toBe(true)
   expect(isBackgroundSession(undefined, undefined)).toBe(false)
   expect(isBackgroundSession('', '  ')).toBe(false)
+  expect(isBackgroundSession('interactive', undefined)).toBe(false)
 })
 
-type Fake = { env?: Record<string, string>; records?: readonly string[]; ppid?: string; failRun?: boolean }
+type Fake = { env?: Record<string, string>; records?: readonly string[]; texts?: Record<string, string>; parents?: Record<string, string>; ppid?: string; failRun?: boolean }
 
 function world(fake: Fake): { dollar: World; runs: string[][]; logs: string[]; toasts: string[] } {
   const runs: string[][] = []
@@ -99,7 +101,8 @@ function world(fake: Fake): { dollar: World; runs: string[][]; logs: string[]; t
   const toasts: string[] = []
   const dollar = hostOf({
     env: { get: async (name: string) => ({ CLAUDE_CONFIG_DIR: '/u/cfg', ORCHESTRATOR_HOST_CLI: 'hostcli', ...fake.env })[name] },
-    fs: { exists: async (path: string) => (fake.records ?? []).includes(path) },
+    fs: { exists: async (path: string) => (fake.records ?? []).includes(path), read: async (path: string) => fake.texts?.[path] ?? '{}' },
+    session: { id: async () => 'S1' },
     process: {
       run: async (argv: readonly string[]): Promise<ProcessRunResult> => {
         const line = logLineOf(argv)
@@ -107,6 +110,7 @@ function world(fake: Fake): { dollar: World; runs: string[][]; logs: string[]; t
         if (fake.failRun) throw new Error('no process')
         runs.push([...argv])
         if (argv[0] === 'sh' && argv[2] === 'echo $PPID') return { exitCode: 0, stdout: `${fake.ppid ?? ''}\n`, stderr: '' }
+        if (argv[0] === 'ps') return { exitCode: 0, stdout: `${fake.parents?.[String(argv[4])] ?? ''}\n`, stderr: '' }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -145,6 +149,14 @@ test('a print run and the plugin test reach the tool untouched', async () => {
   }
 })
 
+test('the guard that could not finish and cannot read the CLI\'s name denies every line not yet run', async () => {
+  const { dollar } = world({})
+  const blind = { ...dollar, env: { get: async () => { throw new Error('no env') } } }
+  const net = hookOf(hooks(), 'tool.call', { tool: 'Bash' }).net!
+  const failed = Object.assign(async (x: unknown) => x, { error: { message: 'budget' }, called: false })
+  expect(String(denyOf(await net(blind, bash('ls'), failed)))).toContain(BACKGROUND_DENY)
+})
+
 test('the guard that could not finish denies a line that names the CLI and lets any other through', async () => {
   const { dollar } = world({})
   const net = hookOf(hooks(), 'tool.call', { tool: 'Bash' }).net!
@@ -173,6 +185,15 @@ test('a background session ends at start: its own process, proved by its host re
     expect(toasts).toEqual([BACKGROUND_END])
     expect(passedThrough).toBe(e)
   }
+})
+
+test('the walk climbs from the shell to the first recorded ancestor, and its record must name this session or none', async () => {
+  const walked = world({ env: { CLAUDE_CODE_SESSION_KIND: 'bg' }, ppid: '700', parents: { '700': '4242' }, records: ['/u/cfg/sessions/4242.json'], texts: { '/u/cfg/sessions/4242.json': '{"sessionId":"S1"}' } })
+  await start(walked.dollar)
+  expect(walked.runs).toContainEqual(['kill', '-TERM', '4242'])
+  const other = world({ env: { CLAUDE_CODE_SESSION_KIND: 'bg' }, ppid: '4242', records: ['/u/cfg/sessions/4242.json'], texts: { '/u/cfg/sessions/4242.json': '{"sessionId":"S2"}' } })
+  await start(other.dollar)
+  expect(other.runs.filter(argv => argv[0] === 'kill')).toEqual([])
 })
 
 test('a background session whose process is not proved is never signalled, and the log says so', async () => {

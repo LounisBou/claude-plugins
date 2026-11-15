@@ -5870,6 +5870,10 @@ if command -v tmux >/dev/null 2>&1; then
   MVMARK=$((5600 + $$ % 1000))
   mvsrv() { env -u TMUX -u TMUX_PANE tmux -L "$MVSRV" "$@"; }
   mvalive() { n=0; for p in $1; do ps -p "$p" >/dev/null 2>&1 && n=$((n+1)); done; echo "$n"; }
+  # The tab's client, a pty whose master the probe holds, written here too: this block needs no other.
+  [ -f "$WORK/ptyclient.py" ] || printf '%s\n' 'import os, pty, sys, time' 'pid, fd = pty.fork()' 'if pid == 0:' \
+    '    os.execvp(sys.argv[1], sys.argv[1:])' 'while True:' '    try:' '        os.read(fd, 4096)' '    except OSError:' \
+    '        time.sleep(0.2)' > "$WORK/ptyclient.py"
   ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$MVSRV', 'Orch: old', '$WORK', 'sleep $MVMARK', 'suite')" >/dev/null 2>&1
   mvsrv new-window -d -t home: -n 'Orch: new' "sleep $MVMARK" 2>/dev/null
   mvsrv new-window -d -t home: -n 'Agent: a' "sleep $MVMARK" 2>/dev/null
