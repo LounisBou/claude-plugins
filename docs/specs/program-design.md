@@ -274,7 +274,9 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 **statusbar**
 - `statusline/statusline.sh:122-130`: `date -r <epoch>` is macOS-only; on GNU the reset times vanish silently. **Fixed** (#22).
 - `install.sh:200-211`: overwrites a foreign `statusLine` (backup only), not atomic, replaces a symlinked `settings.json` by a file. **Partly** (#22): atomic, through the
-  symlink, with a backup; a foreign `statusLine` is still replaced, with a message.
+  symlink, with a backup; a foreign `statusLine` is still replaced, with a message (`install.sh:216-221`). **Open: a choice.** The install replaces
+  another tool's status line and says so, the old command kept in the backup, one command as today; or it stops when it finds one and asks before
+  replacing it, one more answer to give at install (non-goal 2 weighs against it).
 - `statusline/statusline.sh:20` sources its config file as code at every redraw. **Fixed** (#22).
 - Suspected: `git status` without `GIT_OPTIONAL_LOCKS=0` can take `index.lock` beside agents; `launcher.sh:10` takes the first install path. **Fixed** (#22).
 
