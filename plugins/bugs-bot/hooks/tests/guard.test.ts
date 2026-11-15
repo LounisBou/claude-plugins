@@ -241,3 +241,36 @@ test('a guard that throws refuses a post and lets a read through, through the en
   expect((await $.tool.call({ tool: 'Read', file_path: '/repo/src/app.ts' })).deny).toBeUndefined()
   expect(ran).toBe(1)
 })
+
+// --- the journal ---------------------------------------------------------------------------
+
+test('each refusal leaves one refusal event under its stable code, and a call let through leaves none', async ($, on) => {
+  const { journal } = mount(on, { files: PROJECT, shell: () => ({ result: 'posted' }) })
+  await begin($)
+  await $.tool.call({ tool: 'Bash', command: 'bugs-bot reply 1 "corrigé dans #680"' })
+  await $.tool.call({ tool: 'Bash', command: 'bugs-bot reply 1 "$(cat x)"' })
+  await $.tool.call({ tool: 'Read', file_path: '/home/op/.bugs-bot/.env' })
+  await $.tool.call({ tool: 'Bash', command: "bugs-bot reply 1 \"C'est réglé\"" })
+  expect(journal.map(e => [e.kind, e.source.plugin, e.source.code, e.trust, e.evidence])).toEqual([
+    ['refusal', 'bugs-bot', 'bugs-bot.post.leak', 'computed', [{ type: 'refusal', code: 'bugs-bot.post.leak' }]],
+    ['refusal', 'bugs-bot', 'bugs-bot.post.dynamic', 'computed', [{ type: 'refusal', code: 'bugs-bot.post.dynamic' }]],
+    ['refusal', 'bugs-bot', 'bugs-bot.token-file', 'computed', [{ type: 'refusal', code: 'bugs-bot.token-file' }]],
+  ])
+  expect(JSON.stringify(journal)).not.toContain('#680')
+  expect(journal[0].context.session).toBe('session-1')
+})
+
+test('a failed guard\'s refusal is one event under its own code', async ($, on) => {
+  const { journal } = mount(on, { files: PROJECT, cwdFails: true })
+  await begin($)
+  expect((await $.tool.call({ tool: TOOL, command: 'reply', args: ['1', 'corrigé'] })).deny).toBe(NET_DENIAL)
+  expect(journal.map(e => e.source.code)).toEqual(['bugs-bot.guard.failed'])
+})
+
+test('a journal that cannot be written leaves the refusal standing and one line in the log', async ($, on) => {
+  const { logs } = mount(on, { files: PROJECT, writeFails: 'disk full' })
+  await begin($)
+  const out = await $.tool.call({ tool: 'Bash', command: 'bugs-bot reply 1 "corrigé dans #680"' })
+  expect(String(out.deny)).toContain('#680')
+  expect(logs.some(line => line.startsWith('bugs-bot: the journal could not be written'))).toBe(true)
+})

@@ -5,6 +5,7 @@ import {
   AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, CANDIDATE_CONTRACT, CANDIDATE_STATE_CONTRACT, candidateStateDir, candidateStateFile, isDue, judged, moved, parseCandidateState, readCandidateState, retrospectiveStartArgv, scopeFits, eventId, parseCandidate, signatureFrom, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
   answerEvent, answerGiven, findingEvent, repoPath, subjectOf,
+  guardPhase, isEnforceable, LEARNED_GUARD_CONTRACT, learnedDecision, tallyOf, wouldBeRefusals, wouldBeVerdict, type WouldBeVerdict,
   foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, pathClassesOf, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
@@ -662,5 +663,62 @@ describe("the candidate's state", () => {
     assert.deepEqual(retrospectiveStartArgv('/p/learning/', '/c'), ['node', '--experimental-strip-types', '--no-warnings', '/p/learning/skills/learning/scripts/retrospective.ts', 'start', '--config', '/c'])
     assert.equal(typeof readCandidateState(null), 'string')
     assert.equal(typeof readCandidateState({ ...proposed, candidate: null }), 'string')
+  })
+})
+
+describe('a learned guard: warn, then enforce', () => {
+  const EVENTS = ['20261101T101500Z-0a1b2c3d', '20261102T101500Z-0a1b2c3d', '20261103T101500Z-0a1b2c3d']
+  const candidate = parseCandidate({
+    v: 1, signature: 'refusal:github.writing.rule', kind: 'refusal', code: 'github.writing.rule', severity: null, classes: [], languages: [],
+    since: '2026-10-15T10:00:00Z', until: '2026-11-14T10:00:00Z', events: EVENTS, prs: ['owner/name#7', 'owner/name#8'], repos: ['owner/name'],
+  })
+  assert.ok(candidate)
+  const cause = { resolved: true, first_failure: 'the rules are read after the text is written', counterfactual: 'read first, the commit passes at once', evidence: [EVENTS[0]], alternatives: ['the rules changed'], confidence: 'medium' }
+  const stateOf = (rung: string, pr: string | null) => {
+    const proposed = judged(candidate, { signature: candidate.signature, cause, remedy: { scope: 'project', rung, target: 'owner/name', proof: { type: 'test', path: 'hooks/tests/a.test.ts' } } }, '2026-11-14T11:00:00Z')
+    assert.ok(typeof proposed !== 'string', String(proposed))
+    if (pr === null) return proposed
+    const merged = moved(proposed, { state: 'merged', pr }, '2026-11-15T11:00:00Z')
+    assert.ok(typeof merged !== 'string', String(merged))
+    return merged
+  }
+  const right = (n: number): WouldBeVerdict[] => Array.from({ length: n }, () => 'right')
+
+  it('reads a would-be refusal as right when its pull request was corrected, wrong when it merged as it was, open before', () => {
+    assert.equal(wouldBeVerdict({ merged: true, corrected: true }), 'right')
+    assert.equal(wouldBeVerdict({ merged: false, corrected: true }), 'right')
+    assert.equal(wouldBeVerdict({ merged: true, corrected: false }), 'wrong')
+    assert.equal(wouldBeVerdict({ merged: false, corrected: false }), 'open')
+  })
+
+  it('is enforceable at nine in ten of at least five decided would-be refusals, open ones left out', () => {
+    assert.equal(LEARNED_GUARD_CONTRACT.min_decided, 5)
+    assert.equal(isEnforceable(tallyOf(right(5))), true)
+    assert.equal(isEnforceable(tallyOf([...right(4), 'open', 'open'])), false)
+    assert.equal(isEnforceable(tallyOf([...right(9), 'wrong'])), true)
+    assert.equal(isEnforceable(tallyOf([...right(8), 'wrong'])), false)
+    assert.deepEqual(tallyOf(['right', 'wrong', 'open', 'open']), { right: 1, wrong: 1, open: 2 })
+  })
+
+  it('a guard the retrospective proposed warns until it merged and its would-be refusals reach the precision, then enforces', () => {
+    assert.equal(guardPhase(stateOf('guard', null), right(10)), 'warn')
+    assert.equal(guardPhase(stateOf('guard', 'owner/name#9'), right(4)), 'warn')
+    assert.equal(guardPhase(stateOf('guard', 'owner/name#9'), right(5)), 'enforce')
+    assert.equal(guardPhase(stateOf('test', 'owner/name#9'), right(5)), undefined)
+  })
+
+  it('in warn the call goes through and leaves an escape; enforced it is refused and leaves a refusal', () => {
+    assert.deepEqual(learnedDecision('warn', 'github: no'), { deny: undefined, kind: 'escape' })
+    assert.deepEqual(learnedDecision('enforce', 'github: no'), { deny: 'github: no', kind: 'refusal' })
+  })
+
+  it("gathers a guard's would-be refusals by the pull request each names", () => {
+    const escape = (random: string, pr: number | null, code = 'github.learned.rule') => learningEvent({
+      at: AT, random, kind: 'escape', source: { plugin: 'github', code }, trust: 'computed', evidence: [{ type: 'refusal', code }], subject: subjectOf({ repo: 'owner/name', pr }),
+    })
+    const events = [escape('00000001', 7), escape('00000002', 7), escape('00000003', 8), escape('00000004', null), escape('00000005', 7, 'github.other.rule')].filter(e => e !== undefined)
+    const byPr = wouldBeRefusals(events, 'github.learned.rule')
+    assert.deepEqual([...byPr.keys()], ['owner/name#7', 'owner/name#8'])
+    assert.equal(byPr.get('owner/name#7')?.length, 2)
   })
 })

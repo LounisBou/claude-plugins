@@ -13,8 +13,11 @@ import { register as registerWalkthrough } from './walkthrough.ts'
 import { register as registerTriage } from './triage.ts'
 import { register as registerLoop } from './loop.ts'
 import { register as registerCommands } from './commands.ts'
+import type { Host, On } from '../core/host.ts'
+import type { LoopHost } from './loop.ts'
+import type { SessionHost } from './session.ts'
 
-export function register(on: any): void {
+export function register(on: On<LoopHost & SessionHost & Host<'plugin'>>): void {
   registerSession(on)
   registerWalkthrough(on)
   registerTriage(on)

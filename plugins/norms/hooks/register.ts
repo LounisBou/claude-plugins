@@ -8,8 +8,10 @@ import { register as registerLearn } from './learn.ts'
 import { register as registerGuards } from './guards.ts'
 import { register as registerValidate } from './validate.ts'
 import { register as registerRecord } from './record.ts'
+import type { On } from '../core/host.ts'
+import type { CheckHost } from './check.ts'
 
-export function register(on: any): void {
+export function register(on: On<CheckHost>): void {
   registerCheck(on)
   registerLearn(on)
   registerGuards(on)
