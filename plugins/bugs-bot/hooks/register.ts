@@ -9,8 +9,9 @@
 import { register as registerGuard } from './guard.ts'
 import { register as registerTool } from './tool.ts'
 import { register as registerStart } from './start.ts'
+import type { Host, On } from '../core/host.ts'
 
-export function register(on: any): void {
+export function register(on: On<Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'ui' | 'clock'>>): void {
   registerGuard(on)
   registerTool(on)
   registerStart(on)
