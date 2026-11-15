@@ -2,7 +2,7 @@
 // The to-do list's format (todo-format.ts): the grammar of a line, the numbering, the closing and the deferring.
 import { expect, test } from 'claude-code/testing'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, rowTodo, todoItems, todoFile, todoLabel, todoName, todoPath, TODO_VERSION,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, rowTodo, todoImagesLine, todoItems, todoFile, todoLabel, todoName, todoPath, TODO_VERSION,
 } from '../todo-format.ts'
 
 const NOW = new Date('2026-11-14T15:00:00Z')
@@ -100,4 +100,18 @@ test('an item names the rows it turned into, never their state; a line whose row
   expect(rowTodo(one.text, 2, 7)).toEqual({ error: 'no to-do 2 in this list' })
   expect(parseTodoItem({ ...linked.item, rows: ['7'] })).toBe(undefined)
   expect(parseTodoItem({ ...linked.item, rows: 7 })).toBe(undefined)
+})
+
+test('keeps the images he gave with his words, and prints them on one line', () => {
+  const made = added(undefined, 'fix this screen', { images: ['/tmp/shots/a.png', '/tmp/shots/b.png'] })
+  expect(made.item.images).toEqual(['/tmp/shots/a.png', '/tmp/shots/b.png'])
+  expect(todoItems(made.text)[0]?.images).toEqual(['/tmp/shots/a.png', '/tmp/shots/b.png'])
+  expect(todoImagesLine(made.item)).toBe('images: /tmp/shots/a.png, /tmp/shots/b.png')
+  // None given: no field, no line.
+  const plain = added(undefined, 'merge it')
+  expect('images' in plain.item).toBe(false)
+  expect(todoImagesLine(plain.item)).toBe(null)
+  // A line whose images are no absolute paths is no item.
+  expect(parseTodoItem({ ...plain.item, images: ['relative.png'] })).toBe(undefined)
+  expect(parseTodoItem({ ...plain.item, images: 'a.png' })).toBe(undefined)
 })
