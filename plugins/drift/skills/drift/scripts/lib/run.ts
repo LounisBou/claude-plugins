@@ -3,7 +3,8 @@
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { KILL_GRACE_MS, signalGroup, type Run } from '../../../../core/index.ts'
+import { KILL_GRACE_MS, signalGroup } from '../../../../core/process-group.ts'
+import type { Run } from '../../../../core/playwright.ts'
 import { DriftError } from './compare.ts'
 import { configPathOf, scratchpadOf, slugOf, type Options } from './config.ts'
 
