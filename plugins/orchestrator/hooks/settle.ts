@@ -177,6 +177,17 @@ export function planWithdrawal(entry: Fields, why: string, at: string, shown: bo
   return { entry: { ...entry, status: shown ? 'closed' : 'withdrawn', answer }, asker, deliver: null, consentBy: null, consentText: why, relayed: true, told: false }
 }
 
+// An operator entry of an older release, still open, withdrawn by the round's wake in the
+// coordinator's session (null leaves any other): its sender is told by the caller once written.
+export function planOlder(entry: Fields, text: string, at: string): Plan | null {
+  if (entry['kind'] !== 'operator' || entry['status'] !== 'open' || fields(entry['sender']) !== null) return null
+  const asker: Asker = { session: String(entry['session'] ?? ''), name: String(entry['from'] ?? ''), remote: fields(entry['origin']) !== null }
+  return {
+    entry: { ...entry, status: 'withdrawn', answer: { text: `withdrawn: ${text}`, by: 'coordinator', at } },
+    asker, deliver: null, consentBy: null, consentText: text, relayed: false, told: false,
+  }
+}
+
 /** The message an asker receives when another session settled its question asked with `ask`. */
 export function settledMessage(entry: Fields, me: Me): string {
   const answer = fields(entry['answer']) ?? {}
