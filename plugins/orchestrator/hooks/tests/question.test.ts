@@ -387,6 +387,21 @@ test('a consent question answered « Accorder » in the asker\'s tab is recorded
   expect((await records('let me think')).length).toBe(0)
 })
 
+test('words that open with « Accorder » typed in the coordinator\'s own tab are the consent; in another session\'s tab they record none', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const records = async (me: [string, string], typed: string) => {
+    const { dollar, files } = world({ me })
+    await ask(dollar, { ...FULL, urgent: undefined, ...consent })
+    await claimAsked(dollar, 'composer', typed, NOW)
+    await settleClaimed(dollar, [], NOW)
+    return [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer)
+  }
+  const words = 'Accorder la dispense et fusionner, merci'
+  expect(await records(['coordinator', 'Coord: general [a1b2c3]'], words)).toEqual(['Accorder'])
+  expect(await records(['orchestrator', 'Orch: belt [a1b2c3]'], words)).toEqual([])
+  expect(await records(['coordinator', 'Coord: general [a1b2c3]'], "Accorder la dispense, valable jusqu'au 16/11")).toEqual([])
+})
+
 test('a subagent\'s call is refused', async () => {
   const { dollar, files } = world()
   expect((await ask(dollar, { ...FULL, agentId: 'agent-1' })).isError).toBe(true)

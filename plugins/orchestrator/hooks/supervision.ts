@@ -28,7 +28,7 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
-import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -2359,7 +2359,11 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
   if (!entry.consent) return null
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
   if (!record) {
-    const why = `« ${text.trim()} » names none of its choices`
+    const why = opensChoice(text, entry.choices)
+      ? namesOtherSubject(text, entry.consent)
+        ? `« ${text.trim()} » names a pull request or repository other than the question's own (${subjectLabel(entry.consent)}): ask again, with it in the question`
+        : `« ${text.trim()} » adds words after its choice (a limit, a condition or a question): only a plain confirmation records, so ask again with the limit in the question`
+      : `« ${text.trim()} » names none of its choices`
     await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: ${why}`)
     return why
   }

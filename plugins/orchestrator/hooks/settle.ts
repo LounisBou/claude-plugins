@@ -84,7 +84,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     asker,
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
-    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own ? 'tab' : 'coordinator',
+    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
     relayed: false,
     told: false,
@@ -109,7 +109,11 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
       ...(request.outcome === 'answered-here' ? { typed: request.text } : {}),
     }
     const status = shown ? 'closed' : request.outcome === 'withdrawn' ? 'withdrawn' : 'answered'
-    return { entry: { ...entry, status, answer }, asker, deliver: null, consentBy: null, consentText: request.text, relayed: true, told: shown }
+    // His consent is recorded from his answer only: in the coordinator's own tab every order of his is
+    // one, so its settle is recorded as the coordinator's (the words need no exact form, as the pane's
+    // and the coordinator's close of another's question); an orchestrator's own settle is its word.
+    const consentBy = request.outcome === 'answered-here' && me.role === 'coordinator' ? 'coordinator' : null
+    return { entry: { ...entry, status, answer }, asker, deliver: null, consentBy, consentText: request.text, relayed: true, told: shown }
   }
   if (me.role !== 'coordinator') return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
   if (entry['status'] === 'closed') return { error: `${request.id} is closed already: nothing to settle.` }
