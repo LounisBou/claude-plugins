@@ -3606,24 +3606,6 @@ check "the command reference states the title shape once" "1|no|no" \
 # transcript with or without --inherit-model, and the measure file feeds no launch.
 check "no text still says the opening takes the deep tier, the succession depends on --inherit-model or the measure file feeds it" "0|0|0" \
   "$(grep -c 'on the deep tier unless told' "$ROOT/docs/design.md")|$(grep -cE 'whether or not (it is typed|--inherit-model)|^ *# +--inherit-model is typed' "$ITERMCMDS")|$(grep -c -- "launcher's \`--inherit-model\` takes the model" "$ROOT/README.md")"
-# One exception, the operator's order: the rulebook and the decision round route a question for
-# him through a running coordinator. They name it in that one paragraph and nowhere else.
-coordinator_named_in() { # <root>
-  ( cd "$1" && grep -rln -i --exclude-dir=__pycache__ 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/succeed.md commands/audit.md | grep -v '^skills/orchestrator/SKILL.md$' )
-}
-check "no orchestrator, launcher or brief-template text names the coordinator" "" \
-  "$(coordinator_named_in "$ROOT")"
-# A byte-compiled script left under __pycache__ by an earlier run is not text of the plugin:
-# the verdict is the same whether or not one lies in the tree.
-PYC="$WORK/pycache-trap"
-mkdir -p "$PYC/skills" "$PYC/templates" "$PYC/commands"
-cp -R "$ROOT/skills/orchestrator" "$ROOT/skills/iterm-agents" "$PYC/skills/"
-cp "$ROOT"/templates/agent-*.md "$ROOT/templates/orchestrator-succession-brief.md" "$PYC/templates/"
-cp "$ROOT/commands/succeed.md" "$ROOT/commands/audit.md" "$PYC/commands/"
-mkdir -p "$PYC/skills/orchestrator/scripts/__pycache__"
-printf 'x\0coordinat\0' > "$PYC/skills/orchestrator/scripts/__pycache__/draft_guard.cpython-311.pyc"
-check "a stray __pycache__ does not change the coordinator check" "" "$(coordinator_named_in "$PYC")"
-rm -rf "$PYC"
 coord_outside_routing() {
   awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
@@ -10321,8 +10303,8 @@ check "two orchestrators in one checkout are still a pull request collision; a f
   "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
-mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts"
-cp "$COORD" "$CT/coordinator/scripts/"
+mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts" "$WORK/coord-tree/core"
+cp "$COORD" "$CT/coordinator/scripts/" && cp "$ROOT/core/names.json" "$WORK/coord-tree/core/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"

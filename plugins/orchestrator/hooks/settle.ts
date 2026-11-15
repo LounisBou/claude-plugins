@@ -61,8 +61,10 @@ export type Plan = {
 const RELAY_TAB = "answered in the sender's own tab"
 
 // The close of an object `ask` stored: its asker settles it any way, the coordinator answers it in
-// its tab or withdraws it; it is answered or withdrawn, never closed (no coordinator holds it).
-export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: string): Plan | { error: string } {
+// its tab or withdraws it; it is answered or withdrawn, never closed (no coordinator holds it). The
+// coordinator here that was shown it (`shown`) is told when its asker settles it, so the question
+// leaves its conversation too.
+export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: string, shown = false): Plan | { error: string } {
   const sender = fields(entry['sender'])
   const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
   if (entry['status'] !== 'open') return { error: `${request.id} is ${String(entry['status'])} already: nothing to settle.` }
@@ -87,7 +89,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     consentBy: !answered || request.outcome === 'answered-by-message' ? null : own && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
     relayed: false,
-    told: false,
+    told: own && shown && me.role !== 'coordinator',
   }
 }
 

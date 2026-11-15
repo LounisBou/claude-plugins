@@ -191,6 +191,8 @@ REMOTE_STALE_AFTER_S=86400
 SLEEPING="$STATE/sleeping.json"
 LAUNCHER_PY="$here/../../iterm-agents/scripts/iterm_agent.py"
 WORKSPACE="$here/../../orchestrator/scripts/workspace.sh"
+# The orchestrator's prefix is core's (names.ts), read as the data `npm run core` writes.
+ORCH=$(jq -er '.roles | to_entries[] | select(.value == "orchestrator") | .key' "$here/../../../core/names.json" 2>/dev/null) || die "core/names.json names no orchestrator prefix"
 
 # --- The sleeping orchestrators. ---------------------------------------------------------
 
@@ -241,9 +243,8 @@ host_cli() {
 }
 
 # current_orch <name>: the name with the former shape, `Orch : x`, written the current way,
-# `Orch: x`; any other name as given. Sessions started, and briefs written, before the change
-# carry the former shape.
-current_orch() { printf '%s' "$1" | sed 's/^Orch : /Orch: /'; }
+# `Orch: x`; any other name as given.
+current_orch() { printf '%s' "$1" | sed "s/^$ORCH : /$ORCH: /"; }
 
 # brief_orchestrator <command line> <directory>: sets orch to the orchestrator the session's
 # brief names, else the one its startup prompt names, else « unknown » with the reason in
@@ -266,7 +267,7 @@ brief_orchestrator() {
             why="brief $brief cannot be read"
         fi
     fi
-    orch=$(current_orch "$(printf '%s' "$1" | sed -n 's/.*[Yy]our orchestrator is \(Orch \{0,1\}: [^][]*\[[0-9A-Za-z]*\]\).*/\1/p')")
+    orch=$(current_orch "$(printf '%s' "$1" | sed -n "s/.*[Yy]our orchestrator is \($ORCH \{0,1\}: [^][]*\[[0-9A-Za-z]*\]\).*/\1/p")")
     [ -n "$orch" ] || orch=unknown
 }
 
@@ -350,7 +351,7 @@ read_facts() {
         fi
         title=$(printf '%s' "$cmd" | sed -n 's/.* --name \(.*\)$/\1/p' | sed 's/ --remote-control .*//')
         case "$title" in
-            "Orch: "*|"Orch : "*) orch=$(current_orch "$title"); why=- ;;
+            "$ORCH: "*|"$ORCH : "*) orch=$(current_orch "$title"); why=- ;;
             *) brief_orchestrator "$cmd" "$cwd" ;;
         esac
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pid" "$tty" "${title:--}" "$orch" "$repo" "$branch" "$top" "$why" >> "$T/sessions"

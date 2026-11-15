@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { findTranscript, readTranscript, WAIT_TOOL } from './transcript.ts'
+import { WAIT_KINDS } from '../../../packages/core/src/orchestration.ts'
 
 type Line = Record<string, unknown>
 
@@ -29,8 +30,8 @@ describe('outcome evals: the orchestrator transcript', () => {
     const block = '**Question 1 of 1**\n_Subject_ : name'
     const asked = readTranscript(jsonl([prompt(), called(WAIT_TOOL, { kind: 'operator', blocks: 'the name', question: block }), result('t1'), said('Over.')]))
     assert.deepEqual(asked.wait, { kind: 'operator', blocks: 'the name', question: block })
-    const other = readTranscript(jsonl([prompt(), called(WAIT_TOOL, { kind: 'tool', blocks: 'a watch', question: block }), result('t1'), said('Over.')]))
-    assert.deepEqual(other.wait, { kind: 'tool', blocks: 'a watch' })
+    const other = readTranscript(jsonl([prompt(), called(WAIT_TOOL, { kind: 'deferred', blocks: 'a watch', question: block }), result('t1'), said('Over.')]))
+    assert.deepEqual(other.wait, { kind: 'deferred', blocks: 'a watch' })
   })
 
   it('reads a turn that is still working as not idle', () => {
@@ -54,9 +55,14 @@ describe('outcome evals: the orchestrator transcript', () => {
     assert.equal(readTranscript(jsonl([prompt(), said('nothing to declare')])).wait, null)
   })
 
+  it('reads every kind core names, and none from a kind the tool does not take', () => {
+    for (const kind of WAIT_KINDS) assert.equal(readTranscript(jsonl([prompt(), declare(kind, 'x'), result('t1'), said('Over.')])).wait?.kind, kind)
+    assert.equal(readTranscript(jsonl([prompt(), declare('tool', 'a watch'), result('t1'), said('Over.')])).wait, null)
+  })
+
   it('lets a declaration beat the wording of the last line', () => {
-    const reading = readTranscript(jsonl([prompt(), declare('tool', 'a watch'), result('t1'), said('waiting: done')]))
-    assert.deepEqual(reading.wait, { kind: 'tool', blocks: 'a watch' })
+    const reading = readTranscript(jsonl([prompt(), declare('deferred', 'a watch'), result('t1'), said('waiting: done')]))
+    assert.deepEqual(reading.wait, { kind: 'deferred', blocks: 'a watch' })
   })
 
   it("leaves a subagent's turns out, and the lines that are not messages", () => {

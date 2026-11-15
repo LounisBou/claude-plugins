@@ -15,6 +15,7 @@
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
 import { machineLine } from '../core/method.ts'
+import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
 import type { Host } from './host.ts'
 
@@ -68,10 +69,8 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // --- the declared wait (hooks/wait.ts) ----------------------------------------------------------
 
 // What a turn may declare will wake it, by `declare_wait({kind, blocks})`: a question for the
-// operator, every goal met, or only deferred work left. A command, monitor, subagent or agent of
-// its own is read by the gate itself (checkWake), never declared.
-export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const
-export type WaitKind = typeof WAIT_KINDS[number]
+// operator, every goal met, or only deferred work left (core's WAIT_KINDS). A command, monitor,
+// subagent or agent of its own is read by the gate itself (checkWake), never declared.
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
 // consent: the subject an operator question asks his consent on (core's consent-record.ts), which the
 // audit trail names.

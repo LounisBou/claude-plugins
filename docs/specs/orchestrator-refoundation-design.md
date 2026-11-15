@@ -71,40 +71,38 @@ Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrat
   pane answer and a withdrawal; `close` by a recycled tty; ignored files outside the
   `workspace.sh delete` guard; handlers past the host's budget.
 
-## State on main (2026-11-09)
+## State on main (2026-11-15)
 
-Read from the code at orchestrator 0.99.3. Pull requests are this repository's.
+Read from the code at orchestrator 0.104.5 (`775d7fdc`). Pull requests are this repository's.
 
 | Goal | State | Evidence | Open, and why |
 |---|---|---|---|
 | 1 | met | the hooks' store on core (`core/store.ts`, `store-io.ts`); `deck.json` (version 3) a view held byte for byte by `hooks/tests/golden-deck.ts`, written only when it differs or is a minute old (#66, #70) | `round/` and `chains/` sit outside `store/`, written under the store's lock convention |
-| 2 | met, with its transition | `declare_wait` (`hooks/wait.ts`), taught in place of the last line (#57, #60) | the stop gate still reads the last line of a turn that declared nothing (`stop-gate.ts`), as « Constraints » allows; removing it is the transition's end |
-| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | eight hook files are under the strict check; `supervision.ts`, `stop-gate.ts`, `guards.ts`, `wait.ts` and others are not. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py` |
+| 2 | partly met | `declare_wait` (`hooks/wait.ts`; #57, #60); the stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, #179) | other readers of a turn's last line remain: `undeclaredOperatorWait` and `deferredIds` in `hooks/guards.ts`, and the relay's reading of an agent's `status:` line (`program-design.md`, goal 9) |
+| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | twelve hook files are under the strict check, one of them by import; 26 are not, `supervision.ts`, `stop-gate.ts`, `guards.ts` and `wait.ts` among them. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`; whether that Python is ported is open against the program's non-goal 4 (`program-design.md`, last row of « State on main ») |
 | 4 | withdrawn | the machine-to-machine move (`hooks/move.ts`, `hooks/moving.ts`) was deleted on the operator's order of 2026-11-14 | — |
 | 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
 | 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
-| 7 | met | the suite blocks on Linux, as root and as a normal user (#65), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
-| 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 1,960 tokens at a `build` start, 1,290 at an `investigate` start | no principle has been tested by ablation |
-| 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49) | no pilot or measure has run; paid runs are the operator's, under `evals/outcome/caps.json` |
+| 7 | met | the suite blocks on Linux, in four shards (#65, #169), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
+| 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 2,153 tokens at a `build` start, 1,552 at an `investigate` start | no principle has been tested by ablation |
+| 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49), the orchestration arm run as an orchestration (#97) | no pilot of the rebuilt arm and no measure is recorded; paid runs are the operator's, under `evals/outcome/caps.json`. « At every release » is open against the monthly cadence of `learning-design.md`, question 4 (`program-design.md`, last row of « State on main ») |
 | 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted on the operator's order of 2026-11-14 | `routing.py` still holds `pick` and `profile` beside the cost rule, and both are in use, so the wording is not met by a deletion. No code calls them; `skills/model-routing/SKILL.md` has every dispatch run `pick`, which is also what reads the tier map (`CLASS_TIERS`, `models.json`). What `pick` holds beyond that map: the operator's hand-written tables and the shipped defaults, the size rule (`--files`, `--lines`), the exploration notch read on the dispatch record, the `corrective=` pair (`docs/agent-dispatches.md`), and the profile inference that names a profile's table, which `profile` prints. Reducing it to the map removes those behaviours: the operator's ruling, not a refactor |
 | 11 | met | « Your mode » in `skills/orchestrator/SKILL.md`: `build` loads `method:lifecycle`, `investigate` does not; both starts are scenarios of `ci/scenarios.json` (#74, #75) | — |
-| 12 | met | `succession.sh live` generates the brief from the state, its notes capped and promoted or dropped; `succession.sh check` refuses a brief that misses an open item, and the launcher runs it (#71) | — |
+| 12 | met, by another road | `succession.sh takeover` prints the takeover from the state alone (the dispatch record, the to-do list, the round, the goals, agents and pull requests read live): no brief is written, so no note is carried and no brief is left to refuse (#71, #307) | — |
 | 13 | met | the measure file's `start` (the first figure, the brief and its size; `hooks/gauge-core.ts`) (#61, #71) | — |
 
-Phases 1, 2, 4, 5, 10 and 11 are done; 3, 6, 8 and 9 are partly done, for the reasons above; 7
-waits on the operator's paid runs.
+Phases 1, 2, 5, 6, 10 and 11 are done and 4 is withdrawn; 3, 8 and 9 are partly done, for the
+reasons above; 7 waits on the operator's paid runs.
 
 ## Constraints
 
 - Incremental replacement, stacked pull requests; the plugin is usable after every merge.
 - Kept as they are: review on evidence, the orchestrator never judging itself, the merge
-  reserved to the operator, the context gauge, the `workspace.sh delete` guards (carried over
+  reserved to the operator outside auto-merge, the context gauge, the `workspace.sh delete` guards (carried over
   verbatim when ported), the iTerm launch, the home session, `deck.json`'s format.
 - One implementation per rule, in core when another plugin needs it (`docs/conventions.md`).
   A port replaces its source in the same pull request.
 - A new rule of the kernel replaces one.
-- Transitional compatibility where a format changes (the last-line wait is still read
-  until `declare_wait` has shipped and the kernel teaches only the call).
 
 ## Phases (the orchestrator may split, never merge two)
 
@@ -137,14 +135,13 @@ takes it.
 **Already where the evidence points; keep.**
 
 - **The succession is rebuilt from durable sources** (goal 12, decision 0007): its live state
-  is generated from the state by `succession.sh live`, every item re-verified on the artifact
-  by one named command (`templates/orchestrator-succession-brief.md`), and notes are promoted
-  or dropped, never carried. A memory a model rewrites summary after summary degrades
+  is printed from the state by `succession.sh takeover`
+  (`templates/orchestrator-succession-brief.md`), and no note is carried. A memory a model rewrites summary after summary degrades
   (Zhang 2026, arXiv:2605.12978); immutable sources with derived summaries is the remedy, and
   this is it.
 - **A brief makes the agent verify the state, not believe it** (`references/brief.md`, item
   2), and the successor reads the artifact before the brief when they disagree.
-- **A light start** (goal 8, 1,960 tokens at a `build` start). Standing context files did not generally
+- **A light start** (goal 8, 2,153 tokens at a `build` start). Standing context files did not generally
   improve task success (Gloaguen et al. 2026, arXiv:2602.11988), and across 288 runs their
   effect on correctness was bounded to about 10 to 15 points at most (Khatri 2026,
   arXiv:2607.27250).

@@ -166,7 +166,7 @@ def register(subparsers):
     parser.add_argument("zone", help="zone name or id")
     parser.add_argument("--phase", choices=sorted(PHASES), help="only this phase's (default: all three)")
     parser.add_argument("--plugin", action="store_true", help="only the rules this plugin made")
-    parser.set_defaults(handler=rules, read=True)
+    parser.set_defaults(handler=rules)
 
     parser = subparsers.add_parser("rule-update", help="change a rule, by its id")
     parser.add_argument("zone")

@@ -30,4 +30,4 @@ def zones(args, ctx):
 
 def register(subparsers):
     parser = subparsers.add_parser("zones", help="the zones of the account")
-    parser.set_defaults(handler=zones, read=True)
+    parser.set_defaults(handler=zones)

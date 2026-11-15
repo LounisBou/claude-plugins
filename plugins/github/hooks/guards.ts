@@ -22,11 +22,11 @@ function ghWords(argv: string[]): { noun: string; verb: string; flags: string[] 
   const named: string[] = []
   let k = 1
   while (k < argv.length && named.length < 2) {
-    const word = argv[k++]
+    const word = argv[k++] ?? ''
     if (word === '-R' || word === '--repo') k++
     else if (!word.startsWith('-R') && !word.startsWith('--repo=')) named.push(word)
   }
-  return named.length === 2 ? { noun: named[0], verb: named[1], flags: argv.slice(k) } : undefined
+  return named.length === 2 ? { noun: named[0] ?? '', verb: named[1] ?? '', flags: argv.slice(k) } : undefined
 }
 
 // The engine subcommands that write a text engine/writing/ governs, as gh pr create,
@@ -85,7 +85,7 @@ export type BashText = {
 function flagValue(flags: string[], short: string, long: string): string | undefined {
   let value: string | undefined
   for (let k = 0; k < flags.length; k++) {
-    const word = flags[k]
+    const word = flags[k] ?? ''
     if (word === short || word === long) value = flags[++k]
     else if (word.startsWith(long + '=')) value = word.slice(long.length + 1)
     else if (!word.startsWith('--') && word.startsWith(short) && word.length > 2) value = word.slice(2)
@@ -118,7 +118,7 @@ export function substitutes(line: string): boolean {
 const HEREDOC_BODY = /(?:^|\s)(?:-b|--body)(?:\s+|=)"\$\(cat\s+<<-?\s*(['"]?)([A-Za-z_]\w*)\1[ \t]*\n([\s\S]*?)\n\2[ \t]*\n\s*\)"/g
 export function heredocBody(line: string): string | undefined {
   const found = [...line.matchAll(HEREDOC_BODY)]
-  return found.length === 1 ? found[0][3] : undefined
+  return found.length === 1 ? found[0]?.[3] : undefined
 }
 
 // The mark put before each `$` or backtick the shell expands: a word that
@@ -198,14 +198,15 @@ export function bashTexts(line: string): BashText[] {
     if (!gh || !command || !name || !words) return
     const text: BashText = { name, command, argv }
     const read = (value: string | undefined) => (value === undefined || value.includes(EXPANDED) ? undefined : value)
-    const title = flagValue(words.flags, '-t', '--title')
-    if (read(title) !== undefined && (command === 'pr-create' || command === 'pr-update')) text.title = title
+    const title = read(flagValue(words.flags, '-t', '--title'))
+    if (title !== undefined && (command === 'pr-create' || command === 'pr-update')) text.title = title
     const body = flagValue(words.flags, '-b', '--body')
-    const file = flagValue(words.flags, '-F', '--body-file')
+    const file = read(flagValue(words.flags, '-F', '--body-file'))
     if (body !== undefined) {
+      const heredoc = substituted ? heredocBody(line) : undefined
       if (!substituted && read(body) !== undefined) text.body = body
-      else if (substituted && heredocBody(line) !== undefined) text.body = heredocBody(line)
-    } else if (read(file) !== undefined && file !== '-' && !(moves && !/^[/~]/.test(file ?? ''))) {
+      else if (heredoc !== undefined) text.body = heredoc
+    } else if (file !== undefined && file !== '-' && !(moves && !/^[/~]/.test(file))) {
       text.bodyFile = file
     }
     if (text.title !== undefined || text.body !== undefined || text.bodyFile !== undefined) out.push(text)

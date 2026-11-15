@@ -8,11 +8,11 @@ import { describe, it } from 'node:test'
 import type { Case } from './cases.ts'
 import type { Diff } from './bench.ts'
 import type { Agent } from './harness.ts'
+import { deckSessions as sessionsOf, parseDeck, type DeckSession } from '../../../packages/core/src/deck.ts'
 import {
   agentArgs,
   byArm,
   deckMeter,
-  deckSessions,
   DeckLedger,
   dependencyNames,
   hostAgent,
@@ -115,27 +115,32 @@ describe('outcome evals: the arms on the host', () => {
 })
 
 describe('outcome evals: the deck meter', () => {
+  const period = (cost: number | null) => ({ from: '2026-11-09T23:00:00.000Z', tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: cost })
+  const usage = (cost: number | null) => ({ day: period(cost), week: period(cost), at: '2026-11-15T10:00:00.000Z' })
+  const session = (key: string, tty: string | null, cost?: number | null) => ({
+    key, name: key, tty, tmux: null, repo: null, context: { percent: 1, tokens: 1, window: 1, past_gate: false }, waiting: null,
+    updated_at: '2026-11-15T10:00:00.000Z', usage: cost === undefined ? null : usage(cost),
+  })
   const deck = (sessions: Record<string, number | null>, tty = true): unknown => ({
     version: 3,
+    generated_at: '2026-11-15T10:00:00.000Z',
+    machine: 'mbp',
     coordinator: null,
     orchestrators: Object.entries(sessions)
       .filter(([key]) => key.startsWith('o'))
       .map(([key, cost]) => ({
-        key,
-        tty: tty ? `/dev/tty${key}` : null,
-        usage: { week: { cost_usd: cost } },
-        agents: Object.entries(sessions)
-          .filter(([agent]) => agent.startsWith(`a${key}`))
-          .map(([agent, agentCost]) => ({ key: agent, tty: `/dev/tty${agent}`, usage: { week: { cost_usd: agentCost } } })),
+        ...session(key, tty ? `/dev/tty${key}` : null, cost),
+        machine: null,
+        prs: [],
+        agents: Object.entries(sessions).filter(([agent]) => agent.startsWith(`a${key}`)).map(([agent, agentCost]) => session(agent, `/dev/tty${agent}`, agentCost)),
       })),
-    unattached_agents: [{ key: 'u', tty: null, usage: null }, 'junk'],
+    unattached_agents: [session('u', null)],
+    sleeping: [],
+    round: { open: 0, urgent: 0, oldest_since: null },
+    usage_totals: usage(0),
+    usage_basis: { currency: 'USD', prices: 'api-list-equivalent', timezone: 'Europe/Paris' },
   })
-
-  it('lists every local session with its week cost', () => {
-    const sessions = deckSessions(deck({ o1: 2, ao1x: 1 }))
-    assert.deepEqual(sessions.map(session => [session.key, session.weekUsd]), [['o1', 2], ['ao1x', 1], ['u', null]])
-    assert.deepEqual(deckSessions('nope'), [])
-  })
+  const deckSessions = (raw: unknown): DeckSession[] => sessionsOf(parseDeck(JSON.stringify(raw)) ?? assert.fail('no deck'))
 
   it('counts only the sessions opened since the start, each at its highest reading', () => {
     const ledger = new DeckLedger(deckSessions(deck({ o1: 50 })), () => true)

@@ -123,7 +123,7 @@ commands/sleeping.md                 lists the orchestrators paused on the opera
 short-names.tsv                      each command's short name beside its file: the table the installer writes the user commands from, and brief-lint reads
 short-commands.sh                    launches skills/orchestrator/scripts/short-commands.ts, which writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
 hooks/hooks.json                     declares the hooks module, and nothing else
-hooks/host.ts                        the part of the host's API the strict hooks call, as types only
+hooks/host.ts                        the part of the host's API the strict hooks call: core's types (core/host.ts), under the name the module's files import them by
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure
 hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing
 hooks/gauge.ts                       measures the context into one file per session on session events, and announces model drift
@@ -209,7 +209,7 @@ tests/usage-rule.ts                  the deck's usage rule run under node, throu
 tests/row-rule.ts                    the module's row writer run under node, for the suite to hold the launcher's row_write to the same key, line and temporary file
 tests/pane-e2e.sh                    the coordinator's pane answered from the keyboard in a live host, under tmux
 tests/tmux-e2e.sh                    agents as windows of a home session, spawned, listed, read, closed and rotated by the launcher on live hosts, under tmux
-tests/question-relay-proof.sh        a home succession watched on a live machine: each question moved to the successor checked in the round, the log, the told ids and the coordinator's screen, with a dry run over fixtures
+tests/question-relay-proof.sh        a home succession watched on a live machine: each question moved to the successor checked in the round, the log and the coordinator's screen, with a dry run over fixtures
 tests/fixtures/tap-settings.json     a settings.json wired the way the tap installer wired it, for the unwrap
 tests/fixtures/transcript-renamed.jsonl  a transcript whose last custom-title entry is a rename
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
