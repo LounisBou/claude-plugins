@@ -7,6 +7,8 @@
 //                                                         the export a session's end starts: at most once a day,
 //                                                         detached unless --foreground
 //   telemetry.ts backfill --config <dir> <transcript>...  one session_summary per past transcript
+//   telemetry.ts sweep    [--auto] --config <dir>         the sessions that never ended, summarized, and the settled
+//                                                         round questions; with --auto, at most once a day
 //   telemetry.ts report   --config <dir> [--week <first day>] [--tool <owner/name>]...
 //                                                         the week's cost, delay, questions, refusals and figures
 //
@@ -23,9 +25,10 @@ import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.t
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
+import { claimSweep, sweep, sweepDue } from './lib/sweep.ts'
 import { summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill|sweep [--auto]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
@@ -40,8 +43,8 @@ export interface Deps {
   readonly err: (line: string) => void
   readonly git: Git
   readonly now: () => number
-  /** Starts `export --auto --foreground` for `config` as a detached process. */
-  readonly detach: (config: string) => void
+  /** Starts `export --auto --foreground`, or `sweep --auto`, for `config` as a detached process. */
+  readonly detach: (config: string, work?: 'sweep') => void
   readonly exportWaitMs: number
   /** The report's reads of GitHub and of a directory's remote, and the directory it runs in. */
   readonly gh: Gh
@@ -135,7 +138,12 @@ export function run(args: readonly string[], deps: Deps): number {
       const { refused } = append(eventsDir(stateDir), lines, secrets)
       for (const reason of refused) deps.err(`telemetry: a line was refused (${reason})`)
       if (raw.some(line => endsSession(line))) {
-        // A session's end is the export's trigger; it never fails the write.
+        // A session's end is the trigger of the day's sweep and of the export; neither ever fails the write.
+        try {
+          if (sweepDue(stateDir, deps.now())) deps.detach(config, 'sweep')
+        } catch (error) {
+          deps.err(`telemetry: the sweep was skipped: ${error instanceof Error ? error.message : String(error)}`)
+        }
         try {
           for (const line of runAuto({ ...exportOptions(), now: deps.now, foreground: false, detach: () => deps.detach(config) }).lines) deps.out(line)
         } catch (error) {
@@ -166,6 +174,13 @@ export function run(args: readonly string[], deps: Deps): number {
       }
       const { written } = append(eventsDir(stateDir), events.join('\n'), secrets)
       deps.out(`backfill: ${written} session(s) summarized`)
+      return 0
+    }
+    case 'sweep': {
+      if (operands.includes('--auto') && !claimSweep(stateDir, deps.now())) return 0
+      const result = sweep({ config, stateDir, secrets, moduleDir: deps.env['ORCHESTRATOR_MODULE_DIR'], now: deps.now() })
+      for (const reason of result.refused) deps.err(`telemetry: a line was refused (${reason})`)
+      deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded`)
       return 0
     }
     default:
@@ -208,9 +223,10 @@ export const realRepositoryAt = (dir: string): string | undefined => {
   return result.status === 0 ? firstRepository(result.stdout) : undefined
 }
 
-/** The automatic export as a process of its own, which outlives the session that started it. */
-export const realDetach = (config: string): void => {
-  const argv = ['--experimental-strip-types', '--no-warnings', fileURLToPath(import.meta.url), 'export', '--auto', '--foreground', '--config', config]
+/** The automatic export, or the day's sweep, as a process of its own, which outlives the session that started it. */
+export const realDetach = (config: string, work?: 'sweep'): void => {
+  const sub = work === 'sweep' ? ['sweep', '--auto'] : ['export', '--auto', '--foreground']
+  const argv = ['--experimental-strip-types', '--no-warnings', fileURLToPath(import.meta.url), ...sub, '--config', config]
   spawn(process.execPath, argv, { detached: true, stdio: 'ignore', env: process.env }).unref()
 }
 

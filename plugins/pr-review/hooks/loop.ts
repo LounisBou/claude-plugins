@@ -11,7 +11,7 @@
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
-import { answerOf, fieldsOf, messageOf, type Host, type Input, type On } from '../core/host.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
@@ -19,6 +19,9 @@ import { journal, noteSubject, notedSubject, observed, resetSubject } from './ob
 import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
+
+// A call of a tool, as the host takes it.
+type ToolCall = { tool: string } & Record<string, unknown>
 
 export type LoopHost = Host<'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui' | 'tool'>
 
@@ -48,7 +51,7 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: Input, dir?: { dir: string } | { why: string }, maxPasses = MAX_PASSES): Record<string, unknown> {
+export function act(e: Events['tool.call'], dir?: { dir: string } | { why: string }, maxPasses = MAX_PASSES): Record<string, unknown> {
   const action = String(e['action'] ?? '')
   if (action === 'start') {
     resetLoop(String(e['test_command'] ?? '').trim(), e['review_only'] === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined, maxPasses)
@@ -319,14 +322,14 @@ async function checkoutDir($: Host<'process'>): Promise<{ dir: string } | { why:
     if (run.exitCode === 0 && top.startsWith('/')) return { dir: top }
     return { why: String(run.stderr ?? '').trim() || 'git rev-parse --show-toplevel answered ' + (top || 'nothing') }
   } catch (err) {
-    return { why: messageOf(err).trim() }
+    return { why: reasonOf(err).trim() }
   }
 }
 
 // A call to a github tool, asked again after a pause while it fails transiently; a refusal that is
 // not transient is the answer at once. The last answer, or the last error thrown, once the pauses
 // are spent.
-async function github($: Host<'tool' | 'process'>, call: Record<string, unknown>): Promise<unknown> {
+async function github($: Host<'tool' | 'process'>, call: ToolCall): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     let answer: unknown
     let failure: string
@@ -337,7 +340,7 @@ async function github($: Host<'tool' | 'process'>, call: Record<string, unknown>
       failure = textOf(answer)
     } catch (err) {
       thrown = err
-      failure = messageOf(err)
+      failure = reasonOf(err)
     }
     const pause = RETRY_PAUSES[attempt]
     if (!isTransient(failure) || pause === undefined) {
@@ -351,7 +354,7 @@ async function github($: Host<'tool' | 'process'>, call: Record<string, unknown>
 // The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
 // head (a review checkout) names no branch, and the open pull request whose head is its commit is
 // the one, never one of several. The number, or the line that says why there is none.
-async function pullOf($: Host<'process'>, repo: string, ask: (call: Record<string, unknown>) => Promise<unknown>, dir?: string): Promise<number | string> {
+async function pullOf($: Host<'process'>, repo: string, ask: (call: ToolCall) => Promise<unknown>, dir?: string): Promise<number | string> {
   const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'], dir)
   const branch = String(branchRun.stdout ?? '').trim()
   if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
@@ -403,14 +406,14 @@ async function recordReview($: Host<'tool' | 'process'>, exit: string, isRetry: 
   if (loop.isReviewing) return { line: 'record: none — the last pass has no findings its review agents reported', isOwed: false }
   // Whether the last github call failed transiently.
   let isOwed = false
-  const ask = async (call: Record<string, unknown>): Promise<unknown> => {
+  const ask = async (call: ToolCall): Promise<unknown> => {
     isOwed = false
     try {
       const answer = await github($, call)
       isOwed = isFailed(answer) && isTransient(textOf(answer))
       return answer
     } catch (err) {
-      isOwed = isTransient(messageOf(err))
+      isOwed = isTransient(reasonOf(err))
       throw err
     }
   }
@@ -440,7 +443,7 @@ async function recordReview($: Host<'tool' | 'process'>, exit: string, isRetry: 
     if (isFailed(written)) return none(textOf(written) || 'refused')
     return { line: 'record: ' + textOf(written), isOwed: false }
   } catch (err) {
-    return none(messageOf(err))
+    return none(reasonOf(err))
   }
 }
 
@@ -486,7 +489,7 @@ async function plannedPasses($: Host<'tool' | 'process'>, top: { dir: string } |
     const remote = await git($, ['remote', 'get-url', 'origin'], top.dir)
     const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
     if (!repo) return REVIEW_ROUNDS.omitted
-    const ask = (call: Record<string, unknown>) => github($, call)
+    const ask = (call: ToolCall) => github($, call)
     const pr = await pullOf($, repo, ask, top.dir)
     if (typeof pr === 'string') return REVIEW_ROUNDS.omitted
     const answer = await ask({ tool: GH_TOOL, command: 'pr-plan', args: { pr }, repo })
@@ -537,7 +540,7 @@ export function register(on: On<LoopHost>): void {
     } catch (err) {
       loop.reports.push(null)
       loop.readers.push(reader)
-      return { result: messageOf(err), isError: true }
+      return { result: reasonOf(err), isError: true }
     }
     let report: ReturnType<typeof reportOf> = null
     let agent: string | undefined

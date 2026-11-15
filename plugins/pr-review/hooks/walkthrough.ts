@@ -10,12 +10,12 @@
 // Never a trap: "end review" typed by the user, an interrupted turn (Esc), a
 // /clear, or the skill's own closing line ends the rules at once (session.ts
 // holds those lifecycle hooks; this file holds the guard and the band).
-import { fieldsOf, type Host, type Input, type On } from '../core/host.ts'
+import { fieldsOf, type Host, type Events, type On } from '../core/host.ts'
 import { GH_TOOL, PUSH_REFUSAL, decide, needsToolList, pushQuestion, scratchDirOf, type Call } from './policy.ts'
 import { askAllow, observed, type JournalHost } from './observe.ts'
 import { walkthrough, loop } from './state.ts'
 
-type WalkthroughHost = JournalHost & Host<'tool'>
+type WalkthroughHost = JournalHost & Host<'tool' | 'ui' | 'fs'>
 
 async function isGhListed($: Host<'tool'>): Promise<boolean> {
   try {
@@ -66,7 +66,7 @@ async function bandPieces($: Host<'fs'>): Promise<Piece[] | null> {
 }
 
 // The tool call an event carries, as the policy reads it.
-const callOf = (e: Input): Call => ({ ...e, tool: String(e['tool'] ?? '') })
+const callOf = (e: Events['tool.call']): Call => ({ ...e, tool: String(e['tool'] ?? '') })
 
 export function register(on: On<WalkthroughHost>): void {
   on('tool.call', async ($, e, next) => {

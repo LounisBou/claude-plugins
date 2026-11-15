@@ -8,7 +8,8 @@
 // takes the declaration as a fact of its own, this module hands it on as the one machine line
 // the declaration spells (waitLine), written last in the message every later reader of the
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
-import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
+import { waitLine, type DeclaredWait } from './stop-gate.ts'
+import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
@@ -18,8 +19,6 @@ import { readAsked } from './question.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
-
-export const WAIT_TOOL = 'declare_wait'
 
 // Why an operator wait is refused with no question of the session's open.
 export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'

@@ -24,4 +24,4 @@ def plan(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("plan", help="a zone's plan and the quotas the engine relies on")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=plan, read=True)
+    parser.set_defaults(handler=plan)

@@ -20,7 +20,7 @@ Python launcher.
 | `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); the coordinator's `settle` (hooks too), `round-archive` and `succession.sh takeover` | read-modify-write under the entry's lock |
 | `store/waits/<id>` | the session's own relay; the coordinator's hooks and its `settle`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
 | `chains/<tty>.jsonl` | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |
-| `round-woken.json`, `round-told.json` | the coordinator's hooks (two at a succession) | ids added under the file's lock, the list read again first |
+| `round-woken.json` | the coordinator's hooks (two at a succession) | ids added under the file's lock, the list read again first |
 | `store/coordinator-learnt` | every orchestrator's hooks | replaced whole, one rename: the last coordinator learnt |
 | `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |

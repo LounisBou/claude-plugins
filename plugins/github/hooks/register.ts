@@ -4,7 +4,8 @@
 
 import { atom, read, update } from 'claude-code'
 
-import type { GithubPane, GithubPaneRow } from '../types'
+import type { GithubPane, GithubPaneRow } from '../types/index.d.ts'
+import { reasonOf, type Events, type FsEntry, type Host, type On } from '../core/host.ts'
 import { carriesText, lint, NEGATIVE_FILE, parsePhrases } from './writing.ts'
 import { CONSENT_GRANT, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_REFUSE, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, grants, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
@@ -17,7 +18,7 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
-import { observe, OBSERVED } from './observe.ts'
+import { isCatchable, observe, OBSERVED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
@@ -27,6 +28,24 @@ import {
   RECORDS_REFUSAL, deletes, deletesRecords,
   type Act, type Carried, type Gate, type Labelling, type RecordFile,
 } from './ready.ts'
+
+// The host's nouns the module calls.
+type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' | 'command' | 'clock'>
+
+// What a tool call hands a hook: the tool's arguments, each read through a validator.
+type ToolInput = Events['tool.call']
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const isText = (value: unknown): value is string => typeof value === 'string'
+
+// A value as a refusal quotes it.
+const quoted = (value: unknown): string => (value === undefined ? 'nothing' : JSON.stringify(value) ?? String(value))
+
+// A field of a tool call's `args`, undefined when the call gives no arguments object.
+const argOf = (args: unknown, name: string): unknown => (isRecord(args) ? args[name] : undefined)
+
+// A pull request number as a call writes it: 12, "12" or "#12".
+const prNumber = (value: unknown): number => Number(String(value ?? '').replace('#', ''))
 
 export const PANE_ID = 'github-prs'
 
@@ -64,13 +83,31 @@ export const READS = new Set([
 
 export const TOOL = 'mcp__github__gh'
 
+// A call of the gh tool as its schema declares it: the subcommand, its arguments when given, the repository when named.
+type GhRequest = { readonly command: string; readonly args: Record<string, unknown> | undefined; readonly repo: string | undefined }
+// The call once the house defaults are in: its arguments are there, and a CI undraft adds one to them.
+type GhCall = { readonly command: string; args: Record<string, unknown>; readonly repo: string | undefined }
+// What names the repository a call is for: its own `repo`, else its arguments'.
+type Named = { readonly repo?: unknown; readonly args?: unknown }
+// What a tool's hook answers.
+type Answer = { result?: string; deny?: string; isError?: boolean }
+
+/** The gh tool's call a hook was handed, or a sentence saying what is wrong with it. */
+export function ghRequest(raw: ToolInput): GhRequest | string {
+  const { command, args, repo } = raw
+  if (typeof command !== 'string' || command === '') return 'github: "command" names the subcommand, a text; got: ' + quoted(command)
+  if (args !== undefined && args !== null && !isRecord(args)) return 'github: "args" is an object of the subcommand\'s arguments; got: ' + quoted(args)
+  if (repo !== undefined && repo !== null && typeof repo !== 'string') return 'github: "repo" is owner/name, a text; got: ' + quoted(repo)
+  return { command, args: args ?? undefined, repo: repo ?? undefined }
+}
+
 // The request travels as JSON on stdin: gh.py maps it onto its own parser,
 // refuses what that parser does not declare, and writes the bodies to a
 // private directory it removes. No argv is built and no file written here.
 //
 // full: the module parses the answer, so it asks the full object where a read has a short default.
 async function runGhRaw(
-  $: any, command: string, args: Record<string, unknown> = {}, repo?: string, full = false,
+  $: Mod, command: string, args: Record<string, unknown> = {}, repo?: string, full = false,
 ): Promise<{ out: string; err: string }> {
   const r = await $.process.run(
     ['python3', $.plugin.root + '/engine/gh.py', '--stdin-json'],
@@ -87,7 +124,7 @@ const withNote = (out: string, err: string): string => (err ? out.trimEnd() + '\
 // notes: a call that succeeds can still print a line on stderr (a label that could not
 // be set after a pull request was opened). The tool shows it after the output.
 async function runGh(
-  $: any, command: string, args: Record<string, unknown> = {}, repo?: string, notes = false,
+  $: Mod, command: string, args: Record<string, unknown> = {}, repo?: string, notes = false,
 ): Promise<string> {
   const r = await runGhRaw($, command, args, repo, true)
   return notes ? withNote(r.out, r.err) : r.out
@@ -114,12 +151,12 @@ async function runGh(
  * from an explicit rule stand, and so do the mechanical writing rules.
  */
 async function permit(
-  $: any, e: any, beforeAsk?: () => Promise<string | undefined>, ciUndraft?: () => Promise<boolean>,
+  $: Mod, e: GhCall, beforeAsk?: () => Promise<string | undefined>, ciUndraft?: () => Promise<boolean>,
 ): Promise<string | undefined> {
   const input = { command: e.command, args: e.args, repo: e.repo }
   const verdict = await $.tool.check({ tool: TOOL, input })
   if (verdict.decision === 'deny') return verdict.reason || 'refused by a permission rule'
-  const args = e.args ?? {}
+  const args = e.args
 
   // The ready guard, before any question: nobody is asked about a pull
   // request that is not ready.
@@ -178,7 +215,7 @@ async function permit(
  * once, as through the tool. A body the hook cannot see, from stdin or a command substitution, is
  * left out, and so is a file it cannot read, logged: the command then runs as it is.
  */
-async function bashLint($: any, line: string): Promise<void> {
+async function bashLint($: Mod, line: string): Promise<void> {
   let texts
   try {
     texts = bashTexts(line)
@@ -188,15 +225,15 @@ async function bashLint($: any, line: string): Promise<void> {
   }
   for (const text of texts) {
     const args: Record<string, unknown> = {}
-    if (text.title !== undefined) args.title = text.title
-    if (text.body !== undefined) args.body = text.body
+    if (text.title !== undefined) args['title'] = text.title
+    if (text.body !== undefined) args['body'] = text.body
     else if (text.bodyFile !== undefined) {
       try {
-        args.body = String(await $.fs.read(await bodyPath($, text.bodyFile)))
+        args['body'] = String(await $.fs.read(await bodyPath($, text.bodyFile)))
       } catch (err) {
         // An unreadable file is gh's to refuse: the command runs unchecked.
         $.ui.log('github: the writing rules could not read ' + text.bodyFile + ' and let the command through: '
-          + String((err as any)?.message ?? err))
+          + reasonOf(err))
       }
     }
     if (lint(text.command, args, lastTyped, await negativePhrases($, text.command)).length > 0) {
@@ -211,7 +248,7 @@ async function bashLint($: any, line: string): Promise<void> {
  * engine's image titles read too. Read for a call that carries text only. A file that cannot be read
  * leaves that one rule unchecked and is logged, as any other failure of the writing rules is.
  */
-async function negativePhrases($: any, command: string): Promise<readonly string[]> {
+async function negativePhrases($: Mod, command: string): Promise<readonly string[]> {
   if (!carriesText(command)) return []
   const file = String($.plugin.root) + '/' + NEGATIVE_FILE
   try {
@@ -220,14 +257,14 @@ async function negativePhrases($: any, command: string): Promise<readonly string
     $.ui.log('github: the writing rules found no list of phrases in ' + file + ' and left that rule unchecked')
   } catch (err) {
     $.ui.log('github: the writing rules could not read ' + file + ' and left that rule unchecked: '
-      + String((err as any)?.message ?? err))
+      + reasonOf(err))
   }
   return []
 }
 
 // The file a --body-file names, as the shell reads it: `~` is HOME, a relative
 // path is under the session's directory.
-async function bodyPath($: any, file: string): Promise<string> {
+async function bodyPath($: Mod, file: string): Promise<string> {
   const tilde = /^~(\/|$)/.exec(file)
   if (!tilde && file.startsWith('~')) throw new Error('another user\'s home is not read: ' + file)
   if (!tilde) return normalise(file, String(await $.session.cwd()))
@@ -236,7 +273,7 @@ async function bodyPath($: any, file: string): Promise<string> {
   return normalise(String(home) + file.slice(1))
 }
 
-async function ask($: any, question: string, options: string[], command: string): Promise<string | undefined> {
+async function ask($: Mod, question: string, options: string[], command: string): Promise<string | undefined> {
   try {
     if ((await $.ui.ask(question, options)) === options[0]) return undefined
   } catch {
@@ -245,16 +282,19 @@ async function ask($: any, question: string, options: string[], command: string)
   return 'the user refused gh ' + command
 }
 
-function guardFailed($: any, err: any): undefined {
-  $.ui.log('github: the writing rules guard failed and let the call through: ' + String(err?.message ?? err))
+function guardFailed($: Mod, err: unknown): undefined {
+  $.ui.log('github: the writing rules guard failed and let the call through: ' + reasonOf(err))
   return undefined
 }
 
-function failed(result: any): boolean {
-  return !result || result.deny !== undefined || result.isError === true
+// Whether a call's answer is a refusal or an error: an answer that is no object has no such field.
+function failed(result: unknown): boolean {
+  if (!result) return true
+  if (typeof result !== 'object') return false
+  return ('deny' in result && result.deny !== undefined) || ('isError' in result && result.isError === true)
 }
 
-function describe(e: any): string {
+function describe(e: GhRequest): string {
   const detail = JSON.stringify(e.args ?? {})
   return 'Run gh ' + e.command + ' on ' + (e.repo || 'the origin repository') + ' with '
     + (detail.length > 200 ? detail.slice(0, 199) + '…' : detail)
@@ -351,33 +391,35 @@ export const DATA_UNDER_HOME = '/.claude/plugins/data/github-lounisbou'
 const GITHUB_ORIGIN = /(?:git@github\.com:|https:\/\/github\.com\/)([^/]+)\/(.+?)(?:\.git)?$/
 
 // The plugin's data directory: the host's, else the one under HOME, else ''.
-async function dataDir($: any): Promise<string> {
+async function dataDir($: Mod): Promise<string> {
   const home = await $.env.get('HOME')
   return (await $.env.get('CLAUDE_PLUGIN_DATA')) || (home ? home + DATA_UNDER_HOME : '')
 }
 
 // A list that is there but cannot be read, with its path.
 class UnreadList extends Error {
-  constructor(readonly path: string, why: string) {
+  readonly path: string
+  constructor(path: string, why: string) {
     super(path + ': ' + why)
+    this.path = path
   }
 }
 
 // The file as it stands: its path, its object and its list as written. An
 // absent file is an empty list; an unreadable or malformed one throws UnreadList.
-async function readAutoMerge($: any): Promise<{ path: string; data: Record<string, unknown>; listed: string[] }> {
+async function readAutoMerge($: Mod): Promise<{ path: string; data: Record<string, unknown>; listed: string[] }> {
   const dir = await dataDir($)
   if (!dir) throw new Error('the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set')
   const path = dir + '/' + AUTO_MERGE_FILE
   if (!(await $.fs.exists(path))) return { path, data: { repositories: [] }, listed: [] }
-  let data: any
+  let data: unknown
   try {
     data = JSON.parse(String(await $.fs.read(path)))
-  } catch (err: any) {
-    throw new UnreadList(path, String(err?.message ?? err))
+  } catch (err: unknown) {
+    throw new UnreadList(path, reasonOf(err))
   }
-  const listed = data?.repositories
-  if (!Array.isArray(listed) || !listed.every((r) => typeof r === 'string')) {
+  const listed = isRecord(data) ? data['repositories'] : undefined
+  if (!isRecord(data) || !Array.isArray(listed) || !listed.every(isText)) {
     throw new UnreadList(path, '"repositories" is not a list of owner/name strings')
   }
   return { path, data, listed }
@@ -385,10 +427,10 @@ async function readAutoMerge($: any): Promise<{ path: string; data: Record<strin
 
 // The listed repositories, lowercased. An absent file lists none, and so does
 // an unreadable or malformed one, which also says so in one log line.
-async function autoMergeRepos($: any): Promise<Set<string>> {
+async function autoMergeRepos($: Mod): Promise<Set<string>> {
   try {
     return new Set((await readAutoMerge($)).listed.map((r) => r.trim().toLowerCase()))
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof UnreadList) {
       $.ui.log('github: ' + err.path + ' unread, every write is asked: ' + err.message.slice(err.path.length + 2))
     }
@@ -398,28 +440,29 @@ async function autoMergeRepos($: any): Promise<Set<string>> {
 
 // The deploy file as it stands: its path, its object and its list. An absent file grants and
 // declares nothing; an unreadable or malformed one throws UnreadList.
-async function readDeployFile($: any): Promise<{ path: string; data: Record<string, unknown>; list: DeployList }> {
+async function readDeployFile($: Mod): Promise<{ path: string; data: Record<string, unknown>; list: DeployList }> {
   const dir = await dataDir($)
   if (!dir) throw new Error('the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set')
   const path = dir + '/' + AUTO_DEPLOY_FILE
   if (!(await $.fs.exists(path))) return { path, data: {}, list: { grants: [], declared: [] } }
-  let data: any
+  let data: unknown
   try {
     data = JSON.parse(String(await $.fs.read(path)))
-  } catch (err: any) {
-    throw new UnreadList(path, String(err?.message ?? err))
+  } catch (err: unknown) {
+    throw new UnreadList(path, reasonOf(err))
   }
   const list = parseDeployList(data)
   if (typeof list === 'string') throw new UnreadList(path, list)
+  if (!isRecord(data)) throw new UnreadList(path, 'the file is not an object')
   return { path, data, list }
 }
 
 // The deploy list a call is judged by. An unreadable one declares nothing: no deploy is
 // recognised, the host's own protections stand, and one log line says so.
-async function deployList($: any): Promise<DeployList> {
+async function deployList($: Mod): Promise<DeployList> {
   try {
     return (await readDeployFile($)).list
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof UnreadList) {
       $.ui.log('github: ' + err.path + ' unread, no deploy is recognised: ' + err.message.slice(err.path.length + 2))
     }
@@ -428,7 +471,7 @@ async function deployList($: any): Promise<DeployList> {
 }
 
 // The refusal of a Bash line that runs a declared deploy the list does not grant, or undefined.
-async function bashDeployRefusal($: any, line: string): Promise<string | undefined> {
+async function bashDeployRefusal($: Mod, line: string): Promise<string | undefined> {
   try {
     const list = await deployList($)
     return list.declared.length === 0 ? undefined : firstRefusal(list, bashDeploys(line, list.declared))
@@ -439,7 +482,7 @@ async function bashDeployRefusal($: any, line: string): Promise<string | undefin
 }
 
 // The refusal of a skill that is a declared deploy the list does not grant, or undefined.
-async function skillDeployRefusal($: any, skill: string): Promise<string | undefined> {
+async function skillDeployRefusal($: Mod, skill: string): Promise<string | undefined> {
   try {
     const list = await deployList($)
     return list.declared.length === 0 ? undefined : firstRefusal(list, skillDeploys(skill, list.declared))
@@ -455,7 +498,7 @@ async function skillDeployRefusal($: any, skill: string): Promise<string | undef
 const targets = new WeakMap<object, Promise<string | undefined>>()
 
 // `dir`: the checkout whose origin names the repository, when not the session's directory.
-function targetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
+function targetRepo($: Mod, e: Named, dir?: string): Promise<string | undefined> {
   let found = targets.get(e)
   if (!found) {
     found = readTargetRepo($, e, dir)
@@ -464,8 +507,8 @@ function targetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
   return found
 }
 
-async function readTargetRepo($: any, e: any, dir?: string): Promise<string | undefined> {
-  const override = e.repo !== undefined && e.repo !== null ? e.repo : e.args?.repo
+async function readTargetRepo($: Mod, e: Named, dir?: string): Promise<string | undefined> {
+  const override = e.repo !== undefined && e.repo !== null ? e.repo : argOf(e.args, 'repo')
   for (const named of [override, await $.env.get('GH_REPO')]) {
     if (named !== undefined && named !== null && String(named) !== '') return String(named)
   }
@@ -476,7 +519,7 @@ async function readTargetRepo($: any, e: any, dir?: string): Promise<string | un
 
 // Whether a write goes to a repository in auto-merge. Any doubt answers no,
 // and the person is asked as before.
-async function inAutoMerge($: any, e: any): Promise<boolean> {
+async function inAutoMerge($: Mod, e: Named): Promise<boolean> {
   const listed = await autoMergeRepos($)
   if (listed.size === 0) return false
   try {
@@ -490,13 +533,13 @@ async function inAutoMerge($: any, e: any): Promise<boolean> {
 // Every pull request is opened as a draft unless the call says otherwise,
 // and saying otherwise is put to the person (reservedToPerson).
 export function withHouseDefaults(command: string, args: Record<string, unknown>): Record<string, unknown> {
-  if (command === 'pr-create' && (args.draft === undefined || args.draft === null)) return { ...args, draft: true }
+  if (command === 'pr-create' && (args['draft'] === undefined || args['draft'] === null)) return { ...args, draft: true }
   return args
 }
 
 // A grant is the session's, the command's and the repository's: an explicit
 // repo by its name, the origin by the directory whose remote it is.
-async function grantKey($: any, e: any): Promise<string | undefined> {
+async function grantKey($: Mod, e: GhRequest): Promise<string | undefined> {
   try {
     const session = await $.session.id()
     const repo = e.repo ? 'repo:' + String(e.repo).toLowerCase() : 'origin:' + await $.session.cwd()
@@ -508,7 +551,7 @@ async function grantKey($: any, e: any): Promise<string | undefined> {
 }
 
 async function prText(
-  $: any,
+  $: Mod,
   rawArgs: string,
   command: string,
   format: string,
@@ -522,12 +565,42 @@ async function prText(
   return shape(current, await runGh($, command, { pr: current, format }))
 }
 
+// checks-status's answer: its verdict and the checks that failed, or a throw naming what is wrong with it.
+function parseChecksStatus(text: string): { result: string; failed: string[] } {
+  const raw: unknown = JSON.parse(text)
+  if (!isRecord(raw)) throw new Error('checks-status answered no object')
+  const failed = raw['failed_checks']
+  if (failed !== undefined && failed !== null && !Array.isArray(failed)) throw new Error('checks-status answered failed checks that are no list')
+  return { result: String(raw['result']), failed: Array.isArray(failed) ? failed.map(String) : [] }
+}
+
+// pr-status's answer: the comments of the pull request, on it and on its diff, or a throw.
+function parseCommentCount(text: string): number {
+  const raw: unknown = JSON.parse(text)
+  if (!isRecord(raw)) throw new Error('pr-status answered no object')
+  const count = (value: unknown): number => {
+    if (value === undefined || value === null) return 0
+    if (typeof value !== 'number') throw new Error('pr-status answered a count that is no number')
+    return value
+  }
+  return count(raw['comments']) + count(raw['review_comments'])
+}
+
+// pr-list's answer, as far as the pane reads it, or a throw naming what is wrong with it.
+function parsePrList(text: string): Array<Pick<PaneRow, 'number' | 'title' | 'url' | 'draft'>> {
+  const raw: unknown = JSON.parse(text)
+  if (!Array.isArray(raw)) throw new Error('pr-list answered no list of pull requests')
+  return raw.map((pull: unknown) => {
+    if (!isRecord(pull) || typeof pull['number'] !== 'number') throw new Error('pr-list answered a pull request with no number')
+    return { number: pull['number'], title: String(pull['title'] ?? ''), url: String(pull['html_url'] ?? ''), draft: Boolean(pull['draft']) }
+  })
+}
+
 // checks-status JSON as a line a person reads: "#12 CI: FAILURE (lint, test)".
 export function checksLine(pr: string, out: string): string {
   try {
-    const status = JSON.parse(out)
-    const failed: string[] = status.failed_checks ?? []
-    return '#' + pr + ' CI: ' + status.result + (failed.length > 0 ? ' (' + failed.join(', ') + ')' : '')
+    const status = parseChecksStatus(out)
+    return '#' + pr + ' CI: ' + status.result + (status.failed.length > 0 ? ' (' + status.failed.join(', ') + ')' : '')
   } catch {
     return out
   }
@@ -546,7 +619,8 @@ export const WATCH_MS = 60_000
 
 // The pane's rows live in the session's state: a reload of the module keeps
 // them, and a write redraws the pane with nobody invalidating it.
-const pane = atom({ plugin: 'github', key: 'pane' } as const, { rows: [], error: null, refreshing: false } as GithubPane)
+const EMPTY_PANE: GithubPane = { rows: [], error: null, refreshing: false }
+const pane = atom({ plugin: 'github', key: 'pane' } as const, EMPTY_PANE)
 
 // Names this module registered; a taken name is left to its owner.
 const ownedCommands = new Set<string>()
@@ -579,7 +653,7 @@ function ciColor(ci: string): string {
   return 'inactive'
 }
 
-async function detail($: any, pr: number): Promise<{ ci: string; failed: string[]; comments: number | null }> {
+async function detail($: Mod, pr: number): Promise<{ ci: string; failed: string[]; comments: number | null }> {
   const [checks, status] = await Promise.allSettled([
     runGh($, 'pr-checks', { pr, format: 'checks-status' }),
     runGh($, 'pr-status', { pr, json: true }),
@@ -589,34 +663,28 @@ async function detail($: any, pr: number): Promise<{ ci: string; failed: string[
   let comments: number | null = null
   try {
     if (checks.status === 'fulfilled') {
-      const parsed = JSON.parse(checks.value)
-      ci = String(parsed.result)
-      failed = Array.isArray(parsed.failed_checks) ? parsed.failed_checks.map(String) : []
+      const parsed = parseChecksStatus(checks.value)
+      ci = parsed.result
+      failed = parsed.failed
     }
   } catch {
     // Unreadable checks stay "?": never shown as a state they are not.
   }
   try {
-    if (status.status === 'fulfilled') {
-      const pull = JSON.parse(status.value)
-      comments = (pull.comments ?? 0) + (pull.review_comments ?? 0)
-    }
+    if (status.status === 'fulfilled') comments = parseCommentCount(status.value)
   } catch {
     // Unreadable record: no count shown.
   }
   return { ci, failed, comments }
 }
 
-async function collectRows($: any): Promise<PaneRow[]> {
-  const prs = JSON.parse(await runGh($, 'pr-list')) as any[]
+async function collectRows($: Mod): Promise<PaneRow[]> {
+  const prs = parsePrList(await runGh($, 'pr-list'))
   const details = await Promise.all(
-    prs.slice(0, DETAILED).map((p) => detail($, Number(p.number))),
+    prs.slice(0, DETAILED).map((p) => detail($, p.number)),
   )
   return prs.map((p, i) => ({
-    number: p.number,
-    title: String(p.title ?? ''),
-    url: String(p.html_url ?? ''),
-    draft: Boolean(p.draft),
+    ...p,
     comments: details[i]?.comments ?? null,
     ci: details[i]?.ci ?? '–',
     failed: details[i]?.failed ?? [],
@@ -639,7 +707,7 @@ export function ciTransitions(before: PaneRow[], after: PaneRow[]): string[] {
   return lines
 }
 
-async function refresh($: any): Promise<void> {
+async function refresh($: Mod): Promise<void> {
   if (refreshing) return
   refreshing = true
   await update($, pane, (p) => ({ ...p, refreshing: true }))
@@ -648,9 +716,9 @@ async function refresh($: any): Promise<void> {
     const rows = await collectRows($)
     await update($, pane, (p) => ({ ...p, rows, error: null }))
     for (const line of ciTransitions(before, rows)) $.ui.toast(line)
-  } catch (err: any) {
+  } catch (err: unknown) {
     // The rows from the last good read stay on screen under the error.
-    const error = String(err?.message ?? err).trim()
+    const error = reasonOf(err).trim()
     await update($, pane, (p) => ({ ...p, error }))
   } finally {
     refreshing = false
@@ -660,7 +728,7 @@ async function refresh($: any): Promise<void> {
 
 // One timer while the pane is open; a reload of the module cancels it with
 // the old copy, and the next /prs or Refresh starts it again.
-function startWatch($: any): void {
+function startWatch($: Mod): void {
   if (watch) return
   watch = $.clock.every(WATCH_MS, () => {
     void refresh($)
@@ -688,7 +756,7 @@ export const DIAGNOSTIC: Record<number, string> = {
 // install.sh run in the session's directory, its output verbatim and its exit
 // code named. /github:install lets it install gh and start the browser
 // sign-in, which can take minutes; /github:doctor only checks (--check).
-export async function diagnose($: any, check = false): Promise<string> {
+export async function diagnose($: Mod, check = false): Promise<string> {
   const argv = ['bash', $.plugin.root + '/install.sh', ...(check ? ['--check'] : [])]
   const r = await $.process.run(argv, { timeoutMs: check ? 60_000 : 600_000 })
   const out = [r.stdout, r.stderr].map((t: string) => (t ?? '').trimEnd()).filter(Boolean).join('\n')
@@ -711,16 +779,16 @@ export async function diagnose($: any, check = false): Promise<string> {
 export const RECORD_TOOL = 'mcp__github__record'
 
 // A line in the transcript that never fails what it reports on.
-function note($: any, text: string): void {
+function note($: Mod, text: string): void {
   try {
-    const sent = $.ui.log(text)
-    if (sent && typeof sent.catch === 'function') sent.catch(() => undefined)
+    const sent: unknown = $.ui.log(text)
+    if (isCatchable(sent)) sent.catch(() => undefined)
   } catch {
     // Nowhere to say it: the act it notes is not held for that.
   }
 }
 
-async function configDir($: any): Promise<string | undefined> {
+async function configDir($: Mod): Promise<string | undefined> {
   const named = await $.env.get('CLAUDE_CONFIG_DIR')
   if (named) return String(named)
   const home = await $.env.get('HOME')
@@ -728,7 +796,7 @@ async function configDir($: any): Promise<string | undefined> {
 }
 
 // A guard that no longer refuses: the call goes on, one refusal event of its code is journaled.
-async function observed($: any, code: string): Promise<void> {
+async function observed($: Mod, code: string): Promise<void> {
   let config: string | undefined
   try {
     config = await configDir($)
@@ -748,23 +816,24 @@ export const LIGHT_CI_TOOL = SCRIPTED.tool
 const LIGHT_CI_TIMEOUT_MS = 600_000
 const LIGHT_CI_BUDGET_S = 570
 
-async function lightCiOffOf($: any, gate: Gate): Promise<string | undefined> {
+async function lightCiOffOf($: Mod, gate: Gate): Promise<string | undefined> {
   if (gate.stacked !== true) return undefined
   try {
     const dir = await configDir($)
     const [owner, name] = gate.repo.toLowerCase().split('/')
     const path = dir ? dir + '/light-ci/' + owner + '-' + name + '.json' : undefined
     if (!path || !(await $.fs.exists(path))) return undefined
-    const file = JSON.parse(String(await $.fs.read(path)))
-    if (typeof file?.off !== 'string' || file.off.trim() === '') return undefined
-    return typeof file.at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(file.at) ? file.at.slice(0, 10) : 'undated'
+    const file: unknown = JSON.parse(String(await $.fs.read(path)))
+    const { off, at } = isRecord(file) ? file : {}
+    if (typeof off !== 'string' || off.trim() === '') return undefined
+    return typeof at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(at) ? at.slice(0, 10) : 'undated'
   } catch {
     return undefined
   }
 }
 
 // ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/pr-records, or undefined when unreadable.
-async function recordsRoot($: any): Promise<string | undefined> {
+async function recordsRoot($: Mod): Promise<string | undefined> {
   try {
     const dir = await configDir($)
     return dir ? dir + '/pr-records' : undefined
@@ -779,14 +848,14 @@ class RecordsUnread extends Error {}
 // The records of a pull request's head, as files. A directory that is not there
 // holds none; one that cannot be listed throws RecordsUnread, never read as none.
 // A file that cannot be read is one that does not parse.
-async function headRecords($: any, gate: Gate, head = gate.head): Promise<RecordFile[]> {
+async function headRecords($: Mod, gate: Gate, head = gate.head): Promise<RecordFile[]> {
   const root = await recordsRoot($)
   if (!root) return []
   const dir = root + '/' + gate.repo.toLowerCase() + '/' + head
-  let entries: any[]
+  let entries: FsEntry[]
   try {
     entries = await $.fs.list(dir)
-  } catch (err: any) {
+  } catch (err: unknown) {
     let absent = false
     try {
       absent = !(await $.fs.exists(dir))
@@ -794,7 +863,7 @@ async function headRecords($: any, gate: Gate, head = gate.head): Promise<Record
       // Unknown: not read as absent.
     }
     if (absent) return []
-    throw new RecordsUnread('the records of ' + head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
+    throw new RecordsUnread('the records of ' + head.slice(0, 7) + ' cannot be listed: ' + reasonOf(err).trim())
   }
   const files: RecordFile[] = []
   for (const entry of entries) {
@@ -831,31 +900,33 @@ type Fingerprint = { fingerprint: string; commits: number }
 // What the data directory keeps of a head: its commit count, and the fingerprint over it once computed.
 type Kept = { commits: number; fingerprint?: string }
 
-async function fingerprintPath($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+async function fingerprintPath($: Mod, repo: string, pr: number, head: string): Promise<string | undefined> {
   const dir = await dataDir($)
   return dir ? dir + '/' + FINGERPRINT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
 }
 
-const countOf = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0
+const countOf = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0
 
-async function keptOf($: any, path: string | undefined): Promise<Kept | undefined> {
+async function keptOf($: Mod, path: string | undefined): Promise<Kept | undefined> {
   try {
     if (!path || !(await $.fs.exists(path))) return undefined
-    const kept = JSON.parse(String(await $.fs.read(path)))
-    if (kept?.v !== FINGERPRINT_VERSION || !countOf(kept.commits)) return undefined
-    return { commits: kept.commits, ...(FINGERPRINT.test(String(kept.fingerprint)) ? { fingerprint: kept.fingerprint } : {}) }
+    const kept: unknown = JSON.parse(String(await $.fs.read(path)))
+    if (!isRecord(kept) || kept['v'] !== FINGERPRINT_VERSION) return undefined
+    const { commits, fingerprint } = kept
+    if (!countOf(commits)) return undefined
+    return { commits, ...(typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint) ? { fingerprint } : {}) }
   } catch {
     return undefined
   }
 }
 
-async function writeKept($: any, path: string, repo: string, pr: number, head: string, kept: Kept): Promise<void> {
+async function writeKept($: Mod, path: string, repo: string, pr: number, head: string, kept: Kept): Promise<void> {
   await $.fs.write(path, JSON.stringify({ v: FINGERPRINT_VERSION, repo: repo.toLowerCase(), pr, head, ...kept }) + '\n').catch(() => undefined)
 }
 
 // The commit count the gate read at its head, kept for when that head is an earlier one; a count
 // that changed at the same head (a base merged into it) drops the fingerprint taken over the other.
-async function keepCount($: any, gate: Gate): Promise<void> {
+async function keepCount($: Mod, gate: Gate): Promise<void> {
   if (gate.state !== 'open' || !countOf(gate.commits)) return
   const path = await fingerprintPath($, gate.repo, gate.pr, gate.head)
   if (path && (await keptOf($, path))?.commits !== gate.commits) await writeKept($, path, gate.repo, gate.pr, gate.head, { commits: gate.commits })
@@ -863,14 +934,15 @@ async function keepCount($: any, gate: Gate): Promise<void> {
 
 // The fingerprint of the pull request's own commits at a head, over `count` commits (by default the
 // pull request's), or a throw naming why there is none.
-async function headFingerprint($: any, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
+async function headFingerprint($: Mod, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
   const path = await fingerprintPath($, repo, pr, head)
   const kept = await keptOf($, path)
   if (kept?.fingerprint && (count === undefined || kept.commits === count)) return { fingerprint: kept.fingerprint, commits: kept.commits }
-  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
-  if (!FINGERPRINT.test(String(computed?.fingerprint)) || !countOf(computed.commits)) throw new Error('pr-fingerprint answered no fingerprint')
-  if (path) await writeKept($, path, repo, pr, head, { commits: computed.commits, fingerprint: computed.fingerprint })
-  return { fingerprint: computed.fingerprint, commits: computed.commits }
+  const computed: unknown = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
+  const { fingerprint, commits } = isRecord(computed) ? computed : {}
+  if (typeof fingerprint !== 'string' || !FINGERPRINT.test(fingerprint) || !countOf(commits)) throw new Error('pr-fingerprint answered no fingerprint')
+  if (path) await writeKept($, path, repo, pr, head, { commits, fingerprint })
+  return { fingerprint, commits }
 }
 
 // The pull requests each head directory's records name, by path, as of the directory's mtime: a
@@ -879,15 +951,15 @@ const headPrs = new Map<string, { mtimeMs: number; prs: number[] }>()
 
 // The records of the gate's pull request at its earlier heads, read once each, by head, and the
 // first head whose records cannot be listed, by why.
-async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found: Map<string, RecordFile[]>; unread?: string }> {
+async function earlierRecords($: Mod, gate: Gate, root: string): Promise<{ found: Map<string, RecordFile[]>; unread?: string | undefined }> {
   const dir = root + '/' + gate.repo.toLowerCase()
   const found = new Map<string, RecordFile[]>()
   let unread: string | undefined
   let heads: string[]
   try {
     heads = (await $.fs.list(dir))
-      .filter((x: any) => x?.kind === 'dir' && SHA.test(String(x.name)) && x.name !== gate.head)
-      .map((x: any) => String(x.name))
+      .filter((x) => x?.kind === 'dir' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .map((x) => String(x.name))
   } catch {
     return { found }
   }
@@ -904,9 +976,9 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
     let files: RecordFile[]
     try {
       files = await headRecords($, gate, head)
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Unread, it may hold any kind of the pull request: no earlier head carries.
-      unread ??= String(err?.message ?? err).trim()
+      unread ??= reasonOf(err).trim()
       continue
     }
     // A file that does not parse may be the pull request's: such a directory is read every time.
@@ -924,7 +996,7 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<{ found
  * are carried from no head, and every kind when the records of a head cannot be listed. A record file
  * of a head of the same diff that does not parse may be that failure too: its kind is carried from no head.
  */
-async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
+async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
   await keepCount($, gate)
   // A tests record carries only to a stacked pull request: the bottom one reads no light CI.
   const possible = KINDS.filter((kind) => kind !== SCRIPTED.kind || gate.stacked === true)
@@ -962,8 +1034,8 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
-  } catch (err: any) {
-    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim())
+  } catch (err: unknown) {
+    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim())
     return withWaiver([])
   }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
@@ -976,10 +1048,10 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
       if (!kept) throw new Error('the pull request was never read at that head, its commit count is not known')
       if (kept.commits !== current.commits) continue
       earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits)
-    } catch (err: any) {
+    } catch (err: unknown) {
       const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
-      uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + String(err?.message ?? err).trim(), kinds)
+      uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), kinds)
       continue
     }
     if (earlier.fingerprint !== current.fingerprint) continue
@@ -1012,58 +1084,59 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
 export const CI_UNDRAFT_PREFIX = 'ci-undraft.'
 
 // The mark's file: the repository (lowercase, encoded) and the pull request number.
-async function ciUndraftPath($: any, repo: string, pr: number): Promise<string | undefined> {
+async function ciUndraftPath($: Mod, repo: string, pr: number): Promise<string | undefined> {
   const dir = await dataDir($)
   return dir ? dir + '/' + CI_UNDRAFT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.json' : undefined
 }
 
 // The head the pull request was undrafted at for CI, or '' when it was not or the mark is spent or unreadable.
-async function ciUndraftHead($: any, repo: string, pr: number): Promise<string> {
+async function ciUndraftHead($: Mod, repo: string, pr: number): Promise<string> {
   try {
     const path = await ciUndraftPath($, repo, pr)
     if (!path || !(await $.fs.exists(path))) return ''
-    const head = JSON.parse(String(await $.fs.read(path)))?.head
+    const mark: unknown = JSON.parse(String(await $.fs.read(path)))
+    const head = isRecord(mark) ? mark['head'] : undefined
     return typeof head === 'string' ? head : ''
   } catch {
     return ''
   }
 }
 
-async function writeCiUndraft($: any, repo: string, pr: number, head: string): Promise<void> {
+async function writeCiUndraft($: Mod, repo: string, pr: number, head: string): Promise<void> {
   const path = await ciUndraftPath($, repo, pr)
   if (!path) throw new Error('the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set')
   await $.fs.write(path, JSON.stringify({ v: 1, repo: repo.toLowerCase(), pr, head }) + '\n')
 }
 
-async function ciUndraftMarked($: any, repo: string, pr: number): Promise<boolean> {
+async function ciUndraftMarked($: Mod, repo: string, pr: number): Promise<boolean> {
   return await ciUndraftHead($, repo, pr) !== ''
 }
 
 // Spends the mark, written only when there is one.
-async function dropCiUndraft($: any, repo: string, pr: number): Promise<void> {
+async function dropCiUndraft($: Mod, repo: string, pr: number): Promise<void> {
   if (await ciUndraftHead($, repo, pr) !== '') await writeCiUndraft($, repo, pr, '')
 }
 
 // A mark that cannot be kept only means the gate will not redraft: said in one line.
-async function noteCiUndraft($: any, repo: string, pr: number, head: string | undefined): Promise<void> {
+async function noteCiUndraft($: Mod, repo: string, pr: number, head: string | undefined): Promise<void> {
   note($, ciUndraftLine(repo, pr))
   if (!head) return
   try {
     await writeCiUndraft($, repo, pr, head)
-  } catch (err: any) {
-    note($, 'github: ' + repo + '#' + pr + ' out of draft to run CI is not marked, the gate will leave it out of draft: ' + String(err?.message ?? err).trim())
+  } catch (err: unknown) {
+    note($, 'github: ' + repo + '#' + pr + ' out of draft to run CI is not marked, the gate will leave it out of draft: ' + reasonOf(err).trim())
   }
 }
 
 // ---- E2E a pull request does not need (e2e-scope.ts) ----
 
 // The files of a pull request, or a throw: never read as none.
-async function prFiles($: any, repo: string, pr: number): Promise<PrFile[]> {
+async function prFiles($: Mod, repo: string, pr: number): Promise<PrFile[]> {
   return parsePrFiles(await runGh($, 'pr-files', { pr }, repo))
 }
 
 // The repository's exemption file as it stands, or undefined when there is none or it cannot be read.
-async function readExemption($: any, repo: string): Promise<Exemption | undefined> {
+async function readExemption($: Mod, repo: string): Promise<Exemption | undefined> {
   try {
     const dir = await dataDir($)
     if (!dir) return undefined
@@ -1078,7 +1151,7 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
 // Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read answers
 // `unreadable`: the gate runs it out (the exemption the operator limited excuses only while it is known to stand),
 // the labels keep it standing (a session never frees them on a clock that fails). One with no expiry never reads the clock.
-async function runOut($: any, exemption: Exemption, unreadable = true): Promise<boolean> {
+async function runOut($: Mod, exemption: Exemption, unreadable = true): Promise<boolean> {
   if (exemption.until === undefined) return false
   try {
     const now = Number(await $.clock.now())
@@ -1099,15 +1172,15 @@ const REPO_PLACEHOLDER = /\{owner\}|\{repo\}|:owner\b|:repo\b/g
  * placeholders filled from the checkout's repository as gh api fills them, or the checkout's own
  * when it names none.
  */
-async function labellingRepo($: any, named: string | undefined): Promise<string | undefined> {
+async function labellingRepo($: Mod, named: string | undefined): Promise<string | undefined> {
   if (named && !named.match(REPO_PLACEHOLDER)) return named
   const checkout = await targetRepo($, {}).catch(() => undefined)
   if (!named || !checkout) return checkout
-  const [owner, name] = checkout.split('/')
+  const [owner = '', name = ''] = checkout.split('/')
   return named.replace(REPO_PLACEHOLDER, (part) => (part.includes('owner') ? owner : name))
 }
 
-async function movesExemptLabel($: any, labelling: Labelling, repo: string | undefined): Promise<boolean> {
+async function movesExemptLabel($: Mod, labelling: Labelling, repo: string | undefined): Promise<boolean> {
   if (!repo) return false
   const read = await readExemption($, repo)
   const exemption = read && (await runOut($, read, false)) ? undefined : read
@@ -1117,7 +1190,7 @@ async function movesExemptLabel($: any, labelling: Labelling, repo: string | und
 
 // The line of the operator's exemption that covers this pull request, or undefined. Any doubt (a
 // file or a list of files that cannot be read) covers nothing: the E2E record is asked as before.
-async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
+async function e2eExemptionOf($: Mod, gate: Gate): Promise<string | undefined> {
   const exemption = await readExemption($, gate.repo)
   if (!exemption?.exempt || (await runOut($, exemption))) return undefined
   let files: PrFile[] | undefined
@@ -1128,7 +1201,7 @@ async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
 // What a pull request misses, and one line more when its repository's exemption ran out while its E2E record is
 // missing: the operator's limit is why the exemption no longer stands for it. A rule by labels it does not carry,
 // or an E2E that failed, was never the exemption's to excuse: no line. A rule by paths is not read here, the line stays.
-async function missingWithExpiry($: any, gate: Gate, missing: string[]): Promise<string[]> {
+async function missingWithExpiry($: Mod, gate: Gate, missing: string[]): Promise<string[]> {
   if (!missing.some((item) => item.startsWith('e2e: no record'))) return missing
   const exemption = await readExemption($, gate.repo)
   if (!exemption?.exempt || !(await runOut($, exemption))) return missing
@@ -1136,7 +1209,7 @@ async function missingWithExpiry($: any, gate: Gate, missing: string[]): Promise
 }
 
 // The pull request's check plan as it stands, or undefined when there is none or it cannot be read: then it owes every proof.
-async function readPlan($: any, repo: string, pr: number): Promise<CheckPlan | undefined> {
+async function readPlan($: Mod, repo: string, pr: number): Promise<CheckPlan | undefined> {
   try {
     const dir = await dataDir($)
     const path = dir ? planPath(dir, repo, pr) : undefined
@@ -1149,7 +1222,7 @@ async function readPlan($: any, repo: string, pr: number): Promise<CheckPlan | u
 }
 
 // The kinds that stand without a record at the head: those the plan excuses, and E2E under the operator's exemption.
-async function excusedOf($: any, gate: Gate): Promise<Excused> {
+async function excusedOf($: Mod, gate: Gate): Promise<Excused> {
   const exempt = await e2eExemptionOf($, gate)
   return { ...(exempt ? { e2e: exempt } : {}), ...planExcuses(await readPlan($, gate.repo, Number(gate.pr))) }
 }
@@ -1157,17 +1230,17 @@ async function excusedOf($: any, gate: Gate): Promise<Excused> {
 type Readiness = { gate?: Gate; missing: string[]; carried?: Carried[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
-async function readiness($: any, repo: string, pr: number, sha?: string): Promise<Readiness> {
+async function readiness($: Mod, repo: string, pr: number, sha?: string): Promise<Readiness> {
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
-  } catch (err: any) {
-    return { missing: [], error: String(err?.message ?? err).trim() }
+  } catch (err: unknown) {
+    return { missing: [], error: reasonOf(err).trim() }
   }
   let files: RecordFile[]
   try {
     files = await headRecords($, gate)
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
     throw err
   }
@@ -1187,7 +1260,7 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
  */
 type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[] }
 
-async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
+async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
   let excused: Excused
@@ -1203,8 +1276,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
     missing = await missingWithExpiry($, gate, missingItems(gate, files, undefined, excused, carried, undefined, off))
     accepted = reviewAccepted(gate, files)
     ciText = stackedCi(gate, files, carried, off)
-  } catch (err: any) {
-    return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
+  } catch (err: unknown) {
+    return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
   // A pull request in draft or closed is no CI undraft any more: its mark is dropped.
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
@@ -1216,8 +1289,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   let now: Gate
   try {
     now = parseGate(await runGh($, 'pr-gate', { pr }, repo))
-  } catch (err: any) {
-    return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
+  } catch (err: unknown) {
+    return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
   if (now.head !== gate.head) return { line: gateMovedLine(repo, pr, gate.head, now.head) }
   const redraft = move === 'ready' && !now.draft && !(await autoMergeRepos($)).has(repo.toLowerCase())
@@ -1228,8 +1301,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
       await dropCiUndraft($, repo, pr).catch(() => undefined)
     }
     await runGh($, 'pr-readiness', { pr, state: move }, repo)
-  } catch (err: any) {
-    return { line: gateUnwrittenLine(repo, pr, String(err?.message ?? err).trim()) }
+  } catch (err: unknown) {
+    return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()) }
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
@@ -1242,9 +1315,9 @@ const GATE_READS = new Set(['pr-gate', 'pr-checks'])
 
 // A read's output once the gate followed it. Its line is the module's own, never in the output;
 // pr-gate's JSON says the labels and the draft the gate left.
-async function afterRead($: any, e: any, output: string): Promise<string> {
+async function afterRead($: Mod, e: GhCall, output: string): Promise<string> {
   if (!GATE_READS.has(e.command)) return output
-  const pr = Number(String(e.args?.pr ?? '').replace('#', ''))
+  const pr = prNumber(e.args['pr'])
   if (!Number.isInteger(pr) || pr < 1) return output
   const repo = await targetRepo($, e).catch(() => undefined)
   if (!repo) return output
@@ -1262,16 +1335,28 @@ async function afterRead($: any, e: any, output: string): Promise<string> {
   return JSON.stringify({ ...known, labels: followed.labels, draft: followed.draft }, null, 2)
 }
 
-async function labelNotReady($: any, repo: string, pr: number): Promise<void> {
+async function labelNotReady($: Mod, repo: string, pr: number): Promise<void> {
   await runGh($, 'pr-readiness', { pr, state: 'not-ready' }, repo)
 }
 
 // The number of the open pull request of a branch, the current one when none
 // is named, or undefined.
-async function prOfBranch($: any, repo: string, branch?: string): Promise<number | undefined> {
-  const pulls = JSON.parse(await runGh($, 'pr-get', branch ? { branch } : {}, repo))
-  const pull = Array.isArray(pulls) ? pulls.find((p: any) => p && p.number) : undefined
-  return pull ? Number(pull.number) : undefined
+async function prOfBranch($: Mod, repo: string, branch?: string): Promise<number | undefined> {
+  return parsePulls(await runGh($, 'pr-get', branch ? { branch } : {}, repo))[0]?.number
+}
+
+// pr-get's answer for a branch: its open pull requests, each with its number and its labels' names, lowercased.
+// An answer that is no list holds none, and an entry with no number is left out.
+function parsePulls(text: string): Array<{ number: number; labels: string[] }> {
+  const raw: unknown = JSON.parse(text)
+  const pulls: Array<{ number: number; labels: string[] }> = []
+  const entries: unknown[] = Array.isArray(raw) ? raw : []
+  for (const pull of entries) {
+    if (!isRecord(pull) || typeof pull['number'] !== 'number' || !(pull['number'] > 0)) continue
+    const labels: unknown[] = Array.isArray(pull['labels']) ? pull['labels'] : []
+    pulls.push({ number: pull['number'], labels: labels.map((l) => String((isRecord(l) ? l['name'] : undefined) ?? l).toLowerCase()) })
+  }
+  return pulls
 }
 
 // What the gate says when it does not let Ready on: the refusal of an act, and pr-readiness's answer.
@@ -1283,15 +1368,16 @@ function heldUnverified(repo: string | undefined, pr: number | string | undefine
 
 // A pull request that is not ready, which also loses Ready when it still carries it, so the label
 // never claims what the gate refused.
-async function heldNotReady($: any, name: string, repo: string, pr: number, r: Readiness): Promise<Held> {
-  const gate = r.gate as Gate
+async function heldNotReady($: Mod, name: string, repo: string, pr: number, r: Readiness): Promise<Held> {
+  const gate = r.gate
+  if (!gate) throw new Error('the gate of ' + repo + '#' + pr + ' was not read')
   let labels = gate.labels
   if (carriesReady(gate)) {
     try {
       await labelNotReady($, repo, pr)
       labels = [...labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), 'Not Ready']
-    } catch (err: any) {
-      note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
+    } catch (err: unknown) {
+      note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + reasonOf(err))
     }
   }
   return {
@@ -1315,7 +1401,7 @@ function missesOnlyRecords(missing: string[]): boolean {
  * An act (`act` given) goes through as well when only records are absent at the head, which its
  * caller observes: CI, a record that failed and a readiness unread still refuse it.
  */
-async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness, act?: Passage): Promise<Held | undefined> {
+async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readiness, act?: Passage): Promise<Held | undefined> {
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
   const passes = (missing: string[]): boolean => missing.length === 0 || (act !== undefined && missesOnlyRecords(missing))
   if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
@@ -1332,17 +1418,18 @@ async function gateHeld($: any, name: string, repo: string, pr: number, r: Readi
  * it does not, the call answers the state the pull request carries and what is missing, or why that
  * is unknown: an answer, no error, as pr-readiness reports a state (`answer`).
  */
-function readyLabelCall($: any, e: any): { check: () => Promise<string | undefined>; answer: (refused: string) => { result: string } | undefined } | undefined {
-  if (e.command !== 'pr-readiness' || e.args?.state !== 'ready') return undefined
+function readyLabelCall($: Mod, e: GhCall): { check: () => Promise<string | undefined>; answer: (refused: string) => { result: string } | undefined } | undefined {
+  if (e.command !== 'pr-readiness' || e.args['state'] !== 'ready') return undefined
   let held: Held | undefined
   const check = async (): Promise<string | undefined> => {
     const repo = await targetRepo($, e).catch(() => undefined)
-    const pr = Number(String(e.args?.pr ?? '').replace('#', ''))
+    const named = e.args['pr']
+    const pr = prNumber(e.args['pr'])
     try {
-      if (!repo || !Number.isInteger(pr) || pr < 1) held = heldUnverified(repo, e.args?.pr, 'no repository or pull request named')
+      if (!repo || !Number.isInteger(pr) || pr < 1) held = heldUnverified(repo, typeof named === 'number' || typeof named === 'string' ? named : undefined, 'no repository or pull request named')
       else held = await gateHeld($, e.command, repo, pr, await readiness($, repo, pr))
-    } catch (err: any) {
-      held = heldUnverified(repo, pr, String(err?.message ?? err).trim())
+    } catch (err: unknown) {
+      held = heldUnverified(repo, pr, reasonOf(err).trim())
     }
     return held?.refusal
   }
@@ -1350,17 +1437,17 @@ function readyLabelCall($: any, e: any): { check: () => Promise<string | undefin
 }
 
 // The Bash ready guard failed on its own: the command is refused as a readiness that could not be read.
-function guardThrew(act: Act | undefined, err: any): string {
-  const error = String(err?.message ?? err).trim()
+function guardThrew(act: Act | undefined, err: unknown): string {
+  const error = reasonOf(err).trim()
   if (act?.opaque) return opaqueGraphqlRefusal()
   return unverifiedRefusal(act?.repo, act?.pr, error)
 }
 
 // The tool's act: checked before any question. A CI undraft runs as pr-ready --for-ci, which keeps Not Ready.
-function toolReady($: any, e: any, act: Act) {
+function toolReady($: Mod, e: GhCall, act: Act) {
   let read: Readiness | undefined
   let forCi = false
-  const repoPr = async (): Promise<{ repo?: string; pr?: number }> => {
+  const repoPr = async (): Promise<{ repo?: string | undefined; pr?: number | undefined }> => {
     let repo: string | undefined
     try {
       repo = await targetRepo($, e)
@@ -1382,9 +1469,9 @@ function toolReady($: any, e: any, act: Act) {
         e.args = { ...e.args, 'for-ci': true }
         return undefined
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       // The guard's own failure reads as a readiness that could not be read.
-      read = { missing: [], error: String(err?.message ?? err).trim() }
+      read = { missing: [], error: reasonOf(err).trim() }
     }
     if (read.error || read.missing.length > 0) return { repo, pr, r: read }
     return undefined
@@ -1410,8 +1497,8 @@ function toolReady($: any, e: any, act: Act) {
       if (typeof found.pr !== 'number') return unverifiedRefusal(found.repo, found.pr, found.r.error ?? '')
       try {
         return await heldAct(found.repo, found.pr, found.r)
-      } catch (err: any) {
-        return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
+      } catch (err: unknown) {
+        return unverifiedRefusal(found.repo, found.pr, reasonOf(err).trim())
       }
     },
     // Whether this is an undraft for CI.
@@ -1437,7 +1524,7 @@ function engineName(act: Act): string | undefined {
 
 // The Bash act's refusal, or undefined; what must follow its success goes in after, what is observed in observations
 // (journaled by the caller once no act of the line is refused).
-async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>, observations: string[]): Promise<string | undefined> {
+async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Promise<void>>, observations: string[]): Promise<string | undefined> {
   if (act.stdin) return STDIN_REFUSAL
   if (act.kind === 'create' || act.kind === 'create-draft') {
     if (act.kind === 'create') observations.push(OBSERVED.draftOpen)
@@ -1479,8 +1566,8 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     try {
       pr = await prOfBranch($, repo, act.branch)
       if (pr === undefined) lookup = 'no open pull request for ' + (act.branch ?? 'the current branch')
-    } catch (err: any) {
-      lookup = String(err?.message ?? err).trim()
+    } catch (err: unknown) {
+      lookup = reasonOf(err).trim()
     }
   }
   const r: Readiness = pr === undefined ? { missing: [], error: lookup } : await readiness($, repo, pr, act.sha)
@@ -1504,17 +1591,17 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   return held
 }
 
-function stdoutOf(result: any): string {
-  const out = result?.result
+function stdoutOf(result: unknown): string {
+  const out = isRecord(result) ? result['result'] : undefined
   if (typeof out === 'string') return out
-  return String(out?.stdout ?? '')
+  return String((isRecord(out) ? out['stdout'] : undefined) ?? '')
 }
 
 // A push moves the head of the branches it names: a pull request of theirs
 // that carries Ready goes back to Not Ready. A branch or a repository read
 // with any doubt is left alone, with one line saying so.
 // After a push this session ran, its checkout's head is one it pushed.
-async function notePushedHead($: any, line: string): Promise<void> {
+async function notePushedHead($: Mod, line: string): Promise<void> {
   try {
     if (bashPushes(line).pushes.length === 0) return
     const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })
@@ -1524,7 +1611,7 @@ async function notePushedHead($: any, line: string): Promise<void> {
   }
 }
 
-async function followPushes($: any, line: string): Promise<void> {
+async function followPushes($: Mod, line: string): Promise<void> {
   const { pushes, moves } = bashPushes(line)
   for (const push of pushes) {
     try {
@@ -1566,16 +1653,14 @@ async function followPushes($: any, line: string): Promise<void> {
       }
       const repo = match[1] + '/' + match[2]
       for (const branch of branches) {
-        const pulls = JSON.parse(await runGh($, 'pr-get', { branch }, repo))
-        for (const pull of Array.isArray(pulls) ? pulls : []) {
-          const labels = (pull?.labels ?? []).map((l: any) => String(l?.name ?? l).toLowerCase())
-          if (!labels.includes('ready')) continue
-          await labelNotReady($, repo, Number(pull.number))
+        for (const pull of parsePulls(await runGh($, 'pr-get', { branch }, repo))) {
+          if (!pull.labels.includes('ready')) continue
+          await labelNotReady($, repo, pull.number)
           note($, 'github: ' + repo + '#' + pull.number + ' back to Not Ready after the push to ' + branch)
         }
       }
-    } catch (err: any) {
-      note($, 'github: the labels could not be read after the push: ' + String(err?.message ?? err))
+    } catch (err: unknown) {
+      note($, 'github: the labels could not be read after the push: ' + reasonOf(err))
     }
   }
 }
@@ -1591,7 +1676,7 @@ function spaced(text: string): string {
 const CONSENT_READ = 200
 
 // The consent records of a repository, the newest files first; a directory or a file that cannot be read holds none.
-async function consentRecords($: any, repo: string): Promise<ConsentRecord[]> {
+async function consentRecords($: Mod, repo: string): Promise<ConsentRecord[]> {
   const records: ConsentRecord[] = []
   try {
     const dir = await configDir($)
@@ -1625,31 +1710,34 @@ async function consentRecords($: any, repo: string): Promise<ConsentRecord[]> {
 // True when some consent record of the subject, written for the operator's answer to the
 // question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
 // itself says what `carries` asks of the operator's words.
-async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
+async function consentAnswered($: Mod, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
   return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
 }
 
 // The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
 // question, from any channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
-async function grantedWaiver($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
+async function grantedWaiver($: Mod, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
   const newest = await newestAnswer($, { kind: waiverSubject(check), repo, pr })
   return newest && grants(newest.answer) ? newest : undefined
 }
 
 // His newest recorded answer to the question that asked consent on the subject, whichever channel wrote it.
-async function newestAnswer($: any, subject: ConsentSubject): Promise<ConsentRecord | undefined> {
+async function newestAnswer($: Mod, subject: ConsentSubject): Promise<ConsentRecord | undefined> {
   const answers = (await consentRecords($, subject.repo)).filter((record) => sameSubject(record.subject, subject))
   return answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
 }
 
 // The operator's answer to a waiver question put by dialog, recorded as the round's answers are
 // (core's consent-record.ts, `by: 'tab'`, the asking session's own), dated by the module.
-async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
-  const answers = out?.result?.answers
-  if (typeof answers !== 'object' || answers === null) return
-  for (const question of Array.isArray(e.questions) ? e.questions : []) {
+async function recordWaiverAnswers($: Mod, e: ToolInput, out: unknown): Promise<void> {
+  const result = isRecord(out) ? out['result'] : undefined
+  const answers = isRecord(result) ? result['answers'] : undefined
+  if (!isRecord(answers)) return
+  const questions: unknown[] = Array.isArray(e['questions']) ? e['questions'] : []
+  for (const question of questions) {
     const asked = waiverQuestion(question)
-    const answer = String(answers[String(question?.question ?? '')] ?? '').trim()
+    const text = isRecord(question) ? question['question'] : undefined
+    const answer = String(answers[String(text ?? '')] ?? '').trim()
     if (!asked || (answer !== CONSENT_GRANT && answer !== CONSENT_REFUSE)) continue
     const dir = await configDir($)
     if (!dir) return
@@ -1657,14 +1745,14 @@ async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
     const session = String(await $.session.id() ?? '').replace(/[^A-Za-z0-9._-]/g, '')
     const record: ConsentRecord = {
       v: CONSENT_VERSION, subject: { kind: waiverSubject(asked.check), repo: asked.repo.toLowerCase(), pr: asked.pr },
-      entry: 'dialog-' + (session || 'session') + '-' + now, question: String(question.question), answer, by: 'tab',
+      entry: 'dialog-' + (session || 'session') + '-' + now, question: String(text), answer, by: 'tab',
       at: new Date(now).toISOString().replace(/\.\d+Z$/, 'Z'),
     }
     const path = consentPath(dir, record)
     try {
       await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(record) + '\n'))
-    } catch (err: any) {
-      note($, 'github: the waiver answer of ' + asked.repo + '#' + asked.pr + ' is not recorded: ' + String(err?.message ?? err).trim())
+    } catch (err: unknown) {
+      note($, 'github: the waiver answer of ' + asked.repo + '#' + asked.pr + ' is not recorded: ' + reasonOf(err).trim())
       continue
     }
     const { line } = await followGate($, asked.repo, asked.pr, undefined, true)
@@ -1677,21 +1765,21 @@ async function recordWaiverAnswers($: any, e: any, out: any): Promise<void> {
 // Whether a Bash command line names a list where it lives: its file name
 // with the plugin's data directory, any plugin's, or the variable naming it.
 // The name alone, in this plugin's sources or a message, is no path.
-async function touchesList($: any, line: string, file: string): Promise<boolean> {
+async function touchesList($: Mod, line: string, file: string): Promise<boolean> {
   if (!line.includes(file)) return false
   const dir = await dataDir($)
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
 
 // Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
-async function touchesExemptions($: any, line: string): Promise<boolean> {
+async function touchesExemptions($: Mod, line: string): Promise<boolean> {
   if (!line.includes(EXEMPT_DIR) && !line.includes(PLAN_DIR)) return false
   const dir = await dataDir($)
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
 
 // The list, one repository per line as written.
-async function listAutoMerge($: any): Promise<string> {
+async function listAutoMerge($: Mod): Promise<string> {
   const { listed } = await readAutoMerge($)
   return listed.length > 0 ? listed.join('\n') : 'no repository in auto-merge'
 }
@@ -1702,7 +1790,7 @@ function askedConsent(kind: string, repo: string, extra?: string, value?: string
 }
 
 // The refusal of an auto-merge-set whose words are not the operator's, or undefined.
-async function unprovenWord($: any, words: string, repo: string, on: boolean): Promise<string | undefined> {
+async function unprovenWord($: Mod, words: string, repo: string, on: boolean): Promise<string | undefined> {
   if (!AUTO_MERGE_WORD.test(words)) {
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
       + ' "automerge"), in their recorded answer.'
@@ -1720,7 +1808,7 @@ const LOCK_TRIES = 100
 const LOCK_POLL = '0.05'
 const LOCK_STALE_MS = 30_000
 
-async function withListLock<T>($: any, path: string, work: () => Promise<T>): Promise<T> {
+async function withListLock<T>($: Mod, path: string, work: () => Promise<T>): Promise<T> {
   const lock = path + '.lock'
   const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 10_000 })
   if (made.exitCode !== 0) throw new Error(made.stderr || 'mkdir exited ' + made.exitCode)
@@ -1750,7 +1838,7 @@ async function withListLock<T>($: any, path: string, work: () => Promise<T>): Pr
 // The list written whole to a temporary file beside it, then moved over it:
 // a reader sees the old list or the new one, never half of one. A move that
 // fails removes the temporary file.
-async function writeAutoMerge($: any, path: string, text: string): Promise<void> {
+async function writeAutoMerge($: Mod, path: string, text: string): Promise<void> {
   const temp = path + '.' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.tmp'
   try {
     await $.fs.write(temp, text)
@@ -1762,15 +1850,15 @@ async function writeAutoMerge($: any, path: string, text: string): Promise<void>
   }
 }
 
-async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+async function setAutoMerge($: Mod, e: GhRequest): Promise<Answer> {
   const verdict = await $.tool.check({ tool: TOOL, input: { command: e.command, args: e.args, repo: e.repo } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   const args = e.args ?? {}
-  const repo = String(args.repo ?? '').trim()
+  const repo = String(args['repo'] ?? '').trim()
   if (!isRepoName(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
-  if (typeof args.on !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
-  const words = typeof args.words === 'string' ? args.words : ''
-  const unproven = await unprovenWord($, words, repo, args.on)
+  if (typeof args['on'] !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
+  const words = typeof args['words'] === 'string' ? args['words'] : ''
+  const unproven = await unprovenWord($, words, repo, args['on'])
   if (unproven) return { deny: unproven }
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -1783,18 +1871,18 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
     const key = repo.toLowerCase()
     const kept = listed.filter((r) => r.trim().toLowerCase() !== key)
     const was = kept.length < listed.length
-    if (args.on && was && kept.length === listed.length - 1) return { result: repo + ' is already in auto-merge' }
-    if (!args.on && !was) return { result: repo + ' was not in auto-merge' }
-    const repositories = args.on ? [...kept, repo] : kept
+    if (args['on'] && was && kept.length === listed.length - 1) return { result: repo + ' is already in auto-merge' }
+    if (!args['on'] && !was) return { result: repo + ' was not in auto-merge' }
+    const repositories = args['on'] ? [...kept, repo] : kept
     await writeAutoMerge($, path, JSON.stringify({ ...data, repositories }, null, 2) + '\n')
-    return { result: repo + (args.on ? ' is now in auto-merge' : ' is no longer in auto-merge') }
+    return { result: repo + (args['on'] ? ' is now in auto-merge' : ' is no longer in auto-merge') }
   })
 }
 
 // ---- the deploy list on the operator's word ----
 
 // The list, one environment of a repository per line.
-async function listAutoDeploy($: any): Promise<string> {
+async function listAutoDeploy($: Mod): Promise<string> {
   const { list } = await readDeployFile($)
   return list.grants.length > 0 ? list.grants.map((g) => g.repo + ' ' + g.env).join('\n') : 'no repository in auto-deploy'
 }
@@ -1802,7 +1890,7 @@ async function listAutoDeploy($: any): Promise<string> {
 // The refusal of an auto-deploy-set whose consent is not the operator's, or undefined. A grant rests on
 // the record alone: his newest answer for the repository and the environment is « Accorder », whatever
 // "words" says. A withdrawal quotes a record of that subject, and its words name auto-deploy.
-async function unprovenDeployWord($: any, words: string, repo: string, env: DeployEnv, on: boolean): Promise<string | undefined> {
+async function unprovenDeployWord($: Mod, words: string, repo: string, env: DeployEnv, on: boolean): Promise<string | undefined> {
   const subject: ConsentSubject = { kind: 'auto-deploy', repo, env }
   if (on) {
     const newest = await newestAnswer($, subject)
@@ -1823,7 +1911,8 @@ function declarationsOf(raw: unknown, repo: string): Declared[] | string {
   if (raw === undefined) return []
   if (!Array.isArray(raw)) return 'github: auto-deploy-set declares its commands as a list: {"commands": [{"kind": "command", "argv": [...], "env": "prod"}]}'
   const out: Declared[] = []
-  for (const entry of raw) {
+  const entries: unknown[] = raw
+  for (const entry of entries) {
     const one = parseDeclared(typeof entry === 'object' && entry !== null ? { ...entry, repo } : entry)
     if (typeof one === 'string') return 'github: auto-deploy-set: ' + one
     out.push(one)
@@ -1831,18 +1920,18 @@ function declarationsOf(raw: unknown, repo: string): Declared[] | string {
   return out
 }
 
-async function setAutoDeploy($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
+async function setAutoDeploy($: Mod, e: GhRequest): Promise<Answer> {
   const verdict = await $.tool.check({ tool: TOOL, input: { command: e.command, args: e.args, repo: e.repo } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   const args = e.args ?? {}
-  const repo = String(args.repo ?? '').trim()
+  const repo = String(args['repo'] ?? '').trim()
   if (!isRepoName(repo)) return { deny: 'github: auto-deploy-set names its repository as owner/name: {"repo": "owner/name"}' }
-  const env = (DEPLOY_ENVS as readonly unknown[]).includes(args.env) ? args.env as DeployEnv : undefined
+  const env = DEPLOY_ENVS.find((known) => known === args['env'])
   if (env === undefined) return { deny: 'github: auto-deploy-set names its environment: {"env": "' + DEPLOY_ENVS.join('"|"') + '"}' }
-  if (typeof args.on !== 'boolean') return { deny: 'github: auto-deploy-set says in or out: {"on": true} or {"on": false}' }
-  const declared = declarationsOf(args.commands, repo)
+  if (typeof args['on'] !== 'boolean') return { deny: 'github: auto-deploy-set says in or out: {"on": true} or {"on": false}' }
+  const declared = declarationsOf(args['commands'], repo)
   if (typeof declared === 'string') return { deny: declared }
-  const unproven = await unprovenDeployWord($, typeof args.words === 'string' ? args.words : '', repo, env, args.on)
+  const unproven = await unprovenDeployWord($, typeof args['words'] === 'string' ? args['words'] : '', repo, env, args['on'])
   if (unproven) return { deny: unproven }
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -1856,12 +1945,12 @@ async function setAutoDeploy($: any, e: any): Promise<{ result?: string; deny?: 
     const was = kept.length < list.grants.length
     const known = new Set(list.declared.map((d) => JSON.stringify(d)))
     const added = declared.filter((d) => !known.has(JSON.stringify(d)))
-    if (args.on && was && added.length === 0) return { result: repo + ' is already in auto-deploy on ' + env }
-    if (!args.on && !was && added.length === 0) return { result: repo + ' was not in auto-deploy on ' + env }
-    const repositories = (args.on ? [...kept, { repo, env }] : kept).map((g) => ({ repo: g.repo, env: g.env }))
+    if (args['on'] && was && added.length === 0) return { result: repo + ' is already in auto-deploy on ' + env }
+    if (!args['on'] && !was && added.length === 0) return { result: repo + ' was not in auto-deploy on ' + env }
+    const repositories = (args['on'] ? [...kept, { repo, env }] : kept).map((g) => ({ repo: g.repo, env: g.env }))
     const commands = [...list.declared, ...added]
     await writeAutoMerge($, path, JSON.stringify({ ...data, repositories, commands }, null, 2) + '\n')
-    return { result: repo + (args.on ? ' is now in auto-deploy on ' : ' is no longer in auto-deploy on ') + env }
+    return { result: repo + (args['on'] ? ' is now in auto-deploy on ' : ' is no longer in auto-deploy on ') + env }
   })
 }
 
@@ -1869,14 +1958,14 @@ async function setAutoDeploy($: any, e: any): Promise<{ result?: string; deny?: 
 
 // Why the pull request at `head` is no pull request without runtime, or undefined: its files, read
 // at that head (read again after them, so files of another head are never vouched for), all hold none.
-async function runtimeRefusal($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+async function runtimeRefusal($: Mod, repo: string, pr: number, head: string): Promise<string | undefined> {
   let files: PrFile[]
   let after: Gate
   try {
     files = await prFiles($, repo, pr)
     after = parseGate(await runGh($, 'pr-gate', { pr }, repo))
-  } catch (err: any) {
-    return 'github: the files of ' + repo + '#' + pr + ' cannot be read: ' + String(err?.message ?? err).trim()
+  } catch (err: unknown) {
+    return 'github: the files of ' + repo + '#' + pr + ' cannot be read: ' + reasonOf(err).trim()
   }
   if (after.head !== head) return 'github: the head moved from ' + head.slice(0, 7) + ' to ' + after.head.slice(0, 7) + ' while its files were read: record again.'
   const held = runtimeFiles(files)
@@ -1891,18 +1980,18 @@ const isRule = (value: unknown): value is string[] =>
 
 // The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
 // requests from E2E (all, or those a rule names), or revokes it, in their words.
-async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  if (typeof e.exempt !== 'boolean') return { deny: 'github: an E2E exemption says in or out: {"exempt": true} or {"exempt": false}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} })
+async function setExemption($: Mod, e: ToolInput, detail: string): Promise<Answer> {
+  if (typeof e['exempt'] !== 'boolean') return { deny: 'github: an E2E exemption says in or out: {"exempt": true} or {"exempt": false}' }
+  const repo = await targetRepo($, { repo: e['repo'], args: {} })
   if (!repo || !isRepoName(repo)) return { deny: 'github: an E2E exemption names its repository: {"repo": "owner/name"}' }
-  const paths = e.paths ?? []
-  const labels = e.labels ?? []
+  const paths = e['paths'] ?? []
+  const labels = e['labels'] ?? []
   if (!isRule(paths) || !isRule(labels)) {
     return { deny: 'github: "paths" and "labels" are lists of at most ' + RULES_MAX + ' globs and label names.' }
   }
-  const until: string | undefined = e.until === undefined || e.until === null ? undefined : e.until
+  const until: unknown = e['until'] ?? undefined
   if (until !== undefined) {
-    if (!e.exempt) return { deny: 'github: an E2E exemption is revoked with no "until": only one that is granted has an expiry.' }
+    if (!e['exempt']) return { deny: 'github: an E2E exemption is revoked with no "until": only one that is granted has an expiry.' }
     if (typeof until !== 'string' || !isInstant(until)) {
       return { deny: 'github: "until" is the instant the exemption ends, in UTC to the second: 2026-11-15T22:00:00Z.' }
     }
@@ -1919,7 +2008,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   } catch {
     // Written without it.
   }
-  const exempt: boolean = e.exempt
+  const exempt: boolean = e['exempt']
   const kept = exempt ? { paths: paths.map((p: string) => p.trim()), labels: labels.map((l: string) => l.trim()) } : { paths: [], labels: [] }
   const body = { v: 1, repo: repo.toLowerCase(), exempt, ...kept, detail, session, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), ...(until === undefined ? {} : { until }) }
   const path = exemptionPath(dir, repo)
@@ -1933,8 +2022,8 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
 }
 
 // pr-plan {pr}: the pull request's check plan as the gate reads it, as JSON, or the line that says it has none.
-async function showPlan($: any, raw: any): Promise<{ result: string; isError?: boolean }> {
-  const pr = Number(String(raw.args?.pr ?? '').replace('#', ''))
+async function showPlan($: Mod, raw: GhRequest): Promise<{ result: string; isError?: boolean }> {
+  const pr = prNumber(raw.args?.['pr'])
   if (!Number.isInteger(pr) || pr < 1) return { result: 'github: name the pull request: {"pr": <n>}', isError: true }
   const repo = await targetRepo($, raw)
   if (!repo || !isRepoName(repo)) return { result: 'github: name the repository: {"repo": "owner/name"}', isError: true }
@@ -1946,14 +2035,14 @@ async function showPlan($: any, raw: any): Promise<{ result: string; isError?: b
  * The record tool's {pr, plan: {e2e, norms}}: the proofs the pull request owes, decided when the work is
  * scoped, kept across its heads and posted on it. A new plan replaces the previous one.
  */
-async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  const checks = planInput(e.plan)
+async function setPlan($: Mod, e: ToolInput): Promise<Answer> {
+  const checks = planInput(e['plan'])
   if (typeof checks === 'string') {
     return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
   }
-  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  const pr = Number(String(e['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} })
+  const repo = await targetRepo($, { repo: e['repo'], args: {} })
   if (!repo || !isRepoName(repo)) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
   const dir = await dataDir($)
   if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
@@ -1963,8 +2052,8 @@ async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string
   let posted = ''
   try {
     await runGh($, 'pr-comment', { pr, body: planText(checks) }, repo)
-  } catch (err: any) {
-    posted = '\ngithub: the plan is not posted on ' + repo + '#' + pr + ': ' + String(err?.message ?? err).trim()
+  } catch (err: unknown) {
+    posted = '\ngithub: the plan is not posted on ' + repo + '#' + pr + ': ' + reasonOf(err).trim()
   }
   const { line } = await followGate($, repo, pr, undefined, true)
   return { result: 'github: check plan of ' + repo + '#' + pr + ': e2e ' + checks.e2e.need + ', norms ' + checks.norms.need + ', review ' + needText(checks.review) + posted + (line ? '\n' + line : '') }
@@ -1974,37 +2063,37 @@ async function setPlan($: any, e: any): Promise<{ result?: string; deny?: string
 
 // Why a path is no directory, or undefined when it is one. The host's `$.fs.stat` says `dir`; a
 // spawn in a path that is none fails with a raw ENOENT, so the refusal comes first.
-async function notDirectory($: any, path: string): Promise<string | undefined> {
+async function notDirectory($: Mod, path: string): Promise<string | undefined> {
   try {
     return (await $.fs.stat(path)).kind === 'dir' ? undefined : 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
-  } catch (err: any) {
-    const why = String(err?.message ?? err).trim()
+  } catch (err: unknown) {
+    const why = reasonOf(err).trim()
     return /ENOENT|no such file|not found/i.test(why)
       ? 'dir ' + path + ' is not a directory: name the checkout the tests ran in'
       : 'cannot stat dir ' + path + ': ' + why
   }
 }
 
-async function writeRecord($: any, e: any, origin: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail, dir: e.dir } })
+async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer> {
+  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e['pr'], repo: e['repo'], kind: e['kind'], result: e['result'], detail: e['detail'], dir: e['dir'] } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   // The checkout the tests ran in: named, or the session's directory.
-  const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
+  const dir = e['dir'] === undefined || e['dir'] === null || e['dir'] === '' ? undefined : String(e['dir'])
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout the tests ran in, got: ' + dir }
   const notDir = dir === undefined ? undefined : await notDirectory($, dir)
   if (notDir) return { deny: 'github: ' + notDir }
   const inDir = dir ? { cwd: dir } : {}
   const owned = recordKindFor(origin)
-  const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
+  const kind = e['kind'] === undefined || e['kind'] === null || e['kind'] === '' ? owned : String(e['kind'])
   if (kind !== owned) {
     return {
       deny: kindRefusal(kind, origin, owned),
     }
   }
-  const detail = e.detail === undefined || e.detail === null ? '' : String(e.detail)
-  if (e.exempt !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
-  if (e.plan !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
-  const result = String(e.result ?? '')
+  const detail = e['detail'] === undefined || e['detail'] === null ? '' : String(e['detail'])
+  if (e['exempt'] !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
+  if (e['plan'] !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
+  const result = String(e['result'] ?? '')
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
   }
@@ -2012,9 +2101,9 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (result === ACCEPTANCE.result && detail.trim() === '') {
     return { deny: 'github: an acceptance names each point it sets aside with its reason in "detail".' }
   }
-  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  const pr = Number(String(e['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
-  const repo = await targetRepo($, { repo: e.repo, args: {} }, dir)
+  const repo = await targetRepo($, { repo: e['repo'], args: {} }, dir)
   if (!repo) {
     return {
       deny: dir
@@ -2032,8 +2121,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
-  } catch (err: any) {
-    return { deny: unverifiedRefusal(repo, pr, String(err?.message ?? err).trim()) }
+  } catch (err: unknown) {
+    return { deny: unverifiedRefusal(repo, pr, reasonOf(err).trim()) }
   }
   const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
   const local = head.exitCode === 0 ? String(head.stdout).trim().toLowerCase() : ''
@@ -2084,18 +2173,18 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
  * it; `status` says what the repository's project file holds and the facts of the invitation. The script does
  * every check and every write: this hook names the checkout, the session and the gate's line.
  */
-async function lightCi($: any, e: any): Promise<{ result?: string; deny?: string; isError?: boolean }> {
-  const verdict = await $.tool.check({ tool: LIGHT_CI_TOOL, input: { action: e.action, pr: e.pr, repo: e.repo, dir: e.dir } })
+async function lightCi($: Mod, e: ToolInput): Promise<Answer> {
+  const verdict = await $.tool.check({ tool: LIGHT_CI_TOOL, input: { action: e['action'], pr: e['pr'], repo: e['repo'], dir: e['dir'] } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
-  const action = String(e.action ?? '')
+  const action = String(e['action'] ?? '')
   if (action !== 'run' && action !== 'status') {
     return { deny: 'github: ' + LIGHT_CI_TOOL + ' takes {"action": "run", "pr": <n>} or {"action": "status"}, each with "repo" and "dir" if needed' }
   }
-  const dir = e.dir === undefined || e.dir === null || e.dir === '' ? undefined : String(e.dir)
+  const dir = e['dir'] === undefined || e['dir'] === null || e['dir'] === '' ? undefined : String(e['dir'])
   if (dir !== undefined && !dir.startsWith('/')) return { deny: 'github: dir is the absolute path of the checkout, got: ' + dir }
   const notDir = dir === undefined ? undefined : await notDirectory($, dir)
   if (notDir) return { deny: 'github: ' + notDir }
-  const named = e.repo === undefined || e.repo === null || e.repo === '' ? undefined : String(e.repo)
+  const named = e['repo'] === undefined || e['repo'] === null || e['repo'] === '' ? undefined : String(e['repo'])
   if (named !== undefined && !isRepoName(named)) return { deny: 'github: repo is owner/name, got: ' + named }
   const script = ['python3', $.plugin.root + '/engine/light_ci.py']
   const inDir = dir ? { cwd: dir } : {}
@@ -2105,7 +2194,7 @@ async function lightCi($: any, e: any): Promise<{ result?: string; deny?: string
     if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
     return { result: String(run.stdout).trim() }
   }
-  const pr = Number(String(e.pr ?? '').replace('#', ''))
+  const pr = Number(String(e['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"action": "run", "pr": <n>}' }
   let session = ''
   try {
@@ -2124,7 +2213,7 @@ async function lightCi($: any, e: any): Promise<{ result?: string; deny?: string
 
 // At most once a day, the head directories whose newest record is older than
 // PRUNE_DAYS go, their pull request merged or moved on long ago, and the fingerprints kept as long.
-async function pruneRecords($: any): Promise<void> {
+async function pruneRecords($: Mod): Promise<void> {
   const root = await recordsRoot($)
   if (!root || !(await $.fs.exists(root))) return
   const stamp = root + '/.pruned'
@@ -2136,7 +2225,7 @@ async function pruneRecords($: any): Promise<void> {
   }
   const cut = Date.now() - PRUNE_DAYS * 24 * 3600 * 1000
   const dirs = async (path: string): Promise<string[]> =>
-    (await $.fs.list(path)).filter((x: any) => x?.kind === 'dir').map((x: any) => path + '/' + x.name)
+    (await $.fs.list(path)).filter((x) => x?.kind === 'dir').map((x) => path + '/' + x.name)
   const stale: string[] = []
   for (const owner of await dirs(root)) {
     for (const name of await dirs(owner)) {
@@ -2162,8 +2251,8 @@ async function pruneRecords($: any): Promise<void> {
   await $.fs.write(stamp, new Date().toISOString() + '\n')
 }
 
-export function register(on: any): void {
-  on('session.start', async ($: any, e: any, next: any) => {
+export function register(on: On<Mod>): void {
+  on('session.start', async ($, e, next) => {
     const root = $.plugin.root
     await $.tool.register({
       name: 'gh',
@@ -2227,8 +2316,8 @@ export function register(on: any): void {
           required: [],
         },
       })
-    } catch (err: any) {
-      note($, 'github: the record tool could not be registered: ' + String(err?.message ?? err))
+    } catch (err: unknown) {
+      note($, 'github: the record tool could not be registered: ' + reasonOf(err))
     }
     try {
       await $.tool.register({
@@ -2249,13 +2338,13 @@ export function register(on: any): void {
           required: ['action'],
         },
       })
-    } catch (err: any) {
-      note($, 'github: the light CI tool could not be registered: ' + String(err?.message ?? err))
+    } catch (err: unknown) {
+      note($, 'github: the light CI tool could not be registered: ' + reasonOf(err))
     }
     try {
       await pruneRecords($)
-    } catch (err: any) {
-      note($, 'github: the old records could not be pruned: ' + String(err?.message ?? err))
+    } catch (err: unknown) {
+      note($, 'github: the old records could not be pruned: ' + reasonOf(err))
     }
     ownedCommands.clear()
     // Commands last: a taken name throws and would skip the rest of the hook.
@@ -2272,17 +2361,17 @@ export function register(on: any): void {
       }
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+  on('prompt.submit', async ($, e, next) => {
     const kind = String(e.origin?.kind ?? '')
     if (kind !== 'composer' && kind !== 'bridge') return next(e)
     lastTyped = String(e.text ?? '')
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
-    const line = String(e.command)
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const line = String(e['command'])
     // What the call is observed for, journaled just before it runs: a call refused further down leaves no line.
     const observations: string[] = []
     try {
@@ -2303,21 +2392,21 @@ export function register(on: any): void {
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
-    const undeployed = await bashDeployRefusal($, String(e.command))
+    const undeployed = await bashDeployRefusal($, line)
     if (undeployed) return { deny: undeployed }
     let labellings: Labelling[] = []
     try {
-      labellings = bashLabellings(String(e.command))
+      labellings = bashLabellings(line)
     } catch {
       // A line that cannot be read moves no label it shows.
     }
     for (const labelling of labellings) {
       if (await movesExemptLabel($, labelling, await labellingRepo($, labelling.repo))) observations.push(OBSERVED.exemptLabel)
     }
-    const after: Array<(result: any) => Promise<void>> = []
+    const after: Array<(result: unknown) => Promise<void>> = []
     let current: Act | undefined
     try {
-      for (const act of bashActs(String(e.command))) {
+      for (const act of bashActs(line)) {
         current = act
         const refused = await bashReady($, act, after, observations)
         if (refused) return { deny: refused }
@@ -2333,24 +2422,24 @@ export function register(on: any): void {
       for (const then of after) {
         try {
           await then(result)
-        } catch (err: any) {
-          note($, 'github: the label could not be set after the command: ' + String(err?.message ?? err))
+        } catch (err: unknown) {
+          note($, 'github: the label could not be set after the command: ' + reasonOf(err))
         }
       }
-      await followPushes($, String(e.command))
-      await notePushedHead($, String(e.command))
+      await followPushes($, line)
+      await notePushedHead($, line)
     }
     return result
-  }).catch(async (_$: any, e: any, next: any) => {
-    const refusal = bashNetRefusal(String(e?.command ?? ''))
+  }).catch(async (_$, e, next) => {
+    const refusal = bashNetRefusal(String(e['command'] ?? ''))
     return refusal === null ? next(e) : { deny: refusal }
   })
 
   // The auto-merge and deploy lists are written by their tools only; a write to the records or the exemptions is observed.
   for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) {
-    on('tool.call', { tool }, async ($: any, e: any, next: any) => {
+    on('tool.call', { tool }, async ($, e, next) => {
       const root = await recordsRoot($)
-      const path = normalise(String(e.file_path ?? e.notebook_path ?? ''), String(await $.session.cwd()))
+      const path = normalise(String(e['file_path'] ?? e['notebook_path'] ?? ''), String(await $.session.cwd()))
       if ((root && (path === root || path.startsWith(root + '/'))) || path.includes('/.claude/pr-records/')) {
         await observed($, OBSERVED.records)
       }
@@ -2365,46 +2454,48 @@ export function register(on: any): void {
         await observed($, OBSERVED.exemption)
       }
       return next(e)
-    }).catch(async (_$: any, e: any, next: any) => {
-      const refusal = writeNetRefusal(String(e?.file_path ?? e?.notebook_path ?? ''))
+    }).catch(async (_$, e, next) => {
+      const refusal = writeNetRefusal(String(e['file_path'] ?? e['notebook_path'] ?? ''))
       return refusal === null ? next(e) : { deny: refusal }
     })
   }
 
   // The operator's answer to a waiver question put by dialog becomes its consent record.
-  on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: any) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     const out = await next(e)
     try {
       await recordWaiverAnswers($, e, out)
-    } catch (err: any) {
-      note($, 'github: a waiver answer could not be read: ' + String(err?.message ?? err).trim())
+    } catch (err: unknown) {
+      note($, 'github: a waiver answer could not be read: ' + reasonOf(err).trim())
     }
     return out
   })
 
   // A skill the repositories declare as a deploy runs only where the list grants it.
-  on('tool.call', { tool: 'Skill' }, async ($: any, e: any, next: any) => {
-    const refused = await skillDeployRefusal($, String(e.skill ?? ''))
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    const refused = await skillDeployRefusal($, String(e['skill'] ?? ''))
     return refused ? { deny: refused } : next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: RECORD_TOOL }, async ($: any, e: any, next: any) => {
+  on('tool.call', { tool: RECORD_TOOL }, async ($, e, next) => {
     try {
       return await writeRecord($, e, String(next?.origin?.plugin ?? 'engine'))
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+    } catch (err: unknown) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the record hook itself failed' }))
 
-  on('tool.call', { tool: LIGHT_CI_TOOL }, async ($: any, e: any) => {
+  on('tool.call', { tool: LIGHT_CI_TOOL }, async ($, e) => {
     try {
       return await lightCi($, e)
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+    } catch (err: unknown) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the light CI hook itself failed' }))
 
-  on('tool.call', { tool: TOOL }, async ($: any, raw: any) => {
+  on('tool.call', { tool: TOOL }, async ($, input) => {
+    const raw = ghRequest(input)
+    if (typeof raw === 'string') return { result: raw, isError: true }
     if (MOD_COMMANDS.has(raw.command)) {
       try {
         if (raw.command === 'auto-merge-set') return await setAutoMerge($, raw)
@@ -2413,11 +2504,11 @@ export function register(on: any): void {
         if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
         if (raw.command === 'pr-plan') return await showPlan($, raw)
         return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
-      } catch (err: any) {
-        return { result: String(err?.message ?? err), isError: true }
+      } catch (err: unknown) {
+        return { result: reasonOf(err), isError: true }
       }
     }
-    const e = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
+    const e: GhCall = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
     const labelling = toolLabelling(e.command, e.args)
     if (labelling && await movesExemptLabel($, labelling, await targetRepo($, e).catch(() => undefined))) await observed($, OBSERVED.exemptLabel)
     const act = toolAct(e.command, e.args)
@@ -2436,30 +2527,30 @@ export function register(on: any): void {
       // A write changes what the open pane shows: read it again, unawaited.
       if (watch && !READS.has(e.command)) void refresh($)
       return { result }
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+    } catch (err: unknown) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the hook itself failed' }))
 
-  on('command.run', { command: 'checks' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'checks' }, async ($, e, next) => {
     if (!ownedCommands.has('checks')) return next(e)
     try {
       return { text: await prText($, e.args, 'pr-checks', 'checks-status', checksLine) }
-    } catch (err: any) {
-      return { text: String(err?.message ?? err) }
+    } catch (err: unknown) {
+      return { text: reasonOf(err) }
     }
   }).catch(async () => ({ text: 'github mod: /checks failed; the mod itself errored' }))
 
-  on('command.run', { command: 'threads' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'threads' }, async ($, e, next) => {
     if (!ownedCommands.has('threads')) return next(e)
     try {
       return { text: await prText($, e.args, 'pr-threads', 'thread-summary') }
-    } catch (err: any) {
-      return { text: String(err?.message ?? err) }
+    } catch (err: unknown) {
+      return { text: reasonOf(err) }
     }
   }).catch(async () => ({ text: 'github mod: /threads failed; the mod itself errored' }))
 
-  on('command.run', { command: 'prs' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'prs' }, async ($, e, next) => {
     if (!ownedCommands.has('prs')) return next(e)
     try {
       const rows = await collectRows($)
@@ -2467,8 +2558,8 @@ export function register(on: any): void {
       await $.ui.open({ id: PANE_ID, title: 'PRs', closeOnEscape: true })
       startWatch($)
       return {}
-    } catch (err: any) {
-      return { text: String(err?.message ?? err) }
+    } catch (err: unknown) {
+      return { text: reasonOf(err) }
     }
   }).catch(async () => ({ text: 'github mod: /prs failed; the mod itself errored' }))
 
@@ -2476,28 +2567,28 @@ export function register(on: any): void {
   // back to the markdown, which runs the same script through the model.
   // /github:protect [apply] [ci]: the default branch's force-push and deletion protection, read on
   // the forge, and put in place on the operator's « apply »; « ci » adds the CI check readiness requires.
-  on('command.run', { command: 'github:protect' }, async ($: any, e: any) => {
+  on('command.run', { command: 'github:protect' }, async ($, e) => {
     const words = String(e.args ?? '')
     const command = /\bapply\b/.test(words) ? 'protect-apply' : 'protect-check'
     const args = /\bci\b/.test(words) ? { 'require-ci': true } : {}
     try {
       return { text: (await runGh($, command, args, await targetRepo($, { repo: undefined, args: {} }))).trim() }
-    } catch (err: any) {
-      return { text: 'github: ' + command + ' failed: ' + String(err?.message ?? err).trim() }
+    } catch (err: unknown) {
+      return { text: 'github: ' + command + ' failed: ' + reasonOf(err).trim() }
     }
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
-  on('command.run', { command: 'github:install' }, async ($: any) => ({ text: await diagnose($) }))
-    .catch(async (_$: any, e: any, next: any) => next(e))
-  on('command.run', { command: 'github:doctor' }, async ($: any) => ({ text: await diagnose($, true) }))
-    .catch(async (_$: any, e: any, next: any) => next(e))
+  on('command.run', { command: 'github:install' }, async ($) => ({ text: await diagnose($) }))
+    .catch(async (_$, e, next) => next(e))
+  on('command.run', { command: 'github:doctor' }, async ($) => ({ text: await diagnose($, true) }))
+    .catch(async (_$, e, next) => next(e))
 
-  on('ui.close', async (_$: any, e: any, next: any) => {
+  on('ui.close', async (_$, e, next) => {
     if (e.id === PANE_ID) stopWatch()
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('ui.render', { component: 'Pane' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE_ID) return next(e)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const width = e.props?.bodyColumns ?? 80
@@ -2550,5 +2641,5 @@ export function register(on: any): void {
         }),
       ],
     })
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 }

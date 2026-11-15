@@ -342,8 +342,8 @@ written is one line in the transcript, and the call still goes through.
 Two suites, both offline — no network, no account:
 
 ```
-bash tests/run-tests.sh        # the Python engine, served from fixtures
-claude plugin test             # the mod, with stubbed process/fs/ui calls
+bash tests/run-tests.sh        # the Python engine, served from fixtures, then the mod's tests
+claude plugin test             # the mod alone, with stubbed process/fs/ui calls
 ```
 
 ## Licence

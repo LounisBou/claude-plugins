@@ -13,14 +13,14 @@ const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 
 type Handler = ($: Host, e: Record<string, unknown>, next: (e: unknown) => Promise<unknown>) => Promise<unknown>
 
-function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string; messages?: unknown } = {}) {
+function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolean; stdout?: string; transcript?: string; head?: string | Error; headExit?: number; repo?: unknown; remotes?: string; messages?: unknown; env?: Record<string, string> } = {}) {
   const costs = [...(options.costs ?? [])]
   let clock = Date.parse('2026-11-13T20:00:00.000Z')
   const runs: { argv: readonly string[]; stdin: string | undefined }[] = []
   const logs: string[] = []
   const $: Host = {
     plugin: { root: '/p/telemetry' },
-    env: { get: async name => ({ HOME: '/home/u', ORCHESTRATOR_SPAWNED: '1' } as Record<string, string>)[name] },
+    env: { get: async name => ({ HOME: '/home/u', ORCHESTRATOR_SPAWNED: '1', ...options.env } as Record<string, string>)[name] },
     clock: { now: async () => (clock += 100) },
     process: {
       run: async (argv, init) => {
@@ -99,6 +99,43 @@ test('a session: every result passes through, the events are written at the main
   assert.equal(runs.length, 2)
   const last = JSON.parse(runs[1]?.stdin ?? '{}') as Record<string, unknown>
   assert.deepEqual([last['event'], last['turns']], ['session_end', 1])
+})
+
+test('a spawned session: every event carries the orchestrator it reports to and the tier it was launched on', async () => {
+  const { $, runs } = host({ env: { ORCHESTRATOR_REPORTS_TO: 'Orch: billing [a1b2c3]', ORCHESTRATOR_TIER: 'standard' } })
+  const { hook } = hooks()
+  await hook('session.start')($, F('session.start'), through({}))
+  await hook('turn.start')($, { text: '', turnId: 't1' }, through({}))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const written = (runs[0]?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  assert.deepEqual(written.map(e => [e['event'], e['parent'], e['launch_tier']]), [
+    ['session_start', 'Orch: billing [a1b2c3]', 'standard'], ['first_turn', 'Orch: billing [a1b2c3]', 'standard'], ['turn_end', 'Orch: billing [a1b2c3]', 'standard'],
+  ])
+  // The operator's own session carries neither.
+  const own = host()
+  const plain = hooks()
+  await plain.hook('session.start')(own.$, F('session.start'), through({}))
+  await plain.hook('turn.complete')(own.$, F('turn.complete'), through({ text: '' }))
+  assert.equal((own.runs[0]?.stdin ?? '').includes('parent') || (own.runs[0]?.stdin ?? '').includes('launch_tier'), false)
+})
+
+test('a subagent sent a message runs again: each run\'s end is a close, ranked, the later one timed from its own start', async () => {
+  const { $, runs } = host()
+  const { hook } = hooks()
+  await hook('agent.spawn')($, F('agent.spawn'), through(F('agent.spawn.result')))
+  await hook('turn.start')($, { text: '', turnId: 'c1', agentId: 'a1b2c3' }, through({}))
+  await hook('turn.complete')($, F('turn.complete.child'), through({ text: '' }))
+  await hook('turn.start')($, { text: '', turnId: 'c2', agentId: 'a1b2c3' }, through({}))
+  await hook('turn.complete')($, F('turn.complete.child'), through({ text: '' }))
+  // A child the module never saw spawned still closes, with no rank.
+  await hook('turn.complete')($, { ...F('turn.complete.child'), agentId: 'zz9' }, through({ text: '' }))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const closes = (runs[0]?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'agent_closed')
+  assert.deepEqual(closes.map(e => [e['child'], e['run']]), [['a1b2c3', 1], ['a1b2c3', 2], ['zz9', undefined]])
+  assert.equal(closes.every(e => typeof e['duration_ms'] === 'number'), true)
+  // The first run is counted from the spawn, the second from its own first turn: the shorter of the two.
+  assert.equal(Number(closes[1]?.['duration_ms']) < Number(closes[0]?.['duration_ms']), true)
+  assert.equal(closes[2]?.['duration_ms'], 2000)
 })
 
 test('plugin tool calls: a plugin that answers in place of next hides its call from tool.call, so the turn\'s end reads it from the transcript, once', async () => {
@@ -255,7 +292,7 @@ test('who: unknown at the first main turn\'s end, the title is read once from th
   await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
   assert.deepEqual(heads(runs).map(r => r.argv), [['head', '-c', '8192', '--', '/t/s.jsonl']])
   assert.deepEqual(lines(runs).map(l => [l['event'], l['title'], l['role']]), [
-    ['session_start', undefined, undefined], ['turn_end', undefined, undefined], ['turn_end', 'Agent: actor', 'agent'], ['turn_end', 'Agent: actor', 'agent'],
+    ['session_start', undefined, undefined], ['turn_end', undefined, undefined], ['agent_closed', undefined, undefined], ['turn_end', 'Agent: actor', 'agent'], ['turn_end', 'Agent: actor', 'agent'],
   ])
 })
 

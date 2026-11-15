@@ -4,6 +4,7 @@
 // What decides is pure and tested here; the processes are a thin layer.
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { deckSessions, parseDeck, type DeckSession } from '../../../packages/core/src/deck.ts'
 import type { Agent, AgentRun, Finding, IntentVerdict, Judge, JudgeInput, Judgment, Meter, ReviewVerdict } from './harness.ts'
 
 /** A diff longer than this is cut for a judge, and the cut said. */
@@ -149,35 +150,8 @@ export function byArm(single: Agent, orchestration: Agent): Agent {
 // ---------------------------------------------------------------------------------------------
 // The meter: the orchestrator's deck
 
-export interface DeckSessionUsage {
-  readonly key: string
-  /** The session's terminal; null for a remote one. */
-  readonly tty: string | null
-  /** The session's spend this week, at API list prices; null when unpriced. */
-  readonly weekUsd: number | null
-}
-
-function sessionOf(raw: unknown): DeckSessionUsage | null {
-  if (!isRecord(raw) || typeof raw['key'] !== 'string') return null
-  const usage = raw['usage']
-  const week = isRecord(usage) ? usage['week'] : undefined
-  const cost = isRecord(week) ? week['cost_usd'] : undefined
-  return { key: raw['key'], tty: typeof raw['tty'] === 'string' ? raw['tty'] : null, weekUsd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null }
-}
-
-/** Every local session the deck lists: the coordinator, the orchestrators, their agents and the others. */
-export function deckSessions(raw: unknown): DeckSessionUsage[] {
-  if (!isRecord(raw)) return []
-  const found: unknown[] = [raw['coordinator']]
-  for (const list of [raw['orchestrators'], raw['unattached_agents']]) {
-    if (!Array.isArray(list)) continue
-    for (const entry of list) {
-      found.push(entry)
-      if (isRecord(entry) && Array.isArray(entry['agents'])) found.push(...entry['agents'])
-    }
-  }
-  return found.map(sessionOf).filter((session): session is DeckSessionUsage => session !== null)
-}
+/** A session's spend this week, at API list prices; null when unpriced or unread. */
+const weekUsd = (session: DeckSession): number | null => session.usage?.week.cost_usd ?? null
 
 /**
  * What the arm's sessions opened since `before` have spent: a session already listed at the start,
@@ -187,31 +161,28 @@ export function deckSessions(raw: unknown): DeckSessionUsage[] {
  */
 export class DeckLedger {
   readonly #before: ReadonlySet<string>
-  readonly #ours: (session: DeckSessionUsage) => boolean
-  readonly #seen = new Map<string, DeckSessionUsage>()
+  readonly #ours: (session: DeckSession) => boolean
+  readonly #seen = new Map<string, DeckSession>()
 
-  constructor(before: readonly DeckSessionUsage[], ours: (session: DeckSessionUsage) => boolean) {
+  constructor(before: readonly DeckSession[], ours: (session: DeckSession) => boolean) {
     this.#before = new Set(before.map(session => session.key))
     this.#ours = ours
   }
 
-  read(now: readonly DeckSessionUsage[]): number {
+  read(now: readonly DeckSession[]): number {
     for (const session of now) {
       if (this.#before.has(session.key) || !this.#ours(session)) continue
       const earlier = this.#seen.get(session.key)
-      if (earlier === undefined || (session.weekUsd ?? 0) >= (earlier.weekUsd ?? 0)) this.#seen.set(session.key, session)
+      if (earlier === undefined || (weekUsd(session) ?? 0) >= (weekUsd(earlier) ?? 0)) this.#seen.set(session.key, session)
     }
-    return [...this.#seen.values()].reduce((sum, session) => sum + (session.weekUsd ?? 0), 0)
+    return [...this.#seen.values()].reduce((sum, session) => sum + (weekUsd(session) ?? 0), 0)
   }
 }
 
-function readDeck(path: string): DeckSessionUsage[] {
-  if (!existsSync(path)) return []
-  try {
-    return deckSessions(JSON.parse(readFileSync(path, 'utf8')))
-  } catch {
-    return [] // a deck caught mid-write reads as empty; the next poll reads it whole
-  }
+/** The deck's sessions; a deck absent or caught mid-write reads as empty, and the next poll reads it whole. */
+function readDeck(path: string): DeckSession[] {
+  const deck = existsSync(path) ? parseDeck(readFileSync(path, 'utf8')) : null
+  return deck === null ? [] : deckSessions(deck)
 }
 
 /**

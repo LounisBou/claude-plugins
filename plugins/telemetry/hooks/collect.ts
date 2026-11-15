@@ -3,6 +3,7 @@
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { currentSessionName, parseSessionName } from '../core/names.ts'
+import { WAIT_TOOL } from '../core/orchestration.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -25,7 +26,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -501,7 +502,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     target: target !== undefined && Object.keys(target).length > 0 ? target : undefined,
   })]
   if (tool === 'AskUserQuestion') events.push(makeEvent('question', at, session, { agent, ...questionOf(e, result), wait_ms: durationMs }))
-  if (mcp?.server === 'orchestrator' && mcp.name === 'declare_wait' && text(e['kind']) === 'operator') {
+  if (mcp?.server === 'orchestrator' && mcp.name === WAIT_TOOL && text(e['kind']) === 'operator') {
     events.push(makeEvent('question', at, session, { agent, source: 'round', kind: text(e['kind']), urgent: bool(e['urgent']) }))
   }
   if (bash !== undefined && outcome === 'ok') {
@@ -572,19 +573,45 @@ export function agentSpawned(at: number, session: string, input: unknown, result
   })
 }
 
-export function agentClosed(at: number, session: string, child: string, spawnedAt: number, input: unknown): Event {
+/**
+ * The end of one run of a subagent: its first, counted from its spawn, or a later one (the child
+ * was sent a message and ran again), counted from that run's first turn, or from the host's own
+ * figure when the module did not see it start. `run` is absent for a child whose spawn the module
+ * did not see (a session resumed, a module reloaded).
+ */
+export function agentClosed(at: number, session: string, child: string, run: Run, input: unknown): Event {
   const e = record(input)
-  return makeEvent('agent_closed', at, session, { kind: 'subagent', child, duration_ms: Math.max(0, at - spawnedAt), reason: text(e['reason']) })
+  const duration = run.since === undefined ? num(e['durationMs']) : Math.max(0, at - run.since)
+  return makeEvent('agent_closed', at, session, { kind: 'subagent', child, run: run.run, duration_ms: duration, reason: text(e['reason']) })
+}
+
+/** One run of a subagent: its rank from the spawn (1 for the first), and when it began. */
+export interface Run {
+  readonly run?: number
+  readonly since?: number
+}
+
+/** What the launcher's environment says of a session it spawned: the orchestrator it reports to and its tier. */
+export interface Origin {
+  readonly parent?: string
+  readonly tier?: string
+}
+
+/** The origin two values of the environment give (core's `ENV.reportsTo` and `ENV.tier`); a tier that is no plain word is left out. */
+export function originOf(reportsTo: string | undefined, tier: string | undefined): Origin {
+  const word = tier?.trim().toLowerCase()
+  return compact({ parent: titleText(reportsTo), tier: word !== undefined && /^[a-z][a-z0-9-]{0,30}$/.test(word) ? word : undefined }) as Origin
 }
 
 /**
  * The module's memory between hooks: the events not yet written, the checks waiting for their
- * call, the subagents running, and the session's own clock marks.
+ * call, the subagents spawned with their runs, and the session's own clock marks.
  */
 export class Collector {
   private buffer: Event[] = []
   private readonly checks = new Map<string, Check>()
-  private readonly running = new Map<string, number>()
+  private readonly children = new Map<string, { spawnedAt: number; runs: number }>()
+  private readonly runStarts = new Map<string, number>()
   private readonly recorded = new Set<string>()
   startAt: number | undefined
   launchedAt: number | undefined
@@ -593,6 +620,7 @@ export class Collector {
   private costSoFar: number | undefined
   private actor: { title: string; role: string } | undefined
   private headRead = false
+  private origin: Origin = {}
 
   /**
    * The cost of the turn that just ended, from the session's cumulative `costUsd`: the difference
@@ -625,11 +653,20 @@ export class Collector {
     return true
   }
 
-  /** `event` with the session's title and role, but for those its kind carries of its own. */
+  /** Says where the session comes from: each event buffered from now on carries its parent orchestrator and its launch tier. */
+  setOrigin(origin: Origin): void {
+    this.origin = origin
+  }
+
+  /**
+   * `event` with the session's title and role, but for those its kind carries of its own, and with
+   * the orchestrator it reports to and the tier it was launched on.
+   */
   private stamped(event: Event): Event {
-    if (this.actor === undefined) return event
+    const from = compact({ parent: this.origin.parent, launch_tier: this.origin.tier })
+    if (this.actor === undefined) return { ...event, ...from }
     const own = text(event['title'])
-    return { ...event, title: own ?? this.actor.title, role: event['role'] ?? (own === undefined ? this.actor.role : roleOf(own)) }
+    return { ...event, title: own ?? this.actor.title, role: event['role'] ?? (own === undefined ? this.actor.role : roleOf(own)), ...from }
   }
 
   push(...events: Event[]): boolean {
@@ -667,14 +704,24 @@ export class Collector {
   }
 
   spawned(child: string | undefined, at: number): void {
-    if (child !== undefined) this.running.set(child, at)
+    if (child !== undefined) this.children.set(child, { spawnedAt: at, runs: 0 })
   }
 
-  /** When the child was spawned, once: its first run's end closes it. */
-  closing(child: string | undefined): number | undefined {
-    if (child === undefined) return undefined
-    const at = this.running.get(child)
-    this.running.delete(child)
-    return at
+  /** Notes when a run of `child` began: the first turn start seen since its last run's end. */
+  runStarted(child: string, at: number): void {
+    if (!this.runStarts.has(child)) this.runStarts.set(child, at)
+  }
+
+  /**
+   * The run of `child` that just ended. Its first is counted from the spawn; a later one from its
+   * own start, when the module saw it. A child whose spawn the module did not see has no rank.
+   */
+  closing(child: string): Run {
+    const started = this.runStarts.get(child)
+    this.runStarts.delete(child)
+    const known = this.children.get(child)
+    if (known === undefined) return compact({ since: started }) as Run
+    known.runs++
+    return compact({ run: known.runs, since: known.runs === 1 ? known.spawnedAt : started }) as Run
   }
 }

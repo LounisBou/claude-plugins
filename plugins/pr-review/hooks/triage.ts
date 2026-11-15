@@ -5,7 +5,7 @@
 // route runs. One call answers the open items, the counts, the tier and the
 // line to announce, where the skill used to spend a dozen shell blocks.
 // The pull request it read is the one the walkthrough's journal lines then name (hooks/observe.ts).
-import { answerOf, fieldsOf, messageOf, type Host, type On } from '../core/host.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type On } from '../core/host.ts'
 import { noteSubject, resetSubject } from './observe.ts'
 import { GH_TOOL } from './policy.ts'
 
@@ -89,7 +89,7 @@ export function register(on: On<TriageHost>): void {
       if (run.exitCode !== 0) return { result: (run.stderr || 'triage.py exited ' + run.exitCode).trim(), isError: true }
       return { result: run.stdout }
     } catch (err) {
-      return { result: messageOf(err), isError: true }
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({
     result: 'pr-review open_comments failed in the module itself: run the Bash route of process-comments Step 0 instead.',

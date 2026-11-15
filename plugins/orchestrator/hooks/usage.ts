@@ -8,7 +8,7 @@
 // The sums are kept current by a book per session: per transcript file the offset already
 // read, and one record per message, so a deck write reads only the lines appended since the
 // last one and a period boundary passed is summed again from the records, never re-read.
-import type { DeckPeriod, DeckTokens, DeckUsage } from './deck.ts'
+import type { DeckPeriod, DeckTokens, DeckUsage } from '../core/deck.ts'
 
 export const USAGE_TIMEZONE = 'Europe/Paris'
 

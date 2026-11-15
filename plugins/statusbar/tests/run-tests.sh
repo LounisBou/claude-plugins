@@ -655,6 +655,14 @@ else
   printf '  FAIL %s (%s)\n' "every plugin option is a boolean that defaults to on" "$nonbool"; fail=$((fail + 1))
 fi
 
+# The hooks module's tests (hooks/tests/*.test.ts) run only in the host's kit. Without `claude`
+# the check fails: it does not skip.
+if command -v claude >/dev/null 2>&1 && claude plugin test "$HERE/.." >/dev/null 2>&1; then
+  printf '  ok   %s\n' "the module's tests pass in the host's kit"; pass=$((pass + 1))
+else
+  printf '  FAIL %s\n' "the module's tests pass in the host's kit (claude plugin test)"; fail=$((fail + 1))
+fi
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -29,9 +29,9 @@ function hostOn(home: string, logged: string[]): JournalHost {
         writeFileSync(path, text)
       },
       read: async path => readFileSync(path, 'utf8'),
-      list: async path => readdirSync(path).map(name => ({ name })),
+      list: async path => readdirSync(path).map(name => ({ name, kind: 'file' as const, size: 0, isLink: false })),
       exists: async path => existsSync(path),
-      stat: async path => ({ kind: statSync(path).isDirectory() ? 'dir' : 'file', mtimeMs: statSync(path).mtimeMs }),
+      stat: async path => ({ kind: statSync(path).isDirectory() ? 'dir' : 'file', size: statSync(path).size, mtimeMs: statSync(path).mtimeMs }),
     },
     process: {
       run: async argv => {
@@ -39,9 +39,9 @@ function hostOn(home: string, logged: string[]): JournalHost {
         return { exitCode: ran.status ?? 1, stdout: ran.stdout, stderr: ran.stderr }
       },
     },
-    session: { id: async () => 'sess-1', root: async () => home },
+    session: { id: async () => 'sess-1' },
     clock: { sleep: async () => undefined },
-    ui: { log: line => logged.push(line), invalidate: () => undefined, ask: async () => '', resolve: () => ({}) },
+    ui: { log: line => { logged.push(line) }, ask: async () => '' },
   }
 }
 

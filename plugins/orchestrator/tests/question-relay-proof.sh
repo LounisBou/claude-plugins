@@ -8,8 +8,7 @@
 # The live run is not part of `run-tests.sh`, its --dry is: the live run watches the installed
 # release while a person makes a home succession, during an open decision wave, with the coordinator's pane open. The script
 # drives nothing and starts no session: it samples, every 5 seconds by default for 180, the
-# round under <state>/round/, the ids the coordinator's conversation was told of
-# (<state>/round-told.json), the rows of the store (<module>/store/sessions/) and, given
+# round under <state>/round/, the rows of the store (<module>/store/sessions/) and, given
 # --screen, the coordinator's screen as that command prints it (each read bounded by the
 # interval), then judges what it sampled from the module's log (<module>/hooks-module.log and
 # its .1). Each sample lands in <out> (a new directory under TMPDIR by default), kept.
@@ -26,8 +25,7 @@
 #     the module's life, so a question drawn before the move needs --screen to be proven after it;
 #   - it in the pane before the successor's first measure: the same over the samples taken
 #     between the move and the first one holding the successor's row;
-#   - « pane: shown <id> » in the log;
-#   - the coordinator's one-line notice: the id in round-told.json.
+#   - « pane: shown <id> » in the log.
 # A failed expectation prints, under it, every « not drawn » and « never drawn » line the log
 # holds for that id, or « unexplained: no not drawn or never drawn line names it ». With no move
 # in the window the run fails, naming the fate of each question open at its start.
@@ -75,9 +73,9 @@ read_screen() {  # <file>
 
 # One sample, one JSON line appended to <out>/samples.jsonl: its time, every round entry's id,
 # status, sender, session, movedFrom, answer text and first question line, the store's row keys,
-# the told ids, and the screen file read, if any.
+# and the screen file read, if any.
 sample() {  # <n>
-  local n="$1" at entries rows told screen=null f
+  local n="$1" at entries rows screen=null f
   at=$(now_utc)
   entries=$(for f in "$STATE/round"/*.json; do
       [ -f "$f" ] || continue
@@ -87,14 +85,13 @@ sample() {  # <n>
              | map(select(length > 0)) | (.[0] // ""))}' "$f" 2>/dev/null
     done | jq -sc .)
   rows=$(ls "$MODULE/store/sessions" 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0))')
-  told=$(jq -c 'if type == "array" then . else [] end' "$STATE/round-told.json" 2>/dev/null || echo '[]')
   if [ -n "$SCREEN" ]; then
     read_screen "$OUT/screen-$n.txt"
     screen="\"screen-$n.txt\""
   fi
   jq -nc --arg at "$at" --argjson entries "${entries:-[]}" --argjson rows "${rows:-[]}" \
-    --argjson told "${told:-[]}" --argjson screen "$screen" \
-    '{at: $at, entries: $entries, rows: $rows, told: $told, screen: $screen}' >> "$OUT/samples.jsonl"
+    --argjson screen "$screen" \
+    '{at: $at, entries: $entries, rows: $rows, screen: $screen}' >> "$OUT/samples.jsonl"
 }
 
 # The module's log lines that name a round entry, from both files, oldest first.
@@ -211,8 +208,6 @@ judge() {
     else bad "in the pane before the successor's first measure: no render shows it"; why "$id"; fi
     if grep -qF -- "pane: shown $id" "$OUT/log.txt"; then ok "pane: shown $id (log)"
     else bad "pane: shown $id (log)"; why "$id"; fi
-    if jq -e --arg id "$id" 'select(.told | index($id))' "$OUT/samples.jsonl" >/dev/null; then ok "the coordinator was told of it (round-told.json)"
-    else bad "the coordinator was told of it (round-told.json)"; fi
   done
 }
 
@@ -277,10 +272,10 @@ play() {  # <name> <steps> [noscreen]
   echo "exit $?" >> "$DRYROOT/$1.out"
 }
 
-# Moved at 5 s, the successor's row at 15 s: drawn throughout, told, shown before the move.
+# Moved at 5 s, the successor's row at 15 s: drawn throughout, shown before the move.
 drawn() {
   case "$1" in
-    0) entry q1 s-old open; row s-old; echo '["q1"]' > "$STATE/round-told.json"; logl 0 "pane: shown q1"; screen_shows 1 ;;
+    0) entry q1 s-old open; row s-old; logl 0 "pane: shown q1"; screen_shows 1 ;;
     1) entry q1 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q1" ;;
     3) row s-new ;;
   esac
@@ -288,7 +283,7 @@ drawn() {
 # Moved at 5 s, then left out: no row for its successor yet, the pane says why.
 left_out() {
   case "$1" in
-    0) entry q2 s-old open; row s-old; echo '["q2"]' > "$STATE/round-told.json"; logl 0 "pane: shown q2"; screen_shows 1 ;;
+    0) entry q2 s-old open; row s-old; logl 0 "pane: shown q2"; screen_shows 1 ;;
     1) entry q2 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q2"; screen_shows 0 ;;
     2) logl 10 "pane: q2 not drawn: no row for its sender s-new" ;;
     4) row s-new ;;
@@ -297,14 +292,14 @@ left_out() {
 # Withdrawn at the hand-over: never moved.
 withdrawn() {
   case "$1" in
-    0) entry q3 s-old open; row s-old; echo '["q3"]' > "$STATE/round-told.json"; logl 0 "pane: shown q3"; screen_shows 1 ;;
+    0) entry q3 s-old open; row s-old; logl 0 "pane: shown q3"; screen_shows 1 ;;
     1) entry q3 s-old withdrawn "" "handed over to its successor"; logl 5 "round: withdrawn by the sender: q3"; screen_shows 0 ;;
   esac
 }
 # Two questions at the hand-over: one moved and drawn, the other withdrawn instead of moved.
 withdrawn_one() {
   case "$1" in
-    0) entry q4 s-old open; entry q5 s-old open; row s-old; echo '["q4","q5"]' > "$STATE/round-told.json"
+    0) entry q4 s-old open; entry q5 s-old open; row s-old
        logl 0 "pane: shown q4"; logl 0 "pane: shown q5"; screen_shows 1 ;;
     1) entry q4 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q4"
        entry q5 s-old withdrawn "" "handed over to its successor"; logl 5 "round: withdrawn by the sender: q5" ;;
@@ -314,7 +309,7 @@ withdrawn_one() {
 # Two questions at the hand-over: one moved, the other's move could not be written.
 write_fails() {
   case "$1" in
-    0) entry q6 s-old open; entry q7 s-old open; row s-old; echo '["q6","q7"]' > "$STATE/round-told.json"
+    0) entry q6 s-old open; entry q7 s-old open; row s-old
        logl 0 "pane: shown q6"; logl 0 "pane: shown q7"; screen_shows 1 ;;
     1) entry q6 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q6"
        logl 5 "round: EIO: i/o error, rename '$STATE/round/q7.json.tmp-1' -> '$STATE/round/q7.json'" ;;
@@ -324,7 +319,7 @@ write_fails() {
 # Shown before the move, moved, then never drawn again, with no line saying why and no screen read.
 unseen() {
   case "$1" in
-    0) entry q8 s-old open; row s-old; echo '["q8"]' > "$STATE/round-told.json"; logl 0 "pane: shown q8" ;;
+    0) entry q8 s-old open; row s-old; logl 0 "pane: shown q8" ;;
     1) entry q8 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q8" ;;
     3) row s-new ;;
   esac
@@ -347,8 +342,8 @@ expect() {  # <what> <fixture> <text the verdict holds>...
 expect "a question moved and drawn passes every expectation" drawn \
   "ok   moved, never withdrawn" "ok   in the pane after the move, on screen within 20 s" \
   "ok   in the pane before the successor's first measure (2 sample(s) before its row)" \
-  "ok   q1 moved to the successor" "ok   pane: shown q1 (log)" "ok   the coordinator was told of it" \
-  "passed (7 checks)" "exit 0"
+  "ok   q1 moved to the successor" "ok   pane: shown q1 (log)" \
+  "passed (6 checks)" "exit 0"
 expect "a question left out after the move fails, its not drawn line under it" left-out \
   "FAIL in the pane after the move: no not drawn line since" "pane: q2 not drawn: no row for its sender s-new" \
   "FAIL in the pane before the successor's first measure" "exit 1"

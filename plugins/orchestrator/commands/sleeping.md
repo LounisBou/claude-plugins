@@ -6,7 +6,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator
 
 The operator's command. An orchestrator is sleeping when the coordinator paused it on his word:
 its tab closed, its dispatch record kept for the takeover a wake runs, its record in `<state dir>/sleeping.json`
-(`orchestrator:coordination`, « Pausing and waking orchestrators »).
+(`orchestrator:coordination`, « Pausing, waking and opening orchestrators »).
 
 Usage: `/orchestrator-sleeping` lists them; `/orchestrator-sleeping drop <name>` abandons one
 for good.

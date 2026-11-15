@@ -13,6 +13,7 @@
 // per signature and week (`foldWeekly`).
 
 import { consentAnswer, givenAnswer, grants } from './consent-record.ts'
+import { WAIT_KINDS } from './orchestration.ts'
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
 export const LEARNING_CONTRACT = {
@@ -547,7 +548,8 @@ export const AUDIT_CONTRACT = {
   verdicts: ['pass', 'fail', 'accepted'],
   decisions: ['kept', 'set-aside'],
   finding_severities: ['critical', 'important', 'minor'],
-  waits: ['operator', 'tool', 'done', 'deferred'],
+  // The kinds a turn declares, and `tool`, which past journals carry.
+  waits: [...WAIT_KINDS, 'tool'],
   wait_on: ['operator', 'tool'],
   failures: ['fix-after-merge', 'verdict-overridden', 'succession-lost-state'],
   prs_max: 8,
@@ -579,7 +581,7 @@ export type Edge = (typeof audit.edges)[number]
 export type Verdict = (typeof audit.verdicts)[number]
 export type Decision = (typeof audit.decisions)[number]
 export type FindingSeverity = (typeof audit.finding_severities)[number]
-export type WaitKind = (typeof audit.waits)[number]
+export type JournalWaitKind = (typeof audit.waits)[number]
 export type WaitOn = (typeof audit.wait_on)[number]
 export type Failure = (typeof audit.failures)[number]
 
@@ -588,7 +590,7 @@ export interface Facts {
   readonly step: { readonly step: Step; readonly edge: Edge; readonly record: string | null; readonly row: number | null; readonly result: string | null }
   readonly review: { readonly verdict: Verdict; readonly kept: number; readonly set_aside: number }
   readonly decision: { readonly decision: Decision; readonly severity: FindingSeverity | null; readonly file: string | null; readonly line: number | null }
-  readonly wait: { readonly wait: WaitKind; readonly edge: Edge; readonly span: string | null; readonly on: WaitOn | null }
+  readonly wait: { readonly wait: JournalWaitKind; readonly edge: Edge; readonly span: string | null; readonly on: WaitOn | null }
   readonly failure: { readonly failure: Failure; readonly count: number | null; readonly prs: readonly string[] }
 }
 

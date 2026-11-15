@@ -5,14 +5,19 @@
 // the pull request the session works on once the module read it (`noteSubject`). Never throws: the
 // journal is an observation, and a call whose line cannot be written goes through all the same.
 import { configDirOf } from '../core/env.ts'
-import { messageOf, type Host } from '../core/host.ts'
+import { reasonOf, type Host } from '../core/host.ts'
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
 import { answerEvent, journalDir, learningEvent, subjectOf, type Known, type LearningEvent } from '../core/learning.ts'
 
 export const PLUGIN = 'norms'
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 
-export type JournalHost = Host<'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui'>
+// The nouns the journal reads, narrowed to the calls it makes.
+export type JournalHost = Host<'env' | 'fs' | 'process'> & {
+  session: Pick<Host<'session'>['session'], 'id'>
+  clock: Pick<Host<'clock'>['clock'], 'sleep'>
+  ui: Pick<Host<'ui'>['ui'], 'log' | 'ask'>
+}
 
 // The journal is pruned once per process, at its first line.
 let pruned = false
@@ -72,7 +77,7 @@ export async function journal($: JournalHost, build: (known: () => Known) => Rea
   } catch (err) {
     // An observation that cannot be written is one line in the host's log; the call it describes goes through.
     try {
-      $.ui.log(`norms: the journal could not be written or pruned: ${messageOf(err)}`)
+      $.ui.log(`norms: the journal could not be written or pruned: ${reasonOf(err)}`)
     } catch {
       // A session with no log has nothing to tell.
     }

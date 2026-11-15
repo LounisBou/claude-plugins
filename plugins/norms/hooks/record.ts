@@ -10,7 +10,7 @@
 // per finding an agent reported, once the pull request they belong to is read.
 import type { NormsScopeMark } from '../types/index.d.ts'
 import { endSkillCheck, spawned } from './guards.ts'
-import { answerOf, fieldsOf, messageOf, type Host, type Input, type On } from '../core/host.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { agentText, noteReport, reportOf, reported, resetReports, type Found } from './findings.ts'
@@ -97,7 +97,7 @@ export async function markScope($: RecordHost, head: string, files: readonly str
     fallback = undefined
   } catch (err) {
     fallback = mark
-    warn($, `norms: the scope mark could not be kept in the session state, it is kept in memory: ${messageOf(err).trim()}`)
+    warn($, `norms: the scope mark could not be kept in the session state, it is kept in memory: ${reasonOf(err).trim()}`)
   }
 }
 
@@ -258,7 +258,7 @@ async function journalFindings($: RecordHost, findings: readonly Found[], dir: s
   })))
 }
 
-export async function checkDone($: RecordHost, input: Input): Promise<{ result: string; isError?: boolean }> {
+export async function checkDone($: RecordHost, input: Events['tool.call']): Promise<{ result: string; isError?: boolean }> {
   const checked = await readMark($)
   if (!checked) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
   const given = { open: count(input['open']), fixed: count(input['fixed']), passed: count(input['passed']), setAside: input['setAside'] === undefined ? 0 : count(input['setAside']) }
@@ -350,7 +350,7 @@ export async function checkDone($: RecordHost, input: Input): Promise<{ result: 
     })
     return { result: `record: ${recorded.text}\n${line}` }
   } catch (err) {
-    return { result: none(messageOf(err).trim()) }
+    return { result: none(reasonOf(err).trim()) }
   }
 }
 
@@ -364,7 +364,7 @@ export function register(on: On<RecordHost>): void {
       })
     } catch (err) {
       // Not listed: the report goes without a record line, and the session says why.
-      warn($, `norms: mcp__norms__check_done could not be registered, the report goes without a record line: ${messageOf(err).trim()}`)
+      warn($, `norms: mcp__norms__check_done could not be registered, the report goes without a record line: ${reasonOf(err).trim()}`)
     }
     return next(e)
   }).catch(async (_$, e, next) => next(e))
@@ -380,7 +380,7 @@ export function register(on: On<RecordHost>): void {
       answer = await next(e)
     } catch (err) {
       noteReport(type, null)
-      return { result: messageOf(err), isError: true }
+      return { result: reasonOf(err), isError: true }
     }
     try {
       const read = answerOf(answer)

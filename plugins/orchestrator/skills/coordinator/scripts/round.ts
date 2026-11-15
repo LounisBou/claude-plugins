@@ -5,6 +5,7 @@
 // A question is closed by the module's `settle` tool, no longer by a command here.
 import { readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { die, stateOf, type Context } from './context.ts'
 
@@ -12,7 +13,7 @@ export { parseEntry } from '../../orchestrator/scripts/lib/round-archive.ts'
 
 export function roundArchive(ctx: Context, args: readonly string[]): number {
   if (args.length > 0) die(`round-archive: unexpected argument ${args[0]}`)
-  const round = join(stateOf(ctx.env), 'round')
+  const round = join(stateOf(ctx.env), ROUND_DIR)
   let moved: number
   try {
     moved = archiveSettled(round, ctx.now())
