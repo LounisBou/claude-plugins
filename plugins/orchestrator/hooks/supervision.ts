@@ -2367,7 +2367,16 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
     return
   }
-  const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
+  /*
+   * The figure is the host's own at this turn's end: the row is written by the measure, which
+   * runs after the turn ends, so it still holds the turn before's figure (a gate crossed in this
+   * turn went unsaid). The row answers only when the host has no figure.
+   */
+  const now = await $.session.usage().then(u => u.context, () => null)
+  const figure = now && typeof now.tokens === 'number' && now.tokens > 0 && typeof now.percent === 'number'
+    ? { tokens: now.tokens, percent: now.percent }
+    : row && row.context_tokens > 0 ? { tokens: row.context_tokens, percent: row.context_percent } : null
+  const context = figure ? `${figure.tokens.toLocaleString('en-US')} (${figure.percent}%)` : null
   // A delivery's facts are read on the repository, not taken from its report (relay.ts readDeliveryFacts).
   const facts = wait?.kind === 'delivered'
     ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS }), whole))

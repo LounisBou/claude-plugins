@@ -295,6 +295,15 @@ test('each state is sent once to the orchestrator, a repeat sends nothing, a new
   expect(fx.sent[2]!.text).toBe(`[module] ${AGENT} is blocked — no seed\n${REPLY}\n\nThe seed fails.`)
   expect(fx.sent[3]!.text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${UNREAD}\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
   expect(fx.sent[4]!.text).toContain('head def')
+})
+
+test('a delivery quotes the host figure at its turn end, not the row the measure has not rewritten yet', async () => {
+  const chains = mounted()
+  const fx = fake()
+  fx.usage.context = { tokens: 321013, window: 1000000, percent: 32 }
+  await drive(chains, 'turn.start', fx.dollar, {})
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR #12, head abc, 40 passed.\nstatus: done — PR #12'))
+  expect(fx.sent[0]!.text).toContain('context 321,013 (32%)')
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
 })
 
@@ -685,7 +694,7 @@ test("a run launched from the agent's shell sends no notice in its name, the age
   expect(run.files.has(WAIT)).toBe(false)
   const agent = fake({ walk: 'agent' })
   await drive(chains, 'turn.complete', agent.dollar, turnEnd('Working on the second task.'))
-  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} ended a turn without its status line\n${REPLY}\n\nWorking on the second task.` }])
+  expect(agent.sent).toEqual([{ to: ORCH, text: `${NO_STATUS}\n${REPLY}\n\nWorking on the second task.` }])
 })
 
 test("a run launched from the agent's shell writes no row and reports no gate in its name", async () => {
