@@ -184,6 +184,37 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
   assert.equal(rows()[1]?.['deferred'], undefined)
 })
 
+test('verdict: the row carries the verdict, its few words and the findings index, level 1 of the review', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(await cli(['verdict', r, '1']), '1||ERROR: verdict: --head is required\n')
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc', '--result', 'pass', '--words', 'clean']), /too short/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'maybe', '--words', 'x']), /--result is pass, fail or accepted, got: maybe/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass']), /--words "<a few words>" is required/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'a\nb']), /one line of at most 120 characters/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'x'.repeat(121)]), /one line of at most 120 characters/)
+  assert.match(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', 'x', '--findings', 'rel/index.md']), /--findings is the absolute path of the review's findings index, got: rel\/index.md/)
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', '1 critical', '--findings', '/b/review-1.md']),
+    '0|row 1: fail — 1 critical — findings: /b/review-1.md\n|WARNING: verdict: row 1 has no review recorded: recording the verdict anyway\n')
+  // A new review round voids the verdict of the previous one; a correction keeps it; the verdict moves no round, it keeps the row's count.
+  await cli(['review', r, '1', '--head', 'abc1234'])
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'fail', '--words', '1 critical', '--findings', '/b/review-1.md']), '0|row 1: fail — 1 critical — findings: /b/review-1.md\n|')
+  const before = (rows()[0]?.['review'] as Record<string, unknown>)['verdict']
+  assert.deepEqual(before, { head: 'abc1234', result: 'fail', words: '1 critical', findings: '/b/review-1.md', rounds: 0, at: '2026-11-08T10:11:12Z' })
+  await cli(['fixed', r, '1', '--head', 'def5678'])
+  assert.deepEqual((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], before)
+  assert.equal(await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', '2 set aside']), '0|row 1: accepted — 2 set aside — findings: none\n|')
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z', fixed: { head: 'def5678', at: '2026-11-08T10:11:12Z' },
+    verdict: { head: 'def5678', result: 'accepted', words: '2 set aside', findings: null, rounds: 1, at: '2026-11-08T10:11:12Z' },
+  })
+  assert.equal(rows()[0]?.['rounds'], 1)
+  assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted@def5678 — 2 set aside — findings=none')
+  await cli(['review', r, '1', '--head', 'aaa1111'])
+  assert.equal((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], undefined)
+})
+
 test('surface and audit', async () => {
   await withGoals()
   const r = rec()
@@ -256,7 +287,7 @@ test('cost: measured, counted once, recounted when priced, named on a legacy row
   const priced = deps({}, { cost: s => s === 'bad' ? { status: 3, stdout: '', stderr: '' } : s === 'junk' ? ok('nope') : s === 'text' ? ok('{"cost_usd":"1"}') : ok(JSON.stringify({ cost_usd: s.startsWith('u') ? null : 0.25 })) })
   assert.equal(await cli(['cost', r, '1'], priced), '1||ERROR: cost: --session is required\n')
   assert.equal(await cli(['cost', r, '1', '--session', 'a'], priced), '0|cost: row 1 +0.25 (session a)\n|')
-  assert.ok(priced.calls.includes('python3 /p/routing.py cost --session a --alias m --json'))
+  assert.ok(priced.calls.includes('python3 /p/routing.py cost --session a --json'))
   assert.match(await cli(['cost', r, '1', '--session', 'a'], priced), /^0\|\|WARNING: cost: session a is already counted on row 1/)
   assert.equal(await cli(['cost', r, '1', '--session', 'u1'], priced), '0|cost: row 1 +null (session u1)\n|WARNING: cost: session u1 has an unpriced model: row 1 is marked cost_incomplete\n')
   assert.equal(await cli(['cost', r, '1', '--session', 'bad'], priced), '1||ERROR: cost: could not measure session bad\n')

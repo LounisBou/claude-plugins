@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""routing.py - measure and pick the model/effort pair a dispatch runs on.
+"""routing.py - read the cost of a dispatch and pick the model/effort pair it runs on.
 
-The routing skill chose a tier from a table written by judgment, and nothing measured what
-a dispatch cost or whether a lighter pair would have closed it. Every subcommand here turns
-one part of that judgment into a reading: what a session cost, and which pair a table, else the
-tier map, names for a class. What replayed pull requests say each pair delivers is
-calibration.py's, which this file hands its subcommands to.
+Every subcommand here turns one part of the routing skill's judgment into a reading: what a
+session cost, and which pair a table, else the tier map, names for a class.
 
-Measured data lives in <state dir>/routing/ and names model identifiers; it never enters
-the plugin. Only `export` writes into the plugin, in tier/effort form.
+Data in <state dir>/routing/ names model identifiers; it never enters the plugin.
 """
 
 import argparse
@@ -18,7 +14,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 
 STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude"),
@@ -56,16 +51,6 @@ def read_json(path, default):
         return default
     except ValueError:
         die("%s does not read as JSON" % path)
-
-
-def write_json(path, data):
-    """Through a temporary file in the same directory, so a reader never sees half a file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
-    with os.fdopen(fd, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp, path)
 
 
 def parse_pair(text):
@@ -205,40 +190,10 @@ def measure(paths):
     return out
 
 
-def carries_alias(ident, alias):
-    """Whether a model identifier carries the alias as a dash segment (`b-model` in `b-model-1`)."""
-    return bool(re.search(r"(^|-)%s(-|$)" % re.escape(alias), ident))
-
-
-def resolve_alias(alias, models):
-    """The identifier an alias resolved to: the one carrying the alias as a dash segment,
-    else the costliest. None when nothing was reported.
-    """
-    if not alias or not models:
-        return None
-    named = [m for m in sorted(models) if carries_alias(m, alias)]
-    return named[0] if named else max(models, key=lambda m: models[m] or 0)
-
-
-def note_alias(alias, models):
-    """Record which identifier an alias resolved to, when one of `models` carries it. A session
-    that ran other models says nothing about the alias: the costliest of them is not its
-    identifier, and recording it would fold the trials of two models under one pair. A stale
-    table entry is read against this.
-    """
-    if not alias or not any(carries_alias(m, alias) for m in models or {}):
-        return
-    path = os.path.join(ROUTING_DIR, "aliases.json")
-    data = read_json(path, {})
-    data[alias] = resolve_alias(alias, models)
-    write_json(path, data)
-
-
 def cmd_cost(argv):
     p = argparse.ArgumentParser(prog="cost")
     p.add_argument("transcript", nargs="?")
     p.add_argument("--session")
-    p.add_argument("--alias")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     if bool(a.transcript) == bool(a.session):
@@ -247,7 +202,6 @@ def cmd_cost(argv):
         die("cost: no transcript at %s" % a.transcript)
     paths = session_transcripts(a.session) if a.session else [a.transcript]
     m = measure(paths)
-    note_alias(a.alias, m["models"])
     if a.json:
         print(json.dumps(m, sort_keys=True))
         return
@@ -257,8 +211,8 @@ def cmd_cost(argv):
              m["cache_read"], m["cache_write"]))
 
 
-# The size rule and the trials a rung needs, read by `pick` and by the calibration alike.
-MIN_TRIALS = 6  # graded trials a pair needs in a class with no bench task, record rows only
+# The size rule and the trials a rung needs, read by `pick`.
+MIN_TRIALS = 6  # graded trials a pair needs in a class, record rows only
 SMALL_FILES = 3
 SMALL_LINES = 50
 
@@ -499,13 +453,6 @@ def lookup(repo, cls, size=None):
     return (bound[0] + ("/" + bound[1] if bound[1] else "")), "tier-table", None, beyond
 
 
-def is_stale(pair, entry):
-    if not entry or not entry.get("models") or "/" not in pair:
-        return False
-    now = read_json(os.path.join(ROUTING_DIR, "aliases.json"), {}).get(pair.split("/")[0])
-    return bool(now) and now not in entry["models"]
-
-
 def read_rows(record):
     """The record's rows; a line that does not read is skipped with a warning, never fatal."""
     rows = []
@@ -579,7 +526,7 @@ def cmd_pick(argv):
         die("pick: unknown class: %s (expected one of %s)" % (a.cls, ", ".join(sorted(CLASS_TIERS))))
     size = phase_size(a.files, a.lines)
     pair, source, entry, beyond = lookup(a.repo, a.cls, size)
-    line = "pair=%s source=%s%s" % (pair, source, " stale" if is_stale(pair, entry) else "")
+    line = "pair=%s source=%s" % (pair, source)
     if size:
         line += " size=%s%s" % (size, " beyond=" + beyond if beyond else "")
     print(line)
@@ -592,24 +539,13 @@ def cmd_pick(argv):
         print("corrective=%s" % up)
 
 
-# The calibration engine's subcommands live in calibration.py, which reads this file's map,
-# cost rule and tables: imported here only when one of them runs, under this module's name so
-# both read one copy of its state.
-CALIBRATION = ("calibrate", "harvest", "ready", "void", "trial", "bench", "generalize", "show", "export")
 COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick}
 
 
 def main():
-    names = sorted(COMMANDS) + sorted(CALIBRATION)
-    if len(sys.argv) < 2 or sys.argv[1] not in names:
-        die("usage: routing.py {%s} ..." % "|".join(sorted(names)))
-    if sys.argv[1] in COMMANDS:
-        COMMANDS[sys.argv[1]](sys.argv[2:])
-        return
-    sys.modules.setdefault("routing", sys.modules[__name__])
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import calibration
-    calibration.COMMANDS[sys.argv[1]](sys.argv[2:])
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        die("usage: routing.py {%s} ..." % "|".join(sorted(COMMANDS)))
+    COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
 if __name__ == "__main__":

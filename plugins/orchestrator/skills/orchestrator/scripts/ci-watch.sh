@@ -35,6 +35,16 @@
 # On a draft the watch settled on its guards, a check that depends on no guard (a secret scanner)
 # is no evidence either: only a passed check whose job needs a guard counts (`draft_guard.py
 # --dependents`), else `no-checks` with the count skipped.
+# Nor is a head whose CI has not started: once every run listed is done, the github plugin's `pr-gate`
+# is read (its engine, found where the host installed the plugin, or at the checkout the override names), and
+# while its `ci.result` is PENDING with a check running — a required check not yet reported counts as
+# running there — or with checks the base requires it could not read (`ci.unverified`), or speaks of
+# another head, the watch goes on, bounded by CI_WATCH_REGISTER_WAIT (restarted whenever a run is
+# watched for the first time), runs and checks read again. A head with a third-party check alone (a
+# secret scanner) is that case until the repository's own run registers, when the repository requires
+# it; past the bound it says `no-checks`. A repository that requires no check gets the gate's answer,
+# green as before. The gate is the one definition of « CI is still to come »: the watch counts nothing
+# of its own. A gate that cannot be read is `unread`.
 # Nor is a pull request GitHub reports as conflicting: it starts no workflow run, so what passed is an
 # external check at most, and the suites never ran. It says `no-checks` with the word `conflicting`,
 # before any wait for a merge: the head is rebased, never reported ready.
@@ -58,7 +68,8 @@
 #   ci-watch: red <pr> <head> <failing check names>             1
 #                                                                  (a cancelled check is one, though the watch
 #                                                                  exits 0 over it)
-#   ci-watch: no-checks <pr> <head>                             2  none registered within the bound
+#   ci-watch: no-checks <pr> <head>                             2  none registered within the bound, or a
+#                                                                  required check still to come at its end
 #   ci-watch: no-checks <pr> <head> conflicting                 2  the pull request conflicts with its base: its
 #                                                                  suites never ran
 #   ci-watch: no-checks <pr> <head> skipped=<n>                 2  every check done and none passed: each one

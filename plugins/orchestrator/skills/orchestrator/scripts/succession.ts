@@ -9,12 +9,16 @@
 // also matches the round's entries written under it.
 //
 // `live` rewrites the brief's « Live state » from the files that hold it — the dispatch record's
-// open rows, the deck's pull requests and agents of this orchestrator, the round's open questions
+// open rows and its pull request ledger (each open pull request with its repository, its number
+// and who is on it), the deck's agents of this orchestrator, the round's open questions
 // of this session, verbatim — and adds only what needs judgment: the next step and the notes. A
 // note carries the generation it was written in; at the next generation it is promoted into an
 // artifact (`--promote <n>=<path>`, the path of the decision, ruling or record it now lives in) or
 // dropped, never carried: each one dropped is said on stderr. At most NOTES_MAX notes of at most
 // NOTE_CHARS characters each. The brief's size is printed, the measure of the generation.
+//
+// `live` also brings the brief's takeover reading steps to the template's lean form (`leanSteps`): a
+// standing brief keeps the orders of the template it came from, and says on stderr how many it changed.
 //
 // `live` then prunes the rulings and state files the brief names (`prune.ts`): what is carried
 // out, superseded or older than the live summary moves to an archive beside each, never read at
@@ -23,11 +27,14 @@
 //
 // `check` refuses (exit 1) a brief that misses an open item of the state: an open row, an open
 // pull request, a running agent or a pending question, each one it misses named.
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { readText, writeAtomic } from '../../../core/store.ts'
-import type { Env } from '../../../core/paths.ts'
+import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
+import { ledgerLines, prKey, statusText } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type PruneResult } from './prune.ts'
 import { recordNamedIn } from './lib/record-paths.ts'
@@ -49,6 +56,8 @@ export const FIELDS = {
   agents: '- Agents running (',
   questions: "- The operator's open questions",
   next: '- The next step:',
+  owners: '- Row owners (',
+  installed: '- Installed plugin (',
   notes: '- Notes of judgment (',
 } as const
 
@@ -102,7 +111,7 @@ export interface Question {
 
 /** What the state holds open for this orchestrator. */
 export interface OpenState {
-  readonly rows: readonly { readonly id: string; readonly line: string }[]
+  readonly rows: readonly { readonly id: string; readonly line: string; readonly label?: string; readonly ruling?: string }[]
   readonly prs: readonly string[]
   readonly agents: readonly string[]
   readonly questions: readonly Question[]
@@ -174,12 +183,17 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
 /** Reads the state this orchestrator holds open from the files that keep it. */
 export function readOpen(request: Request, env: Env): OpenState {
   const state = stateRoot(env)
-  const rows = parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'open')
-  const { prs, agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
+  const recordText = readText(request.record) ?? ''
+  const rows = parseRecord(recordText).filter(row => row['state'] === 'open')
+  // The ledger names each pull request it attends with its own repository: the deck lists numbers
+  // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
+  // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
+  const prs = ledgerLines(recordText).map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
+  const { agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
   const round = join(state, 'round')
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
-    rows: rows.map(row => ({ id: String(row['id']), line: openLine(row) })),
+    rows: rows.map(row => ({ id: String(row['id']), line: openLine(row), label: String(row['label'] ?? ''), ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '' })),
     prs,
     agents,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
@@ -209,8 +223,54 @@ export function notesOf(brief: string): Note[] {
 
 const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.join('; '))
 
+const alnum = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/**
+ * Who works each open row, from the facts the state holds: the agents of the deck carry the row's
+ * label word as their name (`Agent: takeoverlean` for `TAKEOVERLEAN: …`, listed without its role prefix), no record names the
+ * agent of a row. A deferred row reads « ruling », an open row with neither a live agent nor a
+ * ruling reads « NO OWNER », so that it is seen at takeover, not found idle later.
+ */
+export function ownersOf(open: OpenState): string[] {
+  return open.rows.map(row => {
+    if ((row.ruling ?? '') !== '') return `${row.id} ruling`
+    const word = alnum(/^[A-Za-z0-9]+/.exec(row.label ?? '')?.[0] ?? '')
+    const agent = word.length < 3 ? undefined : open.agents.find(name => {
+      const own = alnum(name.replace(/^Agent:\s*/, ''))
+      return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
+    })
+    return `${row.id} ${agent === undefined ? 'NO OWNER' : agent.replace(/^Agent:\s*/, '')}`
+  })
+}
+
+/**
+ * The merged pull requests of the project's main that touch this plugin since the commit the
+ * installed copy was built from, `<n> merged PRs not installed, oldest <h> h`: a git log against
+ * the sha the host recorded for its install, read in the brief's worktree on its local `origin/main`
+ * (no fetch). Empty where any of it cannot be read: a line is said only when it is known.
+ */
+export function notInstalled(brief: string, env: Env, now: Date): string {
+  try {
+    const worktree = /worktree `([^`{}]+)`/.exec(brief)?.[1] ?? ''
+    if (worktree === '' || worktree === 'none') return ''
+    const installed = JSON.parse(readText(join(configDir(env), 'plugins', 'installed_plugins.json')) ?? '{}') as { plugins?: Record<string, { gitCommitSha?: unknown }[]> }
+    const entry = Object.entries(installed.plugins ?? {}).find(([key]) => key.startsWith('orchestrator@'))?.[1]?.[0]
+    const sha = typeof entry?.gitCommitSha === 'string' ? entry.gitCommitSha : ''
+    if (!/^[0-9a-f]{7,40}$/.test(sha)) return ''
+    const dates = execFileSync('git', ['-C', worktree, 'log', '--first-parent', '-m', '--merges', '--format=%cI', `${sha}..origin/main`, '--', 'plugins/orchestrator'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).split('\n').filter(line => line !== '')
+    if (dates.length === 0) return '0 merged PRs not installed'
+    // The log walks the history, not the dates: the oldest merge is the earliest of them all.
+    const times = dates.map(line => Date.parse(line))
+    if (times.some(Number.isNaN)) return ''
+    const oldest = Math.min(...times)
+    return `${dates.length} merged PRs not installed, oldest ${Math.max(0, Math.round((now.getTime() - oldest) / 3_600_000))} h`
+  } catch {
+    return ''
+  }
+}
+
 /** The Live state's lines, generated: each field the template names, the notes last. */
-export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number): Map<string, string> {
+export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number, installed = ''): Map<string, string> {
   const questions = open.questions.map(q => `[${q.id}] ${q.text}`)
   return new Map([
     [FIELDS.rows, `- Rows open (id, label, what remains): ${list(open.rows.map(row => row.line))}`],
@@ -218,6 +278,8 @@ export function liveLines(open: OpenState, next: string, notes: readonly Note[],
     [FIELDS.agents, `- Agents running (name and reference, brief path): ${list(open.agents)}`],
     [FIELDS.questions, `- The operator's open questions, each verbatim (its \`Question i of N\` block whole), with its round entry id, or \`none\`: ${questions.length === 0 ? 'none' : questions.join('\n\n')}`],
     [FIELDS.next, `- The next step: ${next}`],
+    [FIELDS.owners, `- Row owners (an open row's live agent by its label word, « ruling » for a deferred one, « NO OWNER » for neither): ${list(ownersOf(open))}`],
+    ...(installed === '' ? [] : [[FIELDS.installed, `- Installed plugin (merged on main since the installed copy was built, by git log): ${installed}`] as [string, string]]),
     [FIELDS.notes, `- Notes of judgment (generation ${generation}, at most ${NOTES_MAX}; each is promoted into an artifact or dropped at the next succession): ${notes.length === 0 ? 'none' : notes.map(n => `[g${n.generation}] ${n.text}`).join(' · ')}`],
   ])
 }
@@ -243,12 +305,53 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
   return body.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
+/** The successor's reference beside these scripts: an installed copy may lack it, and its pointer is then left as it is. */
+const successorReference = fileURLToPath(new URL('../references/succession-successor.md', import.meta.url))
+
+/**
+ * The takeover's reading steps of a standing brief, in the form the template gives them now. A
+ * standing brief is kept from one generation to the next and only its Live state is rewritten, so
+ * it keeps the reading orders of the template it came from: the whole rulings file, the whole goals
+ * table, every project's checkouts. Each stale order below is replaced by its lean form, the
+ * rulings file read by `grep -v` on its entries for one open item, the goals without their met
+ * rows, the checkouts of the brief's own project; a brief already lean is left as it is.
+ */
+export function leanSteps(brief: string, rulings: string, successor = true): { readonly text: string; readonly refreshed: number; readonly left: number } {
+  const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
+  // A title that is no `owner/name` or `name` (spaces, parentheses) is no argument of a command: that step is left alone.
+  // The replacement strings read `$` as a pattern: a path carrying one is escaped.
+  const lit = (value: string): string => value.replaceAll('$', '$$$$')
+  const steps: [RegExp, string][] = [
+    ...(rulings === '' || rulings === 'none' ? [] : [[
+      /^1\. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole\.$/m,
+      `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${lit(rulings)}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
+    ] as [RegExp, string]]),
+    [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
+    ...(!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/.test(project) ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
+    // The pointer moves only where the successor reference is installed beside these scripts; else it stays, and is counted.
+    ...(successor ? [[/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'] as [RegExp, string]] : []),
+  ]
+  let text = brief
+  let refreshed = 0
+  for (const [stale, lean] of steps) {
+    const next = text.replace(stale, lean)
+    if (next !== text) refreshed++
+    text = next
+  }
+  // A stale order worded otherwise is not rewritten: it is counted, so that the caller says it.
+  const left = [/Read the rulings file WHOLE/, /goals [^`\n]* status`, read whole/, /workspace\.sh list`/, /`references\/lifecycle\.md`, « Succession/].filter(marker => marker.test(text)).length
+  return { text, refreshed, left }
+}
+
 /** The open items of the state a brief does not name: each row id, pull request, agent and question id. */
 export function missingItems(brief: string, open: OpenState): string[] {
   const live = liveSection(brief)
   const missing: string[] = []
   for (const row of open.rows) if (!new RegExp(`(?:open|deferred)=${row.id}\\b`).test(live)) missing.push(`dispatch row ${row.id}`)
-  for (const pr of open.prs) if (!live.includes(pr.split(' ')[0] ?? pr)) missing.push(`pull request ${pr}`)
+  for (const pr of open.prs) {
+    const key = pr.split(' ')[0] ?? pr
+    if (!live.includes(key)) missing.push(`pull request ${key}`)
+  }
   for (const agent of open.agents) if (!live.includes(agent)) missing.push(`agent ${agent}`)
   for (const question of open.questions) if (!live.includes(question.id)) missing.push(`question ${question.id}`)
   return missing
@@ -348,13 +451,16 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
       : `succession: note ${i + 1} of generation ${note.generation} promoted to ${promoted}\n`)
   })
   const notes = request.notes.map(text => ({ generation, text }))
-  const written = rewrite(brief, liveLines(open, request.next, notes, generation), generation)
+  const written = rewrite(brief, liveLines(open, request.next, notes, generation, notInstalled(brief, env, now())), generation)
   if (typeof written !== 'string') {
     io.err(`succession: ${written.error}\n`)
     return 2
   }
-  writeAtomic(request.brief, written)
   const files = prunedFilesOf(written, env['HOME'] ?? '')
+  const lean = leanSteps(written, files.rulings, existsSync(successorReference))
+  writeAtomic(request.brief, lean.text)
+  if (lean.refreshed > 0) io.err(`succession: ${lean.refreshed} reading step(s) of the brief brought to the template's lean form\n`)
+  if (lean.left > 0) io.err(`succession: ${lean.left} reading step(s) of the brief still follow an older template (whole rulings, whole goals, every checkout or the lifecycle.md pointer): word them as templates/orchestrator-succession-brief.md does\n`)
   // A ruling for rows all closed in the dispatch record is carried out: it moves as a `done` one.
   const closed = new Set(parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'closed').map(row => Number(row['id'])))
   const rulings = prune(files.rulings, (text, archive) => pruneRulings(text, archive, closed), now(), io)
@@ -362,8 +468,8 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
   const round = archiveRound(stateRoot(env), now(), io)
   // Before: the rulings file read whole. After: the part a takeover reads, its entries for one open item left out.
   const read = files.rulings === '' || files.rulings === 'none' ? 0 : readAtTakeover(readText(files.rulings) ?? '').length
-  const takeover = (side: 'before' | 'after') => written.length + (side === 'before' ? rulings.before : read) + state[side]
-  io.out(`generation=${generation} chars=${written.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
+  const takeover = (side: 'before' | 'after') => lean.text.length + (side === 'before' ? rulings.before : read) + state[side]
+  io.out(`generation=${generation} chars=${lean.text.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
   return 0
 }
 

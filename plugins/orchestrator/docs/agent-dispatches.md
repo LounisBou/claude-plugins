@@ -22,7 +22,7 @@ This file does not hold:
 
 | Tier | Binding | Serves | What re-checks it |
 |---|---|---|---|
-| `deep` | the top family, at the effort its calling orchestrator runs at now | orchestrators, successors, decision rounds, contract-defining phases, the final verification, the bench's judge | nothing downstream |
+| `deep` | the top family, at the effort its calling orchestrator runs at now | orchestrators, successors, decision rounds, contract-defining phases, the final verification | nothing downstream |
 | `standard` | the middle family at effort high, shipped by the plugin | behaviour and conversion phases, correction rounds, review collectors and lenses, comments agents | the test suite, then the review round |
 | `light` | the smallest family at effort medium, shipped by the plugin | read-only search | the search itself: it finds or it does not |
 
@@ -32,7 +32,7 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 
 ### 1. Pay for judgment that nothing downstream re-checks
 
-- Since: the model routing design (`docs/specs/2026-10-09-model-routing-calibration-design.md`).
+- Since: the model routing design of 2026-10-09.
 - Rule: `skills/model-routing/SKILL.md`, « The principle ».
 - Why: an error in work a suite, a gate or the orchestrator re-checks is caught cheaply; an
   error in a contract or in the orchestrator's own sequencing is paid by every phase after it.
@@ -130,25 +130,6 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
   exists for a session launched by hand or without the plugin.
 - Superseded: the model alone, read from the hooks module's measure file, until 2026-11-04.
 
-### 8. A table serves the cheapest pair equivalent to the best
-
-- Since: routing phase 4 (#173); its defaults on 2026-10-12, the operator (calibration decision O4).
-- Rule: `skills/model-routing/references/calibration.md`, « 5. Calibrate the project's table ».
-- Choice: a class's entry is the cheapest pair, by expected cost, among the pairs
-  statistically equivalent to the best measured pair, with `delta` 0.10 and `bar` 0.8.
-- Why: the floor it replaces, 0.9 on six trials or more, sits inside the noise: ten runs
-  cannot separate 70 % from 90 %, and the unit that counts is the task, not the run.
-- Worked values: against a best at 10/10, 9/10 is equivalent and 8/10 is not; against 14/14,
-  13/14 is and 12/14 is not; a best at 5/5 is not weak, at 4/5 it is. Changing the defaults
-  costs a recompute of the tables from the trials already recorded, no bench.
-- Superseded: the 0.9 floor.
-
-### 9. A trial run on another model stays out of the tables
-
-- Since: routing phase 4 (#173); the model of each trial recorded since the bench fixes of #171.
-- Why: an alias can resolve to an older release and a session can fall back to another
-  model; such a trial measured something other than its pair.
-
 ### 10. One notch at a time, and never a cascade on a phase
 
 - Rule: `skills/model-routing/SKILL.md`, « Explore one notch, never more », « Escalate on
@@ -166,13 +147,6 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the budget is the operator's to manage; a pair chosen to save it and paid back in
   rework saves nothing.
 
-### 12. The host's command line is updated after the bench, not during it
-
-- Since: 2026-10-12, the operator (calibration decision O1).
-- Why: the tables must be measured on one release of the host. The update then brings the
-  effort setting of a subagent launched inside a session, and the isolation options of an
-  evaluation run.
-
 ### 13. A correction round runs one effort notch above its phase
 
 - Since: routing phase 4 (#181, 2026-10-12), from the operator's study of the dispatch trials.
@@ -188,9 +162,7 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 ### 14. A table measured on small work does not serve a large phase
 
 - Since: routing phase 4 (#181, 2026-10-12), from the same study.
-- Rule: `skills/model-routing/SKILL.md`, « Where the pair comes from »;
-  `skills/model-routing/references/calibration.md`, « 5. Calibrate the project's table » (the
-  size stamp, pick by size).
+- Rule: `skills/model-routing/SKILL.md`, « Where the pair comes from » (pick by size).
 - Choice: a phase of more than 3 files or more than 50 lines is large. `pick`, given its size,
   serves only an entry measured on large work, and otherwise names the scope it skipped
   (`size=large beyond=<scope>`), falling to the tier table when none was. A phase beyond every
@@ -198,19 +170,3 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the gaps between pairs are small on short single-file work with a full spec and large
   beyond it, and our corpora are almost all short work: a pair's record there says little about
   a large phase.
-
-### 15. The bench runs every pair on the same tasks
-
-- Since: routing phase 4 (#184, 2026-10-12), from the operator's study of the dispatch trials.
-- Rule: `skills/model-routing/references/calibration.md`, « 4. Run the bench, on the
-  operator's cap ».
-- Choice: every pair of the grid runs the first half of a class's tasks; a pair stops there
-  only when it passed nothing or another pair costs no more, passes every task it passed and
-  beats it on one of the two; the survivors run the rest; a second repetition goes only to
-  the best pair and to the pairs the data cannot yet tell from it; a class left weak or with
-  no equivalent pair brings the pruned pairs back, cheapest first, until one gives an entry.
-- Why: screening on two tasks and confirmation in cost bands confirmed a dearer pair only when
-  every cheaper one had missed, so the best measured pair was often not on every task and no
-  comparison was paired. Adding tasks beats adding repetitions, and a pair another pair
-  dominates cannot win whatever a second repetition says.
-- Superseded: the screening on two tasks and the cost bands.

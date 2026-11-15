@@ -106,7 +106,7 @@ outside this repository.
 - The current repositories are frozen except for urgent fixes, each re-imported here the same
   day (`docs/migration.md`).
 - Kept as they are: the orchestrator's iTerm sessions and home session, `deck.json`'s format,
-  the machine-to-machine move (fixed, not removed), the cost accounting, the spawn without
+  the cost accounting, the spawn without
   approval, the launcher's trust write (made safe, not removed), review on evidence, the merge
   reserved to the operator, the context gauge, the `workspace.sh delete` guards.
 - `docs/conventions.md` governs every change; a convention changes with the code it governs.
@@ -155,10 +155,10 @@ cap is the operator's.
   reads core's shell reader (#29); norms keeps its own `PUSH` regex (`hooks/guards.ts`), and
   github's `bashPushes` (`hooks/ready.ts`) tracks pushed heads for the gate.
 - The github locator `scripts/resolve_github.py`, identical in norms and pr-review. **Open.**
-- The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`, `move.ts:95`,
+- The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`,
   `skills/coordinator/scripts/coordinator.sh:316`, `skills/iterm-agents/scripts/iterm_agent.py:114`,
   `dispatch-record.sh:168`, and statusbar's prefixes. **Open**: core's `names.ts` is read by
-  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts`, `move.ts` and
+  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts` and
   `session-name.ts`; `iterm_agent.py` reads it as `names.json`; `coordinator.sh` and statusbar
   still hold their own.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`, and

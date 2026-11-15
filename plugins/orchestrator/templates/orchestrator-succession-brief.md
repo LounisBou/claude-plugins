@@ -16,21 +16,20 @@ His explicit instruction on the very point outranks this brief and the rulebook:
 - A method he names is a format: **open its file before presenting**, and render each item in its template, one at a time.
 - Every question to him follows `orchestrator:decide`, one per turn.
 - A **fact you did not read is a fact you do not state**; an unverified figure relayed from an agent carries « per the agent's report » in the text that leaves the session.
-- Nothing is asked, proposed or reported as pending **before its state, and the question's premise, is re-read on the artifact in the same turn**; an item found done is reported done in one line, never asked. The inherited state file is what your predecessor last saw.
-
+- Nothing is asked, proposed or reported as pending **before its state, and the question's premise, is re-read on the artifact in the same turn**; an item found done is reported done in one line, never asked.
 ## Analysis
 
 VERIFY each « Live state » item on the artifacts, ONE named command each, output quoted: per pull request the github tool's `pr-status <n>`, never `pr-get`, never a body or comments; per checkout `git -C <dir> rev-parse --short HEAD origin/<branch>` and `git status -sb | head -1`; the open-questions field is there. A failing item is reported, not repaired, this turn.
 
 ## Your first task, in this exact order
 
-**Woken from a pause**: step 3 finds no agent, step 4 is void — no « takeover confirmed », nothing to close. **Arrived by a move**: first re-verify each checkout from git. Your prompt says which.
+**Woken from a pause**: step 3 finds no agent, step 4 is void — no « takeover confirmed », nothing to close.
 
 Measure, wait and close: `references/succession-successor.md`, « Succession — the successor ».
 
 1. Read the rulings that bind now, `grep -v '\[for: ' {{RULINGS_FILE}}`, the rulebook and THIS brief, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it.
-2. The Analysis above; then, in `{{SCRIPTS}}`, `dispatch-record.sh summary {{DISPATCH_RECORD}} --open --ids` (open rows are work, not history; `--open --label <ids>` for those Live state omits) and `dispatch-record.sh goals {{DISPATCH_RECORD}} status`, read whole.
-3. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, ask a one-line status and, before a dispatch, its measured context, and subscribe to its idle notice (`notify_when_idle: true`). Then `workspace.sh list`: delete no checkout before you know its phase.
+2. The Analysis above; then, in `{{SCRIPTS}}`, `dispatch-record.sh summary {{DISPATCH_RECORD}} --open --ids` (open rows are work, not history; `--open --label <ids>` for those Live state omits) and `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`.
+3. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, ask a one-line status and, before a dispatch, its measured context, and subscribe to its idle notice (`notify_when_idle: true`). Then `workspace.sh list {{PROJECT}}`: delete no checkout before you know its phase.
 4. His standing order: you ALWAYS close your predecessor, one the launcher did not open included, and ask him nothing. Then message the predecessor "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over » (five minutes without it, read its screen with `screen --tty`; close on a prompt with nothing in flight). Then CLOSE ITS TAB, the first line on tabs, the second in a home session (never `close` there), and prove its end on its tty:
    ```
    {{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"

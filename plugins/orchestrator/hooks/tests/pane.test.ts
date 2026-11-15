@@ -18,6 +18,7 @@ import { withdrawalText } from '../relay.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { GLUED_BLOCKS } from './fixtures.ts'
+import { parseQ, parseAnswer as parseOldAnswer } from '../remote-round.ts'
 
 const HOME = '/tmp/h'
 const SESSIONS = `${HOME}/.claude/claude-orchestrator/store/sessions`
@@ -1349,10 +1350,21 @@ const minutesAgo = (n: number) => new Date(Date.now() - n * 60000).toISOString()
 
 // A coordinator whose round holds `asked`, each sender live, its pane open by its first turn,
 // or closed by the command before it: the wake's clock is armed by the turn's end.
+// An operator question as this release stores it, an object of `ask`: the entry's id, sender,
+// start, what it blocks, its status, urgency and move kept; a closing proposal stays the relay's
+// entry. The relay writes no operator entry, and the round's wake withdraws one left.
+function askedOf(e: RoundEntry) {
+  if (e.kind !== 'operator') return e
+  return askedObject(e.session, e.from, e.since, {
+    id: e.id, blocks: e.blocks ?? '', status: e.status,
+    ...(e.urgent ? { urgent: true } : {}), ...(e.movedFrom !== undefined ? { movedFrom: e.movedFrom } : {}),
+  })
+}
+
 async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boolean } = {}) {
   const fx = coordinatorSession()
   for (const e of asked) {
-    fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
+    fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(askedOf(e)) + '\n')
     fx.files.set(`${SESSIONS}/${e.session}`, JSON.stringify(row({ role: 'orchestrator', name: e.from })) + '\n')
   }
   const { handlers } = mounted(registerSupervision)
@@ -1386,7 +1398,7 @@ test('a due question wakes the coordinator once: with the pane open only an urge
   await tick()
   expect(fx.submitted.length).toBe(1)
   // A plain wait asked again urgent, on the same id, is due at the next reading.
-  fx.files.set(`${ROUND}/${young.id}.json`, JSON.stringify({ ...young, urgent: true }) + '\n')
+  fx.files.set(`${ROUND}/${young.id}.json`, JSON.stringify(askedOf({ ...young, urgent: true })) + '\n')
   await tick()
   expect(fx.submitted.length).toBe(2)
   expect(fx.submitted[1]).toContain(young.from)
@@ -1437,7 +1449,7 @@ test('with the pane closed every open question is due at once; one answered in t
   const asked = entry('Orch: b', '2026-10-24T11:59:00.000Z', { session: 'sb' })
   const quiet = await wakingCoordinator([asked])
   const settled = asked
-  quiet.fx.files.set(`${ROUND}/${settled.id}.json`, JSON.stringify({ ...settled, since: minutesAgo(20), status: 'answered' }) + '\n')
+  quiet.fx.files.set(`${ROUND}/${settled.id}.json`, JSON.stringify(askedOf({ ...settled, since: minutesAgo(20), status: 'answered' })) + '\n')
   await quiet.tick()
   expect(quiet.fx.submitted).toEqual([])
 })
@@ -1514,7 +1526,7 @@ test('an entry another session was woken for between the reading and the wake is
 test('a reload arms the wake with no turn after it; a second arm starts no second chain; the session\'s end stops it', async () => {
   const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const fx = coordinatorSession()
-  fx.files.set(`${ROUND}/${urgent.id}.json`, JSON.stringify(urgent) + '\n')
+  fx.files.set(`${ROUND}/${urgent.id}.json`, JSON.stringify(askedOf(urgent)) + '\n')
   fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: urgent.from })) + '\n')
   const { handlers } = mounted(registerSupervision)
   const start = mounted(registerWake).handlers
@@ -1832,6 +1844,35 @@ const storedIn = (fx: Fx, id: string) => JSON.parse(String(fx.files.get(`${ROUND
 // round's next reading up to 30 seconds later.
 const settleHere = (id: string, answer = 'A, ship it') => ({ id, outcome: 'answered-here' as const, text: answer, author: null, work: null })
 
+// An operator entry of an older release left in the round (the relay writes none now): the
+// round's wake withdraws it, by the coordinator, and tells its sender to ask it with ask — a
+// session here by a message, one on another machine by an answer on its own line — once; it is
+// never told nor due.
+test('an open operator entry of an older release is withdrawn by the wake, its sender told once to ask it again, never told nor woken for', async () => {
+  const { fx, tick } = await wakingCoordinator([])
+  const sent = sends(fx)
+  const here = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
+  // A remote entry's id in the shape the lines between machines carry.
+  const there = entry('Orch: b', minutesAgo(2), { id: 'sb-17-abc1', session: 'sb', urgent: true, origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })
+  const old = entry('Orch: c', minutesAgo(3), { id: 'sc-17-abc2', session: 'sc', urgent: true, origin: { machine: 'bench-mac', address: 'bridge:old' } })
+  for (const e of [here, there, old]) {
+    fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
+    fx.files.set(`${SESSIONS}/${e.session}`, JSON.stringify(row({ role: 'orchestrator', name: e.from })) + '\n')
+  }
+  await tick()
+  for (const e of [here, there, old]) expect(storedIn(fx, e.id)).toMatchObject({ status: 'withdrawn', answer: { by: 'coordinator', text: `withdrawn: Your question ${e.id} was withdrawn: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.` } })
+  expect(sent.length).toBe(3)
+  expect(sent.find(s => JSON.stringify(s.to) === JSON.stringify({ sessionId: 'sa' }))?.text).toBe(`[module] Your question ${here.id} was withdrawn: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`)
+  const q = parseQ(sent.find(s => s.to === 'bridge:peer')!.text)
+  expect(q?.event.kind === 'answer' ? [q.id, q.event.since, q.event.readable.endsWith('Ask it again with the ask tool.')] : null).toEqual([there.id, there.since, true])
+  const line = parseOldAnswer(sent.find(s => s.to === 'bridge:old')!.text)
+  expect([line?.id, line?.since, line?.readable.endsWith('Ask it again with the ask tool.')]).toEqual([old.id, old.since, true])
+  expect([fx.notices, fx.submitted]).toEqual([[], []])
+  expect(fx.written.filter(l => l.includes('| round: an operator question of an older release withdrawn:')).length).toBe(3)
+  await tick()
+  expect(sent.length).toBe(3)
+})
+
 test('a settle refused, or one from a session that is no coordinator, sends nothing and closes nothing', async () => {
   const open = entry('Orch: a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null })
   const { fx } = await wakingCoordinator([open])
@@ -1890,7 +1931,7 @@ test('with the pane open, a new question is told to the coordinator once, one li
   expect(fx.notices.length).toBe(3)
   // A reload, or a successor over the same state directory, tells none again; a new entry is told.
   const later = entry('Orch: a', minutesAgo(0), { session: 'sa', blocks: 'phase 5' })
-  fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(later) + '\n')
+  fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(askedOf(later)) + '\n')
   await mounted(registerSupervision).handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   await tick()
   expect(fx.notices.slice(3)).toEqual(['Question pending from Orch: a — blocks: phase 5'])
