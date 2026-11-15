@@ -120,7 +120,7 @@ test('a delivery reaches the orchestrator with its facts read on the repository,
 })
 
 // Seen 2026-11-15 (review 395, row 259's delivery): the facts were read in the directory the
-// module runs in (~/.claude, head fbece9e, 1 dirty path), never the agent's checkout, and said
+// module runs in (the host's configuration directory, head fbece9e, 1 dirty path), never the agent's checkout, and said
 // FALSE CLAIM of two clean deliveries.
 test("a delivery's facts are read in the agent's own checkout, not in the module's directory", async () => {
   const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'

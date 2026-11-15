@@ -444,7 +444,7 @@ test('a takeover that failed, was interrupted, ended the session or was run by a
 // tests, a review's proof) was sent « go on to step 4 of your takeover »; the move and the wake
 // are a successor orchestrator's alone.
 test('a takeover run by a session that is not an orchestrator moves and wakes nothing', async () => {
-  for (const name of ['Agent: takeoversense', 'Review: claude-plugins#396']) {
+  for (const name of ['Agent: takeoversense', 'Review: app#396']) {
     const { handlers } = mounted()
     const fx = movingDollar({ exitCode: 0, stdout: 'stay: not a tab\n' }, name)
     await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
