@@ -28,7 +28,7 @@ def restore(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("backups", help="the backups taken before zone writes")
     parser.add_argument("--zone", help="only this zone's")
-    parser.set_defaults(handler=backups, read=True, account_free=True)
+    parser.set_defaults(handler=backups, account_free=True)
 
     parser = subparsers.add_parser("restore", help="replay a backup")
     parser.add_argument("path", help="a path that backups lists")

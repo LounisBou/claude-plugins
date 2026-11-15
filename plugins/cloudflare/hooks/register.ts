@@ -23,12 +23,13 @@ export const COMMANDS = [
 
 // The commands that only read. Every other one writes to Cloudflare, and a
 // command missing here is treated as a write, so the safe side is the default.
+// The list is JSON: the engine (cf.py) reads it here as data and keeps none of its own.
 export const READS = new Set([
-  'auth-check', 'accounts', 'zones', 'dns-list', 'dns-get', 'dns-export', 'backups',
-  'settings', 'certs', 'plan', 'rules', 'ip-rules', 'security',
-  'cache-rules', 'workers', 'worker-routes', 'worker-domains',
-  'caddy-sites', 'caddy-site', 'caddy-status', 'caddy-docs',
-  'check', 'inventory',
+  "auth-check", "accounts", "zones", "dns-list", "dns-get", "dns-export", "backups",
+  "settings", "certs", "plan", "rules", "ip-rules", "security",
+  "cache-rules", "workers", "worker-routes", "worker-domains",
+  "caddy-sites", "caddy-site", "caddy-status", "caddy-docs",
+  "check", "inventory"
 ])
 
 // The writes no session grant covers, asked each time: a deletion, a replay
