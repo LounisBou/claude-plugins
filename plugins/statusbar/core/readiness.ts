@@ -10,10 +10,9 @@ import { accepts, KINDS, PR_RECORD_CONTRACT, type Kind, type PrRecord } from './
 export const READINESS_CONTRACT = {
   version: 1,
   // A pull request is ready at its head when every condition holds there. Each is held by the one
-  // that answers for it at a merge: the github ready gate reads the records at the head, refuses
-  // on one that failed there and observes one that is absent, GitHub itself requires the workflow's
-  // aggregator job, the status check named here. The Ready label, which the gate puts, takes every
-  // condition, whoever holds it.
+  // that refuses a merge without it: the github ready gate reads the records at the head, GitHub
+  // itself requires the workflow's aggregator job, the status check named here. The Ready label,
+  // which the gate puts and a merge needs, takes every condition, whoever holds it.
   conditions: {
     review: { holder: 'gate', means: 'a review record that passes: no blocking finding, or the orchestrator\'s acceptance of its set-asides, unless the check plan excuses it' },
     e2e: { holder: 'gate', means: 'passed, waived by the operator or not applicable, unless the check plan or an exemption excuses it' },
