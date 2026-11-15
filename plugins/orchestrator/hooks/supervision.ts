@@ -44,8 +44,8 @@ import {
 } from './remote-row.ts'
 import {
   askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
-  parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
-  qAskLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
+  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -2596,6 +2596,19 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
     if (await ownRole($) !== 'coordinator') {
       await logLine($, 'supervision', `receive: a remote question reached a session that is no coordinator: ${asked.entry.id}`)
       return { consumed: 'orchestrator: a remote question for no coordinator, dropped' }
+    }
+    // An older machine's question, asked by its machine line: this release enters none, no pane
+    // would draw it. It is answered by the line it came by, which clears the sender's wait and
+    // tells its model to ask it with ask; never acknowledged as entered.
+    if (asked.entry.kind !== 'done') {
+      await logLine($, 'supervision', `receive: an operator question from ${asked.machine} refused, its release asks by its machine line: ${asked.entry.id}`)
+      step = 'the refusal'
+      const at = new Date().toISOString()
+      const readable = `Your question ${asked.entry.id} was not entered: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`
+      const line = byEvent ? qAnswerLine : answerLine
+      const sent = await $.session.send({ to: from, text: line(asked.entry.id, asked.entry.since, 'refused', at, readable) })
+      if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the refusal of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+      return { consumed: 'orchestrator: a remote operator question of an older release, refused' }
     }
     step = 'the entry read'
     const path = roundPath(await stateDir($), asked.entry.id)
