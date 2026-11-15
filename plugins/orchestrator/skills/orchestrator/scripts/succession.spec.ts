@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, briefOf, closeVerb, HOME_STEP, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -129,7 +129,7 @@ test('an orchestrator closed with no handover is taken up from the state alone: 
     'the stray to-do items': 'to-do 2 → row 1 closed; to-do 3 → row 9 missing',
     'the project sheet': 'objective a belt that holds; spec /specs/belt.md; goals met=1/2 open=G2 (plan: phase 2)',
     'the state directory': `State directory: \`${w.state}\``,
-    'the first dispatch': 'Your next turn dispatches every open row with no agent',
+    'the first dispatch': 'every open row with no agent that the phase rules allow',
   }
   for (const [need, part] of Object.entries(needs)) assert.ok(text.includes(part), `the print carries ${need}: ${part}`)
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
@@ -149,14 +149,15 @@ test('the close printed is the one command that fits the predecessor\'s place: t
   assert.equal(closeVerb('none', () => 0).verb, 'close')
 })
 
-test('a takeover in a plain tab ends on the move into the home session; one in a home session does not', () => {
+test('a takeover in a plain tab ends on the move into the home session; one in a home session dispatches in the same turn, nothing else waking it', () => {
   const plain = world({ movesHome: true })
   assert.equal(plain.run('--tty', '/dev/ttys009'), 0)
   assert.ok(plain.text().includes(`END THE TURN.${HOME_STEP}\n`))
   assert.match(plain.text(), /Its end turns this tab into your home session/)
   const home = world({ windows: { '/dev/ttys009': 0 }, movesHome: false })
   assert.equal(home.run('--tty', '/dev/ttys009'), 0)
-  assert.ok(home.text().includes('END THE TURN.\n'))
+  assert.ok(home.text().includes(`${STAY_TURN}\n4. Dispatch every open row`))
+  assert.ok(plain.text().includes('\n4. Your next turn dispatches every open row'))
   assert.ok(!home.text().includes('home session, as the orchestrator start command does'))
   // Read from where the session runs: a tmux pane, or any system but macOS, never moves.
   assert.equal(movesHome({ TMUX: '/tmp/tmux-501/orch-x,1,0' }, 'darwin'), false)
