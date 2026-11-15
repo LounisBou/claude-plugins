@@ -27,8 +27,7 @@ what the cutover changes.
 
 All of them, each with its evidence:
 
-1. CI green on `main`, every plugin blocking on macOS and Linux (`ci/plugins.json`). Not met:
-   drift blocks on Linux only.
+1. CI green on `main`, every plugin blocking on macOS and Linux (`ci/plugins.json`).
 2. Every goal of `specs/program-design.md` met.
 3. Outcome evals measured, the orchestration at least as good as the current version on the
    same replayed pull requests.
