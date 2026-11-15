@@ -224,6 +224,7 @@ test('blocker: the moment (until, an existing ISO UTC time) and the measure (fre
   // An until that is not an existing instant, or not in the form, and a measure with no words, are refused.
   for (const bad of ['until 2026-02-30T00:00:00Z', 'until 2026-11-15 11:00', 'until 2026-11-15T11:00:00+02:00', 'measure ', 'measure']) {
     assert.match(await cli(['blocker', r, '2', bad]), /blocker: `none`, .* got: /, bad)
+    assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', bad]), /open: --blocker takes `none`, .* got: /, bad)
   }
 })
 

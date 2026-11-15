@@ -29,7 +29,7 @@ const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface'
  * falls by itself: the orchestrator sets it to `none` or closes the row. The `until` time is checked by
  * `untilOf` (core), so a time that does not exist is refused here.
  */
-export const BLOCKER = /^(none|PR [A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+ merged|row [0-9]+ closed|release installed|until \S+|measure \S[^\n]*)$/
+export const BLOCKER = /^(none|PR [A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+ merged|row [0-9]+ closed|release installed|until \S+|measure \S[^\r\n]*)$/
 const BLOCKER_FORMS = '`none`, `PR <owner/repo>#<n> merged`, `row <n> closed`, `release installed`, `until <ISO UTC time>` or `measure <what>`'
 // The blocker as the record takes it: a form of BLOCKER, and for `until` a time that exists.
 const blockerValid = (blocker: string): boolean => (blocker.startsWith('until ') ? BLOCKER.test(blocker) && untilOf(blocker) !== undefined : BLOCKER.test(blocker))

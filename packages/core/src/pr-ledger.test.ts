@@ -206,6 +206,11 @@ describe('an unattended pull request', () => {
       assert.equal(blockerFallen(undefined, Number.MAX_SAFE_INTEGER), false)
     })
 
+    it('reads the clock itself when no now is given: an until in the past is ready, one in the future is not', () => {
+      assert.equal(readyRows({ texts: [rowText({ blocker: 'until 2000-01-01T00:00:00Z' })], lines: [], live: new Set() }).length, 1)
+      assert.equal(readyRows({ texts: [rowText({ blocker: 'until 2999-01-01T00:00:00Z' })], lines: [], live: new Set() }).length, 0)
+    })
+
     it('untilOf reads the one form, to the second with Z, and nothing else', () => {
       assert.equal(untilOf('until 2026-11-15T11:00:00Z'), Date.parse('2026-11-15T11:00:00Z'))
       for (const bad of ['until 2026-11-15T11:00Z', 'until 2026-11-15T11:00:00.000Z', 'until 2026-11-15T11:00:00+01:00', 'until 2026-02-30T00:00:00Z', 'until soon', 'none']) {
