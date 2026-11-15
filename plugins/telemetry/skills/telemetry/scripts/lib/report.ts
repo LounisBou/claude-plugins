@@ -72,6 +72,8 @@ const sum = (o: unknown): number => Object.values(record(o)).reduce<number>((n, 
 interface Pending {
   day: string
   plugin: boolean
+  /** What decided it: `plugin:<name>`, `hook`, `user`, and so on. */
+  by: string | undefined
 }
 interface Session {
   cwd: string | undefined
@@ -98,7 +100,7 @@ interface Session {
   live: boolean
   targets: Set<string>
   refused: Pending[]
-  summarized: { day: string; all: number; plugin: number } | undefined
+  summarized: { day: string; all: number; plugin: number; by: string[] } | undefined
 }
 
 const isPlugin = (decider: string | undefined): boolean => decider === 'hook' || (decider ?? '').startsWith('plugin')
@@ -160,7 +162,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
         if (context !== undefined) turns.push({ session: id, tokens: context })
         s.firstContext ??= context
       } else if (kind === 'tool_call') {
-        if (e['outcome'] === 'refused') s.refused.push({ day, plugin: isPlugin(text(e['decided_by'])) })
+        if (e['outcome'] === 'refused') s.refused.push({ day, plugin: isPlugin(text(e['decided_by'])), by: text(e['decided_by']) })
         const target = record(e['target'])
         if (text(target['repo']) !== undefined && num(target['pr']) !== undefined) s.targets.add(`${text(target['repo'])}#${num(target['pr'])}`)
       } else if (kind === 'question' && e['source'] === 'ask_user') {
@@ -172,7 +174,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
         if (life !== undefined && Number.isFinite(life)) s.life = life
         if (kind === 'session_summary') {
           const refusals = Object.entries(record(e['refusals']))
-          s.summarized = { day, all: refusals.reduce((n, [, v]) => n + (num(v) ?? 0), 0), plugin: refusals.reduce((n, [k, v]) => n + (isPlugin(k) ? (num(v) ?? 0) : 0), 0) }
+          s.summarized = { day, all: refusals.reduce((n, [, v]) => n + (num(v) ?? 0), 0), plugin: refusals.reduce((n, [k, v]) => n + (isPlugin(k) ? (num(v) ?? 0) : 0), 0), by: refusals.filter(([, v]) => (num(v) ?? 0) > 0).map(([k]) => k) }
         }
       }
     }
@@ -202,19 +204,21 @@ function filesOf<T>(dir: string, parse: (body: string) => T, skipped: { n: numbe
 const json = (body: string): unknown => JSON.parse(body)
 
 /** The refusals the learning journals hold, each with its guard source and its Paris day: `<config>/<plugin>/journal/*.json`, read as the learning plugin reads them. */
-function journalRefusals(config: string, skipped: { n: number }): { plugin: string; code: string; day: string | undefined }[] {
+function journalRefusals(config: string, skipped: { n: number }): { found: { plugin: string; code: string; day: string | undefined }[]; journals: Set<string> } {
   const found: { plugin: string; code: string; day: string | undefined }[] = []
+  const journals = new Set<string>()
   let plugins: string[]
   try {
     plugins = readdirSync(config)
   } catch (error) {
     // No configuration directory holds no journal; one that cannot be read is a gap the heading counts.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') skipped.n++
-    return found
+    return { found, journals }
   }
   for (const name of plugins.filter(n => PLUGIN_NAME.test(n))) {
     const dir = journalDir(config, name)
     if (!existsSync(dir)) continue
+    journals.add(name)
     let files: string[]
     try {
       files = readdirSync(dir)
@@ -232,7 +236,7 @@ function journalRefusals(config: string, skipped: { n: number }): { plugin: stri
       }
     }
   }
-  return found
+  return { found, journals }
 }
 
 /** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms. */
@@ -405,16 +409,19 @@ export function report(input: ReportInput): string[] {
   // Questions and refusals per day.
   const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, 'archive'), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
   const refusals = new Map<string, { all: number; plugin: number }>()
+  /** The plugins the events name as having refused a call. */
+  const deciders = new Set<string>()
   const byRole = new Map<string, { all: number; plugin: number }>(REFUSAL_ROLES.map(role => [role, { all: 0, plugin: 0 }]))
   for (const s of sessions.values()) {
     // A session with live calls counts them on their days; one with only a summary counts its lifetime refusals on the day it ended.
-    const counted = s.live || s.summarized === undefined ? s.refused.map(r => ({ day: r.day, all: 1, plugin: r.plugin ? 1 : 0 })) : [s.summarized]
+    const counted = s.live || s.summarized === undefined ? s.refused.map(r => ({ day: r.day, all: 1, plugin: r.plugin ? 1 : 0, by: r.by === undefined ? [] : [r.by] })) : [s.summarized]
     const role = byRole.get(roleOfRefusal(s.role)) ?? { all: 0, plugin: 0 }
     for (const c of counted) {
       const d = refusals.get(c.day) ?? { all: 0, plugin: 0 }
       refusals.set(c.day, { all: d.all + c.all, plugin: d.plugin + c.plugin })
       role.all += c.all
       role.plugin += c.plugin
+      for (const by of c.by) if (by.startsWith('plugin:')) deciders.add(by.slice('plugin:'.length))
     }
   }
   out.push('', 'day         questions  refusals  of them by a plugin')
@@ -425,7 +432,8 @@ export function report(input: ReportInput): string[] {
 
   // Refusals per guard source, from the learning journals (the only place a guard's code is kept), and per role, from the events.
   const sources = new Map<string, { plugin: string; code: string; count: number }>()
-  for (const r of journalRefusals(input.config, skipped)) {
+  const journaled = journalRefusals(input.config, skipped)
+  for (const r of journaled.found) {
     if (!inWindow(r.day)) continue
     const key = `${r.plugin} ${r.code}`
     sources.set(key, { plugin: r.plugin, code: r.code, count: (sources.get(key)?.count ?? 0) + 1 })
@@ -435,6 +443,9 @@ export function report(input: ReportInput): string[] {
     out.push(`  ${plugin.padEnd(14)} ${code.padEnd(44)} ${String(count).padStart(5)}`)
   }
   if (sources.size === 0) out.push('  none in the journals for the week')
+  // Coverage: a plugin keeps a journal or not, so the table holds the codes of those that do; the role table counts every refusal the events hold.
+  const noJournal = [...deciders].filter(name => !journaled.journals.has(name)).sort()
+  out.push(`  coverage: this table counts ${[...sources.values()].reduce((n, c) => n + c.count, 0)} refusals, the role table ${[...byRole.values()].reduce((n, d) => n + d.all, 0)}; no journal for ${noJournal.length === 0 ? 'any plugin that refused' : noJournal.join(', ')}`)
   out.push('', 'role          refusals  of them by a plugin')
   for (const [role, d] of byRole) out.push(`${role.padEnd(12)}  ${String(d.all).padStart(8)}  ${String(d.plugin).padStart(19)}`)
 

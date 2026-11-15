@@ -38,7 +38,7 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   events, a session's directory naming its repository), with the tool's share held to its 20 % cap, each pull request merged with its delay
   (`gh`) and the cost of the sessions that name only it, questions and refusals per day (the round
   files, the events), the week's refusals per guard source (plugin and guard code, from the learning
-  journals, which are where the code is kept) and per role (orchestrator, coordinator, auditor, agent,
+  journals, which are where the code is kept, with a coverage line: its count against the role table's and the plugins that refused with no journal) and per role (orchestrator, coordinator, auditor, agent,
   other, from the role a session's events carry, a session of another role or of none counted as other), and the nine figures of the target: those no source holds (agents on every
   runnable line, merge to service, code per release) print `n/a` and why, never an estimate. The tool
   is the repository of the working directory unless `--tool` names it. It reads the orchestrator's

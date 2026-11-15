@@ -503,7 +503,12 @@ test('refusals by guard source: the week\'s refusals of the learning journals, p
     journaled('2026-11-07T10:00:00Z', 'github', 'github.ready.missing-review', '00000008'),
     journaled('2026-11-10T10:00:00Z', 'norms', 'norms.check.open-finding', '00000009', 'finding'),
   ])
-  scratch({ journals, events: [ev('2026-11-10T10:00:00Z', 'tool_call', S(1), { outcome: 'refused', decided_by: 'plugin:github' })] }, config => {
+  const events = [
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(1), { outcome: 'refused', decided_by: 'plugin:github' }),
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(2), { outcome: 'refused', decided_by: 'plugin:acme-tool' }),
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { refusals: { 'plugin:acme-bot': 2, user: 1, 'plugin:acme-none': 0 } }),
+  ]
+  scratch({ journals, events }, config => {
     writeFileSync(join(config, 'github', 'journal', 'folded.json'), '[]')
     writeFileSync(join(config, 'github', 'journal', 'torn.json'), '{')
     const out = lines(config)
@@ -517,7 +522,8 @@ test('refusals by guard source: the week\'s refusals of the learning journals, p
       ['acme', 'acme.guard.beta', '1'],
       ['orchestrator', 'orchestrator.stop.declared-wait', '1'],
     ])
-    assert.equal(out[at + 6], '')
+    // The coverage: what the table counts against the role table's total, and the plugins that refused with no journal (a decider that refused nothing is not one).
+    assert.equal(out[at + 6], '  coverage: this table counts 8 refusals, the role table 5; no journal for acme-bot, acme-tool')
     assert.match(out[0] ?? '', / \(1 unreadable event lines or files left out\)$/)
   })
   // A journal directory with nothing but its fold file or an audit event, and a journal that is a file: nothing counted, nothing unreadable but the file.
@@ -529,6 +535,7 @@ test('refusals by guard source: the week\'s refusals of the learning journals, p
     writeFileSync(join(config, 'orchestrator', 'journal'), 'x')
     const out = lines(config)
     assert.ok(out.includes('  none in the journals for the week'))
+    assert.ok(out.includes('  coverage: this table counts 0 refusals, the role table 0; no journal for any plugin that refused'))
     // The invalid event and the journal that is a file are counted, the fold file and the audit event are not.
     assert.match(out[0] ?? '', / \(2 unreadable event lines or files left out\)$/)
   })
