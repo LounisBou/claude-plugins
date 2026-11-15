@@ -1573,6 +1573,13 @@ test('auto-merge-set on, quoting the operator\'s recorded answer, lists the repo
   expect(commands(seen)).toContain('pr-ready')
 })
 
+test('auto-merge-set on, quoting an « Accorder (A) » the coordinator recorded before the writer kept the text alone, lists the repository', async ($, on) => {
+  const seen = await world($, on, mergeWorld('Accorder (A)'))
+  const set: any = await $.tool.call(setAutoMerge(true, 'Accorder (A) : thing en auto-merge'))
+  expect(set.deny).toBeUndefined()
+  expect(listed(seen)).toEqual(['acme/thing'])
+})
+
 test('words the operator typed are no consent: with no consent record auto-merge-set is refused and writes nothing', async ($, on) => {
   const seen = await world($, on)
   await typed($, HIS_WORDS)

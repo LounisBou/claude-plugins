@@ -289,7 +289,7 @@ export function consentRecordOf(fields: {
  * kept the choice's text alone hold it (« Accorder (A) »). A consent question offers « Accorder » as
  * choice A (orchestrator's question.ts): under any other letter the answer contradicts itself.
  */
-const LETTERED_GRANT = new RegExp('^' + contract.grant.toLowerCase() + ' ?\\(a\\)$')
+const LETTERED_GRANT = new RegExp('^' + contract.grant.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' ?\\(a\\)$')
 
 /**
  * Whether a recorded answer grants the consent: the choice « Accorder » and nothing else, case and
