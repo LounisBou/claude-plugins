@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   GATE_PERCENT, GATE_TOKENS, gateTokensOf, LAUNCHER, launcherOf, MEASURE_VERSION, measureFilePath, moduleDirOf, ORCHESTRATION_CONTRACT,
-  parseMeasure, peersOf, selfOf, spawnArgv, tripGate,
+  parseMeasure, peersOf, roundEntryPath, selfOf, spawnArgv, tripGate,
 } from './orchestration.ts'
 
 const LISTING = [
@@ -31,6 +31,12 @@ describe('the context gate', () => {
     assert.deepEqual(tripGate(29, 299_999, 1_000_000), { tripped: false, words: '' })
     assert.deepEqual(tripGate(null, 400_000, null), { tripped: false, words: '' })
     assert.deepEqual(tripGate(50, null, null, { gate: 50 }), { tripped: true, words: '50% (gate 50%)' })
+  })
+})
+
+describe('the round', () => {
+  it('names one entry\'s file under the state directory', () => {
+    assert.equal(roundEntryPath('/s', 'q-1'), '/s/round/q-1.json')
   })
 })
 

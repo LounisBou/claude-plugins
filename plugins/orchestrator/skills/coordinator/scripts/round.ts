@@ -7,7 +7,8 @@ import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
-import { writeAtomic } from '../../../core/store.ts'
+import { isTemporary } from '../../../core/store-io.ts'
+import { update } from '../../../core/store.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { die, moduleOf, say, stateOf, type Context } from './context.ts'
 
@@ -33,7 +34,7 @@ export function roundArchive(ctx: Context, args: readonly string[]): number {
   // one a day old is no write in flight.
   const now = ctx.now().getTime()
   for (const name of names) {
-    if (!/\.json\.tmp-/.test(name)) continue
+    if (!isTemporary(name)) continue
     const path = join(round, name)
     try {
       const stat = statSync(path)
@@ -273,15 +274,26 @@ export function entryLines(entry: Entry, view: View): string[] {
  */
 export function recordListed(ctx: Context, state: string, entries: readonly Entry[], view: View): void {
   const listed = join(state, 'round-listed.json')
-  const was = readJson(listed)
-  const before = Array.isArray(was) ? was.filter((id): id is string => typeof id === 'string') : []
   const present = new Set(entries.map(e => text(e, 'id')))
   const open = entries.filter(e => e['status'] === 'open' && presents(e, view)).map(e => text(e, 'id'))
-  const ids = [...new Set([...before, ...open])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).filter(id => present.has(id))
   try {
-    writeAtomic(listed, `${JSON.stringify(ids)}\n`)
+    // Read and rewritten under the store's lock: two listings at once each keep the other's ids.
+    update(listed, current => {
+      const was = parsed(current)
+      const before = Array.isArray(was) ? was.filter((id): id is string => typeof id === 'string') : []
+      const ids = [...new Set([...before, ...open])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).filter(id => present.has(id))
+      return `${JSON.stringify(ids)}\n`
+    })
   } catch {
     say(ctx, `round: cannot record the listed entries in ${listed}`)
+  }
+}
+
+function parsed(text: string | undefined): unknown {
+  try {
+    return text === undefined ? undefined : JSON.parse(text)
+  } catch {
+    return undefined
   }
 }
 

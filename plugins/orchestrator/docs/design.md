@@ -72,6 +72,7 @@ skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves the adapter's
 skills/iterm-agents/scripts/launcher.ts, skills/iterm-agents/scripts/launcher.spec.ts  the command line read by core's versioned argument set into a typed request, handed to the adapter
 skills/iterm-agents/scripts/spawn-prep.ts, skills/iterm-agents/scripts/spawn-prep.spec.ts  what a spawn's line decides alone: its refusals, its title, its tools, its gate, its brief's prompt
 skills/iterm-agents/scripts/tier.ts, skills/iterm-agents/scripts/tier.spec.ts  a tier's binding in the operator's map, and resolve-tier
+skills/iterm-agents/scripts/chains.ts, skills/iterm-agents/scripts/chains.spec.ts  the adapter's chain changes, made through core's store (core/chains.ts)
 skills/iterm-agents/scripts/iterm_agent.py   the adapter: the request performed, over the app API
 skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
