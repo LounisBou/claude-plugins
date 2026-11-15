@@ -85,6 +85,8 @@ export type Exemption = {
   readonly detail: string
   readonly session: string
   readonly at: string
+  // The instant (ISO, UTC, to the second) the operator limited it to: past it the exemption counts for nothing. Absent, it stands until revoked.
+  readonly until?: string
 }
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
@@ -93,15 +95,34 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 export function isRepoName(repo: string): boolean {
   return REPO.test(repo) && repo.split('/').every((part) => !/^\.+$/.test(part))
 }
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
+
+/** Whether a text is an instant as the exemption writes it, `2026-11-15T22:00:00Z`: a real date, in UTC, to the second. */
+export function isInstant(text: string): boolean {
+  const ms = Date.parse(text)
+  return INSTANT.test(text) && Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 19) + 'Z' === text
+}
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string' && v !== '')
 
 /** The exemption a file holds, or undefined when it breaks its shape: then no pull request is exempt. */
 export function parseExemption(raw: unknown): Exemption | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
-  const { v, repo, exempt, paths, labels, detail, session, at } = raw as Record<string, unknown>
+  const { v, repo, exempt, paths, labels, detail, session, at, until } = raw as Record<string, unknown>
   if (v !== RECORD_VERSION || typeof repo !== 'string' || !isRepoName(repo) || typeof exempt !== 'boolean') return undefined
   if (!strings(paths) || !strings(labels) || typeof detail !== 'string' || typeof session !== 'string' || typeof at !== 'string') return undefined
-  return { v, repo, exempt, paths, labels, detail, session, at }
+  // An expiry that cannot be read is a file that breaks its shape: it exempts nothing rather than for good.
+  if (until !== undefined && (typeof until !== 'string' || !isInstant(until))) return undefined
+  return { v, repo, exempt, paths, labels, detail, session, at, ...(until === undefined ? {} : { until }) }
+}
+
+/** Whether an exemption with an expiry has reached it at `now` (ms): it counts until that instant, not at it. */
+export function expired(exemption: Exemption, now: number): boolean {
+  return exemption.until !== undefined && !(now < Date.parse(exemption.until))
+}
+
+/** What the ready gate says of an exemption that ran out: it no longer excuses E2E. */
+export function expiryLine(exemption: Exemption): string {
+  return 'E2E exemption of ' + exemption.repo + ' expired at ' + exemption.until + ': it no longer excuses E2E.'
 }
 
 /** The file of a repository's exemption under the plugin's data directory, or a throw for a name that is no repository. */
@@ -163,5 +184,5 @@ export function exemptionLine(exemption: Exemption): string {
     ...(exemption.paths.length > 0 ? ['paths ' + exemption.paths.join(', ')] : []),
   ]
   return 'E2E exemption of ' + exemption.repo + (rules.length > 0 ? ' (' + rules.join(', ') + ')' : '') + ', '
-    + exemption.at.slice(0, 10) + ': ' + exemption.detail
+    + exemption.at.slice(0, 10) + (exemption.until ? ', until ' + exemption.until : '') + ': ' + exemption.detail
 }
