@@ -199,7 +199,8 @@ readiness contract (`core/readiness.ts`); the gate computes it there (`missingEv
 records are small JSON files under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by the producers
 core's `pr-record.ts` declares; a review record written by the session that pushed the head is
-refused. `engine/REFERENCE.md` « Records » holds the record contract.
+refused (the pushed heads are kept on disk, `pushed-heads/`); an E2E pass or fail is computed from a
+run the record tool performs (`run`) or observed in the session's Bash calls (`ran`). `engine/REFERENCE.md` « Records » holds the record contract.
 
 The module puts `Ready` itself: after a record is written, and after a
 `pr-gate` or `pr-checks` read through the tool, it reads readiness at the head, CI included,

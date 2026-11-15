@@ -624,8 +624,10 @@ const pane = atom({ plugin: 'github', key: 'pane' } as const, EMPTY_PANE)
 
 // Names this module registered; a taken name is left to its owner.
 const ownedCommands = new Set<string>()
-// The heads this session pushed: its review of one of them is no review (method, « review on evidence »).
-const pushedHeads = new Set<string>()
+// The heads a session pushed are kept on disk, one file per head naming the sessions that pushed it
+// (<config>/pushed-heads/<sha>), so a later process of the same session, another session reading the head
+// or a reload of this module knows them too: a review of one's own push is no review (method, « review on evidence »).
+const PUSHED_DIR = 'pushed-heads'
 
 // A review record refused when the session writing it pushed the head it reviews.
 export function selfReviewRefusal(kind: string, head: string, pushed: ReadonlySet<string>): string | null {
@@ -1605,10 +1607,24 @@ async function notePushedHead($: Mod, line: string): Promise<void> {
   try {
     if (bashPushes(line).pushes.length === 0) return
     const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })
-    if (head.exitCode === 0) pushedHeads.add(String(head.stdout).trim().toLowerCase())
-  } catch {
-    // Unread: the head is not known as pushed here.
+    const sha = head.exitCode === 0 ? String(head.stdout).trim().toLowerCase() : ''
+    const dir = await configDir($)
+    const session = String(await $.session.id() ?? '')
+    if (!SHA.test(sha) || !dir || session === '') return
+    const path = dir + '/' + PUSHED_DIR + '/' + sha
+    const before = await pushersOf($, sha)
+    if (!before.has(session)) await $.fs.write(path, [...before, session].join('\n') + '\n')
+  } catch (err: unknown) {
+    note($, 'github: the pushed head could not be kept: ' + reasonOf(err))
   }
+}
+
+// The sessions that pushed a head, from its file; none when it is not there or cannot be read.
+async function pushersOf($: Mod, sha: string): Promise<Set<string>> {
+  const dir = await configDir($).catch(() => undefined)
+  if (!dir || !SHA.test(sha)) return new Set()
+  const text = await $.fs.read(dir + '/' + PUSHED_DIR + '/' + sha).then(String, () => '')
+  return new Set(text.split('\n').map((line) => line.trim()).filter((line) => line !== ''))
 }
 
 async function followPushes($: Mod, line: string): Promise<void> {
@@ -2074,8 +2090,100 @@ async function notDirectory($: Mod, path: string): Promise<string | undefined> {
   }
 }
 
+// ---- the E2E run: performed by the record tool, or observed in the session ----
+
+// The E2E run the record tool performs stays under the host's limit on one process, as the light CI's does.
+const E2E_TIMEOUT_MS = LIGHT_CI_BUDGET_S * 1000
+// The Bash runs this module observed, newest last: what a record « ran » may name.
+const OBSERVED_RUNS_MAX = 50
+const observedRuns: Array<{ line: string; cwd: string; ok: boolean; at: number }> = []
+// A command line that starts in another directory: `cd <absolute path> && …`.
+const CD_FIRST = /^\s*cd\s+(\/[^\s;&|]+)\s*&&\s*/
+
+// A Bash call run to its end, kept with the directory it ran in, whether it succeeded and when it started.
+async function noteRun($: Mod, line: string, started: number, result: unknown): Promise<void> {
+  try {
+    const cd = CD_FIRST.exec(line)
+    const cwd = cd ? String(cd[1]) : String(await $.session.cwd())
+    observedRuns.push({ line: line.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started })
+    if (observedRuns.length > OBSERVED_RUNS_MAX) observedRuns.splice(0, observedRuns.length - OBSERVED_RUNS_MAX)
+  } catch {
+    // An unread directory leaves the run unobserved: the record asks for it again.
+  }
+}
+
+// An argv shown as one line, each word quoted when it holds a character the shell reads.
+function shownArgv(argv: readonly string[]): string {
+  return argv.map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : "'" + word.replace(/'/g, "'\\''") + "'")).join(' ')
+}
+
+// When the checkout's HEAD last moved, from its reflog, in ms; undefined when it cannot be read.
+async function headMovedAt($: Mod, inDir: { cwd?: string }): Promise<number | undefined> {
+  const out = await $.process.run(['git', 'log', '-g', '-1', '--date=unix', '--format=%gd', 'HEAD'], { timeoutMs: 10_000, ...inDir })
+  const at = /\{(\d+)\}/.exec(String(out.stdout ?? ''))
+  return out.exitCode === 0 && at ? Number(at[1]) * 1000 : undefined
+}
+
+type E2eRun = { argv: string[] } | { ran: string }
+
+// The E2E run a pass or a fail rests on, from the input: `run` (an argv the tool runs) or `ran` (a command line the
+// session ran in Bash); a string says why the input names none.
+function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
+  const run: unknown = e['run']
+  const ran: unknown = e['ran']
+  if (run !== undefined && ran !== undefined) return 'github: an E2E rests on one run: "run" (the tool runs it) or "ran" (a command this session ran in Bash), not both.'
+  if (run !== undefined) {
+    if (!Array.isArray(run) || run.length === 0 || !run.every((word): word is string => typeof word === 'string' && word !== '')) {
+      return 'github: "run" is the E2E command as an argv, no shell: ["npm", "run", "e2e"].'
+    }
+    return { argv: run }
+  }
+  if (ran !== undefined) {
+    if (typeof ran !== 'string' || ran.trim() === '') return 'github: "ran" is the command line this session ran in Bash, as it ran it.'
+    return { ran: ran.trim() }
+  }
+  return undefined
+}
+
+/*
+ * The result and detail of an E2E record, computed from its run: the tool runs `run` in the checkout at the head
+ * (allowed as that command would be in Bash), or finds `ran` among the Bash runs this session made in that checkout
+ * since its HEAD last moved. Pass on exit 0, fail otherwise; the session's own detail follows.
+ */
+async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: string, inDir: { cwd?: string }, said: string): Promise<{ result: 'pass' | 'fail'; detail: string } | { deny: string }> {
+  const tail = said.trim() === '' ? '' : '; ' + said.trim()
+  const cut = (text: string): string => text.slice(0, DETAIL_MAX)
+  if ('argv' in run) {
+    const line = shownArgv(run.argv)
+    const allowed = await $.tool.check({ tool: 'Bash', input: { command: line } })
+    if (allowed.decision !== 'allow') {
+      return { deny: 'github: the record tool runs only what Bash may run without asking; `' + line + '` is not: run it in Bash' + (dir ? ' from ' + dir : '') + ', then record with "ran".' }
+    }
+    const started = Date.now()
+    const out = await $.process.run(run.argv, { timeoutMs: E2E_TIMEOUT_MS, ...inDir })
+    const secs = Math.round((Date.now() - started) / 1000)
+    if (Date.now() - started >= E2E_TIMEOUT_MS - 1000) {
+      return { deny: 'github: `' + line + '` ran past ' + LIGHT_CI_BUDGET_S + ' s and was stopped, nothing written: run it in Bash in the background, then record with "ran".' }
+    }
+    const now = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
+    if (String(now.stdout).trim().toLowerCase() !== head) return { deny: 'github: the checkout moved off ' + head.slice(0, 7) + ' while `' + line + '` ran: nothing written.' }
+    const last = String(out.stderr || out.stdout || '').trim().split('\n').pop() ?? ''
+    const result = out.exitCode === 0 ? 'pass' : 'fail'
+    return { result, detail: cut('ran `' + line + '` at ' + head.slice(0, 7) + ': exit ' + out.exitCode + ' in ' + secs + ' s' + (result === 'fail' && last ? ' (' + last.slice(0, 120) + ')' : '') + tail) }
+  }
+  const cwd = (dir ?? String(await $.session.cwd())).replace(/\/+$/, '')
+  const moved = await headMovedAt($, inDir)
+  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: record with "run" instead.' }
+  const seen = observedRuns.filter((r) => r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
+  if (!seen) {
+    return { deny: 'github: this session ran no `' + run.ran + '` in ' + cwd + ' since its head ' + head.slice(0, 7) + ' was checked out (a background run is not observed): run it there in Bash, or record with "run".' }
+  }
+  const result = seen.ok ? 'pass' : 'fail'
+  return { result, detail: cut('observed `' + run.ran + '` at ' + head.slice(0, 7) + ', run by this session ' + new Date(seen.at).toISOString().replace(/\.\d+Z$/, 'Z') + ': ' + (seen.ok ? 'succeeded' : 'failed') + tail) }
+}
+
 async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer> {
-  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e['pr'], repo: e['repo'], kind: e['kind'], result: e['result'], detail: e['detail'], dir: e['dir'] } })
+  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e['pr'], repo: e['repo'], kind: e['kind'], result: e['result'], detail: e['detail'], dir: e['dir'], run: e['run'], ran: e['ran'] } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e['dir'] === undefined || e['dir'] === null || e['dir'] === '' ? undefined : String(e['dir'])
@@ -2093,7 +2201,16 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   const detail = e['detail'] === undefined || e['detail'] === null ? '' : String(e['detail'])
   if (e['exempt'] !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
   if (e['plan'] !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
-  const result = String(e['result'] ?? '')
+  let result = String(e['result'] ?? '')
+  // An E2E pass or fail is computed from a run the tool performs or observed, never taken from the session's word.
+  const e2eRun = kind === 'e2e' ? e2eRunOf(e) : undefined
+  if (typeof e2eRun === 'string') return { deny: e2eRun }
+  if (e2eRun && result !== '' && result !== 'pass' && result !== 'fail') {
+    return { deny: 'github: a run gives a pass or a fail; a ' + result + ' rests on no run: leave "run" and "ran" out.' }
+  }
+  if (kind === 'e2e' && !e2eRun && (result === 'pass' || result === 'fail' || result === '')) {
+    return { deny: 'github: an E2E pass or fail is computed from its run, not stated: give "run" (the command as an argv, run here in the checkout) or "ran" (the command line this session ran there in Bash).' }
+  }
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
   }
@@ -2140,7 +2257,13 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   if (String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
-  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  let self = ''
+  try {
+    self = String(await $.session.id() ?? '')
+  } catch {
+    // Without its id the session is known as no pusher.
+  }
+  const selfReview = selfReviewRefusal(kind, gate.head, (await pushersOf($, gate.head)).has(self) && self !== '' ? new Set([gate.head]) : new Set<string>())
   if (selfReview) return { deny: selfReview }
   // The orchestrator's pass does not override a failed review at its head: it sets the points aside.
   if (origin === ACCEPTANCE.plugin && result === 'pass' && latestReview(gate, await headRecords($, gate))?.result === 'fail') {
@@ -2150,6 +2273,13 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
     const refused = await runtimeRefusal($, repo, pr, gate.head)
     if (refused) return { deny: refused }
   }
+  let written = detail
+  if (e2eRun) {
+    const outcome = await e2eOutcome($, e2eRun, dir, gate.head, inDir, detail)
+    if ('deny' in outcome) return outcome
+    result = outcome.result
+    written = outcome.detail
+  }
   let session = ''
   try {
     session = String(await $.session.id() ?? '')
@@ -2158,7 +2288,7 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   }
   const argv = [
     'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
-    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', detail, '--session', session,
+    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', written, '--session', session,
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
@@ -2247,6 +2377,15 @@ async function pruneRecords($: Mod): Promise<void> {
       if (Number((await $.fs.stat(data + '/' + name)).mtimeMs) < cut) stale.push(data + '/' + name)
     }
   }
+  // The pushed heads, by the same cut-off.
+  const config = await configDir($)
+  if (config) {
+    const pushed = config + '/' + PUSHED_DIR
+    for (const file of await $.fs.list(pushed).catch(() => [])) {
+      const name = String(file?.name ?? '')
+      if (SHA.test(name) && Number((await $.fs.stat(pushed + '/' + name)).mtimeMs) < cut) stale.push(pushed + '/' + name)
+    }
+  }
   if (stale.length > 0) await $.process.run(['rm', '-rf', '--', ...stale], { timeoutMs: 60_000 })
   await $.fs.write(stamp, new Date().toISOString() + '\n')
 }
@@ -2286,7 +2425,7 @@ export function register(on: On<Mod>): void {
         name: 'record',
         isDeferred: false,
         description:
-          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
+          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail computed from a run, "run" (an argv the tool runs there) or "ran" (a command line this session ran there in Bash), '
           + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived on the operator\'s quoted, dated words. '
           + '{repo, exempt, paths?, labels?, until?} exempts a repository\'s pull requests for good, or until the instant given '
           + '(false revokes) and quotes the operator\'s dated words in detail. See '
@@ -2297,7 +2436,9 @@ export function register(on: On<Mod>): void {
             pr: { type: 'integer', description: 'the pull request number' },
             repo: { type: 'string', description: 'owner/name, overriding origin' },
             result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
-            detail: { type: 'string', description: 'what ran, the reason, or the operator\'s words' },
+            detail: { type: 'string', description: 'the reason, the operator\'s words, or a note added after the run' },
+            run: { type: 'array', items: { type: 'string' }, description: 'E2E: the command as an argv, run by the tool in the checkout; its exit code gives pass or fail' },
+            ran: { type: 'string', description: 'E2E: the command line this session ran in Bash in that checkout since its head was checked out; its outcome gives pass or fail' },
             kind: { type: 'string', enum: KINDS.filter((kind) => kind !== SCRIPTED.kind), description: 'default: the kind this caller writes' },
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
@@ -2417,7 +2558,10 @@ export function register(on: On<Mod>): void {
     }
     for (const code of new Set(observations)) await observed($, code)
     await bashLint($, line)
+    const started = Date.now()
     const result = await next(e)
+    // A run to its end is observed for an E2E record; a background one has not ended.
+    if (e['run_in_background'] !== true) await noteRun($, line, started, result)
     if (!failed(result)) {
       for (const then of after) {
         try {
