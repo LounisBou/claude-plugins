@@ -10,6 +10,7 @@ import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
+import { CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
@@ -99,7 +100,7 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   }
   return {
     pr, repo, interval, base, workflows, registerWait, baseWait, mergeWait,
-    stateDir: setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME')),
+    stateDir: setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env, setting(env, 'HOME')),
     session: setting(env, 'CLAUDE_CODE_SESSION_ID'),
   }
 }
@@ -141,10 +142,9 @@ export function parseView(out: string): PullRequest {
   return { state, head, auto: words.includes('auto'), draft: words.includes('draft'), ...(words.includes('conflicting') ? { conflicting: true as const } : {}) }
 }
 
-/** The log of this pull request's watch, `suffix` naming which watch writes it. */
-export function logPath(options: Options, suffix: string): string {
-  const slug = (options.repo ?? 'here').replace(/[^A-Za-z0-9._-]/g, '_')
-  return join(options.stateDir, 'ci-watch', `${slug}-pr${options.pr}${suffix}.log`)
+/** The log of this pull request's watch, or of its base branch's watch after the merge (core's ciWatchLogPath). */
+export function logPath(options: Options, base: boolean): string {
+  return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
 /** Counts the `bucket<TAB>name` lines of `buckets` in `bucket`, among `names` when given. */
@@ -178,7 +178,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const sleep = (): Promise<void> => deps.sleep(Number(interval))
   const fail = (what: string, ran: Ran, fallback = 'no answer'): Said => unread(pr, `${what} failed: ${firstLine(ran.stderr) || fallback}`)
   let settled = false
-  let log = logPath(options, '')
+  let log = logPath(options, false)
 
   const readPr = async (): Promise<PullRequest> => {
     const ran = await gh(['pr', 'view', pr, '--json', 'state,headRefOid,autoMergeRequest,isDraft,mergeable', '--jq',
@@ -228,9 +228,9 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
 
   const ensureLogDir = (): void => {
     try {
-      mkdirSync(join(options.stateDir, 'ci-watch'), { recursive: true })
+      mkdirSync(join(options.stateDir, CI_WATCH_DIR), { recursive: true })
     } catch {
-      throw unread(pr, `cannot create ${options.stateDir}/ci-watch`)
+      throw unread(pr, `cannot create ${options.stateDir}/${CI_WATCH_DIR}`)
     }
   }
 
@@ -247,7 +247,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     const [sha, branch] = split(out)
     if (sha === '' || branch === '' || branch === out) throw unread(pr, 'gh pr view failed: no merge commit or base branch read')
     ensureLogDir()
-    log = logPath(options, '-base')
+    log = logPath(options, true)
     try {
       writeFileSync(log, '')
     } catch {
@@ -360,7 +360,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   }
 
   ensureLogDir()
-  log = logPath(options, '')
+  log = logPath(options, false)
   // The owner file names the session that armed this watch, beside its log: the stop gate tells a
   // session only the watches its own id owns. A watch armed by no session leaves no owner file, so
   // an earlier watch's is removed, and the log is told to no session.

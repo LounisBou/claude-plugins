@@ -230,7 +230,7 @@ test('the small readings', () => {
   assert.deepEqual(parseView(`OPEN ${HA} auto draft`), { state: 'OPEN', head: HA, auto: true, draft: true })
   assert.deepEqual(parseView('MERGED'), { state: 'MERGED', head: 'MERGED', auto: false, draft: false })
   assert.equal(countBucket('pass\ta\nskipping\tb\npass\tc', 'pass', new Set(['c'])), 1)
-  assert.equal(logPath(options(['7', '--repo', 'o/r x']), '-base'), join(state, 'ci-watch', 'o_r_x-pr7-base.log'))
+  assert.equal(logPath(options(['7', '--repo', 'o/r x']), true), join(state, 'ci-watch', 'o_r_x-pr7-base.log'))
 })
 
 test('a green line ends with the github tool\'s read of the gate, on the repository the watch names', () => {

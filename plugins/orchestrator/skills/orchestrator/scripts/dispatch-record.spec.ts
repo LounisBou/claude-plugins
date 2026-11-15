@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { countShots, groupBy, keyOf, main, nextId, openLine, orchForm, order, parseId, parseRecord, sessionOrchestration, stateRoot, summaryLines, text, withoutCode, type Deps } from './dispatch-record.ts'
+import { countShots, groupBy, keyOf, main, nextId, openLine, order, parseId, parseRecord, stateRoot, summaryLines, text, withoutCode, type Deps } from './dispatch-record.ts'
 import type { Ran } from './lib/process.ts'
 import { scriptJournal } from './lib/audit.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
@@ -84,33 +84,6 @@ test('the jq readings: text, order, groups, ids', () => {
   assert.equal(keyOf({ tier: null }), 'tier=')
   assert.equal(openLine({ id: 2, label: 'x', deferred: 'later' }), 'deferred=2 label=x ruling=later')
   assert.equal(stateRoot({ HOME: '/h' }), '/h/.claude/claude-orchestrator')
-})
-
-test('session names: the house shape is core\'s', () => {
-  assert.equal(orchForm('  Orch: build [a1b2c3] '), 'Orch: build')
-  assert.equal(orchForm('Orch:build'), 'Orch: build')
-  // The former shape, an owner file written before the change: the same orchestration.
-  assert.equal(orchForm('Orch : build [a1b2c3]'), 'Orch: build')
-  assert.equal(orchForm('Agent: x'), 'Agent: x')
-  assert.equal(orchForm('Orch: a subject far longer than twenty-five'), 'Orch: a subject far longer than twenty-five')
-})
-
-test('the session\'s orchestration: the newest host record of this session', () => {
-  const sessions = join(dir, 'cfg', 'sessions')
-  assert.equal(sessionOrchestration({ CLAUDE_CODE_SESSION_ID: 's1', CLAUDE_CONFIG_DIR: join(dir, 'cfg') }), '')
-  mkdirSync(sessions, { recursive: true })
-  writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch: old","updatedAt":5}')
-  writeFileSync(join(sessions, '2.json'), '{"sessionId":"s1","name":"Orch: new [r1]","updatedAt":9}')
-  writeFileSync(join(sessions, '3.json'), '{"sessionId":"s1","name":"Orch: older","updatedAt":7}')
-  writeFileSync(join(sessions, '4.json'), 'not json')
-  writeFileSync(join(sessions, '5.json'), '{"sessionId":"s2","name":"Agent: a"}')
-  mkdirSync(join(sessions, '6.json'))
-  const env = { CLAUDE_CONFIG_DIR: join(dir, 'cfg') }
-  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch: new')
-  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's2' }), '')
-  assert.equal(sessionOrchestration(env), '')
-  writeFileSync(join(sessions, '7.json'), '{"sessionId":"s1","name":"Orch: float","updatedAt":1.5}')
-  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch: float')
 })
 
 test('Markdown code is no image', () => {

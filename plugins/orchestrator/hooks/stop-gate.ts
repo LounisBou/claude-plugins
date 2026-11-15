@@ -793,13 +793,8 @@ export function parseCiWatchLog(text: string): Record<string, string> {
   return checks
 }
 
-// The pull request number a log name carries: `<slug>-pr<n>.log`, the base-branch
-// watches of merged pull requests apart (-base, no number of their own to tell).
-export function watchNumberOf(name: string): string | null {
-  if (/-pr\d+-base\.log$/.test(name)) return null
-  const m = /-pr(\d+)\.log$/.exec(name)
-  return m ? m[1] ?? null : null
-}
+// The pull request number a log name carries: core's, where ci-watch's log name is defined.
+export { watchNumberOf } from '../core/orchestration.ts'
 
 // watched_numbers() ported: the pull request numbers a ci-watch process is alive for.
 // `ci-watch.sh <n>` as a process's command line: the script run by a shell or by its
