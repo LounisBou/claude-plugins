@@ -48,7 +48,7 @@ NEVER move to the next item before the user has decided the one on screen: `post
 These are not negotiable and they differ by destination:
 
 | Output | Language |
-|--------|----------|
+| --- | --- |
 | Chat explanation to the user (all prose, all analysis) | **the language the user writes in** |
 | Draft comment shown in chat (block 8) | **the user's language AND English**, both, side by side |
 | Comment written into the pending review or posted to the PR | **English, always** |
@@ -76,20 +76,9 @@ without "fix", no publication without "post now", no push): ask the user
 for that word first. A forced push and a deleted comment stay refused.
 
 **When `mcp__github__gh` is not in your tool list** (a session where plugin
-modules do not load, such as `claude -p`), send the same request to the same
-engine from Bash, the request object on standard input, no file in between:
-
-```bash
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-python3 "$GH_ROOT/engine/gh.py" --stdin-json <<'PR_REVIEW_REQUEST'
-<the request object, as JSON>
-PR_REVIEW_REQUEST
-```
-
-`${CLAUDE_PLUGIN_ROOT}` names this plugin and reaches no sibling, so the resolver
-reads the platform's install record rather than assembling a path into the plugin
-cache. When the dependency is missing it prints an `error:` line and a `fix:`
-line: stop there. Never take this route while the tool is listed.
+modules do not load, such as `claude -p`), read `references/bash-route.md` and
+send the same request to the same engine from Bash. Never take that route while
+the tool is listed.
 
 ---
 
@@ -346,17 +335,17 @@ If you catch yourself thinking:
 ## User Commands
 
 | Command | Action |
-|---------|--------|
+| --- | --- |
 | `post` | Keep the current item's English comment for the pending review — nothing is sent — then move to the next item |
 | `post now` | Publish the current item's comment on the PR immediately, **in English** — never ask which language. Only on this command, spelled out — then move to the next item |
 | `rework` | Rewrite the current comment, then show it again in both languages and WAIT — see below |
-| `fix` | Apply the proposed code change for the current item, run the project's gate, stage its files and draft its commit message, then move to the next item — see After "fix" |
+| `fix` | Apply the proposed code change for the current item, run the project's gate, stage its files and draft its commit message, then move to the next item — see `references/fix.md` |
 | `next` | Skip the current item, move to the next |
 | Questions | Answer in the user's language, then keep waiting |
 | `post all` | Render each remaining block 8 in turn, keep it without waiting (the After "post" step 1 file write included, for each item), then go to Completion (explicit batch request) |
-| `fix all` | Apply fixes to ALL remaining items (explicit batch request), each one gated, staged and drafted as After "fix" describes, then go to Completion |
+| `fix all` | Apply fixes to ALL remaining items (explicit batch request), each one gated, staged and drafted as `references/fix.md` describes, then go to Completion |
 | `skip all` | Mark all remaining as skipped, then go to Completion — the items already kept are written, never lost |
-| `commit` | At Completion only: create the commits prepared by the fixed items — see Completion |
+| `commit` | At Completion only: create the commits prepared by the fixed items — see `references/completion.md` |
 | `drop <n>` | At Completion only: discard the prepared commit of item n — unstage its files with `git restore --staged -- <the item's files>`, delete its message file, say so |
 | `drop all` | At Completion only: the same, for every prepared commit |
 
@@ -392,76 +381,13 @@ completion.
 
 ---
 
-## After "post now"
+## The later moments
 
-The immediate path. It publishes on the PR, so it runs only when the user asked for it
-by that name — never as the destination of a plain `post`.
+Each one is read when it comes, not before:
 
-When Step 1.3 found a pending review, GitHub allows no second review by the same user:
-use the top-level fallback (`pr-comment`) for this item and say so.
-
-1. **Post the English version. Always.** Never ask the user which language — see Language Rules.
-2. Post as an **inline comment on the cited file and line** where the anchor is inside the PR diff; fall back to a top-level PR comment when the line is outside the diff (a migration filename, a missing test) — and say which you used.
-3. Publish through the github tool, as GitHub calls describes — never `gh api` or a
-   hand-built `curl`, which fail in the sandbox, and never by some other route when
-   the tool refuses. For the inline case, submit a review holding the one comment,
-   with the event `COMMENT` and no other:
-
-```json
-{"command": "review-submit", "args": {"pr": "<PR>", "event": "COMMENT", "comments": [{"path": "<path>", "line": "<line>", "side": "RIGHT", "body": "<the English comment>"}]}}
-```
-
-   For the top-level fallback:
-
-```json
-{"command": "pr-comment", "args": {"pr": "<PR>", "body": "<the English comment>"}}
-```
-
-4. Confirm with the posted URL.
-5. **Move to the next item without being asked**: render its 8 blocks, or go to Completion
-   when no item remains.
-
----
-
-## After "fix"
-
-A fix is not finished when the edit lands: it is finished when the project's own
-checks agree with it. This section runs them, prepares the commit and moves on.
-Nothing is committed here.
-
-1. Apply the change with the Edit tool.
-
-2. **Run the project's quality gate on what you just changed**, synchronously, in
-   the tool call that waits for it — not in the background, and not summarised
-   from memory. The gate is whatever this repository defines: the check and test
-   commands its `CLAUDE.md` or `CONTRIBUTING.md` names, a `ci:check` script or the
-   equivalent, and when neither document names any, the tests covering the files
-   this item touched. State each command you ran with its exit code, one line
-   each, as in `composer ci:check -> exit code 0`. An exit code you did not read
-   is a gate you did not run.
-
-3. **A red gate stops here.** Report the failing command, its exit code and the
-   lines of its output that name the failure; say that the item is fixed but not
-   green; then stop and wait for the user, exactly as an item's own turn does.
-   Stage nothing, draft nothing, render no next item. The user decides what
-   follows: another `fix`, a revert, or moving on.
-
-4. **A green gate carries on.** Stage the files this item changed — those files
-   by name, never `git add -A`, which would sweep up the rest of the working
-   tree. Draft the commit message the repository's convention asks for, in
-   English, with no trailer of any kind, and write it with the Write tool to
-   `/tmp/claude-pr-review-<PR>/commit-<n>.msg` (n = the item number), beside the
-   comment bodies; record its subject and the files it covers under the item in
-   the walkthrough summary. **Create no commit**: the commits are created at
-   Completion, on the user's word, and not before.
-
-5. Say, in the user's language: "Fixed. Item #N: gate green (<the commands>),
-   commit prepared."
-
-6. **Move to the next item without being asked**: render its 8 blocks, or go to
-   Completion when no item remains. The user ordered this change with `fix` and
-   the project's own checks passed on it; making them type `next` after that buys
-   nothing. A red gate is the only outcome that holds the walkthrough on the item.
+- **`post now`:** read `references/post-now.md` before publishing anything.
+- **`fix` or `fix all`:** read `references/fix.md` before the first edit.
+- **No item left, or a batch command handled the rest:** read `references/completion.md`; `commit`, `drop <n>` and `drop all` are answered there.
 
 ---
 
@@ -474,141 +400,10 @@ Nothing is committed here.
 
 ---
 
-## Completion — writing the pending review
-
-When every item has been handled and at least one was kept, the review is written now,
-in one pass. Until this point nothing the user kept has left the session. Writing the
-pending review is not publishing: the author sees nothing until the user submits it on
-GitHub, so it needs no command. When no item was kept, no review is opened: the summary
-drops both new sections and the review line.
-
-1. **Read the state again** with the Step 1.3 `review-pending` call. It prints `none`,
-   or an id and a count.
-
-2. **When it prints `none`**, open the review with every kept item. `comments` is an
-   array with one object per kept item: `path`, `line`, `side` set to `"RIGHT"`, and
-   `body` — read back from the item's `comment-<n>.md`, word for word. `line` is the line
-   the comment anchors on, the last line of the range when it covers several;
-   `start_line`, present only for a range, is its first line and must be below `line`;
-   both are integers, and a single-line comment carries no `start_line`. A range also
-   adds `start_side` set to `"RIGHT"`.
-
-```json
-{"command": "review-pending-create", "args": {"pr": "<PR>", "comments": [{"path": "<path>", "line": "<line>", "side": "RIGHT", "body": "<comment-n.md>"}], "format": "error-check"}}
-```
-
-   On success this prints nothing and exits 0; the id and the count come from the read
-   in step 4. A non-zero exit prints the error: stop and report it.
-
-3. **When a review already exists**, add the kept items to it instead, one call per
-   item, with the numeric `id` line the read printed, never the `node_id`. Each body is
-   the one its `post` kept in `comment-<n>.md`, read back word for word. Add
-   `start-line` when the comment covers a range.
-
-```json
-{"command": "review-pending-add", "args": {"pr": "<PR>", "review-id": "<id>", "path": "<path>", "line": "<line>", "body": "<comment-n.md>", "format": "error-check"}}
-```
-
-   On success this prints nothing and exits 0; the id and the count come from the read
-   in step 4. A non-zero exit prints the error: stop and report it.
-
-4. **Report from a read, never from the write.** Make the Step 1.3 `review-pending` call once more and
-   take the id, the `state` — it must say `PENDING` — the comment count and the
-   path/line table from THAT output. What a write printed says what was sent, not what
-   the PR now holds. The count to expect is the number of kept items when the review was
-   opened here, and the count Step 1.3 printed plus the kept items when they were added
-   to a review that already existed. A count that does not match is a failure to report,
-   not a detail to smooth over.
-
-5. List the "for the review body" items — those whose anchor sat outside the diff. They
-   are not in the review: their English text is for the user to paste into the review
-   body when submitting.
-
-6. Say, in the user's language, what is left to do: the review is pending and the author
-   sees none of it. The user opens it on GitHub, edits or deletes whatever they want,
-   and submits it there. This skill never submits it.
-
-7. **Report the prepared commits and stop there.** Every item fixed with a green
-   gate left its files staged and a message drafted. List them under "Prepared
-   commits", in the order the items were fixed, each with the subject of its
-   message and the files it covers; say that the word `commit` creates them and
-   that nothing is pushed. **WAIT** for that word. A prepared commit is not a
-   commit: the user may still want to rewrite a message, drop one with
-   `drop <n>`, or commit nothing at all. When no item was fixed, this step and
-   its summary section disappear.
-
-   A prepared commit is unfinished work. When the walkthrough is about to end
-   without that word — the user stands the session down, asks for a handoff or
-   a rotation, or the session must stop for any reason — the last message
-   opens with one line, before any acknowledgment or summary:
-   `STOP: <N> prepared commits not created, say commit or drop`, followed by
-   the list of the prepared commits (subject, files, the path of its message
-   file in the walkthrough's temporary directory), and the walkthrough waits
-   for the word. A session that ends with a prepared commit uncreated has
-   ended on a STOP, not on a summary, and says so in its last line.
-
-8. **On `commit`**, create them in order, one commit per fixed item. The message
-   travels by file, never as an argument — a multi-line message with backticks
-   does not survive shell quoting — and the item's files are named as a pathspec,
-   so each commit carries that item's change and nothing else the walkthrough
-   staged along the way:
-
-```bash
-git commit -F /tmp/claude-pr-review-<PR>/commit-<n>.msg -- <the item's files>
-```
-
-   Two fixed items that changed the same file cannot be separated: commit them
-   together under a message covering both, and say which items share that commit.
-   Report the short SHA and the subject of every commit created. **Nothing is
-   pushed** — pushing is the user's, as submitting the review is.
-
-9. **On `drop <n>` or `drop all`**, discard the prepared commit(s): unstage
-   the item's files, delete its message file, and say so.
-
-```bash
-git restore --staged -- <the item's files>
-```
-
-   `drop all` repeats this for every prepared commit still staged. A `commit`
-   given afterwards creates only the prepared commits left.
-
-```
-## Walkthrough complete
-
-### Kept for the pending review (2)
-- #1: <title> — `path/file.php:132`
-- #3: <title> — `path/file.php:16`
-
-### For the review body (1)
-- #5: <title> — anchor outside the diff
-
-### Commented (1)
-- #6: <title> — <URL>
-
-### Fixed (1)
-- #2: <title> — `path/file.php`, gate green (<the commands>)
-
-### Prepared commits (1)
-1. <the drafted message subject> — `path/file.php` (item #2)
-
-### Skipped (1)
-- #4: <title> — dropped by the user
-
-Review <id> — state PENDING, <N> comments. Read it on GitHub and submit it there.
-
-| path | line | commit_id |
-|---|---|---|
-<the table the read printed, verbatim>
-
-Say `commit` to create the <N> prepared commits, or `drop <n>` / `drop all` to discard them. Nothing is pushed.
-```
-
----
-
 ## Common Mistakes
 
 | Mistake | Why it's wrong | Correct behaviour |
-|---------|----------------|-------------------|
+| --- | --- | --- |
 | Explaining in a language the user did not use | The user reads their own language in chat | Their language in chat, bilingual draft |
 | Asking which language to post in | There is only one answer: English | Post the English version, say nothing |
 | Posting the non-English version | Everything on GitHub is English | Post the English version |

@@ -1,6 +1,6 @@
 # Commands
 
-Read before typing any `iterm-agent.sh` command, and again when one fails, hangs or says on stderr that a fallback served it. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
+Read by section, from its heading to the next: the one SKILL.md names for the moment, never the whole file. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
 
 - Quick reference — `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `pair`, `trust prune`, `tools`, the dry run
 - Agents as windows of a home session — where the launcher puts an agent, what each command does there, `home`, `takeover`

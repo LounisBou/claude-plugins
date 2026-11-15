@@ -365,7 +365,7 @@ export interface Deps {
   readonly cacheDir: string
 }
 
-export const USAGE = 'usage: draft_guard.py <owner/repo> <pr> [--dependents]'
+export const USAGE = 'usage: draft-guard.sh <owner/repo> <pr> [--dependents]'
 
 /** Runs one command line; the exit code. */
 export function main(argv: readonly string[], deps: Deps): number {
