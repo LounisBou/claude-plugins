@@ -38,7 +38,7 @@ const ABSENT = /ENOENT|no such file|not found/i
 const codeOf = (err: unknown): unknown => (typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined)
 
 // Whether a call's answer is a promise, whose rejection can be caught.
-function isCatchable(value: unknown): value is { catch(handler: () => undefined): unknown } {
+export function isCatchable(value: unknown): value is { catch(handler: () => undefined): unknown } {
   return typeof value === 'object' && value !== null && 'catch' in value && typeof value.catch === 'function'
 }
 
