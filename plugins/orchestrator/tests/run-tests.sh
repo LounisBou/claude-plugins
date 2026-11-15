@@ -428,7 +428,7 @@ check "the phase, rotation, comments and review briefs say a message carries the
 check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
-  "$(spells "$ROOT/templates/agent-review-brief.md" 'each finding is ONE line of at most 200 characters')"
+  "$(spells "$ROOT/templates/agent-review-brief.md" 'one line per finding, at most 200 characters')"
 # The comments agent's assessments are rendered to the operator item by item: the 3-line cap
 # and the verdict limit would cut the reviewer's words out of them, so each goes whole to a file.
 check "the comments brief sends each per-thread assessment whole, in a file" "yes" \
@@ -456,9 +456,9 @@ check "the phase and comments briefs say a push runs as one bare command" "yes|y
   "$(for t in phase comments; do spells "$ROOT/templates/agent-$t-brief.md" 'A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command.'; done | paste -sd'|' -)"
 check "the takeover's measure still says how to find the session id and directory" "yes" \
   "$(spells "$ORCH_REFS/succession-successor.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory')"
-# review-round.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
-check "the review brief's finding line ends with the proposed fix" "yes" \
-  "$(spells "$ROOT/templates/agent-review-brief.md" '`[severity] file:line — the claim — the evidence in a few words — proposed fix`')"
+# review-round.md asks for each finding's proposed fix: the index line names its detail file, which ends with it.
+check "the review brief's finding line names its detail file, which ends with the proposed fix" "yes|yes" \
+  "$(spells "$ROOT/templates/agent-review-brief.md" '`<n>. [severity] file:line — title — <its detail file>`')|$(spells "$ROOT/templates/agent-review-brief.md" 'claim, evidence, proposed fix')"
 check "the comments brief's end report carries the threads and their outcomes" "yes" \
   "$(spells "$ROOT/templates/agent-comments-brief.md" 'threads and their outcomes')"
 # Rule 55: the module reports the measured context, and the phase brief no longer forbids an
@@ -1304,7 +1304,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -1526,7 +1526,7 @@ check "review-verdict.md writes the review record with the one call, and nothing
 check "review-thresholds.md judges findings against the design and sets the rest aside" "yes|yes" \
   "$(spells "$RT" 'critical is what contradicts the design or the architecture, and only that is kept')|$(spells "$RT" 'the rest is set aside with its one-line reason, no follow-up row')"
 check "review-thresholds.md reviews no head the verified correction or a rebase moved, and holds no per-PR E2E validation" "yes|yes|no|no|yes" \
-  "$(spells "$RT" 'at the head you reviewed or at the correction'"'"'s head once you verified it')|$(spells "$RT" 'you read only its conflict resolution')|$(spells "$RT" 'is reviewed there before the gate can hold')|$(spells "$RT" 'it is ready once he has validated it ready without one')|$(spells "$RV" "14. **The E2E the pull request's check plan requires is replayed and recorded.**")"
+  "$(spells "$RT" 'at the reviewed head or at the correction'"'"'s head once its reader'"'"'s line is clean')|$(spells "$RT" 'a reader reads only its conflict resolution')|$(spells "$RT" 'is reviewed there before the gate can hold')|$(spells "$RT" 'it is ready once he has validated it ready without one')|$(spells "$RV" "14. **The E2E the pull request's check plan requires is replayed and recorded.**")"
 check "design.md says the E2E validation branch was removed" "yes|no" \
   "$(spells "$ROOT/docs/design.md" 'that branch was removed with the method-drift retirements')|$(spells "$ROOT/docs/design.md" '(`--e2e-waiver`')"
 check "the review reference records the surface before ready" "1" \

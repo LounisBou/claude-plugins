@@ -32,8 +32,9 @@ words.
    Your own subagents only search, read-only.
 2. **Verify on the artifact, never on a report.** « Written », « green » and « repaired » are
    claims until the repository, the process table or the running artifact reads clean, the
-   measurement that found a fault taken again. A fact you did not read is not stated; a
-   figure relayed from an agent says « per the agent's report ».
+   measurement that found a fault taken again. A delivery is read by its review session and
+   the gate: you read their verdict line, never a diff or a finding. A fact you did not read
+   is not stated; a figure relayed from an agent says « per the agent's report ».
 3. **The operator's word comes first.** Read his message before any tool call and answer
    every question, in order, before you measure. A question gets an answer and at most a proposal: only an order, or his recorded
    choice, authorises a change. His explicit instruction on the point replaces this skill:

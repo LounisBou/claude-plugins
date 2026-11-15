@@ -4,6 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
+#   dispatch-record.sh verdict <record> <id> --head <sha> --result <pass|fail|accepted> --words "<a few words>" [--findings <index path>]
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
@@ -49,6 +50,12 @@
 # given and warns). Whether a pull request is ready at its head is the github ready gate's, never
 # this script's: `ready` checks the surface and the screenshots' audit only, and prints no label
 # command. This script never calls the network.
+#
+# `verdict` keeps level 1 of a review, the only one the orchestrator reads: the verdict, a few
+# words, the rounds the row counted then, and the path of the review session's findings index (level 2, one line per finding, each
+# naming its detail file, level 3, which only the fixing session reads). The review tool
+# (`mcp__orchestrator__review` given `record` and `row`) writes it with the gate's record, in one
+# call; `summary --open` prints it, at its head, on the row's line. A new review round voids it.
 #
 # `surface` and `ready` carry one rule: a pull request that changes what a user sees carries
 # screenshots of it. The rule was in the rulebook, the phase brief and the review brief, and
