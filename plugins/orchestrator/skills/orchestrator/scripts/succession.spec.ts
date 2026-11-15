@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +17,10 @@ test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 const NAME = 'Orch: belt'
 const SESSION = 's-orch'
 
+/** A pull request ledger line of the dispatch record: the pull request, with the agent on it. */
+const ledger = (repo: string, pr: number, agent: string): string =>
+  JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status: 'working', agent, since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' })
+
 /** A machine whose state holds open what an orchestration in flight holds. */
 function world(over: { rows?: string; deck?: object; round?: object[] } = {}) {
   const state = join(dir, 'state')
@@ -26,11 +30,13 @@ function world(over: { rows?: string; deck?: object; round?: object[] } = {}) {
     JSON.stringify({ id: 1, label: 'schema', state: 'closed' }),
     JSON.stringify({ id: 2, label: 'api', state: 'open' }),
     JSON.stringify({ id: 3, label: 'ui', state: 'open', deferred: 'ruling 4' }),
+    ledger('acme/app', 12, 'Agent: pr'),
+    ledger('acme/app', 14, 'Agent: pr'),
   ].join('\n') + '\n')
   writeFileSync(join(state, 'deck.json'), JSON.stringify(over.deck ?? {
     version: 3,
     orchestrators: [
-      { name: NAME, machine: null, prs: ['acme/app#12', 'acme/app#14'], agents: [{ name: 'Agent: api' }] },
+      { name: NAME, machine: null, prs: ['acme/other#99'], agents: [{ name: 'Agent: api' }] },
       { name: 'Orch: other', machine: null, prs: ['acme/site#7'], agents: [{ name: 'Agent: site' }] },
     ],
   }))
@@ -54,7 +60,7 @@ test('live writes every open item of the state into the brief, and nothing of an
   assert.equal(w.run('live', '--next', 'review #12'), 0)
   const brief = w.read()
   assert.match(brief, /- Rows open \(id, label, what remains\): open=2 label=api; deferred=3 label=ui ruling=ruling 4\n/)
-  assert.match(brief, /- Pull requests open \(number, head, where each stands\): acme\/app#12; acme\/app#14\n/)
+  assert.match(brief, /- Pull requests open \(number, head, where each stands\): acme\/app#12 en cours \(agent Agent: pr\); acme\/app#14 en cours \(agent Agent: pr\)\n/)
   assert.match(brief, /- Agents running \(name and reference, brief path\): Agent: api\n/)
   assert.ok(brief.includes('[q-2] **Question 1 of 1**\nWhich schema?'))
   assert.ok(!brief.includes('q-1') && !brief.includes('q-3') && !brief.includes('acme/site#7') && !brief.includes('Agent: site'))
@@ -68,13 +74,29 @@ test('live writes every open item of the state into the brief, and nothing of an
   assert.equal(w.run('check'), 0)
 })
 
+test('live names the open pull requests from the ledger, each in its own repository, not from the deck or the row labels', () => {
+  const w = world({
+    rows: [
+      JSON.stringify({ id: 2, label: 'API: merge acme/app#261 and #262 (merged)', state: 'open' }),
+      ledger('acme/plugins', 257, 'Agent: lean'),
+      ledger('acme/plugins', 268, 'Agent: fix-268'),
+      JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/plugins', pr: 270, status: 'waiting', on: 'CI', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' }),
+    ].join('\n') + '\n',
+    // The deck lists bare numbers it files under the session's own repository, merged ones among them.
+    deck: { version: 3, orchestrators: [{ name: NAME, machine: null, prs: ['acme/app#261', 'acme/app#262', 'acme/app#263'], agents: [{ name: 'Agent: api' }] }] },
+  })
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.read(), /- Pull requests open \(number, head, where each stands\): acme\/plugins#257 en cours \(agent Agent: lean\); acme\/plugins#268 en cours \(agent Agent: fix-268\); acme\/plugins#270 attend CI depuis 2026-11-14T09:00Z\n/)
+  assert.ok(!w.read().includes('acme/app#26'.concat('3')) && !/- Pull requests open[^\n]*acme\/app#/.test(w.read()))
+  assert.match(w.out.join(''), / prs=3 /)
+  assert.equal(w.run('check'), 0)
+})
+
 test('check refuses a brief that misses an open item, naming each one', () => {
   const w = world()
   assert.equal(w.run('live', '--next', 'x'), 0)
   // The state moves on after the generation: a new pull request, a new question.
-  const deck = JSON.parse(readFileSync(join(w.state, 'deck.json'), 'utf8'))
-  deck.orchestrators[0].prs.push('acme/app#15')
-  writeFileSync(join(w.state, 'deck.json'), JSON.stringify(deck))
+  appendFileSync(w.record, `${ledger('acme/app', 15, 'Agent: pr')}\n`)
   writeFileSync(join(w.state, 'round', 'q-9.json'), JSON.stringify({ id: 'q-9', session: SESSION, kind: 'operator', status: 'open', question: 'New?' }))
   assert.equal(w.run('check'), 1)
   assert.deepEqual(w.err, [
@@ -237,9 +259,7 @@ test('live prunes nothing the brief does not name, and says a supersession it ke
 test('a check that finds the brief lost part of the state is a method failure in the journal: how much was lost, the pull requests among it', () => {
   const w = world()
   assert.equal(w.run('live', '--next', 'x'), 0)
-  const deck = JSON.parse(readFileSync(join(w.state, 'deck.json'), 'utf8'))
-  deck.orchestrators[0].prs.push('acme/app#15')
-  writeFileSync(join(w.state, 'deck.json'), JSON.stringify(deck))
+  appendFileSync(w.record, `${ledger('acme/app', 15, 'Agent: pr')}\n`)
   writeFileSync(join(w.state, 'round', 'q-9.json'), JSON.stringify({ id: 'q-9', session: SESSION, kind: 'operator', status: 'open', question: 'New?' }))
   const events: Record<string, unknown>[] = []
   const named = ['--name', NAME, '--session', SESSION, '--record', w.record]

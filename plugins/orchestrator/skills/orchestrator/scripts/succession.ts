@@ -9,7 +9,8 @@
 // also matches the round's entries written under it.
 //
 // `live` rewrites the brief's « Live state » from the files that hold it — the dispatch record's
-// open rows, the deck's pull requests and agents of this orchestrator, the round's open questions
+// open rows and its pull request ledger (each open pull request with its repository, its number
+// and who is on it), the deck's agents of this orchestrator, the round's open questions
 // of this session, verbatim — and adds only what needs judgment: the next step and the notes. A
 // note carries the generation it was written in; at the next generation it is promoted into an
 // artifact (`--promote <n>=<path>`, the path of the decision, ruling or record it now lives in) or
@@ -33,6 +34,7 @@ import { fileURLToPath } from 'node:url'
 import { readText, writeAtomic } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
+import { ledgerLines, prKey, statusText } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type PruneResult } from './prune.ts'
 import { recordNamedIn } from './lib/record-paths.ts'
@@ -181,8 +183,12 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
 /** Reads the state this orchestrator holds open from the files that keep it. */
 export function readOpen(request: Request, env: Env): OpenState {
   const state = stateRoot(env)
-  const rows = parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'open')
-  const { prs, agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
+  const recordText = readText(request.record) ?? ''
+  const rows = parseRecord(recordText).filter(row => row['state'] === 'open')
+  // The ledger names each open pull request with its own repository: the deck lists numbers whose
+  // repository it cannot tell, and a merged one lingers there (a ledger line is archived at its merge).
+  const prs = ledgerLines(recordText).map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
+  const { agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
   const round = join(state, 'round')
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
@@ -341,7 +347,10 @@ export function missingItems(brief: string, open: OpenState): string[] {
   const live = liveSection(brief)
   const missing: string[] = []
   for (const row of open.rows) if (!new RegExp(`(?:open|deferred)=${row.id}\\b`).test(live)) missing.push(`dispatch row ${row.id}`)
-  for (const pr of open.prs) if (!live.includes(pr.split(' ')[0] ?? pr)) missing.push(`pull request ${pr}`)
+  for (const pr of open.prs) {
+    const key = pr.split(' ')[0] ?? pr
+    if (!live.includes(key)) missing.push(`pull request ${key}`)
+  }
   for (const agent of open.agents) if (!live.includes(agent)) missing.push(`agent ${agent}`)
   for (const question of open.questions) if (!live.includes(question.id)) missing.push(`question ${question.id}`)
   return missing
