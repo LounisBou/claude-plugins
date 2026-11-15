@@ -1,0 +1,9 @@
+{
+  "$comment": "Each plugin's Python coverage floor, lines and branches together, held by scripts/python-coverage.ts in the plugin's CI cell. A floor is the figure measured, rounded down, and only rises (docs/conventions.md, « Ratchets »): `node scripts/python-coverage.ts <plugin> --measure` prints today's figure.",
+  "floors": {
+    "bugs-bot": 97,
+    "cloudflare": 93,
+    "github": 86,
+    "pr-review": 90
+  }
+}
