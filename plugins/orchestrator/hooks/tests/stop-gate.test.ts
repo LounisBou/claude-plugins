@@ -104,6 +104,11 @@ test('a block copied at a later turn, by its id line or by its question line, is
   expect(restatedQuestions(`Still waiting.\n\n${ASKED_BLOCK}`, [entry])).toEqual(['q-a1b2c3-1'])
   expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-1)\nsomething else', [entry])).toEqual(['q-a1b2c3-1'])
   expect(restatedQuestions('_Question_ : Which one?', [entry])).toEqual(['q-a1b2c3-1'])
+  // A longer question that starts like this one's, or a quote of the block, is judged by whole lines.
+  expect(restatedQuestions('_Question_ : Which one? And why?', [entry])).toEqual([])
+  expect(restatedQuestions('> **Question 1 of 1** (q-a1b2c3-1)', [entry])).toEqual(['q-a1b2c3-1'])
+  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-1) is the one I meant', [entry])).toEqual([])
+  expect(restatedQuestions(ASKED_BLOCK, [entry, { id: 'q-other-1', ask: 'Another?' }])).toEqual(['q-a1b2c3-1'])
   // Another question's id is no copy of this one: the id is matched whole, in its parentheses.
   expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-12)', [entry])).toEqual([])
 })
@@ -152,6 +157,9 @@ test('a question answered or withdrawn may be written again, as one by its subje
   const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
   const bySubject = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'The question on the report is still open.' }))
   expect(bySubject.observed).toBeUndefined()
+  // The same copy, the question being open, is told: the passes above are the question's state, not the text.
+  const open = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
+  expect(open.observed).toBe(RESTATED_REASON)
   // A question another session asked is not this session's to be told of.
   const other = fakeDollar({ round: { 'q-ffffff-1.json': askedHere({ id: 'q-ffffff-1', sender: { session: 'ffffff', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
   const elsewhere = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))

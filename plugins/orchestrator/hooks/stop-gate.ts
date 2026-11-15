@@ -378,13 +378,14 @@ export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
   return named
 }
 
-// The ids of the open questions a turn's final text copies: its id line (`**Question i of N** (<id>)`)
-// or its `_Question_ : …` line verbatim. A mention by subject, or an id inside a sentence, copies
-// nothing. The caller hands only the questions asked in an earlier turn.
+// The ids of the open questions a turn's final text copies: a line that is its id line
+// (`**Question i of N** (<id>)`) or its `_Question_ : <ask>` line, whole, a quote mark aside. A mention
+// by subject, an id inside a sentence or a longer question that starts alike copies nothing. The
+// caller hands only the questions asked in an earlier turn.
 export function restatedQuestions(message: string, open: readonly { id: string; ask: string }[]): string[] {
-  const lines = message.split('\n')
+  const lines = message.split('\n').map(line => line.replace(/^\s*(?:>\s*)*/, '').trim())
   return open
-    .filter(q => lines.some(line => line.includes(`(${q.id})`) && /\bQuestion \d+ of \d+\b/.test(line)) || message.includes(`_Question_ : ${q.ask}`))
+    .filter(q => lines.some(line => line === `_Question_ : ${q.ask}` || (line.endsWith(`(${q.id})`) && /^\**Question \d+ of \d+\b/.test(line))))
     .map(q => q.id)
 }
 
