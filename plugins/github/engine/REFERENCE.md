@@ -44,7 +44,7 @@ below, and the `args` object holds the subcommand's arguments.
 statuses and each check's latest run, less a skipped or neutral one of a run older than its
 workflow's latest (greatest run id) if that has a check, plus each required check not yet reported (running). `ci.result`: `FAILURE` if one failed
 (`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
-`skipped`, or `neutral` on a draft), else `SUCCESS`; no check at all is `PENDING` (CI not started). Actions call failed: `error:` on stderr, every
+`skipped`, or `neutral` on a draft), else `SUCCESS`; no check at all is `PENDING` (CI not started), or `NONE` in a repository with no CI configured (no active workflow, no required check, no check run or status on the default branch), which the gate counts as no CI to wait for (the Ready line says `no CI configured`). Actions call failed: `error:` on stderr, every
 run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
 instead.
 
@@ -65,7 +65,7 @@ exits 3 naming the request's uuid if the merge fails or times out. Other errors 
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-threads` | `<pr>` | Open review threads as a table (`thread-summary`); `--json`: all of them (GraphQL) |
+| `pr-threads` | `<pr>` | Open review threads as a table (`thread-summary`: thread, file, line, first author and their `authorAssociation`); `--json`: all of them (GraphQL), each comment with `authorAssociation` |
 | `pr-comments` | `<pr>` | A line per inline review comment (`review-comments`); `--json`: the comments, paginated |
 | `pr-issue-comments` | `<pr>` | General PR comments as a table (`issue-comments-summary`); `--json`: the comments, paginated |
 | `pr-reviews` | `<pr>` | A line per review (`reviews-summary`); `--json`: the review bodies, paginated |
@@ -177,7 +177,7 @@ else `raw`. `--json` (or `--format raw`) is the full object a program parses; a 
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
-| `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
+| `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING\|NONE, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
 | `resolve-status` | `thread-resolve` | `resolved` or `unresolved` |

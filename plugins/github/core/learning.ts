@@ -472,14 +472,28 @@ export function foldDropped(dropped: ReadonlyArray<{ readonly id: string; readon
 // repositories they name) and nothing a session judges: the cause, the remedy and its scope are the
 // retrospective's.
 
+/**
+ * The code of a reviewer's thread that /norms:learn hands to the distiller: written only for a thread
+ * code showed acted on (resolved, its lines changed after it) whose author can write to the repository.
+ */
+export const THREAD_CODE = 'norms.thread'
+
 export const CANDIDATE_CONTRACT = {
   version: 1,
   // A cluster becomes a candidate at this many events, from this many pull requests, within the window.
   min_events: 3,
   min_prs: 2,
-  // The trusts whose events form a cluster: an `external` event is a pointer, never a count.
+  // The trusts whose events form a cluster: an `external` event is a pointer, never a count, except
+  // under a code whose writer checked it in code first (a thread acted on, by an author who can write).
   trusts: ['computed', 'operator', 'review'],
+  counted_external: [THREAD_CODE],
 } as const
+
+/** Whether an event counts toward a cluster: a trust that forms one, or an external event its writer checked. */
+export function countsInCluster(event: Pick<LearningEvent, 'trust' | 'source'>): boolean {
+  if (CANDIDATE_CONTRACT.trusts.some(trust => trust === event.trust)) return true
+  return event.trust === 'external' && CANDIDATE_CONTRACT.counted_external.some(code => code === event.source.code)
+}
 
 export const CANDIDATE_VERSION = CANDIDATE_CONTRACT.version
 
@@ -733,6 +747,87 @@ export function candidateStateDir(configDir: string): string {
 /** The file of a signature's state: the signature, its `:` written `_`, which no signature holds. */
 export function candidateStateFile(signature: string): string {
   return `${signature.replaceAll(':', '_')}.json`
+}
+
+// ----- a learned guard: warn, then enforce -----
+//
+// A guard the retrospective proposed (a remedy whose rung is `guard`) ships in warn once its pull
+// request merges: it lets the call through and leaves an escape under its own code, the refusal it
+// would have answered as its evidence. A would-be refusal is right when the pull request it named was
+// corrected after it, wrong when that pull request merged with no correction, open while it has not
+// merged. The guard is enforced once enough would-be refusals are decided and enough of those are
+// right: nine in ten of at least five (design, section 4). Until then, and for any state but merged, it
+// warns. The phase a guard runs in is a constant of its plugin's code, raised to `enforce` by a pull
+// request when `guardPhase` answers it, so a guard never reads another plugin's state.
+
+export const LEARNED_GUARD_CONTRACT = {
+  phases: ['warn', 'enforce'],
+  min_decided: 5,
+  min_right_ratio: 0.9,
+} as const
+
+export type GuardPhase = (typeof LEARNED_GUARD_CONTRACT.phases)[number]
+export type WouldBeVerdict = 'right' | 'wrong' | 'open'
+
+/** What the forge says of the pull request a would-be refusal named, after the refusal. */
+export interface PrOutcome {
+  readonly merged: boolean
+  /** A commit was pushed to the pull request after the would-be refusal, before its merge. */
+  readonly corrected: boolean
+}
+
+/** A would-be refusal's verdict from its pull request's outcome: right when corrected, wrong when merged uncorrected, else open. */
+export function wouldBeVerdict(outcome: PrOutcome): WouldBeVerdict {
+  if (outcome.corrected) return 'right'
+  return outcome.merged ? 'wrong' : 'open'
+}
+
+/** The would-be refusals of a learned guard: the escapes under its code, by the pull request each names (`owner/name#7`); those that name none are left out. */
+export function wouldBeRefusals(events: readonly LearningEvent[], code: string): Map<string, LearningEvent[]> {
+  const byPr = new Map<string, LearningEvent[]>()
+  for (const event of events) {
+    if (event.kind !== 'escape' || event.source.code !== code) continue
+    const { repo, pr } = event.subject
+    if (repo === null || pr === null) continue
+    const key = `${repo}#${pr}`
+    byPr.set(key, [...(byPr.get(key) ?? []), event])
+  }
+  return byPr
+}
+
+export interface GuardTally {
+  readonly right: number
+  readonly wrong: number
+  readonly open: number
+}
+
+export function tallyOf(verdicts: readonly WouldBeVerdict[]): GuardTally {
+  return {
+    right: verdicts.filter(v => v === 'right').length,
+    wrong: verdicts.filter(v => v === 'wrong').length,
+    open: verdicts.filter(v => v === 'open').length,
+  }
+}
+
+/** Whether the would-be refusals reach the design's precision: at least `min_decided` decided, `min_right_ratio` of them right. */
+export function isEnforceable(tally: GuardTally): boolean {
+  const decided = tally.right + tally.wrong
+  return decided >= LEARNED_GUARD_CONTRACT.min_decided && tally.right >= LEARNED_GUARD_CONTRACT.min_right_ratio * decided
+}
+
+/**
+ * The phase a learned guard runs in: `enforce` once its candidate's remedy, a guard, merged and its
+ * would-be refusals reach the precision; `warn` for a guard remedy in any other case; undefined for a
+ * state whose remedy is no guard.
+ */
+export function guardPhase(state: CandidateState, verdicts: readonly WouldBeVerdict[]): GuardPhase | undefined {
+  if (state.remedy?.rung !== 'guard') return undefined
+  return state.state === 'merged' && isEnforceable(tallyOf(verdicts)) ? 'enforce' : 'warn'
+}
+
+/** What a learned guard does with a call it would refuse: in warn it lets it through and leaves an escape, enforced it refuses and leaves a refusal. */
+export function learnedDecision(phase: GuardPhase, refusal: string): { readonly deny: string | undefined; readonly kind: 'escape' | 'refusal' } {
+  return phase === 'enforce' ? { deny: refusal, kind: 'refusal' } : { deny: undefined, kind: 'escape' }
 }
 
 // ----- the retrospective's start -----

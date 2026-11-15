@@ -2,6 +2,7 @@
 // it: the environment, the clock, the script's own directory, the commands it runs and the
 // streams it writes. A refusal is thrown as a Refusal and said once, by the entry point.
 import { join } from 'node:path'
+import { MODULE_DIR } from '../../../core/orchestration.ts'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
 
 export interface RunResult {
@@ -9,6 +10,12 @@ export interface RunResult {
   readonly status: number
   readonly stdout: string
   readonly stderr: string
+}
+
+/** Where a command runs, and the environment it gets when not the coordinator's own. */
+export interface RunOptions {
+  readonly cwd?: string
+  readonly env?: Env
 }
 
 export interface Context {
@@ -20,7 +27,7 @@ export interface Context {
   readonly out: (line: string) => void
   readonly err: (line: string) => void
   /** Runs a command with no input and returns what it printed and how it ended. */
-  readonly run: (command: string, args: readonly string[]) => RunResult
+  readonly run: (command: string, args: readonly string[], options?: RunOptions) => RunResult
   readonly sleep: (ms: number) => void
   /** Whether a process of that id exists. */
   readonly isRunning: (pid: number) => boolean
@@ -43,16 +50,14 @@ export function say(ctx: Context, message: string): void {
   ctx.err(`coordinator: ${message}`)
 }
 
-const PLUGIN = 'claude-orchestrator'
-
 /** The orchestrator's state directory: ORCHESTRATOR_STATE_DIR, else the plugin's under the configuration directory. */
 export function stateOf(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(PLUGIN, env)
+  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env)
 }
 
 /** The hooks module's own directory (its store): ORCHESTRATOR_MODULE_DIR, as the module reads it. */
 export function moduleOf(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_MODULE_DIR') ?? stateDir(PLUGIN, env)
+  return setting(env, 'ORCHESTRATOR_MODULE_DIR') ?? stateDir(MODULE_DIR, env)
 }
 
 /** A UTC time to the second, as every record of the coordinator stamps it. */
