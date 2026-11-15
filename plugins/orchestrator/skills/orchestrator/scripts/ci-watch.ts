@@ -161,8 +161,8 @@ export interface Deps {
   readonly sleep: (seconds: number) => Promise<void>
   /** Milliseconds, for the bounds. */
   readonly now: () => number
-  /** The draft guard classifier beside this script. */
-  readonly draftGuard: string
+  /** The command that runs the draft guard classifier beside this script, its arguments to follow. */
+  readonly draftGuard: readonly [string, ...string[]]
   /** The github plugin's `pr-gate` of the pull request, as JSON: the one reading of what CI the head still awaits. */
   readonly gate: (repo: string, pr: string) => Promise<Ran>
   /** Takes the watch's start and end for the audit trail (lib/audit.ts); none, nothing is written. */
@@ -190,8 +190,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const draftGuard = async (...args: string[]): Promise<string> => {
     const name = resolved
     if (name === undefined || name === '') throw unread(pr, 'gh repo view failed: no repository read')
-    const ran = await deps.run(['python3', deps.draftGuard, name, pr, ...args], { stderr: 'pipe' })
-    if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft_guard.py failed')
+    const ran = await deps.run([...deps.draftGuard, name, pr, ...args], { stderr: 'pipe' })
+    if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft guard failed')
     return chomp(ran.stdout)
   }
 
@@ -523,7 +523,7 @@ if (isEntry(import.meta.url)) {
     io: processIo,
     sleep: seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000)),
     now: () => Date.now(),
-    draftGuard: join(dirname(fileURLToPath(import.meta.url)), 'draft_guard.py'),
+    draftGuard: [process.execPath, '--no-warnings', join(dirname(fileURLToPath(import.meta.url)), 'draft-guard.ts')],
     gate: readGate,
     journal: scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)),
   })
