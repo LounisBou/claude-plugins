@@ -2206,10 +2206,18 @@ for (const [label, until] of [['an expiry behind', BEHIND], ['an expiry that is 
     expect(readinessRuns(seen)).toEqual([])
     const merge: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
     expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
-    expect(merge.deny).toContain('E2E exemption of acme/thing expired at ' + until + ': it no longer excuses E2E.')
+    expect(merge.deny).toContain('E2E exemption of acme/thing expired at ' + until + ': it no longer excuses E2E')
     expect(merge.deny.split('expired at').length).toBe(2)
   })
 }
+
+test('the gate takes a Ready pull request back to Not Ready on an expired exemption, its one line saying why', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: BEHIND }, labels: ['Ready'], draft: false })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'not-ready' }]])
+  expect(seen.logs.join('\n')).toContain('E2E exemption of acme/thing expired at ' + BEHIND)
+})
 
 test('an exemption whose expiry cannot be read exempts nothing', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
@@ -2343,6 +2351,14 @@ test('an expiry the operator\'s question did not state is refused', async ($, on
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
+test('an exemption with no expiry is refused to an answer whose question stated one', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + AHEAD + '?'))
+  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
+  expect(out.deny).toContain('to a question that states no expiry')
+  expect(seen.files[EXEMPTION]).toBeUndefined()
+})
+
 test('an expiry is refused to an answer whose question states none', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
   const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
@@ -2352,7 +2368,7 @@ test('an expiry is refused to an answer whose question states none', async ($, o
 })
 
 // The operator's own answer, as relayed, to a question asking the exemption until the Paris noon of 2026-11-16 (11:00 UTC).
-test('the operator\'s answer « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris » records the exemption until 11:00 UTC', async ($, on) => {
+test('the operator\'s answer « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris » is quoted for an exemption until 11:00 UTC, the instant its question states', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
   const repo = 'geonativefr/geo-git-flow'
   const until = '2026-11-16T11:00:00Z'
@@ -2371,6 +2387,8 @@ test('an expiry that is past, unreadable or given to a revocation is refused', a
   const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + BEHIND + ', tomorrow, 2026-02-31T00:00:00Z?'))
   const past: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: BEHIND }))
   expect(past.deny).toContain('already past')
+  const now: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: '2026-11-02T12:00:00Z' }))
+  expect(now.deny).toContain('already past')
   for (const until of ['tomorrow', '2026-11-03', '2026-11-03T12:00:00+01:00', '2026-02-31T00:00:00Z', 7]) {
     const bad: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until }))
     expect(bad.deny, String(until)).toContain('"until" is the instant the exemption ends')

@@ -145,5 +145,5 @@ test('an exemption with an expiry has run out at that instant, not before; one w
 test('the lines of an exemption with an expiry name it, the one that ran out says it no longer excuses E2E', () => {
   const limited = { ...EXEMPTION, until: '2026-11-15T22:00:00Z' }
   expect(exemptionLine(limited)).toBe('E2E exemption of acme/thing, 2026-11-13, until 2026-11-15T22:00:00Z: no E2E on thing, 2026-11-13')
-  expect(expiryLine(limited)).toBe('E2E exemption of acme/thing expired at 2026-11-15T22:00:00Z: it no longer excuses E2E.')
+  expect(expiryLine(limited)).toBe('E2E exemption of acme/thing expired at 2026-11-15T22:00:00Z: it no longer excuses E2E')
 })

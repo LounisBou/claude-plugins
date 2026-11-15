@@ -1063,15 +1063,16 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
   }
 }
 
-// Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read runs it out:
-// the exemption the operator limited counts only while it is known to stand. One with no expiry never reads the clock.
-async function runOut($: any, exemption: Exemption): Promise<boolean> {
+// Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read answers
+// `unreadable`: the gate runs it out (the exemption the operator limited excuses only while it is known to stand),
+// the labels keep it standing (a session never frees them on a clock that fails). One with no expiry never reads the clock.
+async function runOut($: any, exemption: Exemption, unreadable = true): Promise<boolean> {
   if (exemption.until === undefined) return false
   try {
     const now = Number(await $.clock.now())
-    return !Number.isFinite(now) || expired(exemption, now)
+    return Number.isFinite(now) ? expired(exemption, now) : unreadable
   } catch {
-    return true
+    return unreadable
   }
 }
 
@@ -1097,7 +1098,7 @@ async function labellingRepo($: any, named: string | undefined): Promise<string 
 async function exemptLabelRefusal($: any, labelling: Labelling, repo: string | undefined): Promise<string | undefined> {
   if (!repo) return undefined
   const read = await readExemption($, repo)
-  const exemption = read && (await runOut($, read)) ? undefined : read
+  const exemption = read && (await runOut($, read, false)) ? undefined : read
   const named = labelling.opaque && exemption?.exempt ? [...exemption.labels] : exemptingLabels(exemption, labelling.labels)
   if (named.length === 0) return undefined
   return 'github: ' + labelling.name + ' refused: ' + named.join(', ') + ' exempts pull requests of ' + repo
@@ -1114,12 +1115,14 @@ async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
   return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
 }
 
-// What a pull request misses, and one line more when its repository's exemption ran out while E2E is missing: the
-// operator's limit is why the exemption no longer stands for it.
+// What a pull request misses, and one line more when its repository's exemption ran out while its E2E record is
+// missing: the operator's limit is why the exemption no longer stands for it. A rule by labels it does not carry,
+// or an E2E that failed, was never the exemption's to excuse: no line. A rule by paths is not read here, the line stays.
 async function missingWithExpiry($: any, gate: Gate, missing: string[]): Promise<string[]> {
-  if (!missing.some((item) => item.startsWith('e2e:'))) return missing
+  if (!missing.some((item) => item.startsWith('e2e: no record'))) return missing
   const exemption = await readExemption($, gate.repo)
-  return exemption?.exempt && (await runOut($, exemption)) ? [...missing, expiryLine(exemption)] : missing
+  if (!exemption?.exempt || !(await runOut($, exemption))) return missing
+  return exemption.paths.length > 0 || covers(exemption, gate.labels, undefined) ? [...missing, expiryLine(exemption)] : missing
 }
 
 // The pull request's check plan as it stands, or undefined when there is none or it cannot be read: then it owes every proof.
@@ -1884,6 +1887,9 @@ const RULES_MAX = 50
 const isRule = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
 
+// An instant written as an exemption's expiry is, anywhere in a question.
+const STATES_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/
+
 // The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
 // requests from E2E (all, or those a rule names), or revokes it, in their words.
 async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
@@ -1904,15 +1910,17 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     if (typeof until !== 'string' || !isInstant(until)) {
       return { deny: 'github: "until" is the instant the exemption ends, in UTC to the second: 2026-11-15T22:00:00Z.' }
     }
-    if (Date.parse(until) <= Number(await $.clock.now())) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
+    const now = await Promise.resolve($.clock.now()).then(Number, () => NaN)
+    if (!(Date.parse(until) > now)) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
   }
   const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  const stated = until === undefined ? undefined : (question: string) => question.includes(until)
+  // A question that states an expiry asks a limited exemption: it grants no other, so an exemption with none needs a question that states none.
+  const stated = until === undefined ? (question: string) => !STATES_INSTANT.test(question) : (question: string) => question.includes(until)
   if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given), stated))) {
     return {
       deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
         + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
-        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? '' : ', to a question that states its expiry ' + until)
+        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? ', to a question that states no expiry' : ', to a question that states its expiry ' + until)
         + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
     }
   }

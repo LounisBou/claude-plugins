@@ -122,7 +122,7 @@ export function expired(exemption: Exemption, now: number): boolean {
 
 /** What the ready gate says of an exemption that ran out: it no longer excuses E2E. */
 export function expiryLine(exemption: Exemption): string {
-  return 'E2E exemption of ' + exemption.repo + ' expired at ' + exemption.until + ': it no longer excuses E2E.'
+  return 'E2E exemption of ' + exemption.repo + ' expired at ' + exemption.until + ': it no longer excuses E2E'
 }
 
 /** The file of a repository's exemption under the plugin's data directory, or a throw for a name that is no repository. */
