@@ -8,13 +8,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
 import { ROLES } from '../../../../core/names.ts'
-import { MEASURE_DIR, moduleDirOf, parseMeasure } from '../../../../core/orchestration.ts'
+import { MEASURE_DIR, moduleDirOf, parseMeasure, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
 
 /** The orchestrator's directories under its module directory (docs/contracts.md, « Weekly report reads »). */
 export const RECORDS_DIR = 'records'
-export const ROUND_DIR = 'round'
 
 /** What each figure of the target is held to. */
 export const TARGETS = { contextTokens: 200_000, generationMs: 2 * 3_600_000, firstTurnTokens: 60_000, lineToMergeMs: 3_600_000, toolSpendPercent: 20 } as const
@@ -454,7 +453,7 @@ export function report(input: ReportInput): string[] {
   out.push(`  cost of sessions that name no pull request or several: ${usd(unnamed)}${prCost.size === 0 ? ' (no tool call of the week names its pull request: the per-pull-request cost is n/a)' : ''}`)
 
   // Questions and refusals per day.
-  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, 'archive'), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
+  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, ROUND_ARCHIVE_DIR), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
   const refusals = new Map<string, { all: number; plugin: number }>()
   /** The plugins the events name as having refused a call. */
   const deciders = new Set<string>()
