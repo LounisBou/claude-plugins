@@ -13,7 +13,7 @@ import {
 import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
-  covers, EXEMPT_DIR, exemptingLabels, exemptionLine, exemptionPath, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
@@ -1063,6 +1063,19 @@ async function readExemption($: any, repo: string): Promise<Exemption | undefine
   }
 }
 
+// Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read answers
+// `unreadable`: the gate runs it out (the exemption the operator limited excuses only while it is known to stand),
+// the labels keep it standing (a session never frees them on a clock that fails). One with no expiry never reads the clock.
+async function runOut($: any, exemption: Exemption, unreadable = true): Promise<boolean> {
+  if (exemption.until === undefined) return false
+  try {
+    const now = Number(await $.clock.now())
+    return Number.isFinite(now) ? expired(exemption, now) : unreadable
+  } catch {
+    return unreadable
+  }
+}
+
 // Whether a labelling is observed: it puts or takes off a label the repository's exemption names, which
 // would cover or uncover pull requests without the operator. A labelling that may move any label
 // (opaque) is observed when the exemption names one. A repository that cannot be named has no
@@ -1084,7 +1097,8 @@ async function labellingRepo($: any, named: string | undefined): Promise<string 
 
 async function movesExemptLabel($: any, labelling: Labelling, repo: string | undefined): Promise<boolean> {
   if (!repo) return false
-  const exemption = await readExemption($, repo)
+  const read = await readExemption($, repo)
+  const exemption = read && (await runOut($, read, false)) ? undefined : read
   const named = labelling.opaque && exemption?.exempt ? [...exemption.labels] : exemptingLabels(exemption, labelling.labels)
   return named.length > 0
 }
@@ -1093,10 +1107,20 @@ async function movesExemptLabel($: any, labelling: Labelling, repo: string | und
 // file or a list of files that cannot be read) covers nothing: the E2E record is asked as before.
 async function e2eExemptionOf($: any, gate: Gate): Promise<string | undefined> {
   const exemption = await readExemption($, gate.repo)
-  if (!exemption?.exempt) return undefined
+  if (!exemption?.exempt || (await runOut($, exemption))) return undefined
   let files: PrFile[] | undefined
   if (exemption.paths.length > 0) files = await prFiles($, gate.repo, Number(gate.pr)).catch(() => undefined)
   return covers(exemption, gate.labels, files) ? exemptionLine(exemption) : undefined
+}
+
+// What a pull request misses, and one line more when its repository's exemption ran out while its E2E record is
+// missing: the operator's limit is why the exemption no longer stands for it. A rule by labels it does not carry,
+// or an E2E that failed, was never the exemption's to excuse: no line. A rule by paths is not read here, the line stays.
+async function missingWithExpiry($: any, gate: Gate, missing: string[]): Promise<string[]> {
+  if (!missing.some((item) => item.startsWith('e2e: no record'))) return missing
+  const exemption = await readExemption($, gate.repo)
+  if (!exemption?.exempt || !(await runOut($, exemption))) return missing
+  return exemption.paths.length > 0 || covers(exemption, gate.labels, undefined) ? [...missing, expiryLine(exemption)] : missing
 }
 
 // The pull request's check plan as it stands, or undefined when there is none or it cannot be read: then it owes every proof.
@@ -1136,7 +1160,8 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     throw err
   }
   const carried = await carriedRecords($, gate, files)
-  return { gate, missing: missingItems(gate, files, sha, await excusedOf($, gate), carried, 'gate', await lightCiOffOf($, gate)), carried }
+  const missing = missingItems(gate, files, sha, await excusedOf($, gate), carried, 'gate', await lightCiOffOf($, gate))
+  return { gate, missing: await missingWithExpiry($, gate, missing), carried }
 }
 
 /*
@@ -1163,7 +1188,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
     const files = await headRecords($, gate)
     carried = await carriedRecords($, gate, files)
     const off = await lightCiOffOf($, gate)
-    missing = missingItems(gate, files, undefined, excused, carried, undefined, off)
+    missing = await missingWithExpiry($, gate, missingItems(gate, files, undefined, excused, carried, undefined, off))
     accepted = reviewAccepted(gate, files)
     ciText = stackedCi(gate, files, carried, off)
   } catch (err: any) {
@@ -1566,9 +1591,12 @@ async function consentRecords($: any, repo: string): Promise<ConsentRecord[]> {
 
 // True when some consent record of the subject, written for the operator's answer to the
 // question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
-// itself says what `carries` asks of the operator's words.
-async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
-  return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
+// itself says what `carries` asks of the operator's words, and the question it answered what `asked` requires.
+async function consentAnswered(
+  $: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean, asked?: (question: string) => boolean,
+): Promise<boolean> {
+  return (await consentRecords($, subject.repo)).some((record) =>
+    quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))) && (!asked || asked(record.question)))
 }
 
 // The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
@@ -1857,6 +1885,9 @@ const RULES_MAX = 50
 const isRule = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
 
+// What a question says of a limit, in words (French or English), a date or a time of day, or as the instant `until` takes.
+const NAMES_LIMIT = /jusqu|until|ce soir|tonight|expir|valable|\d{4}-\d{2}-\d{2}T|\d{1,2}\/\d{1,2}|\b\d{1,2}\s?h\b/i
+
 // The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
 // requests from E2E (all, or those a rule names), or revokes it, in their words.
 async function setExemption($: any, e: any, detail: string): Promise<{ result?: string; deny?: string; isError?: boolean }> {
@@ -1871,12 +1902,24 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   if (detail.length > DETAIL_MAX) {
     return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters.' }
   }
+  const until: string | undefined = e.until === undefined || e.until === null ? undefined : e.until
+  if (until !== undefined) {
+    if (!e.exempt) return { deny: 'github: an E2E exemption is revoked with no "until": only one that is granted has an expiry.' }
+    if (typeof until !== 'string' || !isInstant(until)) {
+      return { deny: 'github: "until" is the instant the exemption ends, in UTC to the second: 2026-11-15T22:00:00Z.' }
+    }
+    const now = await Promise.resolve($.clock.now()).then(Number, () => NaN)
+    if (!(Date.parse(until) > now)) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
+  }
   const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given)))) {
+  // A question that names a limit asks a limited exemption: it grants no other, so an exemption with no `until` needs a question that names none.
+  const stated = until === undefined ? (question: string) => !NAMES_LIMIT.test(question) : (question: string) => question.includes(until)
+  if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given), stated))) {
     return {
       deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
         + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
-        + (e.exempt ? ', the exemption and each rule as given' : '') + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
+        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? ', to a question that names no limit' : ', to a question that states its expiry ' + until)
+        + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
     }
   }
   const dir = await dataDir($)
@@ -1889,7 +1932,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   }
   const exempt: boolean = e.exempt
   const kept = exempt ? { paths: paths.map((p: string) => p.trim()), labels: labels.map((l: string) => l.trim()) } : { paths: [], labels: [] }
-  const body = { v: 1, repo: repo.toLowerCase(), exempt, ...kept, detail, session, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }
+  const body = { v: 1, repo: repo.toLowerCase(), exempt, ...kept, detail, session, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), ...(until === undefined ? {} : { until }) }
   const path = exemptionPath(dir, repo)
   await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(body, null, 2) + '\n'))
   if (!exempt) return { result: 'github: ' + repo + ' no longer exempt from E2E' }
@@ -1897,7 +1940,7 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     ...(kept.labels.length > 0 ? ['carrying ' + kept.labels.join(' or ')] : []),
     ...(kept.paths.length > 0 ? ['whose files all match ' + kept.paths.join(' or ')] : []),
   ]
-  return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') }
+  return { result: 'github: ' + repo + ' exempt from E2E for ' + (rules.length > 0 ? 'its pull requests ' + rules.join(' or ') : 'all its pull requests') + (until === undefined ? '' : ' until ' + until) }
 }
 
 // pr-plan {pr}: the pull request's check plan as the gate reads it, as JSON, or the line that says it has none.
@@ -2173,8 +2216,8 @@ export function register(on: any): void {
         description:
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
           + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived once the operator granted it. '
-          + '{repo, exempt, paths?, labels?} exempts a repository\'s pull requests for good (false revokes) and '
-          + 'quotes the operator\'s answer in a consent record. See '
+          + '{repo, exempt, paths?, labels?, until?} exempts a repository\'s pull requests for good, or until the instant given '
+          + '(false revokes) and quotes the operator\'s answer in a consent record. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
@@ -2187,6 +2230,7 @@ export function register(on: any): void {
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
+            until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z); the question asking it states it' },
             plan: {
               type: 'object',
               description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
