@@ -9,6 +9,11 @@
 // An option never set leaves its line alone: the options always read back their
 // defaults, so writing those would erase every hand edit on the first load.
 
+import type { Host, Named, On } from '../core/host.ts'
+
+// What the module reads of the host.
+export type StatusbarHost = Host<'env' | 'fs' | 'process' | 'plugin' | 'settings'> & Named
+
 // The fourteen settings, in the order the file and the config menu list them.
 export const KEYS = [
   'SHOW_DIRECTORY',
@@ -66,7 +71,7 @@ export function isOwnRow(key: string, plugin: string): boolean {
 
 // The config file the script reads, by the script's own rule: STATUSBAR_CONFIG,
 // else the config directory's statusline-config.txt.
-async function configPath($: any): Promise<string> {
+async function configPath($: StatusbarHost): Promise<string> {
   const override = await $.env.get('STATUSBAR_CONFIG')
   if (override) return override
   const dir = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
@@ -75,7 +80,7 @@ async function configPath($: any): Promise<string> {
 
 // Writes the options the person has set into the file. Writes nothing when none
 // is set or the file already says the same.
-async function syncFromSettings($: any): Promise<void> {
+async function syncFromSettings($: StatusbarHost): Promise<void> {
   const stored = storedOptions(await $.settings.read(), $.plugin.name)
   if (Object.keys(stored).length === 0) return
   const path = await configPath($)
@@ -84,21 +89,21 @@ async function syncFromSettings($: any): Promise<void> {
   if (merged !== existing) await $.fs.write(path, merged)
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<StatusbarHost>): void {
   // At the start of each session, so a session that begins after a change made
   // elsewhere (the settings file edited by hand) picks it up. A failure only
   // leaves the file as it was: the script keeps reading what is there, and the
   // net lets the start through.
-  on('session.start', async ($: any, e: any, next: any) => {
+  on('session.start', async ($, e, next) => {
     await syncFromSettings($)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
   // And as each option is changed in the config menu, once the host has stored
   // it, so the bar follows the toggle without waiting for the next session.
-  on('config.set', async ($: any, e: any, next: any) => {
+  on('config.set', async ($, e, next) => {
     const result = await next(e)
     if (isOwnRow(String(e.key), $.plugin.name)) await syncFromSettings($)
     return result
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 }
