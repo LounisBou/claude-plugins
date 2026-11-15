@@ -44,6 +44,16 @@ test('a backticked absolute path exists, is expected, or is a slash command', ()
   ])
 })
 
+test('a review brief\'s index is a file the review writes: it lints clean while every other missing path is flagged', () => {
+  const over = { exists: (p: string) => p === '/there' }
+  const review = (index: string, spec: string): string => `1. Spec: \`${spec}\`\n\n2. **Your index**, \`${index}\`, a new file that is yours alone (never the implementer's report): one line per finding.\n`
+  assert.deepEqual(texts(review('/b/review-index.md', '/there'), over), [])
+  assert.deepEqual(texts(review('/b/review-index.md', '/nowhere/spec.md'), over), ['1: path does not exist: /nowhere/spec.md'])
+  // Only the line of §4 that names the index is excused; the same path elsewhere is still a missing file.
+  assert.deepEqual(texts('`/b/review-index.md`\n', over), ['1: path does not exist: /b/review-index.md'])
+  assert.deepEqual(texts(`${review('/b/review-index.md', '/there')}Read \`/b/review-index.md\`.\n`, over), ['4: path does not exist: /b/review-index.md'])
+})
+
 test('an implementer brief names one orchestrator and a spec field', () => {
   assert.deepEqual(texts('# p\n\nYou are the implementer for this phase.\n'), [
     '1: no orchestrator address: name the exact ListAgents name and reference',
