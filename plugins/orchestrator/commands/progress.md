@@ -4,7 +4,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-r
 ---
 
 Report the state of the whole build to the user, from the artifacts — never
-from the state file alone, never from memory of what was said.
+from the rows alone, never from memory of what was said.
 
 The hooks module answers this command on the spot, with no model turn: from the dispatch
 records this session registered, one `goals met=<m>/<n> ruled_out=<k> open=<ids> unplanned=<ids>` line
@@ -12,25 +12,25 @@ per record with a `goals.md` beside it, one `open=<id> label=<label>` line per r
 `deferred=<id> label=<label> ruling=<his words>` for a row the operator deferred (put off by his
 ruling, never work to dispatch),
 then the tally `dispatches=<n> closed=<n> rounds_avg=<n>`. It reads no pull request and
-corrects no state file. The steps below run only when that answer fails; a report to the
-user still follows them by hand, and correcting the state file from the artifacts is the
+corrects no row. The steps below run only when that answer fails; a report to the
+user still follows them by hand, and correcting the rows from the artifacts is the
 rulebook's principle 4, « Re-read before you ask, propose or report », due at every quiet boundary
 whatever this command printed.
 
-1. Read the project's state file (the one the `orchestrator:orchestrator` skill
-   says status lives in), the plan's phase list, and the briefs directory.
+1. Read the dispatch record's open rows (`dispatch-record.sh summary <record> --open`: state,
+   blocker, note, verdict line) and the goals' plan (`goals <record> status`).
 2. Verify on the artifacts: for every phase the plan names, its branch and PR
    (`gh pr list --state all`), CI state, whether it is merged, reviewed, in
    fix-up, or not started; the head of `main`; live agents (`ListAgents`); and
    each pending decision, still open on its own artifact.
-   The state file is what was last seen, the artifacts are what is: where they
-   disagree, the artifacts win and the state file is CORRECTED in this same
-   turn, before anything is presented. A PR found merged or closed is reported
+   A row is what was last recorded, the artifacts are what is: where they
+   disagree, the artifacts win and the row is CORRECTED in this same
+   turn (`close`, `blocker`, `note`), before anything is presented. A PR found merged or closed is reported
    as done or closed, never as pending, and FLAGGED: the orchestrator then
    stands down the work in flight on it.
 3. Read the dispatch record's summary:
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh summary <record>`
-   — the path the project's state file names. Keep every `signal=` line: they are
+   — the record `/orchestrator-succeed` and the takeover name. Keep every `signal=` line: they are
    the routing corrections this build has earned, and a signal nobody reads is a
    measurement nobody took.
 4. Measure your own context: read

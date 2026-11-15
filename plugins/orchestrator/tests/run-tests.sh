@@ -868,16 +868,11 @@ check_status "summary --label without a list of ids dies" 1 bash "$REC" summary 
 check_status "summary --label with a list that is not ids dies" 1 bash "$REC" summary "$RIDS" --open --label 3,x
 check_status "summary --ids without --open dies" 1 bash "$REC" summary "$RIDS" --ids
 check_status "summary --ids with --label dies" 1 bash "$REC" summary "$RIDS" --open --ids --label 3
-check "the succession brief's step 2 runs summary --open" "1" \
-  "$(grep -c 'dispatch-record.sh summary {{DISPATCH_RECORD}} --open' "$ROOT/templates/orchestrator-succession-brief.md")"
-check "the succession brief's step 2 reads the open rows as counts and ids, not every label" "yes" \
-  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" '`dispatch-record.sh summary {{DISPATCH_RECORD}} --open --ids`')"
-# The ids alone say neither what an open row is nor a deferred row's ruling: the successor reads
-# the labels of the rows its Live state leaves out, in the same step.
-check "the succession brief's step 2 reads the labels of the open rows the Live state omits" "1" \
-  "$(grep '^2\. ' "$ROOT/templates/orchestrator-succession-brief.md" | grep -cF '`--open --label <ids>` for those Live state omits')"
-check "the succession brief reads the goals by command and points at them" "yes|yes|yes" \
-  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'dispatch-record.sh goals {{DISPATCH_RECORD}} status')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" '{{GOALS}}')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'goals met=m/n')"
+# The takeover prints the open rows at level 1 itself: its step 2 reads no summary of them.
+check "the takeover's step 2 reads no summary of the rows it prints" "0" \
+  "$(grep -c 'dispatch-record.sh summary' "$ROOT/templates/orchestrator-succession-brief.md")"
+check "the succession brief reads the goals by command and prints the project sheet" "yes|yes|yes" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'dispatch-record.sh goals {{DISPATCH_RECORD}} status')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" '{{PROJECT_SHEET}}')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'goals met=m/n')"
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
@@ -1304,7 +1299,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, blocker, note, escaped, cost, summary, goals, pr or pr-archive)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -3213,33 +3208,13 @@ d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^la
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
 check "and a successor's, with the remote-control flag behind it" "Orch: f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
-# A successor starts from a brief generated from the state (decision 0007): one that misses an
-# open item of the state — here the round's open question — is refused before any tab exists,
-# and the same brief once `succession.sh live` wrote its Live state goes through.
-SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
-printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
-sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch: f/g' -e 's/{{MODE}}/build/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
-mkdir -p "$ISTATE/round"
-printf '{"id":"succ-q1","from":"Orch: f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
-check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
-  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
-rm -f "$ISTATE/round/succ-q1.json"
-# The mode travels by machine, not by prose (a successor once loaded the rulebook with no
-# argument and stopped on a dialog asking the mode its brief gave in a sentence). The brief
-# carries a `Mode: build|investigate` line; the spawn refuses a succession brief without one, and
-# the successor's startup prompt opens on the load of the rulebook with that mode as its argument.
-SUCCB_NOMODE="$WORK/succession-brief-nomode.md"; grep -v '^Mode: ' "$SUCCB" > "$SUCCB_NOMODE"
-SUCCB_PROSE="$WORK/succession-brief-prose.md"
-sed 's/^Mode: .*/Mode: `build` (load the rulebook with it)/' "$SUCCB" > "$SUCCB_PROSE"
-SUCCB_INV="$WORK/succession-brief-investigate.md"; sed 's/^Mode: .*/Mode: investigate/' "$SUCCB" > "$SUCCB_INV"
-printf 'Read and execute %s.\n' "$SUCCB_NOMODE" > "$WORK/p-nomode.txt"
-printf 'Read and execute %s.\n' "$SUCCB_INV" > "$WORK/p-inv.txt"
-check "a successor is refused on a succession brief with no Mode line, or a mode said in prose, before any tab" "1|1|1|1" \
-  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_NOMODE" | grep -c 'spawn: refused: the succession brief .* carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_PROSE" | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt-file "$WORK/p-nomode.txt" | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_NOMODE" >/dev/null 2>&1; echo $?)"
-check "a successor's startup prompt loads the rulebook with the brief's mode, first, then keeps the prompt" "1|1|1|1" \
-  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "build", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_INV" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c "^prompt=.*, then read and execute $SUCCB\$")|$(succ "$PSTAB" --successor --prompt-file "$WORK/p-inv.txt" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate"')"
-check "a prompt that names no succession brief is left as it was" "0" \
-  "$(succ "$PSTAB" --successor --prompt "Read and execute $WORK/briefs/good.md" | grep -c 'with the argument')"
+# A successor reads the state through `succession.sh takeover` (decision 0007): no brief is
+# written, so the launcher reads none; the prompt `/orchestrator-succeed` writes carries the load
+# of the rulebook with its mode and the takeover command, and is passed as given.
+SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n\nMode: build\n' > "$SUCCB"
+TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator with the argument "build", then run /p/succession.sh takeover /r.jsonl --mode build --tty /dev/ttys900 and execute what it prints.'
+check "a successor spawns on the takeover prompt, and on a prompt naming a brief, which it no longer reads" "1|0|1|0" \
+  "$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c 'refused')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c 'refused')"
 # `--brief` builds the spawn's prompt from the brief and the successor's prompt, which carries the
 # mode, would be dropped: the combination is refused, before any tab opens, and says why.
 succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
@@ -3247,8 +3222,8 @@ succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHES
   --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
 check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
   "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'Mode:')|$(succ_brief | grep -c '^launch=')"
-check "the template carries the mode on a line of its own, and succeed fills it from the predecessor's own mode" "1|yes|yes" \
-  "$(grep -c '^Mode: {{MODE}}$' "$ROOT/templates/orchestrator-succession-brief.md")|$(spells "$ROOT/commands/succeed.md" 'the `Mode:` line with your own mode')|$(spells "$ROOT/commands/succeed.md" 'without which the brief is refused')"
+check "the template carries the mode on a line of its own, and succeed writes the successor's prompt with its own mode and the takeover" "1|yes|yes" \
+  "$(grep -c '^Mode: {{MODE}}$' "$ROOT/templates/orchestrator-succession-brief.md")|$(spells "$ROOT/commands/succeed.md" 'Load the skill orchestrator:orchestrator with the argument "<your mode>"')|$(spells "$ROOT/commands/succeed.md" 'succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>')"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -5517,21 +5492,21 @@ succ_has() { tr '\n' ' ' < "$SUCC" | tr -s ' ' | grep -oF -- "$1" | wc -l | tr -
 succ1_has() { printf '%s' "$SUCC1" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "step 1 of the succession brief orders no whole read of the spec, plan, runbook, state file or briefs directory" "0|0|0|0|0" \
   "$(succ1_has '{{SPEC}}')|$(succ1_has '{{PLAN}}')|$(succ1_has '{{RUNBOOK}}')|$(succ1_has '{{STATE_FILE}}')|$(succ1_has '{{BRIEFS_DIR}}')"
-check "step 1 reads the rulebook and this brief, and nothing else whole" "1|1" \
-  "$(succ1_has 'the rulebook')|$(succ1_has 'THIS brief')"
+check "step 1 reads the rulebook and this text, and nothing else whole" "1|1" \
+  "$(succ1_has 'the rulebook')|$(succ1_has 'THIS text')"
 SUCC_STANDING=$(awk '/^## Standing context/{f=1} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-check "the spec, plan, runbook, state file and briefs directory are pointers read by section, never whole" "1|1|1|1|1|1|1" \
-  "$(for p in '{{SPEC}}' '{{PLAN}}' '{{RUNBOOK}}' '{{STATE_FILE}}' '{{BRIEFS_DIR}}' "grep -n" "sed -n"; do printf '%s' "$SUCC_STANDING" | grep -qF -- "$p" && echo 1 || echo 0; done | paste -sd'|' -)"
-LIVE_H='## Live state — written at the handover'
+check "the standing context reads by section, and names no state file: the project sheet is printed from goals.md" "1|1|0|0" \
+  "$(for p in "grep -n" "sed -n" 'state file' '{{STATE_FILE}}'; do printf '%s' "$SUCC_STANDING" | grep -qF -- "$p" && echo 1 || echo 0; done | paste -sd'|' -)"
+LIVE_H='## Live state — read from the state at the takeover'
 LIVE_N=$(grep -n -m1 -F -- "$LIVE_H" "$SUCC" | cut -d: -f1)
 FIRST_N=$(grep -n -m1 -F -- '## Your first task' "$SUCC" | cut -d: -f1)
 check "the succession brief carries a Live state section under « Source », after the first task" "1" \
   "$([ -n "$LIVE_N" ] && [ -n "$FIRST_N" ] && [ "$FIRST_N" -lt "$LIVE_N" ] && [ "$(grep -n -m1 '^# Source$' "$SUCC" | cut -d: -f1)" -lt "$LIVE_N" ] && echo 1 || echo 0)"
 LIVE_BODY=$(awk -v h="$LIVE_H" '$0==h{f=1;next} /^## /{f=0} f' "$SUCC")
-check "the Live state section carries its five placeholders" "1|1|1|1|1" \
-  "$(for p in '{{LIVE_ROWS}}' '{{LIVE_PULL_REQUESTS}}' '{{LIVE_AGENTS}}' '{{LIVE_OPEN_QUESTIONS}}' '{{LIVE_NEXT_STEP}}'; do printf '%s' "$LIVE_BODY" | grep -cF -- "$p"; done | paste -sd'|' -)"
-check "the Live state section replaces reading the journal, which is read by grep on the item a task names" "yes|yes" \
-  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -qF 'replaces reading the journal' && echo yes || echo no)|$(printf '%s' "$SUCC_STANDING" | grep -qF 'the state file by `grep -n` on the item a task names, never by heading' && echo yes || echo no)"
+check "the Live state section carries its seven placeholders" "1|1|1|1|1|1|1" \
+  "$(for p in '{{LIVE_ROWS}}' '{{LIVE_OWNERS}}' '{{LIVE_PULL_REQUESTS}}' '{{LIVE_AGENTS}}' '{{LIVE_OPEN_QUESTIONS}}' '{{LIVE_TODO}}' '{{PROJECT_SHEET}}'; do printf '%s' "$LIVE_BODY" | grep -cF -- "$p"; done | paste -sd'|' -)"
+check "the Live state section is printed by the takeover from the state, a judgment being a row's note" "yes" \
+  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -qF 'Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round and the goals; a judgment on a row is its note.' && echo yes || echo no)"
 # A Live state that overflows the 9,000-character cap loses what the successor reads back first:
 # where each pull request stands (its VERIFY runs `pr-status`), then what each row has left (its
 # step 2 lists the open rows), never a number, a head, an id or a label (the operator's ruling of
@@ -5648,8 +5623,8 @@ check "a succession brief with the open-questions field left as its placeholder 
   "$(bash "$LINT" "$OQ_PLACEHOLDER" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_PLACEHOLDER" 2>&1 | grep -c "open-questions field is still its placeholder")"
 check "a succession brief with none as its open questions lints clean" "0" "$(bash "$LINT" "$OQ_NONE" >/dev/null 2>&1; echo $?)"
 check "a succession brief with its open questions filled, over several lines, lints clean" "0" "$(bash "$LINT" "$OQ_FILLED" >/dev/null 2>&1; echo $?)"
-check "the template's open-questions placeholder is the fifth, before the next step" "1|yes" \
-  "$(grep -cF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC")|$([ "$(grep -nF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC" | cut -d: -f1)" -lt "$(grep -nF '{{LIVE_NEXT_STEP}}' "$SUCC" | cut -d: -f1)" ] && echo yes || echo no)"
+check "the template's open-questions placeholder comes before the to-do items" "1|yes" \
+  "$(grep -cF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC")|$([ "$(grep -nF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC" | cut -d: -f1)" -lt "$(grep -nF '{{LIVE_TODO}}' "$SUCC" | cut -d: -f1)" ] && echo yes || echo no)"
 check "the first task has the successor ask again any open question the round does not hold" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/succession-successor.md" 'ask it again, verbatim')|$(spells "$ORCH_REFS/succession-successor.md" 'round/<id>.json')|$(spells "$SUCC" 'found, kept, asked again')"
 # The re-ask runs once the predecessor is closed: the module moves its open entries to the
@@ -5679,8 +5654,8 @@ check "step 2 reads the goals without their met rows, step 3 the checkouts of th
   "$(succ_has "status | grep -v '| met |'")|$(succ_has 'workspace.sh list {{PROJECT}}')|$(succ_has 'status`, read whole')|$(succ_has 'workspace.sh list`')"
 check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
   "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
-check "the template carries the predecessor's tty and home server, the launcher and the scripts" "yes|yes|yes|yes" \
-  "$(for p in '{{PREDECESSOR_TTY}}' '{{PREDECESSOR_SERVER}}' '{{LAUNCHER}}' '{{SCRIPTS}}'; do spells "$SUCC" "$p"; done | paste -sd'|' -)"
+check "the template carries the predecessor's tty, the launcher and the scripts" "yes|yes|yes" \
+  "$(for p in '{{PREDECESSOR_TTY}}' '{{LAUNCHER}}' '{{SCRIPTS}}'; do spells "$SUCC" "$p"; done | paste -sd'|' -)"
 check "step 4 closes by the launcher's path on the predecessor's tty, by takeover in a home session" "1|1|1" \
   "$(succ4_has '{{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title')|$(succ4_has '{{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title')|$(succ4_has 'the first line on tabs, the second in a home session (never `close` there)')"
 check "step 4 sends « takeover confirmed » alone on its message's first line" "1" \
@@ -5796,18 +5771,6 @@ check "a 20,000-character rulings file beside them changes neither verdict" "yes
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$RBIG" | wc -c | tr -d ' ')" -ge 20000 ] && echo yes || echo no)|$(bash "$LINT" "$WORK/succession-9100-big.md" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$WORK/succession-9100-big.md" 2>&1 | grep -c '(9100)')|$(bash "$LINT" "$WORK/succession-8900-big.md" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$WORK/succession-8900-big.md" 2>&1 | grep -c 'warning: rulings file .* characters, over 8000')"
 check "the filled brief with its two-entry rulings file raises no warning" "0" \
   "$(bash "$LINT" "$SUCCFILL" 2>&1 | grep -c 'warning')"
-# Check 17: a state file left unpruned is the journal a successor ends up reading (158,176 bytes
-# at one handover). Past 30,000 characters it is one warning naming the pruning rule, never a
-# refusal; at 29,000 nothing is said.
-state_brief() {  # $1 out brief, $2 the state file's size in characters
-  local f="${1%.md}-state.md"
-  head -c "$2" /dev/zero | tr '\0' 'x' > "$f"
-  sed "s#state file \`/tmp\`#state file \`$f\`#" "$SUCCFILL" > "$1"
-}
-S_BIG="$WORK/succ-state-big.md"; state_brief "$S_BIG" 30001
-S_SMALL="$WORK/succ-state-small.md"; state_brief "$S_SMALL" 29000
-check "a state file past 30,000 characters is one warning naming the pruning rule, not a finding" "1|0|1|1|0" \
-  "$(grep -c "state file \`$WORK/succ-state-big-state.md\`" "$S_BIG")|$(bash "$LINT" "$S_BIG" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$S_BIG" 2>&1 | grep -c 'warning')|$(bash "$LINT" "$S_BIG" 2>&1 | grep -c "warning: state file $WORK/succ-state-big-state.md is 30001 characters, over 30000: prune it, lifecycle item 0")|$(bash "$LINT" "$S_SMALL" 2>&1 | grep -c 'warning')"
 # Check 16 refuses a succession brief whose rulings file is missing or unnamed, and an entry of
 # that file without its date or its « » quote, naming the file's line.
 rulings_brief() {  # $1 out brief, $2 the rulings file's content, or ABSENT for a path to no file

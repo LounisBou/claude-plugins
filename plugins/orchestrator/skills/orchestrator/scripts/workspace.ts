@@ -685,7 +685,7 @@ export async function pin(ctx: Context, argv: readonly string[]): Promise<void> 
   makeParent('pin', target)
   // A detached worktree: a reader's copy carries the code at the head and none of the
   // orchestrator's local material — its settings directory, what the source's own exclude file
-  // keeps out, least of all its briefs and state file — and writes nothing but its metadata
+  // keeps out, least of all its briefs and rulings — and writes nothing but its metadata
   // into the source, which is the orchestrator's own checkout (§37). A worktree shares the
   // source's remotes.
   if ((await git(ctx, src, ['worktree', 'add', '--quiet', '--detach', target, sha])).status !== 0) {

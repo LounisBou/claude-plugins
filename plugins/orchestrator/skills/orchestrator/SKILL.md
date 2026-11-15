@@ -40,10 +40,10 @@ words.
    choice, authorises a change. His explicit instruction on the point replaces this skill:
    say the contradiction in one line and carry it out. His terms are the specification; a
    method he names is a format, opened before you present. Told you erred, check your own
-   doing first. Asked a third time, repeat the answer alone, at the top. A request of his for later or for another session is a `todo`.
+   doing first. Asked a third time, repeat the answer alone, at the top. A request of his for later or for another session is a `todo`; once it is planned, `todo row` names its row.
 4. **Re-read before you ask, propose or report.** He acts between your turns: an item's state
-   and a question's premise are read on the artifact in the same turn, never from the state
-   file or memory. An item found done is reported done, with its evidence. A
+   and a question's premise are read on the artifact in the same turn, never from a note
+   or memory. An item found done is reported done, with its evidence. A
    pull request found merged or closed stops the work on it at once.
 5. **What you can run is yours to run.** Launch, verify, stand down and replace
    your agents without waiting for him; never hand him a line to paste. What reaches him is
@@ -60,8 +60,9 @@ words.
    after asking it with `ask`, then `declare_wait` with what the turn waits on; close its
    answer with `settle`.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
-    briefs and templates it touches change in the same move; a deferred decision opens its
-    dispatch-record row at once. A removal he decides is dispatched in the turn of his
+    briefs and templates it touches change in the same move; every planned item and ruling
+    opens its dispatch-record row the moment it is decided, `--blocker` naming what it waits
+    on, and a judgment on it is the row's `note`. A removal he decides is dispatched in the turn of his
     ruling, by a pull request doing only that removal, ahead of any queued addition.
     Everything durable lives in files.
 
