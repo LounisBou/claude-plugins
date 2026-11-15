@@ -123,4 +123,5 @@
 #
 # The watch itself is ci-watch.ts, beside this launcher; this header documents both.
 
-exec node --no-warnings "$(dirname "$0")/ci-watch.ts" "$@"
+. "$(dirname "$0")/node-ts.sh"
+node_ts_exec ci-watch "$(dirname "$0")/ci-watch.ts" "$@"

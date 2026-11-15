@@ -80,6 +80,7 @@ skills/orchestrator/scripts/goals.py         the spec's goals of one build, read
 skills/orchestrator/scripts/workspace.sh    launches workspace.ts beside it: a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
 skills/orchestrator/scripts/ci-watch.ts, skills/orchestrator/scripts/dispatch-record.ts, skills/orchestrator/scripts/rhythm.ts, skills/orchestrator/scripts/workspace.ts  what the shell launchers above run: each command of ci-watch.sh, dispatch-record.sh, rhythm.sh and workspace.sh, documented in the launcher's header
+skills/orchestrator/scripts/node-ts.sh         sourced by every launcher of a .ts command: runs the first node able to run TypeScript (22.18, 23.6, 24 and later), else says so on stderr and exits 1
 skills/orchestrator/scripts/lib/process.ts  what those scripts reach outside themselves, the commands they run and the streams they write, passed in so a test stands in for each
 skills/orchestrator/scripts/lib/record-paths.ts  where a dispatch record, its owner and its goals live, and the brief's line that names it: read by dispatch-record and succession
 skills/orchestrator/scripts/lib/audit.ts  the audit trail the scripts write (dispatch-record, ci-watch, succession) into the orchestrator's journal, or ORCHESTRATOR_JOURNAL_DIR when set, with the record named by a relative pointer
