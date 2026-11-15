@@ -9,10 +9,10 @@ repository.
 ## What it records
 
 Session start and end (role from the title, model, effort, launch latency, time to the first
-turn, duration, cost, context), each turn's end (duration, tokens, context, cost), each tool call
-(tool, MCP server, outcome, who refused it, duration, a redacted Bash line), subagents and
-launched sessions spawned and closed, questions put to the operator and the letters chosen, and the
-dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
+turn, duration, cost, context), each turn's end (duration, tokens, context, the session's
+cumulative cost and the turn's own), each tool call (tool, MCP server, outcome, who refused it,
+duration, a redacted Bash line), subagents and launched sessions spawned and closed, questions put
+to the operator and the letters chosen, and the dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
 module has learned them) and each GitHub act the repository, pull request and head it names
 (`target`). No prompt, answer, message or tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
@@ -32,6 +32,42 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 - `telemetry.ts check --config <dir>`: the same scan, alone.
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.
+- `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
+  report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It
+  prints the spend of the tool against the products' and the unattributed (by repository, from the
+  events, a session's directory naming its repository), with the tool's share held to its 20 % cap, each pull request merged with its delay
+  (`gh`) and the cost of the sessions that name only it, questions and refusals per day (the round
+  files, the events), and the nine figures of the target: those no source holds (agents on every
+  runnable line, merge to service, code per release) print `n/a` and why, never an estimate. The tool
+  is the repository of the working directory unless `--tool` names it. It reads the orchestrator's
+  record registry, round and measure files (`docs/contracts.md`, « Weekly report reads »).
+
+## Retention
+
+The operator's answer of 2026-11-14 (`docs/specs/learning-design.md`, question 9): the day files of
+events are kept for ever (a few MB a day, about a tenth of that packed), and the raw transcripts
+90 days in the logs repository. Git never forgets, so dropping them is a rewrite of the
+repository, once a year, and the operator's act: no command, hook or schedule does it.
+
+### Yearly rewrite
+
+Once a year, from a clone of the repository `CLAUDE_LOGS_REPO` names, with no export running:
+
+1. List the transcripts older than 90 days: those under `machines/<machine>/transcripts/` whose
+   last commit is more than 90 days old (`git log -1 --format=%cs -- <path>`).
+2. Rewrite the history without them (`git filter-repo --invert-paths --path <file> …`, or
+   `--paths-from-file` with the list), keeping the day files and `index/`. A pointer to a
+   transcript that is gone is missing evidence to the retrospective.
+3. Check that the day files are all still there, then force-push `main`, and expire the old objects
+   (`git reflog expire --expire=now --all && git gc --prune=now --aggressive`) in every clone,
+   the machine's own included.
+
+The export does not put them back: it leaves out a transcript last written over 90 days ago
+(`MAX_TRANSCRIPT_AGE_DAYS` in `lib/export.ts`) and says how many, though the host keeps its file 365
+days. A transcript the repository holds already, whose file has not changed, stays until a rewrite.
+
+The host keeps its own copy of each transcript 365 days (`cleanupPeriodDays`), which this does
+not touch. The yearly size to expect: about 6 GB packed at 365 days, about 1.6 GB at 90.
 
 ## Redaction
 

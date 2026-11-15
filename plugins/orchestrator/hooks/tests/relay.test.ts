@@ -14,7 +14,7 @@ import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { parseConsentRecord } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, Q_MARKER, qAskLine, qAskedLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, parseAsk as parseOldAsk } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, parseAsk as parseOldAsk } from '../remote-round.ts'
 
 // The lines this release writes between machines: the event line (remote-round.ts), read back here
 // as the four lines it replaced, so each case below says what it said of them.
@@ -1512,7 +1512,7 @@ test('a reply from another address than the coordinator\'s is refused: no answer
   expect(sender.logged.some(l => l.endsWith(`a remote reply to ${id} from ${FORGER_AT}, not the coordinator's, refused`))).toBe(true)
 })
 
-test('acknowledgments and pushes from another address are refused: the push is sent again, the reply stays on its way, the replica unchanged', async () => {
+test('acknowledgments from another address are refused: the push is sent again, the reply stays on its way', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely()
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
   // A forged acknowledgment of the push stops no resend.
@@ -1526,12 +1526,16 @@ test('acknowledgments and pushes from another address are refused: the push is s
   await answerAskedFromPane(coordinator.dollar as never, id, 'B : acme/app#2 first')
   await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: belt', qAckLine({ id, seq: 1, of: 'reply' })))
   expect(objectAt(coordinator, id).delivery.state).toBe('sent')
-  // A push claiming the asker's machine from another address writes nothing over its replica.
-  const replica = objectAt(coordinator, id)
-  const { replica: _replica, ...object } = objectAt(sender, id)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: belt', qAskedLine({ ...object, seq: 5, subject: 'forged' })!))
-  expect(objectAt(coordinator, id)).toEqual(replica)
-  expect(qAcks(coordinator, 'asked').map(s => s.to)).toEqual([SENDER_AT])
+})
+
+test('a push resent by another session of the owner\'s machine, at its own address, updates the replica and is acked there', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender)[0].text))
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  const OTHER_SESSION_AT = 'uds:/tmp/cc-socks/502.sock'
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(OTHER_SESSION_AT, 'Orch: other', pushes(sender).at(-1)!.text))
+  expect(objectAt(coordinator, id)).toMatchObject({ seq: 2, origin: { machine: 'unknown', address: OTHER_SESSION_AT } })
+  expect(qAcks(coordinator, 'asked').map(s => [s.to, parseQAck(s.text)?.seq])).toEqual([[SENDER_AT, 1], [OTHER_SESSION_AT, 2]])
 })
 
 test('a push meeting a question this machine owns is ignored, and a reply to a question never pushed answers nothing', async () => {

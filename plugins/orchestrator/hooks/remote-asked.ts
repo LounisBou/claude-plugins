@@ -146,8 +146,9 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
   try {
     await updateOver(storeIo($), await pathOf($, asked.id), current => {
       const held = current === undefined ? null : parseAsked(current)
-      // A file here that is no replica of that machine's pushed from that address (this machine's own question, one it cannot read, or a peer claiming that machine) is never overwritten.
-      owned = current !== undefined && (held === null || held.origin === undefined || held.origin.machine !== asked.sender.machine || held.origin.address !== from)
+      // A file here that is no replica of that machine's (this machine's own question, or one it cannot read) is never overwritten.
+      // Any session of the owner's machine pushes, from its own address: the replica follows the last one.
+      owned = current !== undefined && (held === null || held.origin === undefined || held.origin.machine !== asked.sender.machine)
       if (owned || (held !== null && held.seq >= asked.seq)) return undefined
       const pending = held?.delivery?.state === 'pending' || held?.delivery?.state === 'sent'
       const keeps = asked.status === 'open' && pending
@@ -169,7 +170,7 @@ export async function receiveAsked($: any, from: string, object: Record<string, 
     return { consumed: 'orchestrator: a remote question asked with ask, not written' }
   }
   if (owned) {
-    await logLine($, 'question', `a remote push of ${asked.id} from ${asked.sender.machine} at ${from} meets a question here that is no replica of that machine's from that address, ignored`)
+    await logLine($, 'question', `a remote push of ${asked.id} from ${asked.sender.machine} meets a question here that is no replica of that machine's, ignored`)
     return { consumed: 'orchestrator: a remote push of a question owned here, ignored' }
   }
   await ack($, from, { id: asked.id, seq: asked.seq, of: 'asked' })

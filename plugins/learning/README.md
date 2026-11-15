@@ -34,6 +34,10 @@ The section says `none` when nothing is left. A line of another form is not read
 A guard that has never refused leaves no event, so it is not listed as silent: the section holds the
 codes the journals have seen refuse.
 
+A journal's writer drops the events past 90 days or 6,000 and counts them first, by signature and
+week, in the one file `folded.json` of the journal's directory; `/learning:health` reads that file
+as the fold (« older events folded into weekly counts »), never as an unreadable one.
+
 The orchestrator's hooks write the audit trail into its journal (`plugins/orchestrator/hooks/audit.ts`); where no journal exists the report says so.
 
 ## Tests

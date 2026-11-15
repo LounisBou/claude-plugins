@@ -54,9 +54,10 @@ export async function writeMeasure(
   await writeAtomic($, measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
 }
 
-// A session with no figures has no measure file: removed, never rewritten empty — $.fs.write
-// creates the file when it is absent, so an empty write left a 0-byte file for every session
-// that ended, was compacted or had not answered yet. Removing a file that is not there is no failure.
+// A conversation whose figures are gone (a compaction) has no measure file: removed, never rewritten
+// empty — $.fs.write creates the file when it is absent, so an empty write left a 0-byte file for
+// every session that was compacted or had not answered yet. Removing a file that is not there is no
+// failure. A session's end does not come here: its last figures stay as the series the method is judged on.
 async function removeMeasure($: Host<'env' | 'process'>, sessionId: string): Promise<void> {
   const path = measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))
   const removed = await $.process.run(removeArgv(path), { timeoutMs: 5000 })
@@ -158,13 +159,8 @@ export function register(on: On<Gauge>): void {
     current = null
     currentIn = null
     starts.delete(e.sessionId ?? '')
-    try {
-      await removeMeasure($, e.sessionId ?? await $.session.id())
-    } catch (err) {
-      // Never blocks the end; the failure is said — one line, the
-      // every-handler-logs rule.
-      await logLine($, 'gauge', messageOf(err))
-    }
+    // The measure file is kept: the series of closed sessions is what tells whether a change of
+    // method helped. install.sh prunes it past 90 days.
     return next(e)
   }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:

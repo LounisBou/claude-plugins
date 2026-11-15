@@ -2,9 +2,9 @@
 // the pure functions of scripts.test.ts do not reach.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { after, before, describe, it, type TestContext } from 'node:test'
 import { processIo, type Io } from './lib/io.ts'
@@ -430,9 +430,34 @@ describe('plugins library', () => {
     assert.throws(() => compareVersions('1.0', '1.0.0'), /MAJOR\.MINOR\.PATCH/)
   })
 
+  it('knows the script node was started with through a symbolic link', () => {
+    const script = process.argv[1]
+    assert.ok(script !== undefined)
+    const link = join(mkdtempSync(join(tmpdir(), 'entry-')), 'current')
+    symlinkSync(dirname(realpathSync(script)), link)
+    const argv = process.argv
+    process.argv = [argv[0] ?? 'node', join(link, basename(script))]
+    try {
+      assert.ok(isEntry(pathToFileURL(realpathSync(script)).href))
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it('knows a script by its path when the path does not resolve', () => {
+    const argv = process.argv
+    process.argv = [argv[0] ?? 'node', '/nowhere/script.ts']
+    try {
+      assert.ok(isEntry('file:///nowhere/script.ts'))
+      assert.ok(!isEntry('file:///elsewhere.ts'))
+    } finally {
+      process.argv = argv
+    }
+  })
+
   it('knows the script node was started with', () => {
     const script = process.argv[1]
-    assert.ok(script !== undefined && isEntry(pathToFileURL(script).href))
+    assert.ok(script !== undefined && isEntry(pathToFileURL(realpathSync(script)).href))
     assert.ok(!isEntry('file:///elsewhere.ts'))
     const argv = process.argv
     process.argv = argv.slice(0, 1)
