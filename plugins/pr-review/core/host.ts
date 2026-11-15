@@ -79,12 +79,20 @@ type Nouns = {
   state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
+  // The settings merged over every source, as the host reads them.
+  settings: { read(): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 
+// The host's nouns, by name.
+export type Noun = keyof Nouns
+
 export type Host<N extends keyof Nouns> = { [K in N]: Nouns[K] }
+
+// The plugin's manifest name beside its root, for a file that reads it (`Host<'plugin'> & Named`).
+export type Named = { readonly plugin: { readonly name: string } }
 
 // The events' inputs, as far as the module reads them. A session id on an event that does not
 // declare one is read when present, as some hosts and the test kit hand it.
@@ -95,6 +103,8 @@ export type Events = {
   'session.end': { readonly sessionId: string }
   'turn.start': { readonly agentId?: string }
   'command.run': { readonly command: string; readonly args: string }
+  // An option changed in the config menu, once the host has stored it: its key, `<plugin>.<field>`.
+  'config.set': { readonly key: string; readonly value?: unknown }
   // A prompt as the turn takes it: who typed it (`origin.kind`), and the lines a handler adds beside it.
   'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[]; readonly turnId?: string }
   // A peer's delivery; `origin` is the host's own description of where it came from.
@@ -126,8 +136,10 @@ export type Events = {
   // body's window over the tree (`scroll`), and whether it holds the keys.
   'ui.render': {
     readonly requestId?: string
-    readonly props?: { readonly bodyColumns?: number; readonly scroll?: { readonly offset: number; readonly bodyRows: number }; readonly isFocused?: boolean }
+    readonly props?: { readonly bodyColumns?: number; readonly scroll?: { readonly offset: number; readonly bodyRows: number }; readonly isFocused?: boolean; readonly hasSurvey?: boolean }
   }
+  // A git text the engine composed (`kind`: `commit`, `pr`, …), which the handler may rewrite.
+  'attribution.text': { readonly kind: string; readonly text: string }
   // The person moving a pane's window: the tree's height the host measured.
   'ui.scroll': { readonly requestId?: string; readonly contentRows: number }
   // The ring moving in a pane: the element it reaches, by its key.
@@ -147,10 +159,19 @@ export type Next<E> = ((e: E) => Promise<unknown>) & Budget & Origin
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
+// The events that stream: a hook is an async generator over `next(e)`'s chunks.
+export type StreamEvents = {
+  // One request of a turn to the model; what it returns carries the model's `answer`.
+  'turn.step': { readonly agentId?: string; readonly turnId?: string }
+}
+export type StreamNext<E> = (e: E) => AsyncGenerator<unknown, unknown>
+export type StreamHook<H, E> = ($: H, e: E, next: StreamNext<E>) => AsyncGenerator<unknown, unknown>
+
 // A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several, a pattern).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
   <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[] | RegExp>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
+  <K extends keyof StreamEvents>(event: K, hook: StreamHook<H, StreamEvents[K]>): unknown
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
