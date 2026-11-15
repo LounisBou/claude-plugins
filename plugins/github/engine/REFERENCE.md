@@ -359,7 +359,8 @@ What the guards do not read on that route:
 
 **Records.** A Write, Edit, MultiEdit or NotebookEdit under the records root, and a shell command naming it, a
 `pr-records/` path or `engine/record.py`, are observed, not refused (`github.records.write`; a Read is not), like
-the E2E exemption and check plan files (`github.exemption.write`), a label an exemption names
+the E2E exemption and check plan files (`github.exemption.write`); a shell command that deletes in the records,
+the exemptions or the plans (`rm`, `unlink`, `find -delete`, a `mv` out of them) is refused as before. Also observed: a label an exemption names
 (`github.exempt-label.move`), opening out of draft (`github.draft.open-out`), leaving draft outside auto-merge
 (`github.draft.leave`) and a text that breaks a writing rule (`github.writing.rule`): README « Observed guards ».
 

@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -371,6 +371,26 @@ test('the records guard refuses a write into the records or their writer, never 
   expect(writesRecords('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(true)
   expect(writesRecords('python3 /p/engine/record.py --repo o/r')).toBe(true)
   expect(writesRecords('git status')).toBe(false)
+})
+
+test('a deletion is a line that is no read and deletes: rm, unlink, find -delete, a move out, an interpreter\'s call', () => {
+  const names = (text: string) => text.includes('/d/')
+  for (const line of [
+    'rm /d/x', '/bin/rm /d/x', 'r""m /d/x', 'unlink /d/x', 'shred /d/x', 'find /d -delete', 'find /d -exec rm {} +', 'ls /d | xargs rm',
+    'cd /d && rm x', 'bash -c "rm /d/x"', 'mv /d/x /tmp/y', 'python3 -c "import os; os.remove(1)"', 'node -e "fs.rmSync(1)"',
+  ]) {
+    expect(deletes(line, names), line).toBe(true)
+  }
+  for (const line of [
+    'ls /d', 'cat /d/x | jq .', 'grep -rn rm /d', 'echo rm', 'echo x > /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x', 'sed -i s/a/b/ /d/x',
+    'git commit -m "docs: form the term"', 'find /d -name x',
+  ]) {
+    expect(deletes(line, names), line).toBe(false)
+  }
+  expect(deletesRecords('rm ~/.claude/pr-records/x')).toBe(true)
+  expect(deletesRecords('rm /tmp/x')).toBe(false)
+  expect(deletesRecords('echo x > ~/.claude/pr-records/x')).toBe(false)
+  expect(deletesRecords('ls ~/.claude/pr-records')).toBe(false)
 })
 
 test('each producer plugin writes only its own kind, every other caller E2E', () => {

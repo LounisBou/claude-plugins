@@ -301,7 +301,12 @@ A CI undraft, as above, is the exception, through the shell and the tool alike.
 **Records.** The records are written by their producers alone. A Write, an Edit,
 a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
 a `pr-records/` path or `engine/record.py`, go through and are observed
-(`github.records.write`).
+(`github.records.write`); a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
+of them, an interpreter's `os.remove`) stays refused, a deletion being irreversible:
+
+```
+github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
+```
 
 The command is read as text and word by word with the shell's quotes removed (so
 `rec""ord.py` is `record.py`); reading a record with the Read tool is not observed.
@@ -315,8 +320,8 @@ record is older than 90 days.
 ## Observed guards
 
 The guards of this module refuse only what cannot be taken back: a merge, the auto-merge and deploy
-lists, a deploy, a pull request that is not ready (the gate every merge and undraft meets), a
-readiness that cannot be read. Every other guard observes: the call goes through and one refusal
+lists, a deploy, a deletion of the records, of the E2E exemptions or of the check plans, a pull request
+that is not ready (the gate every merge and undraft meets), a readiness that cannot be read. Every other guard observes: the call goes through and one refusal
 event is written into the module's journal (`<config dir>/github/journal/`, core's learning
 contract, under the guard's stable code), with no command or text in it. A journal that cannot be
 written is one line in the transcript, and the call still goes through.

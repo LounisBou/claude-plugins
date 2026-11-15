@@ -854,6 +854,9 @@ export function gateUnwrittenLine(repo: string, pr: number, error: string): stri
   return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
 }
 
+export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'
+  + ' never by hand.'
+
 // A path into the records, or to their directory itself: a message or a body
 // that only names the word is no path.
 const RECORDS_PATH = /pr-records\/|\/pr-records(?![\w.-])/
@@ -861,8 +864,12 @@ const RECORDS_PATH = /pr-records\/|\/pr-records(?![\w.-])/
 // Whether a Bash command line names the records or their writer.
 // The text, then each word as the shell reads it: quotes removed, so `rec""ord.py` is record.py.
 export function touchesRecords(line: string, root?: string): boolean {
-  const names = (text: string) => RECORDS_PATH.test(text) || text.includes('engine/record.py') || (!!root && text.includes(root))
+  const names = recordsNamer(root)
   return names(line) || simpleCommands(line).some((argv) => argv.some(names))
+}
+
+function recordsNamer(root?: string): (text: string) => boolean {
+  return (text) => RECORDS_PATH.test(text) || text.includes('engine/record.py') || (!!root && text.includes(root))
 }
 
 // The programs that write nothing a line gives them, but through a redirection or one of the
@@ -898,6 +905,36 @@ export function onlyReads(line: string): boolean {
 // (touchesRecords) and is not a line that only reads.
 export function writesRecords(line: string, root?: string): boolean {
   return touchesRecords(line, root) && !onlyReads(line)
+}
+
+// The programs that delete, bare or by path, and the options and calls that delete inside another
+// program. A deletion is irreversible: a command line that deletes the records, the E2E exemptions or
+// the check plans is refused, where any other write to them is observed.
+const DELETER_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?(?:rm|rmdir|unlink|shred|srm|trash)(?=$|[\s;&|(){}`'"])/
+const DELETE_OPTION = /(?:^|\s)-delete(?=\s|$)/
+const DELETE_CALL = /\b(?:os\.(?:remove|unlink|rmdir)|shutil\.rmtree|rmtree|rmSync|unlinkSync|fs\.rm|File\.delete)\b/
+const DELETERS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
+
+// Whether a command line that is not only a read deletes: a deleting program anywhere in its text
+// (`bash -c`, `xargs`, `find -exec` and `&&` included), `find -delete`, a deleting call of an
+// interpreter, a word that reads as a deleting program once its quotes are gone, or a `mv` whose
+// source `names` recognises (a move out of a place deletes there; a move into it only writes).
+export function deletes(line: string, names: (text: string) => boolean): boolean {
+  if (onlyReads(line)) return false
+  if (DELETER_WORD.test(line) || DELETE_OPTION.test(line) || DELETE_CALL.test(line)) return true
+  try {
+    return simpleCommands(line).some((argv) => {
+      const program = (argv[0] ?? '').split('/').pop() ?? ''
+      return argv.some((word) => DELETERS.has(word.split('/').pop() ?? '')) || (program === 'mv' && argv.slice(1, -1).some(names))
+    })
+  } catch {
+    return false
+  }
+}
+
+// Whether a Bash command line deletes in the records: it names them and deletes.
+export function deletesRecords(line: string, root?: string): boolean {
+  return touchesRecords(line, root) && deletes(line, recordsNamer(root))
 }
 
 // The record kind a caller of mcp__github__record may write, by the plugin whose hook made the

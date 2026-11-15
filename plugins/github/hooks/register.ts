@@ -24,6 +24,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
+  RECORDS_REFUSAL, deletes, deletesRecords,
   type Act, type Carried, type Gate, type Labelling, type RecordFile,
 } from './ready.ts'
 
@@ -291,6 +292,9 @@ const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
 const AUTO_DEPLOY_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-deploy\.json$/
 // The E2E exemptions, one file per repository, and the check plans, one per pull request, below these directories of the data directory.
 const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
+const namesExemptions = (text: string) => text.includes(EXEMPT_DIR) || text.includes(PLAN_DIR)
+export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 export function waiverRefusal(repo: string, pr: number, check: Waivable): string {
@@ -300,7 +304,7 @@ export function waiverRefusal(repo: string, pr: number, check: Waivable): string
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
-// auto-merge and deploy lists), judged from the call alone (no state can be read once the hook has
+// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans), judged from the call alone (no state can be read once the hook has
 // thrown); the rest, observed guards included, goes through.
 export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
 
@@ -309,10 +313,12 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE)) return NET_REFUSAL
+    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
+    if ((command.includes(EXEMPT_DIR + '/') || command.includes(PLAN_DIR + '/')) && deletes(command, namesExemptions)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
+    if (/pr-records|e2e-exempt|check-plans/.test(command) && deletes(command, () => false)) return NET_REFUSAL
     return /\b(gh|git)\b|auto-merge|auto-deploy/.test(command) ? NET_REFUSAL : null
   }
 }
@@ -2252,11 +2258,16 @@ export function register(on: any): void {
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     try {
       // A command that only reads them passes: the auto-merge list is refused a write, the deploy list any touch,
-      // the records and the exemptions are observed.
-      if (writesRecords(String(e.command), await recordsRoot($))) await observed($, OBSERVED.records)
-      if (await touchesList($, String(e.command), AUTO_MERGE_FILE) && !onlyReads(String(e.command))) return { deny: AUTO_MERGE_REFUSAL }
-      if (await touchesList($, String(e.command), AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
-      if (await touchesExemptions($, String(e.command))) await observed($, OBSERVED.exemption)
+      // the records and the exemptions a deletion (irreversible); any other write to them is observed.
+      const line = String(e.command)
+      const root = await recordsRoot($)
+      if (deletesRecords(line, root)) return { deny: RECORDS_REFUSAL }
+      const exempt = await touchesExemptions($, line)
+      if (exempt && deletes(line, namesExemptions)) return { deny: EXEMPT_REFUSAL }
+      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesList($, line, AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
+      if (writesRecords(line, root)) await observed($, OBSERVED.records)
+      if (exempt) await observed($, OBSERVED.exemption)
     } catch {
       // A command that is no text names no record either.
     }

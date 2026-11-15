@@ -2346,13 +2346,21 @@ test('the records guard reads the words as the shell does', () => {
 })
 
 
-test('a failed guard lets a write or a command naming the E2E exemption files through: they are observed', () => {
+test('a failed guard lets a write naming the E2E exemption files through (observed), and refuses a deletion in them', () => {
   expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(null)
-  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(null)
+  expect(bashNetRefusal('echo {} > "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
 })
 
 
-test('a failed guard lets a write or a command naming the check plan files through: they are observed', () => {
+test('a failed guard lets a write naming the check plan files through (observed), and refuses a deletion in them', () => {
   expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(null)
-  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(null)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(NET_REFUSAL)
+})
+
+test('a failed guard refuses a deletion in the records, and lets a read or another write through', () => {
+  expect(bashNetRefusal('rm ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('find ~/.claude/pr-records -delete')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(null)
+  expect(bashNetRefusal('cat ~/.claude/pr-records/o/r/x.json')).toBe(null)
 })
