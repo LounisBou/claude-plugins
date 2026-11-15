@@ -4,7 +4,7 @@
 // version that the relay's entries do not carry, its block written to the transcript by the module;
 // and the lines the pane draws from those objects, grouped by asker.
 import { expect, test } from 'claude-code/testing'
-import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settleClaimed, shownLines, register as registerQuestion, type Asked } from '../question.ts'
+import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settleClaimed, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -163,10 +163,9 @@ test('a call stores one object in the round with every field it was given, its i
   expect(files.has(`${ROUND}/${entry.id}.json`)).toBe(true)
   expect(entry.id).toMatch(/^q-s-me-[a-z0-9]+-[a-z0-9]{4}$/)
   expect(answer.result).toContain(`Asked as ${entry.id}`)
-  expect(answer.result).toContain('Do not write it again')
-  expect(shown).toEqual(shownLines(questionBlock(entry, { i: 1, n: 1 })))
-  expect(shown[0]).toBe(`Question 1 of 1 (${entry.id})`)
-  expect(shown).toContain('- A : acme/app#1 first — cost: none — gain: no rebase')
+  expect(answer.result).toContain('Write this block in your message as it stands')
+  expect(answer.result).toContain(questionBlock(entry, { i: 1, n: 1 }))
+  expect(shown).toEqual([])
   expect([...files.keys()].some(p => p.includes('.tmp-') || p.endsWith('.lock'))).toBe(false)
 })
 
@@ -179,14 +178,14 @@ test('the block is the method\'s shape, from the fields alone', () => {
 })
 
 test('several calls in one turn make several objects, each its own id, numbered among the asker\'s open questions', async () => {
-  const { dollar, files, shown } = world()
-  await ask(dollar, FULL)
-  await ask(dollar, { ...FULL, subject: 'a second matter', urgent: undefined }, new Date(NOW.getTime() + 1))
+  const { dollar, files } = world()
+  const answers = [(await ask(dollar, FULL)).result, (await ask(dollar, { ...FULL, subject: 'a second matter', urgent: undefined }, new Date(NOW.getTime() + 1))).result]
   const entries = stored(files)
   expect(entries.length).toBe(2)
   expect(new Set(entries.map(entry => entry.id)).size).toBe(2)
   expect(entries.every(entry => entry.status === 'open' && entry.seq === 1)).toBe(true)
-  expect(shown.filter(line => /^Question \d+ of \d+/.test(line))).toEqual([`Question 1 of 1 (${entries[0].id})`, `Question 2 of 2 (${entries[1].id})`])
+  expect(answers[0]).toContain(`Question 1 of 1** (${entries[0].id})`)
+  expect(answers[1]).toContain(`Question 2 of 2** (${entries[1].id})`)
 })
 
 test('an object ask stored is no entry of the relay\'s, and an entry of the relay\'s is no object of ask\'s', async () => {
@@ -234,10 +233,11 @@ for (const [when, options] of [
   ['after a turn whose measure could not name it', { me: ['orchestrator', 'Orch: acme'], bare: true, walk: 'Orch: acme', session: 's-bare' }],
 ] as const) {
   test(`a woken orchestrator asks ${when}, named as the host names it`, async () => {
-    const { dollar, files, shown } = world(options as Options)
-    expect((await ask(dollar, FULL)).isError).toBeUndefined()
+    const { dollar, files } = world(options as Options)
+    const answer = await ask(dollar, FULL)
+    expect(answer.isError).toBeUndefined()
     expect(stored(files)[0].sender).toMatchObject({ role: 'orchestrator', name: 'Orch: acme' })
-    expect(shown[0]).toBe(`Question 1 of 1 (${stored(files)[0].id})`)
+    expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0].id})`)
   })
 }
 
@@ -269,25 +269,28 @@ test('a walk that does not finish is said in the log, and the question refused',
 })
 
 test('an orchestrator asks as well, its question stored and shown', async () => {
-  const { dollar, files, shown } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })
-  expect((await ask(dollar, FULL)).isError).toBeUndefined()
+  const { dollar, files } = world({ me: ['orchestrator', 'Orch: acme [a1b2c3]'] })
+  const answer = await ask(dollar, FULL)
+  expect(answer.isError).toBeUndefined()
   expect(stored(files)[0].sender.role).toBe('orchestrator')
-  expect(shown[0]).toBe(`Question 1 of 1 (${stored(files)[0].id})`)
+  expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0].id})`)
 })
 
 test('« Question i of N » counts this turn\'s questions only: one asked in a later turn reads 1 of 1, whatever stays open', async () => {
-  const { dollar, files, shown } = world()
-  await ask(dollar, FULL)
+  const { dollar, files } = world()
+  const heads: string[] = []
+  const head = (answer: any) => heads.push(String(/Question \d+ of \d+/.exec(String(answer.result))?.[0]))
+  head(await ask(dollar, FULL))
   await mounted()['turn.start'](dollar, {}, async () => undefined)
-  await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1))
+  head(await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1)))
   const [first, second] = stored(files).sort((a, b) => (a.at < b.at ? -1 : 1))
   expect([first.status, second.status]).toEqual(['open', 'open'])
-  expect(shown.filter(line => /^Question \d+ of \d+/.test(line))).toEqual([`Question 1 of 1 (${first.id})`, `Question 1 of 1 (${second.id})`])
+  expect(heads).toEqual(['Question 1 of 1', 'Question 1 of 1'])
   // A subagent's turn is not the main thread's: it starts no count.
-  await ask(dollar, { ...FULL, subject: 'a third matter' }, new Date(NOW.getTime() + 2))
+  head(await ask(dollar, { ...FULL, subject: 'a third matter' }, new Date(NOW.getTime() + 2)))
   await mounted()['turn.start'](dollar, { agentId: 'a-1' }, async () => undefined)
-  await ask(dollar, { ...FULL, subject: 'a fourth matter' }, new Date(NOW.getTime() + 3))
-  expect(shown.filter(line => /^Question \d+ of \d+/.test(line)).slice(2).map(line => line.slice(0, 14))).toEqual(['Question 2 of ', 'Question 3 of '])
+  head(await ask(dollar, { ...FULL, subject: 'a fourth matter' }, new Date(NOW.getTime() + 3)))
+  expect(heads.slice(2)).toEqual(['Question 2 of 2', 'Question 3 of 3'])
 })
 
 // The operator's answer already recorded (§ 4.7 d): a question of the same project asking the same,
@@ -406,15 +409,6 @@ test('a subagent\'s call is refused', async () => {
   const { dollar, files } = world()
   expect((await ask(dollar, { ...FULL, agentId: 'agent-1' })).isError).toBe(true)
   expect(stored(files)).toEqual([])
-})
-
-test('a transcript that refuses the block keeps the object and hands the block to the model, logged', async () => {
-  const { dollar, files, logs } = world({ logThrows: 'no transcript' })
-  const answer = await ask(dollar, FULL)
-  const [entry] = stored(files)
-  expect(answer.result).toContain(questionBlock(entry, { i: 1, n: 1 }))
-  expect(answer.result).toContain('write it in your message')
-  expect(logs.some(line => line.includes(`question ${entry.id} stored, its block not written to the transcript: no transcript`))).toBe(true)
 })
 
 test('an id is safe as a file name and differs by instant and draw', () => {

@@ -195,14 +195,6 @@ export function questionBlock(entry: Asked, number: { i: number; n: number }): s
 }
 
 /**
- * The block as the transcript shows it: one line per row, the host drawing a row's text as one line,
- * its markup dropped, which a transcript row does not draw.
- */
-export function shownLines(block: string): string[] {
-  return block.split('\n').map(line => plainText(line))
-}
-
-/**
  * A question asked with `ask` as the readers of the relay's entries see it, for what they only read
  * (the coordinator's told line and due wake): its sender's name and session, its stamp as its start,
  * what it blocks, its block from its fields. Never written back.
@@ -525,13 +517,8 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   // one asked in a later turn reads 1 of 1 again, whatever stays open from before.
   const asked = thisTurn.push(entry.id)
   const block = questionBlock(entry, { i: asked, n: asked })
-  try {
-    for (const line of shownLines(block)) $.ui.log(line)
-  } catch (err) {
-    await logLine($, 'question', `question ${entry.id} stored, its block not written to the transcript: ${messageOf(err)}`)
-    return { result: `Asked as ${entry.id}, but its block could not be shown in this chat (${messageOf(err)}): write it in your message as it stands.\n\n${block}` }
-  }
-  return { result: `Asked as ${entry.id}: the question is in the round and shown to the operator in this chat, as a block. Do not write it again.` }
+  // The block goes in the asker's own message: a line of the host's log does not reach the operator's chat.
+  return { result: `Asked as ${entry.id}: stored in the round. Write this block in your message as it stands, once:\n\n${block}` }
 }
 
 /**
@@ -723,7 +710,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: ASK_TOOL,
         isDeferred: false,
-        description: 'Asks the operator one question, in the method\'s format: the module stores it in the round, where the pane draws it, and shows it in this chat; do not write the block yourself. '
+        description: 'Asks the operator one question, in the method\'s format: the module stores it in the round, where the pane draws it, and answers its block, which you write in your message as it stands. '
           + 'One call per question; several calls make several questions, each answered on its own. '
           + 'subject (a few words), context (two to six sentences: the stake, what is known), question (one sentence ending in « ? »), '
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
