@@ -706,10 +706,10 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   return finish(ctx, facts, found.length > 0 ? 1 : 0)
 }
 
-/** What a check reports: each orchestrator session, each collision and each source not read, one line each. */
+/** What a check reports: each orchestrator's name (a successor under it is no newcomer), each collision and each source not read, one line each. */
 export function findings(facts: Facts): string[] {
   return [
-    ...facts.sessions.filter(s => s.title.startsWith(`${ORCH}:`)).map(s => `newcomer ${s.title} | session ${s.pid}`),
+    ...new Set(facts.sessions.filter(s => s.title.startsWith(`${ORCH}:`)).map(s => `newcomer ${s.title}`)),
     ...collisions(facts),
     ...facts.unread.map(line => `unread ${line}`),
   ]

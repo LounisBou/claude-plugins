@@ -298,7 +298,7 @@ describe('facts', () => {
     // Nothing new at the first reading: it sleeps, the newcomer arrives, the next reading ends it.
     const ctx = { ...f.ctx, sleep: (ms: number) => { f.slept.push(ms); writeFileSync(ps, readFileSync(ps, 'utf8') + newcomer); writeFileSync(f.ctx.env['COORDINATOR_CWDS'] ?? '', `107 ${t['src']}\n`, { flag: 'a' }) } }
     assert.equal(main(ctx, ['check', '--every', '5']), 0)
-    const found = ['newcomer Orch: delta | session 107', 'collision sessions | forge.example/o/app | main | 100 Orch: alpha, 107 Orch: delta']
+    const found = ['newcomer Orch: delta', 'collision sessions | forge.example/o/app | main | 100 Orch: alpha, 107 Orch: delta']
     assert.deepEqual([f.out, f.slept], [found, [5000]])
     assert.equal(run(f, 'check'), 0)
     assert.deepEqual(f.out, found)
