@@ -32,6 +32,7 @@
     "plugins/orchestrator/hooks/audit-events.ts",
     "plugins/orchestrator/hooks/settle.ts",
     "plugins/orchestrator/hooks/consent-words.ts",
+    "plugins/orchestrator/hooks/mode-dialog.ts",
     "plugins/telemetry/skills/*/scripts/**/*.ts",
     "plugins/telemetry/hooks/collect.ts",
     "plugins/telemetry/hooks/register.ts",
