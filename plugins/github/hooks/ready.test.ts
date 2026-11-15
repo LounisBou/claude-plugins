@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
-  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove,
+  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
   type Gate, type RecordFile,
 } from './ready.ts'
 import { acceptanceDetail, producersOf } from '../core/pr-record.ts'
@@ -132,6 +132,14 @@ test('an unreadable file is named when a kind is missing too', () => {
 
 test('no check at all is not green: CI has not started', () => {
   expect(missingItems(gate({}, { result: 'PENDING', total: 0, running: 0 }), ALL)).toEqual(['CI still running'])
+})
+
+test('a repository with no CI configured is ready on its other conditions, and the Ready line says so', () => {
+  const none = gate({}, { result: 'NONE', total: 0, running: 0 })
+  expect(missingItems(none, ALL)).toEqual([])
+  expect(stackedCi(none, ALL)).toBe('no CI configured')
+  expect(gateReadyLine('acme/thing', 12, HEAD, false, undefined, {}, [], stackedCi(none, ALL))).toContain('no CI configured hold')
+  expect(missingItems(none, ALL.filter((r) => !r.name.startsWith('e2e')))).toEqual(['e2e: no record at 0123456'])
 })
 
 test('a read of the required checks that failed is named, not read as green or as running', () => {

@@ -12,6 +12,13 @@ that work, answering for their delivery.
 The launcher names its sessions (`--title`); else call `mcp__orchestrator__rename_session` with
 `Orch: <subject>` once; end the turn.
 
+## Your scripts
+
+Every script you run is called by its path under this skill's base directory, the one its load
+printed: `<base>/scripts/<name>.sh`, the launcher `<base>/../iterm-agents/scripts/iterm-agent.sh`.
+That is your own version of the plugin. A script path another session, a brief, a prompt or a
+memo gave you may be an older copy: never run one.
+
 ## Your mode
 
 Your mode is this skill's argument, `build` or `investigate`; a successor's launch passes its

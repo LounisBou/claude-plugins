@@ -20,16 +20,17 @@ import { register as registerCommands, registerEnd as registerCommandsEnd } from
 import { register as registerNaming } from './naming.ts'
 import { register as registerShortCommands } from './short-commands.ts'
 import { logLine } from './module-io.ts'
-import type { Caught, Events, Host, Next } from './host.ts'
+import type { Host, On } from './host.ts'
 
-type Start = Events['session.start']
+// Every noun of the host a domain below calls.
+type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' | 'command' | 'prompt' | 'clock'>
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Mod>): void {
   // The scaffold's own passthrough, now under the every-handler law the four
   // domains below already carry: the net names what the bare handler cannot
   // catch itself, the start is let through, and the state dir says why.
-  on('session.start', async ($: unknown, e: Start, next: Next<Start>) => next(e))
-    .catch(async ($: Host<'plugin' | 'env' | 'process'>, e: Start, next: Next<Start> & Caught) => {
+  on('session.start', async (_$, e, next) => next(e))
+    .catch(async ($, e, next) => {
       await logLine($, 'register', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
     })

@@ -24,24 +24,23 @@ import {
 import { tripGate, parseMeasure, measureFilePath, newerInstalled, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { ASK_FIRST, DECLARATIONS, type Declarations } from './wait.ts'
+import { DECLARATIONS, type Declarations } from './wait.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
-  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, projectCheckouts,
+  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
-  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, MACHINE_LINE, blocksNothing, liveNames,
+  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
 } from './stop-gate.ts'
-import { machineLine } from '../core/method.ts'
 import { launcherOf, RECORDS_DIR } from '../core/orchestration.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
 import { messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
-import { handsOver, unnamedReport } from './relay.ts'
+import { unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
@@ -258,13 +257,6 @@ async function transcriptHasAnswer($: Held, path: string): Promise<boolean> {
     (l: string) => /"type"\s*:\s*"assistant"/.test(l),
   )
   return line !== null
-}
-
-// An operator wait the turn did not declare on questions asked with `ask`: its line, blocking
-// something, asks him nothing he can answer.
-function undeclaredOperatorWait(message: string, declarations: Declarations): boolean {
-  const line = machineLine(message)
-  return declarations.current()?.kind !== 'operator' && !!MACHINE_LINE.exec(line)?.[1] && !blocksNothing(line)
 }
 
 // `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
@@ -514,25 +506,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return fallback ?? next(e)
   })
 
-  // The model's own « handed over », delivered, is the hand-over too: the successor spawned by another
-  // route (or before a reload of this module) leaves no spawn to read, and the session that sent its last
-  // word to its successor is no more refused a done for what is now the successor's.
-  on('session.send', async ($, e, next) => {
-    const sent = await next(e)
-    if (!e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text) && answered(sent).isDelivered !== false) {
-      try {
-        handedOverIn = await $.session.id()
-        declarations.handOver(handedOverIn)
-      } catch (err) {
-        await logLine($, 'guards', `the hand-over could not be kept: ${messageOf(err)}`)
-      }
-    }
-    return sent
-  }).catch(async ($, e, next) => {
-    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
-
   // The stop gate (hooks/stop_gate.py ported; the decisions in stop-gate.ts). The
   // classic events carry the settings payload's own fields — the shipped types give
   // classic.Stop the transcript path, the cwd and the last assistant message beside the
@@ -565,7 +538,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // A stop another gate already held this turn is re-fired with the marker set: this gate,
       // which only observes, steps aside before it reads anything, its line already written.
       if (e.stop_hook_active) return next(e)
-      const unasked = undeclaredOperatorWait(String(e.last_assistant_message ?? ''), declarations)
       const sessionId = String(e.session_id ?? '')
       // The scope first, from the session itself: the launcher's listing is a call to
       // the terminal, and every agent's, auditor's and hand-started session would pay it.
@@ -601,18 +573,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (role === 'coordinator') return next(e)
-      // An orchestrator ending on a wait for the operator puts him a question asked with `ask`.
-      if (unasked) {
-        await logLine($, 'guards', 'stop gate: an operator wait with no question')
-        return await letThrough(ASK_FIRST)
-      }
       const state = await stateDir($)
       // A question asked with `ask` still open stays in the round until he answers it, its answer
-      // waking the session; unless the session handed over, or ends on its last word `handed over`:
-      // its successor holds the questions.
-      const message = String(e.last_assistant_message ?? '')
+      // waking the session; unless the session handed over: its successor holds the questions.
       let questionOpen = false
-      if (sessionId !== '' && handedOverIn !== sessionId && !isEnding() && !endsOnHandOver(message)) {
+      if (sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
         questionOpen = await quietly($, async () => (await readAsked($)).some(entry => entry.status === 'open' && entry.sender.session === sessionId), until, false)
       }
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
@@ -678,7 +643,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         // The host's own list of the session's work in flight, the reliable reading of what will wake it.
         tasks: hostTasks(e.background_tasks, e.session_crons),
         awaiting: sessionId !== '' && awaitingIn(sessionId),
-        message: String(e.last_assistant_message ?? ''),
         declared: declarations.current(),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
         questionOpen,
@@ -695,7 +659,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const top = await projectTop($, String(e.cwd ?? ''), until)
         const checkouts = projectCheckouts(top, await mustRun($, ['bash', `${root}/skills/orchestrator/scripts/workspace.sh`, 'list'], 'workspace.sh list', until))
         const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
-        const ids = deferredIds(machineLine(String(e.last_assistant_message ?? '')))
+        // The ending is the wait the turn declared: done, or deferred with the items it names.
+        const declared = declarations.current()
+        const ids = declared?.kind === 'deferred' ? declared.blocks : null
         const ending = ids === null ? 'done' : 'deferred'
         const texts = await readRecords($, records, until)
         const deferred = openRows(texts)
