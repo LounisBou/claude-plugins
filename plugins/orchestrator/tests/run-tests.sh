@@ -11128,6 +11128,28 @@ round wold | operator | from Orch: d | since 2026-10-24T09:00:00.000Z | blocks: 
 check "with no pane open every open question is due, a closing proposal still not: no record, a dead pid, a record with no pid" \
   "4|0|4|4" \
   "$(mv "$DSTATE/pane.json" "$WORK/coord-due-pane"; dround | grep -c ' | open | due$')|$(dround | grep -c '^round zdone .* | due')|$(printf '{"session":"s-coord","pid":"4243"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')|$(printf '{"session":"s-coord"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')"
+# A pane record naming a host the machine still lists but whose tab is gone (exiting, a zombie, on
+# no tty or another one) is no open pane: a stand-in ps answers what the real one lists for it.
+mkdir -p "$WORK/coord-due-psbin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$PS_STUB_OUT"\n' > "$WORK/coord-due-psbin/ps"
+chmod +x "$WORK/coord-due-psbin/ps"
+printf '{"session":"s-coord","pid":"4242","tty":"/dev/ttys004","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+psround() { PS_STUB_OUT="$1" PATH="$WORK/coord-due-psbin:$PATH" ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$'; }
+check "a pane record is open on a live host on its tty, and not on an exiting one, a zombie, one with no tty, another tty, or none listed" \
+  "1|4|4|4|4|4" \
+  "$(psround 'Ss ttys004')|$(psround '?Es ??')|$(psround 'Z ttys004')|$(psround 'Ss ??')|$(psround 'Ss ttys009')|$(psround '')"
+printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+check "a pane record that names no tty is judged on its host's state alone" \
+  "1|4" \
+  "$(psround 'Ss ??')|$(psround '?Es ??')"
+# The machine's own ps, no stand-in: this shell's pid runs, a pid no process holds does not.
+printf '{"session":"s-coord","pid":"%s","at":"2026-10-24T09:00:00.000Z"}\n' "$$" > "$DSTATE/pane.json"
+ownps_live=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+printf '{"session":"s-coord","pid":"4999999","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+ownps_dead=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+check "with the machine's own ps a pane record is open on a running pid and not on one no process holds" "1|4" "$ownps_live|$ownps_dead"
+printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+
 # An entry answered in the pane is never due, pane open or not, and once the coordinator closes
 # it (the module's settle writes it closed) it is never listed again: the tab never presents it.
 check "an entry answered in the pane is never due, and once closed is never listed again" \
