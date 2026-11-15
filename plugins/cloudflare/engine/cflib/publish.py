@@ -373,7 +373,7 @@ def inventory(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("inventory", help="a zone's SSL settings and its records against the Caddyfile")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=inventory, read=True)
+    parser.set_defaults(handler=inventory)
 
     parser = subparsers.add_parser("publish", help="the A record, the site block, validate, reload, then check")
     parser.add_argument("host")

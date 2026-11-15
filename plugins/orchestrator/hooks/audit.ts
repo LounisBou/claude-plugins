@@ -9,7 +9,7 @@
 // the module's log, and the call's answer stands. The events are built in audit-events.ts.
 import { answerText, githubEvents, refusalEvent, reviewEvents, waitEvents, type WaitSeen } from './audit-events.ts'
 import { guardFallback, killDecision } from './guards.ts'
-import { messageOf, type On } from './host.ts'
+import { messageOf, type Caught, type Next, type On } from './host.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
@@ -98,7 +98,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 }
 
 // The net under every handler: what failed is logged, and the event goes on.
-async function net($: Held, e: unknown, next: ((e: unknown) => Promise<unknown>) & { error?: { kind?: string; message?: string } }): Promise<unknown> {
+async function net<E>($: Held, e: E, next: Next<E> & Caught): Promise<unknown> {
   await logLine($, 'audit', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
   return next(e)
 }

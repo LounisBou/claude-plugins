@@ -13,7 +13,8 @@ export const PLAN_DIR = 'check-plans'
 // The plan's one writer: the orchestrator's tool, from an orchestrator session, never an implementer.
 export const PLAN_WRITER = { plugin: 'orchestrator', tool: 'mcp__orchestrator__review' } as const
 
-const PLANNED = Object.keys(PLAN_NEEDS) as Planned[]
+const isPlanned = (kind: string): kind is Planned => kind in PLAN_NEEDS
+const PLANNED = Object.keys(PLAN_NEEDS).filter(isPlanned)
 
 // A required review carries the rounds it runs at most (core's `reviewNeed`).
 export type Check = { readonly need: string; readonly reason: string; readonly max?: number }
@@ -22,6 +23,10 @@ export type CheckPlan = Checks & { readonly v: number; readonly repo: string; re
 
 // The kinds that stand without a record at the head, each with the line naming why, and the kinds the plan requires.
 export type Excused = Partial<Record<Kind, string>> & { required?: readonly Kind[] }
+
+// A field of a value read from outside, undefined when the value is no object.
+const fieldOf = (value: unknown, name: string): unknown =>
+  typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[name] : undefined
 
 // `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason, a required
 // review its rounds in its place.
@@ -34,7 +39,8 @@ function checkOf(kind: Planned, value: unknown): Check | string {
     const review = reviewNeed(need, reason)
     return typeof review === 'string' ? review : { need: review.need, reason: '', max: review.max }
   }
-  if (!(PLAN_NEEDS[kind] as readonly string[]).includes(need)) return kind + ' is one of ' + PLAN_NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
+  const needs: readonly string[] = PLAN_NEEDS[kind]
+  if (!needs.includes(need)) return kind + ' is one of ' + PLAN_NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
   const strictest = need === PLAN_NEEDS[kind][0]
   if (!strictest && reason === '') return kind + ' ' + need + ' gives its reason: "' + need + ': <why>"'
   if (reason.length > DETAIL_MAX) return kind + '\'s reason is at most ' + DETAIL_MAX + ' characters'
@@ -57,12 +63,13 @@ export function planInput(raw: unknown): Checks | string {
 export function parsePlan(raw: unknown): CheckPlan | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
   const { v, repo, pr, at } = raw as Record<string, unknown>
-  if (v !== RECORD_VERSION || typeof repo !== 'string' || !isRepoName(repo) || !Number.isInteger(pr) || (pr as number) < 1 || typeof at !== 'string') return undefined
+  if (v !== RECORD_VERSION || typeof repo !== 'string' || !isRepoName(repo) || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || typeof at !== 'string') return undefined
   const checks = planInput(Object.fromEntries(PLANNED.map((kind) => {
-    const check = (raw as Record<string, any>)[kind]
-    return [kind, String(check?.need) + (check?.max !== undefined ? ': max ' + String(check.max) : check?.reason ? ': ' + check.reason : '')]
+    const check = fieldOf(raw, kind)
+    const [need, max, reason] = [fieldOf(check, 'need'), fieldOf(check, 'max'), fieldOf(check, 'reason')]
+    return [kind, String(need) + (max !== undefined ? ': max ' + String(max) : reason ? ': ' + reason : '')]
   })))
-  return typeof checks === 'string' ? undefined : { v, repo, pr: pr as number, ...checks, at }
+  return typeof checks === 'string' ? undefined : { v, repo, pr, ...checks, at }
 }
 
 /** The file of a pull request's plan under the plugin's data directory. */
@@ -91,18 +98,19 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
 export type { Waivable }
 export const WAIVED = WAIVABLE
 // The consent subject the dialog's answer is recorded under.
-export const waiverSubject = (check: Waivable) => (check + '-waiver') as 'e2e-waiver' | 'norms-waiver'
+export const waiverSubject = (check: Waivable) => `${check}-waiver` as const
 const WAIVER_QUESTION = /^\s*Dispense (d['’]E2E|de normes) pour ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\s*:/i
 
 /** The check and pull request a dialog question asks the waiver of, or undefined when it is no waiver question. */
 export function waiverQuestion(question: unknown): { check: Waivable; repo: string; pr: number } | undefined {
   const q = (typeof question === 'object' && question !== null ? question : {}) as Record<string, unknown>
   const match = WAIVER_QUESTION.exec(String(q['question'] ?? ''))
-  const labels = Array.isArray(q['options']) ? q['options'].map((o) => String(o?.label ?? '').trim()) : []
+  const labels = Array.isArray(q['options']) ? q['options'].map((o: unknown) => String(fieldOf(o, 'label') ?? '').trim()) : []
   if (!match || labels.length !== 2 || !labels.includes(CONSENT_GRANT) || !labels.includes(CONSENT_REFUSE) || q['multiSelect'] === true) return undefined
   const pr = Number(match[3])
-  const check: Waivable = /normes/i.test(match[1]!) ? 'norms' : 'e2e'
-  return isRepoName(match[2]!) && pr > 0 ? { check, repo: match[2]!, pr } : undefined
+  const repo = match[2] ?? ''
+  const check: Waivable = /normes/i.test(match[1] ?? '') ? 'norms' : 'e2e'
+  return isRepoName(repo) && pr > 0 ? { check, repo, pr } : undefined
 }
 
 /** A check's need as a plan writes it: a required review with its rounds. */

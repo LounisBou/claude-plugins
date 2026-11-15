@@ -6,6 +6,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
+import { DECK_VERSION, deckSessions, parseDeck } from '../packages/core/src/deck.ts'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
@@ -13,6 +14,7 @@ import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
 import { parseRoundQuestion } from '../packages/core/src/round-question.ts'
 import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
+import { GOLDEN_DECK } from '../plugins/orchestrator/hooks/tests/golden-deck.ts'
 
 describe('pull request records: github writes, core reads', () => {
   it('reads every record github engine writes', () => {
@@ -57,6 +59,27 @@ describe('pull request records: github writes, core reads', () => {
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'review', '--detail', 'documentation only'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', [...none, '--kind', 'e2e'], { stdio: 'pipe' }))
     assert.throws(() => execFileSync('python3', ['plugins/github/engine/record.py', '--repo', 'o/n', '--pr', '7', '--head', 'a'.repeat(40), '--producer', 'x', '--kind', 'norms', '--result', 'accepted'], { stdio: 'pipe' }))
+  })
+})
+
+describe('deck.json: the orchestrator writes, core reads', () => {
+  it('reads the deck the orchestrator writes, byte for byte, and lists its sessions', () => {
+    const deck = parseDeck(GOLDEN_DECK)
+    assert.ok(deck)
+    assert.equal(deck.version, DECK_VERSION)
+    assert.deepEqual(deckSessions(deck).map(session => session.key), ['sessions/s-coord', 'sessions/s-orch', 'sessions/s-agent', 'remote/Orch: far', 'sessions/s-loose'])
+    assert.equal(deck.orchestrators[0]?.waiting?.kind, 'operator')
+    assert.equal(deckSessions({ ...deck, coordinator: null }).length, 4)
+  })
+
+  it('reads no deck from a file caught mid-write, another version or a field of another shape', () => {
+    const golden: Record<string, unknown> = JSON.parse(GOLDEN_DECK)
+    assert.equal(parseDeck(GOLDEN_DECK.slice(0, 200)), null)
+    assert.equal(parseDeck('[]'), null)
+    assert.equal(parseDeck('null'), null)
+    for (const over of [{ version: DECK_VERSION + 1 }, { orchestrators: [{ name: 'Orch: x' }] }, { round: { open: '1', urgent: 0, oldest_since: null } }, { sleeping: 'none' }, { coordinator: undefined }]) {
+      assert.equal(parseDeck(JSON.stringify({ ...golden, ...over })), null, JSON.stringify(over))
+    }
   })
 })
 

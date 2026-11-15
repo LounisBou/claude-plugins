@@ -17,6 +17,8 @@ import { CAPS_FILE, CASES_FILE, MODES, parseCapsFile, parseCases, selectCases, t
 import { byArm, deckMeter, dependencyNames, hostAgent, hostJudge, withoutOrchestrator } from './lib/outcome/host.ts'
 import { benchLauncher, benchPathError, orchestrationAgent, realBench, type Launcher } from './lib/outcome/orchestration.ts'
 import { findTranscript } from './lib/outcome/transcript.ts'
+import { DECK_FILE } from '../packages/core/src/deck.ts'
+import { moduleDirOf } from '../packages/core/src/orchestration.ts'
 import { configDir, setting } from '../packages/core/src/paths.ts'
 import { runEvals, type Ports, type Report } from './lib/outcome/harness.ts'
 import { markdown } from './lib/outcome/report.ts'
@@ -85,7 +87,7 @@ export interface Inject {
 
 /** The deck's path: the orchestrator's state directory, under its override or the host's configuration. */
 export function deckPath(env: Io['env']): string {
-  return join(setting(env, 'ORCHESTRATOR_STATE_DIR') ?? join(configDir(env), 'claude-orchestrator'), 'deck.json')
+  return join(setting(env, 'ORCHESTRATOR_STATE_DIR') ?? moduleDirOf(configDir(env)), DECK_FILE)
 }
 
 /** The host's arms, meter and judge, with every installed orchestrator turned off but this checkout's. */

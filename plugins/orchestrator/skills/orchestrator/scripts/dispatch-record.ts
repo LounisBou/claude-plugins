@@ -8,6 +8,7 @@ import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, real
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROLES, parseSessionName, type Prefix } from '../../../core/names.ts'
+import { MODULE_DIR, RECORDS_DIR } from '../../../core/orchestration.ts'
 import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
 import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
@@ -492,7 +493,7 @@ function registerRecord(ctx: Context): void {
   if (session === undefined || !recordThere(ctx)) return
   try {
     const abs = join(realpathSync(dirname(ctx.record)), basename(ctx.record))
-    const list = join(stateRoot(ctx.deps.env), 'records', session.replace(/[^A-Za-z0-9._-]/g, '_'))
+    const list = join(stateRoot(ctx.deps.env), RECORDS_DIR, session.replace(/[^A-Za-z0-9._-]/g, '_'))
     update(list, current => {
       const text = current ?? ''
       return text.split('\n').includes(abs) ? text : `${text}${abs}\n`
@@ -521,7 +522,7 @@ function finish(ctx: Context, code: number): void {
  * config dir's claude-orchestrator, so the registry the gate reads and this script writes agree.
  */
 export function stateRoot(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME'))
+  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env, setting(env, 'HOME'))
 }
 
 async function open(ctx: Context, args: readonly string[]): Promise<void> {

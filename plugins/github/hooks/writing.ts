@@ -43,11 +43,13 @@ export function carriesText(command: string): boolean {
 export function textFields(command: string, args: Record<string, unknown>): Array<{ field: string; text: string }> {
   if (!carriesText(command)) return []
   const out: Array<{ field: string; text: string }> = []
-  if (KIND[command] === 'pr' && typeof args.title === 'string') out.push({ field: 'title', text: args.title })
-  if (typeof args.body === 'string') out.push({ field: 'body', text: args.body })
-  if (Array.isArray(args.comments)) {
-    args.comments.forEach((c: any, i: number) => {
-      if (c && typeof c.body === 'string') out.push({ field: 'comments[' + i + '].body', text: c.body })
+  const { title, body, comments } = args
+  if (KIND[command] === 'pr' && typeof title === 'string') out.push({ field: 'title', text: title })
+  if (typeof body === 'string') out.push({ field: 'body', text: body })
+  if (Array.isArray(comments)) {
+    comments.forEach((c: unknown, i: number) => {
+      const text: unknown = typeof c === 'object' && c !== null && 'body' in c ? c.body : undefined
+      if (typeof text === 'string') out.push({ field: 'comments[' + i + '].body', text })
     })
   }
   return out
@@ -63,14 +65,15 @@ export function proseLines(text: string, fenced?: string): string[] {
   let fence: { char: string; length: number } | null = null
   for (const line of text.split(/\r?\n/)) {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    const run = marker?.[1] ?? ''
     if (fence) {
-      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length
-        && line.trim() === marker[1]) fence = null
+      if (marker && run[0] === fence.char && run.length >= fence.length
+        && line.trim() === run) fence = null
       if (fenced !== undefined) out.push(fenced)
       continue
     }
     if (marker) {
-      fence = { char: marker[1][0], length: marker[1].length }
+      fence = { char: run[0] ?? '', length: run.length }
       if (fenced !== undefined) out.push(fenced)
       continue
     }
@@ -258,7 +261,7 @@ const SHOT_IMAGE = /^(!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>)$/i
 
 function shotTitle(line: string): boolean {
   const m = SHOT_TITLE.exec(line.trim())
-  return !!m && !m[1].trim().endsWith(':')
+  return !!m && !(m[1] ?? '').trim().endsWith(':')
 }
 
 function shotImage(line: string): boolean {
@@ -270,21 +273,22 @@ function shotImage(line: string): boolean {
 // on the last line before that blank one and another starting on the first
 // line below it.
 function shotSeparator(lines: string[], i: number, summaryEnd: number): boolean {
-  if (lines[i].trim() !== '---' || i >= summaryEnd) return false
-  if (i < 3 || lines[i - 1].trim() !== '') return false
+  const at = (k: number): string => lines[k] ?? ''
+  if (at(i).trim() !== '---' || i >= summaryEnd) return false
+  if (i < 3 || at(i - 1).trim() !== '') return false
   let above = i - 1
-  while (above >= 0 && lines[above].trim() === '') above--
-  if (above < 1 || !shotImage(lines[above]) || !shotTitle(lines[above - 1])) return false
+  while (above >= 0 && at(above).trim() === '') above--
+  if (above < 1 || !shotImage(at(above)) || !shotTitle(at(above - 1))) return false
   let below = i + 1
-  while (below < summaryEnd && lines[below].trim() === '') below++
-  return below + 1 < summaryEnd && shotTitle(lines[below]) && shotImage(lines[below + 1])
+  while (below < summaryEnd && at(below).trim() === '') below++
+  return below + 1 < summaryEnd && shotTitle(at(below)) && shotImage(at(below + 1))
 }
 
 // The section a line labels, its index in SECTIONS, and what follows the label
 // on that line; -1 for a bold label that is none of the four.
 function sectionLabel(line: string): { at: number; rest: string } | undefined {
   const m = BOLD_LABEL.exec(line.trim())
-  return m ? { at: SECTIONS.indexOf(m[1].trim()), rest: m[2].trim() } : undefined
+  return m ? { at: SECTIONS.indexOf((m[1] ?? '').trim()), rest: (m[2] ?? '').trim() } : undefined
 }
 
 // What the four sections break: each present once, in order, each holding
@@ -301,7 +305,7 @@ function sectionFaults(lines: string[]): string[] {
     }
     seen.push(label.at)
     let items = 0
-    for (let j = i + 1; j < lines.length && lines[j].trim() !== '' && !sectionLabel(lines[j]); j++) items++
+    for (let j = i + 1; j < lines.length && (lines[j] ?? '').trim() !== '' && !sectionLabel(lines[j] ?? ''); j++) items++
     const none = label.rest === 'none'
     if (label.rest !== '' && !none) faults.add(LABEL_TEXT_RULE)
     else if (none && items > 0) faults.add(NONE_ITEMS_RULE)
@@ -309,7 +313,7 @@ function sectionFaults(lines: string[]): string[] {
   })
   const missing = SECTIONS.filter((_, k) => !seen.includes(k))
   if (missing.length > 0) faults.add(MISSING_RULE + missing.join(', ') + DESCRIPTIONS)
-  if (seen.some((k, n) => n > 0 && k <= seen[n - 1])) faults.add(ORDER_RULE)
+  if (seen.some((k, n) => n > 0 && k <= (seen[n - 1] ?? -1))) faults.add(ORDER_RULE)
   return [...faults]
 }
 
@@ -323,7 +327,7 @@ function textAfterSections(text: string): boolean {
   })
   if (last < 0) return false
   let end = last + 1
-  while (end < lines.length && lines[end].trim() !== '' && !sectionLabel(lines[end])) end++
+  while (end < lines.length && (lines[end] ?? '').trim() !== '' && !sectionLabel(lines[end] ?? '')) end++
   return lines.slice(end).some((l) => l.trim() !== '')
 }
 
