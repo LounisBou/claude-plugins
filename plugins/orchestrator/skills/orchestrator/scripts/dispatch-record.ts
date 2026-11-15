@@ -3,14 +3,16 @@
 // launcher every caller runs.
 //
 // Every write of the record and the registry goes through core's store: a lock,
-// one rename, no temporary file left behind. The session-name shape is core's (names.ts).
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
+// one rename, no temporary file left behind; the owner claim is core's store too (claimOwner). The
+// session-name shape and the session's orchestration are core's (names.ts, session-orchestration.ts).
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ROLES, parseSessionName, type Prefix } from '../../../core/names.ts'
-import { MODULE_DIR, RECORDS_DIR } from '../../../core/orchestration.ts'
-import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
-import { readText, update, writeAtomic } from '../../../core/store.ts'
+import { orchForm } from '../../../core/names.ts'
+import { sessionOrchestration } from '../../../core/session-orchestration.ts'
+import { MODULE_DIR, recordsRegistryPath } from '../../../core/orchestration.ts'
+import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { claimOwner, createOnly, firstLineOf, readText, releaseOwner, update } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
@@ -150,74 +152,6 @@ export function nextId(rows: readonly Row[]): number {
   return rows.length === 0 ? 1 : Math.max(...rows.map(row => asNumber(row['id']))) + 1
 }
 
-// ----- the session's orchestration -----
-
-const ORCH: Prefix = (Object.keys(ROLES) as Prefix[]).find(prefix => ROLES[prefix] === 'orchestrator') ?? 'Orch'
-
-/**
- * A session name in the house shape: blanks and the ` [reference]` the host appends left off, a
- * hand-typed « Orch:x » or a former « Orch : x » spelled « Orch: x ». The shape itself is core's (names.ts): a name it
- * does not read as an orchestrator's stays as it was given.
- */
-export function orchForm(raw: string): string {
-  const name = raw.replace(/^\s+/, '').replace(/\s+$/, '').replace(/ \[[^\]\s]+\]$/, '').replace(/\s+$/, '')
-  const typed = new RegExp(`^${ORCH} ?: *(\\S.*)$`, 's').exec(name)
-  if (typed?.[1] !== undefined) {
-    const canonical = `${ORCH}: ${typed[1]}`
-    if (parseSessionName(canonical)?.role === 'orchestrator') return canonical
-  }
-  return name
-}
-
-/** Whether a name in the house shape is an orchestration's. */
-const isOrchestration = (name: string): boolean => parseSessionName(name)?.role === 'orchestrator'
-
-/**
- * The orchestration this session belongs to, as the host's record of the session names it
- * (`<config dir>/sessions/<pid>.json`, the newest record carrying this session id). Empty for a
- * shell outside any session, a session the host kept no record of, and one that is no orchestrator.
- */
-export function sessionOrchestration(env: Env): string {
-  const session = setting(env, 'CLAUDE_CODE_SESSION_ID')
-  if (session === undefined) return ''
-  const dir = join(configDir(env, setting(env, 'HOME')), 'sessions')
-  let names: string[]
-  try {
-    names = readdirSync(dir).filter(name => name.endsWith('.json')).sort()
-  } catch {
-    return ''
-  }
-  let newest: { at: string; name: string } | undefined
-  for (const file of names) {
-    let value: unknown
-    try {
-      if (!statSync(join(dir, file)).isFile()) continue
-      value = JSON.parse(readText(join(dir, file)) ?? '')
-    } catch {
-      continue
-    }
-    const name = field(value, 'name')
-    if (field(value, 'sessionId') !== session || typeof name !== 'string') continue
-    const at = text(or(field(value, 'updatedAt'), 0))
-    // As `[ newest -ge line ]`: a reading that is no integer never keeps the earlier one.
-    const integer = /^-?[0-9]+$/
-    if (newest !== undefined && integer.test(newest.at) && integer.test(at) && BigInt(newest.at) >= BigInt(at)) continue
-    newest = { at, name }
-  }
-  if (newest === undefined) return ''
-  const name = orchForm(newest.name)
-  return isOrchestration(name) ? name : ''
-}
-
-/** The first line of a file, '' when it cannot be read. */
-function firstLine(path: string): string {
-  try {
-    return (readText(path) ?? '').split('\n')[0] ?? ''
-  } catch {
-    return ''
-  }
-}
-
 const isFile = (path: string): boolean => {
   try {
     return statSync(path).isFile()
@@ -231,29 +165,6 @@ const isDir = (path: string): boolean => {
     return statSync(path).isDirectory()
   } catch {
     return false
-  }
-}
-
-/**
- * Creates `path` holding `content` only when nothing is there: of two first writers, one claim
- * stands. The content is written beside it first and linked into place, so the file is never
- * seen empty: another writer that read an empty owner file would take it over.
- */
-function createOnly(path: string, content: string): boolean {
-  const tmp = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
-  try {
-    const fd = openSync(tmp, 'wx', 0o644)
-    try {
-      writeSync(fd, content)
-    } finally {
-      closeSync(fd)
-    }
-    linkSync(tmp, path)
-    return true
-  } catch {
-    return false
-  } finally {
-    rmSync(tmp, { force: true })
   }
 }
 
@@ -487,21 +398,12 @@ function sameCommit(ctx: Context, a: string, b: string): boolean {
 function guardOwner(ctx: Context): void {
   if (setting(ctx.deps.env, 'CLAUDE_CODE_SESSION_ID') !== undefined) {
     const me = sessionOrchestration(ctx.deps.env)
-    let owner = orchForm(firstLine(ctx.ownerFile))
-    if (owner === '' && me !== '' && isDir(dirname(ctx.record))) {
-      // No owner yet, or an empty file: claim now, before the write, so of two first writers one
-      // claim stands and the other reads the winner back and is refused.
-      if (createOnly(ctx.ownerFile, `${me}\n`)) ctx.claimed = true
-      else if (!nonEmpty(ctx.ownerFile)) {
-        try {
-          writeAtomic(ctx.ownerFile, `${me}\n`, 0o644)
-          ctx.claimed = true
-        } catch {
-          // Unclaimed: the owner read below decides.
-        }
-      }
-      owner = orchForm(firstLine(ctx.ownerFile))
-    }
+    // No owner yet, or an empty file: claim now, before the write, so of two first writers one
+    // claim stands and the other reads the winner back and is refused.
+    const { owner, claimed } = me !== '' && isDir(dirname(ctx.record))
+      ? claimOwner(ctx.ownerFile, me, orchForm)
+      : { owner: orchForm(firstLineOf(ctx.ownerFile)), claimed: false }
+    if (claimed) ctx.claimed = true
     if (owner !== '' && me !== owner) {
       die(ctx, `${ctx.cmd}: ${ctx.record} belongs to ${owner}, and this session is ${me || 'no orchestration it can tell'}: a record belongs to one orchestration, so open your own beside your briefs and hand ${owner} the work by message`)
     }
@@ -509,18 +411,10 @@ function guardOwner(ctx: Context): void {
   ctx.writing = true
 }
 
-function nonEmpty(path: string): boolean {
-  try {
-    return statSync(path).size > 0
-  } catch {
-    return false
-  }
-}
-
 /** Whether this session belongs to the orchestration that owns the record: the owner's successor too. */
 function readsOwnRecord(ctx: Context): boolean {
   if (!isFile(ctx.ownerFile)) return false
-  const owner = orchForm(firstLine(ctx.ownerFile))
+  const owner = orchForm(firstLineOf(ctx.ownerFile))
   return owner !== '' && sessionOrchestration(ctx.deps.env) === owner
 }
 
@@ -537,7 +431,7 @@ function registerRecord(ctx: Context): void {
   if (session === undefined || !recordThere(ctx)) return
   try {
     const abs = join(realpathSync(dirname(ctx.record)), basename(ctx.record))
-    const list = join(stateRoot(ctx.deps.env), RECORDS_DIR, session.replace(/[^A-Za-z0-9._-]/g, '_'))
+    const list = recordsRegistryPath(stateRoot(ctx.deps.env), session)
     update(list, current => {
       const text = current ?? ''
       return text.split('\n').includes(abs) ? text : `${text}${abs}\n`
@@ -556,7 +450,7 @@ function claimRecord(ctx: Context): void {
 
 /** On every exit: a failed write gives back the claim it made; the record is registered, then claimed. */
 function finish(ctx: Context, code: number): void {
-  if (code !== 0 && ctx.claimed && orchForm(firstLine(ctx.ownerFile)) === sessionOrchestration(ctx.deps.env)) rmSync(ctx.ownerFile, { force: true })
+  if (code !== 0 && ctx.claimed) releaseOwner(ctx.ownerFile, sessionOrchestration(ctx.deps.env), orchForm)
   registerRecord(ctx)
   if (code === 0) claimRecord(ctx)
 }

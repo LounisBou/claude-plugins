@@ -31,7 +31,7 @@ import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
-  type WaitKind,
+  hostStopOf, stopInTail, stopKey, stopText, type HostStop, type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
@@ -42,11 +42,7 @@ import {
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
-import {
-  askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
-  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
-  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
-} from './remote-round.ts'
+import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck, type QEvent } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -1359,7 +1355,7 @@ async function withdrawOlder($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
       await logLine($, 'supervision', `round: an operator question of an older release withdrawn: ${entry.id}`)
       const origin = entry.origin
       const sent = origin
-        ? await $.session.send({ to: origin.address, text: (origin.line === 'q' ? qAnswerLine : answerLine)(entry.id, entry.since, 'withdrawn', at, text) })
+        ? await $.session.send({ to: origin.address, text: qAnswerLine(entry.id, entry.since, 'withdrawn', at, text) })
         : await $.session.send({ to: { sessionId: entry.session }, text: `[module] ${text}` })
       if (!sent?.isDelivered) await logLine($, 'supervision', `round: the withdrawal of ${entry.id} was not delivered: ${sent?.reason ?? 'no answer'}`)
     } catch (err) {
@@ -1632,10 +1628,11 @@ export function register(on: On<Held>): void {
   })
   on('turn.complete', {}, async ($, e, next) => {
     try {
-      if (!e.agentId && e.reason === 'answer') {
+      // A turn the person interrupted is his; any other end is read, a stop the host wrote included.
+      if (!e.agentId && e.reason !== 'aborted' && e.isAborted !== true) {
         const inFlight = inFlightAtStop
         inFlightAtStop = null
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer'), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -1707,8 +1704,7 @@ export function register(on: On<Held>): void {
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side; so are a remote orchestrator's
   // ask, entered in the coordinator's round, its acknowledgment, and the acknowledgment of an
-  // answer sent back (remote-round.ts), by the event line or an older machine's lines. That
-  // answer reaches the sender's model as its readable part alone, its marked line taken out. A coordinator's message
+  // answer sent back (remote-round.ts), by the event line. That answer reaches the sender's model as its readable part alone, its marked line taken out. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
@@ -1718,8 +1714,6 @@ export function register(on: On<Held>): void {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
         if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
-        if (isAck(delivery.body)) return await receiveAck($, oldAck(parseAck(delivery.body), 'ask'))
-        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, oldAck(parseAnswerAck(delivery.body), 'answer'))
         const q = isQ(delivery.body) ? parseQ(delivery.body) : null
         // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
         // by the coordinator alone, and the reply given on its replica, which its asker's model reads.
@@ -1738,17 +1732,14 @@ export function register(on: On<Held>): void {
           if ('consumed' in received) return received
           const at = e.text.indexOf(delivery.body)
           passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
-        } else if (isQ(delivery.body) && q?.event.kind !== 'answer') {
-          return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null, true)
-        }
-        if (isAsk(delivery.body)) return await receiveAsk($, delivery, parseAsk(delivery.body), false)
-        if (q?.event.kind === 'answer' || isAnswer(delivery.body)) {
-          const answer = q?.event.kind === 'answer' ? { id: q.id, ...q.event } : parseAnswer(delivery.body)
-          const received = await receiveAnswer($, delivery, answer, q !== null)
+        } else if (q?.event.kind === 'answer') {
+          const received = await receiveAnswer($, delivery, { id: q.id, ...q.event })
           if ('consumed' in received) return received
           // The marked first line out, the readable answer in its place, the envelope kept.
           const at = e.text.indexOf(delivery.body)
           passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
+        } else if (isQ(delivery.body)) {
+          return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null)
         }
         const withdrawal = parseWithdrawal(delivery.body)
         if (withdrawal) {
@@ -2267,7 +2258,10 @@ export function entersRound(role: string | null): boolean {
 // its wait is written, so its row shows it waiting, and no entry is entered or sent.
 // An agent's turn without a status line that ended with work still in flight (`inFlight`, what the
 // host listed at the stop) is no idle agent: nothing is sent; its next turn's end reports.
-export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null): Promise<void> {
+// An agent's turn the host ended in its own words (its limit or spend text, an API error: relay.ts hostStopOf,
+// read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
+// flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
+export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer'): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2284,6 +2278,11 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const role = roleOf(name)
   const orchestrating = entersRound(role)
   if (!name || (!orchestrating && role !== 'agent')) return
+  if (role === 'agent') {
+    const stop = hostStopOf(answer) ?? (reason !== 'answer' || answer.trim() === '' ? await stopAtTail($, sessionId) : null)
+    if (stop) return relayStop($, sessionId, name, pid, tty, stop, turnId)
+  }
+  if (reason !== 'answer') return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   const whole = answer
   if (role === 'agent') answer = heldReport(answer)
@@ -2336,15 +2335,8 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (orchestrating && wait && patch) {
     const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const machine = await machineOf($)
-    const sent = await sendToCoordinator($, to, qAskLine(entry, machine))
-    if (sent?.isDelivered) {
-      // Until the old lines retire, the old ask goes beside the event line: a coordinator of an
-      // older release reads that one alone; this release's enters the first and ignores the other.
-      const old = await sendToCoordinator($, to, askLine(entry, machine))
-      if (!old?.isDelivered) await logLine($, 'supervision', `relay: the old ask line was not delivered to ${addressLabel(to)}: ${old?.reason ?? 'no answer'}`)
-      return
-    }
+    const sent = await sendToCoordinator($, to, qAskLine(entry, await machineOf($)))
+    if (sent?.isDelivered) return
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
     if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
@@ -2362,6 +2354,35 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   } else {
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
+}
+
+// The bytes of the transcript's end read for a stop the host wrote: its last lines, never the whole file.
+const STOP_TAIL_BYTES = 65536
+
+// The stop the session's transcript ends on (relay.ts stopInTail), null when it cannot be read.
+async function stopAtTail($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<HostStop | null> {
+  const path = await transcriptPathOf($, sessionId)
+  if (path === '') return null
+  const tail = await $.process.run(['tail', '-c', String(STOP_TAIL_BYTES), path], { timeoutMs: FACTS_BOUND_MS }).catch(() => null)
+  return tail && tail.exitCode === 0 ? stopInTail(String(tail.stdout ?? '')) : null
+}
+
+// An agent stopped by the host, told to its orchestrator in one line, once per stop (relay.ts
+// stopKey in the wait file's `relayed`); a wait it carried is cleared. Nobody to tell, or a send
+// refused, is one log line, and the next turn's end tries again.
+async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, name: string,
+  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown): Promise<void> {
+  const before = await readWait($, sessionId)
+  const key = stopKey(turnId, stop)
+  if (before?.relayed === key) return
+  const to = await orchestratorOn($, tty, name, 'relay')
+  if (!to) {
+    await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    return
+  }
+  const sent = await $.session.send({ to, text: stopText(name, stop) })
+  if (sent?.isDelivered) await writeWait($, sessionId, { ...(before?.waiting ? clearedWait(before) : before ?? {}), relayed: key, name, pid })
+  else await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
 // The session's open entries moved to the successor it learnt, or, none learnt, withdrawn by its
@@ -2608,8 +2629,8 @@ function roundEntryOf(e: unknown): RoundEntry | null {
   if (e['consent'] !== undefined && consent === undefined) return null
   const originRead = e['origin']
   const origin = originRead === undefined ? undefined
-    : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address']) && (originRead['line'] === undefined || originRead['line'] === 'q')
-      ? { machine: originRead['machine'], address: originRead['address'], ...(originRead['line'] === 'q' ? { line: 'q' as const } : {}) }
+    : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address'])
+      ? { machine: originRead['machine'], address: originRead['address'] }
       : null
   if (origin === null) return null
   const delivery = deliveryOfEntry(e['delivery'], origin !== undefined)
@@ -2827,7 +2848,7 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
 // acknowledged to its sender. The same entry sent again, its wait's start unchanged, is never
 // entered twice, whatever became of it since: it is acknowledged again, its first acknowledgment
 // having been lost. Anything else is one log line.
-async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
+async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, delivery: Delivery, asked: { entry: RoundEntry; machine: string } | null): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
     await logLine($, 'supervision', `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
@@ -2848,21 +2869,15 @@ async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
       step = 'the refusal'
       const at = new Date().toISOString()
       const readable = olderQuestionText(asked.entry.id, 'not entered')
-      const line = byEvent ? qAnswerLine : answerLine
-      const sent = await $.session.send({ to: from, text: line(asked.entry.id, asked.entry.since, 'refused', at, readable) })
+      const sent = await $.session.send({ to: from, text: qAnswerLine(asked.entry.id, asked.entry.since, 'refused', at, readable) })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the refusal of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
       return { consumed: 'orchestrator: a remote operator question of an older release, refused' }
     }
     step = 'the entry read'
     const path = roundPath(await stateDir($), asked.entry.id)
     const known = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-    // The same ask by the other line, sent beside the one it was entered by: the first was
-    // taken and acknowledged, this one changes nothing and is acknowledged nowhere.
-    if (known?.since === asked.entry.since && known.origin && (known.origin.line === 'q') !== byEvent) {
-      return { consumed: 'orchestrator: a remote question received by its other line, ignored' }
-    }
     if (known?.since !== asked.entry.since) {
-      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from, ...(byEvent ? { line: 'q' as const } : {}) } }
+      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
       step = 'the entry write'
       await changeEntry($, path, () => entry)
       await logLine($, 'supervision', `round: entered from ${asked.machine}: ${entry.id}`)
@@ -2872,8 +2887,7 @@ async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
       $.ui.invalidate('ui.render')
     }
     step = 'the acknowledgment'
-    const ack = byEvent ? qAckLine({ id: asked.entry.id, seq: seqOf(asked.entry.since), of: 'ask' }) : ackLine(asked.entry.id, asked.entry.since)
-    const sent = await $.session.send({ to: from, text: ack })
+    const sent = await $.session.send({ to: from, text: qAckLine({ id: asked.entry.id, seq: seqOf(asked.entry.since), of: 'ask' }) })
     if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
   } catch (err) {
     await logLine($, 'supervision', `receive: a remote question failed at ${step} (${asked.entry.id}): ${messageOf(err)}`)
@@ -2913,11 +2927,7 @@ async function receiveAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
 // one part a model reads. The last one taken is kept (answeredKey): the same answer sent again, its
 // acknowledgment lost, is acknowledged again and passed nowhere. A throw is one log line and the
 // readable line still passes. A refused one is one log line, passed nowhere, never acknowledged.
-async function receiveAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, delivery: Delivery, answer: ReturnType<typeof parseAnswer>, byEvent: boolean): Promise<{ consumed: string } | { readable: string }> {
-  if (!answer) {
-    await logLine($, 'supervision', `receive: an answer was refused (${delivery.body.length} characters)`)
-    return { consumed: 'orchestrator: a malformed answer, refused' }
-  }
+async function receiveAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, delivery: Delivery, answer: { id: string } & Extract<QEvent, { kind: 'answer' }>): Promise<{ consumed: string } | { readable: string }> {
   let step = 'the wait read'
   try {
     const sessionId = await $.session.id()
@@ -2937,10 +2947,7 @@ async function receiveAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
     const from = peerAddress(delivery)
     if (!from) await logLine($, 'supervision', `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
     else {
-      // « Already » rides on the event line's acknowledgment alone: an old line's answer that crossed
-      // the tab's is acked by it too, never as delivered, so the pane says it failed. A coordinator of
-      // an older release reads no such acknowledgment: its answer stays unacked and fails there.
-      const ack = byEvent || already ? qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) }) : answerAckLine(answer.id, answer.since)
+      const ack = qAckLine({ id: answer.id, seq: seqOf(answer.since), of: 'answer', ...(already ? { already: true as const } : {}) })
       const sent = await $.session.send({ to: from, text: ack })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
     }
@@ -3002,11 +3009,6 @@ async function receiveQAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'
   if (ack?.of === 'asked') return receiveAskedAck($, from, ack)
   if (ack?.of === 'reply') return receiveReplyAck($, from, ack)
   return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
-}
-
-// An old line's acknowledgment, read as the event line's: its start as the seq.
-function oldAck(ack: { id: string; since: string } | null, of: QAck['of']): QAck | null {
-  return ack && { id: ack.id, seq: seqOf(ack.since), of }
 }
 
 // What the pane says of an answer its sender's tab had settled first.
