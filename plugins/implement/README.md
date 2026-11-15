@@ -95,8 +95,9 @@ A guard stays armed across turns, so a phase stopped on a question resumes
 under the same rules. It is released by another implement skill starting, an
 interrupted turn, the conversation ending or being cleared, and `/implement:release-guard`.
 During a check, a shell line that writes into the tree (a redirection into a file,
-`sed -i`, `cp`, `tee`…) is observed like an edit; `rm` and `rmdir` are refused. A shell line is read word by word: a guarded command
-named inside quotes, a comment or a here-document is not a call.
+`sed -i`, `cp`, `tee`…) is observed like an edit; `rm` and `rmdir` are refused. A shell line
+is read word by word: a guarded command named inside quotes, a comment or a here-document is
+not a call.
 
 ## The artifact layout
 

@@ -138,7 +138,7 @@ export function stateLine(s: Snapshot): string {
 // assignments, and `sh -c` read again. `eval` joins its words into a line read the same way.
 export { simpleCommands } from '../core/shell.ts'
 
-// What a command line does that implement:check refuses: stage or commit.
+// What a command line does that implement:check observes: stage or commit.
 export type Action = 'stage' | 'commit'
 
 function actionsOf(argv: readonly string[], depth: number): Action[] {
@@ -224,6 +224,9 @@ const REMOVERS = new Set(['rm', 'rmdir'])
 // The commands of a line that write into it: a file moved, copied over, created, or edited in place.
 const WRITERS = new Set(['tee', 'mv', 'cp', 'touch', 'truncate', 'ln', 'install', 'dd', 'patch'])
 
+// A word `rm` or `rmdir` of a line the reader cannot read, found by its text: a doubt that may hide a removal.
+const REMOVAL_WORD = /(^|[\s;&|(){}`"'\/])(rm|rmdir)(?=$|[\s;&|(){}`"'])/
+
 const basename = (argv: readonly string[]): string => (argv[0] ?? '').split('/').pop() ?? ''
 
 function writesTree(argv: readonly string[]): string | null {
@@ -236,8 +239,8 @@ function writesTree(argv: readonly string[]): string | null {
 /*
  * The finding of a shell line during a check, null outside one. A removal is the irreversible act
  * and wins over any other finding of the line; the others are observed, the first one found naming
- * the line. A line the reader cannot read (a brace expansion past its limit) is observed too: what
- * it hides is not known, and the check does not stop on a doubt.
+ * the line. A line the reader cannot read (a brace expansion past its limit) is observed too, the
+ * one exception being a word `rm` or `rmdir` anywhere in it: a doubt does not hide a removal.
  */
 export function bashDecision(g: Guard, command: string): Verdict | null {
   if (!g.checking) return null
@@ -251,6 +254,7 @@ export function bashDecision(g: Guard, command: string): Verdict | null {
     const writer = commands.map(writesTree).find(w => w !== null)
     return writer ? observe('implement.check.write', writer) : null
   } catch {
+    if (REMOVAL_WORD.test(command)) return { code: 'implement.check.remove', what: 'a removal in a shell line it cannot read', irreversible: true }
     return observe('implement.check.unreadable', 'a shell line it cannot read')
   }
 }

@@ -237,6 +237,13 @@ describe('the guards', () => {
     for (const g of [IDLE, phase, close]) expect(bashDecision(g, '{git,commit}{1..1001} -m x')).toBeNull()
   })
 
+  test('a removal named in a shell line the reader cannot read is still refused', () => {
+    for (const line of ['rm a; echo {1..2000}', 'echo {1..100000} && /bin/rm -rf x', 'echo {1..2000}; sh -c "rmdir out"']) {
+      expect(bashDecision(checking, line)).toMatchObject({ code: 'implement.check.remove', irreversible: true })
+    }
+    for (const line of ['echo {1..100000} # form', 'ls {1..2000}/rmfile', 'echo {1..2000} firm']) expect(bashDecision(checking, line)).toMatchObject(observedAs('implement.check.unreadable'))
+  })
+
   test('an aborted turn releases everything, an answered one keeps a phase armed', () => {
     expect(onTurnEnd(phase, true)).toEqual(IDLE)
     expect(onTurnEnd(phase, false).outer).toBe('phase')

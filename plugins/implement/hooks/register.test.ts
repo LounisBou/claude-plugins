@@ -329,14 +329,15 @@ test('a check lets an edit and a stage through, one line each, until its verdict
   await skill($, 'check')
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
   expect((await bash($, 'git add -A')).result).toBe('ran')
-  expect(journal).toMatchObject([observedAs('implement.check.edit'), observedAs('implement.check.stage')])
+  for (const command of ['git commit -m x', 'git diff > fix.patch', 'cp a b']) expect((await bash($, command)).result).toBe('ran')
+  expect(journal.map(e => e.source.code)).toEqual(['implement.check.edit', 'implement.check.stage', 'implement.check.commit', 'implement.check.redirect', 'implement.check.write'])
   const stream = $.turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 } as any) as any
   for await (const _ of stream) { /* drained */ }
   await stream
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
-  expect(journal.length).toBe(2)
+  expect(journal.length).toBe(5)
   await agent($, 'general-purpose')   // the phase is still armed
-  expect(journal.map(e => e.source.code)).toEqual(['implement.check.edit', 'implement.check.stage', 'implement.phase.subagent'])
+  expect(journal.map(e => e.source.code)).toEqual(['implement.check.edit', 'implement.check.stage', 'implement.check.commit', 'implement.check.redirect', 'implement.check.write', 'implement.phase.subagent'])
 })
 
 test('a check refuses a removal unrun and leaves no line; a phase lets it run', async ($, on) => {
