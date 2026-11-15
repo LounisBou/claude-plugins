@@ -2,30 +2,32 @@
 // N4: the walkthrough rules of /norms:check and /norms:learn, enforced on the
 // main loop's tool calls while one of those commands is the session's last.
 //
-// The guards are narrow on purpose, so they never trap the user:
-// - a code edit is refused only when the user's last words are the command
-//   itself or a pass/discuss answer (check.md 7.3), and a CONTRIBUTING.md edit
-//   only when they are the command itself or "skip" (learn.md Step 8). Any
-//   other words the user types release the edit guard, since check.md treats
+// The guards watch, they do not trap. A call a rule would have stopped goes through and leaves one
+// escape line in the journal (observe.ts), under the rule's code; only what cannot be undone is
+// still refused or asked:
+// - a code edit on the command turn or after a pass/discuss answer (check.md 7.3), a CONTRIBUTING.md
+//   edit before "add" or after "skip" (learn.md Step 8), a commit message naming the check, the
+//   tooling or the TODO list (check.md 7.4), a plain `git push` and a subagent's shell line that
+//   writes are noted. Any other words the user types release the edit rule, since check.md treats
 //   them as discussion that may well end in "do it this way";
-// - `git push` asks the user, through the host's own question: Allow lets it
-//   through, anything else (Deny, nobody there to answer) refuses it. Words in
-//   a prompt never grant it: « don't push » holds the word too;
-// - under /norms:check, a commit message naming the check, the tooling or the
-//   TODO list is refused unless the user's last words use that word;
-// - an interrupted turn ends the mode, and so do /clear and any other slash
-//   command the user submits;
+// - a forced or deleting `git push` asks the user, through the host's own question: Allow lets it
+//   through, anything else (Deny, nobody there to answer) refuses it. A push the line does not show
+//   whole (a variable set before it, `env`, a substitution, xargs, a configuration given with -c)
+//   is read as forced. Words in a prompt never grant it: « don't push » holds the word too;
+// - a subagent's `rm`, `rmdir` or `find -delete`, and a line the reader cannot read, stay refused;
+// - an interrupted turn ends the mode, and so do /clear and any other slash command the user submits;
 // - the mode is armed by the typed command (command.run) or by the main loop's Skill
 //   tool call that runs it, which no slash prompt follows: that one also ends at the
 //   check's check_done once it wrote its record (a refused call leaves the guards
 //   armed). A spawned session (ORCHESTRATOR_SPAWNED) has nobody to walk through, so
 //   its Skill call arms nothing; the words of the call never disarm a guard.
 // A guard whose own code fails lets the call through: the markdown still states every rule.
-// The push guard is the exception: when nobody can be asked, the push is refused.
+// The push question is the exception: when nobody can be asked, the forced push is refused.
 
-import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { gitSubcommand, innerLine, readCommands, simpleCommands, unwrapPath } from '../core/shell.ts'
 import { isSpawned } from '../core/env.ts'
 import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
+import { observed } from './observe.ts'
 import { clearMark } from './record.ts'
 
 export type Mode = 'check' | 'learn'
@@ -40,33 +42,47 @@ function answer(text: string): string {
 
 const isCommand = (text: string) => text.trim().startsWith('/')
 
-export function editDecision(mode: Mode | undefined, lastPrompt: string | undefined, filePath: string): string | null {
+/*
+ * What a rule of the walkthrough found in a tool call: the stable code the journal holds it under,
+ * and the words that said no. Only an irreversible act (a deletion, a forced push) is refused with
+ * them; any other lets the call through, and the code is the one line it leaves.
+ */
+export type Verdict = { readonly code: string; readonly reason: string; readonly irreversible: boolean }
+
+const observe = (code: string, reason: string): Verdict => ({ code, reason, irreversible: false })
+
+export function editDecision(mode: Mode | undefined, lastPrompt: string | undefined, filePath: string): Verdict | null {
   if (!mode || lastPrompt === undefined) return null
   const a = answer(lastPrompt)
   if (mode === 'check') {
-    if (isCommand(lastPrompt)) return 'norms: no code change before the user answers "fix". Present the report and the first finding, then wait.'
+    if (isCommand(lastPrompt)) return observe('norms.edit.ungranted', 'norms: no code change before the user answers "fix". Present the report and the first finding, then wait.')
     if (PASS.includes(a) || DISCUSS.includes(a)) {
-      return `norms: the user answered "${lastPrompt.trim()}", not "fix". No code change for this finding: ${PASS.includes(a) ? 'mark it passed and move on' : 'answer, then re-present the proposal'}.`
+      return observe('norms.edit.ungranted', `norms: the user answered "${lastPrompt.trim()}", not "fix". No code change for this finding: ${PASS.includes(a) ? 'mark it passed and move on' : 'answer, then re-present the proposal'}.`)
     }
     return null
   }
   if (!/(^|\/)CONTRIBUTING\.md$/.test(filePath)) return null
-  if (isCommand(lastPrompt)) return 'norms: no rule is added before the user answers "add". Present the first proposed rule, then wait.'
-  if (a === 'skip' || a === 'no' || a === 'pass') return `norms: the user answered "${lastPrompt.trim()}". This rule is not added: move on to the next one.`
+  if (isCommand(lastPrompt)) return observe('norms.contributing.ungranted', 'norms: no rule is added before the user answers "add". Present the first proposed rule, then wait.')
+  if (a === 'skip' || a === 'no' || a === 'pass') return observe('norms.contributing.ungranted', `norms: the user answered "${lastPrompt.trim()}". This rule is not added: move on to the next one.`)
   return null
 }
 
-// The review agents a walkthrough launches only read: during one, a subagent's shell line must
-// be made of commands that read, and redirect nothing but to /dev/null or its own streams.
+// The review agents a walkthrough launches only read: during one, a subagent's shell line that
+// writes is noted, and one that deletes is refused. A reader is a command that reads, redirecting
+// nothing but to /dev/null or its own streams.
 const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'sort', 'uniq', 'cut', 'tr', 'pwd', 'echo', 'printf', 'test', '[', 'true', 'jq', 'diff', 'file', 'stat', 'basename', 'dirname', 'realpath'])
 const GIT_READERS = new Set(['diff', 'log', 'show', 'status', 'rev-parse', 'merge-base', 'ls-files', 'blame', 'grep', 'cat-file', 'show-ref', 'describe', 'shortlog', 'name-rev'])
 const HARMLESS_REDIRECT = /\d?>>?\s*\/dev\/null|\d?>&\d/g
+// The programs that delete a file: what they remove is gone for good.
+const DELETERS = new Set(['rm', 'rmdir', 'unlink'])
 
-export const AGENT_WRITE_REFUSAL = 'norms: a review agent only reads during a walkthrough: no shell command that writes, no redirection.'
+export const AGENT_DELETE_REFUSAL = 'norms: a review agent never deletes during a walkthrough: no rm, rmdir or find -delete.'
   + ' Use Read, Grep and Glob, or the <norms-context> block the plugin gave you.'
 
+const baseOf = (word: string | undefined): string => (word ?? '').split('/').pop() ?? ''
+
 function reads(argv: readonly string[]): boolean {
-  const name = (argv[0] ?? '').split('/').pop() ?? ''
+  const name = baseOf(argv[0])
   if (name === 'resolve_base.sh') return true
   if (name === 'git' || /(^|\/)git$/.test(argv[0] ?? '')) {
     const at = gitSubcommand(argv)?.at
@@ -79,39 +95,96 @@ function reads(argv: readonly string[]): boolean {
   return READERS.has(name)
 }
 
-// The refusal for a subagent's shell line during a walkthrough, or null when it only reads. A line
-// the reader cannot read is refused: what it hides is not known to only read.
-export function agentBashDecision(mode: Mode | undefined, command: string): string | null {
+// Whether a command deletes: rm, rmdir and unlink, `find -delete`, and a `find` that executes one of them.
+function deletes(argv: readonly string[]): boolean {
+  const name = baseOf(argv[0])
+  if (DELETERS.has(name)) return true
+  if (name !== 'find') return false
+  return argv.some(a => a === '-delete') || (argv.some(a => ['-exec', '-execdir', '-ok', '-okdir'].includes(a)) && argv.some(a => DELETERS.has(baseOf(a))))
+}
+
+// The finding for a subagent's shell line during a walkthrough, or null when it only reads. A line
+// the reader cannot read is refused: what it hides is not known not to delete.
+export function agentBashDecision(mode: Mode | undefined, command: string): Verdict | null {
   if (!mode) return null
-  if (command.replace(HARMLESS_REDIRECT, '').includes('>')) return AGENT_WRITE_REFUSAL
+  const deleting: Verdict = { code: 'norms.agent.delete', reason: AGENT_DELETE_REFUSAL, irreversible: true }
+  const writing = observe('norms.agent.write', 'norms: a review agent only reads during a walkthrough: no shell command that writes, no redirection.')
+  let argvs: string[][]
   try {
-    return simpleCommands(command).every(reads) ? null : AGENT_WRITE_REFUSAL
+    argvs = simpleCommands(command)
   } catch {
-    return AGENT_WRITE_REFUSAL
+    return deleting
+  }
+  if (argvs.some(deletes)) return deleting
+  if (command.replace(HARMLESS_REDIRECT, '').includes('>')) return writing
+  return argvs.every(reads) ? null : writing
+}
+
+// The options and the words of a push that rewrite nothing on the remote: a plain push.
+const PLAIN_PUSH_FLAGS = new Set(['-u', '--set-upstream', '--tags', '--follow-tags', '--no-verify', '-v', '--verbose', '-q', '--quiet', '-n', '--dry-run'])
+// A remote, a branch or a `local:remote` refspec: a word that neither forces (`+`) nor deletes (`:remote`, `local:`).
+const PLAIN_PUSH_WORD = /^[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*(:[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*)?$/
+// The wrappers that feed a command words, or an environment, the line does not show.
+const HIDING = /^(.*\/)?(env|xargs|parallel)$/
+// A variable assigned on the line (`FOO=1 git push`, `export GIT_CONFIG_COUNT=1; git push`): git reads
+// GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n and GIT_CONFIG_PARAMETERS, which can turn a
+// plain push into a forced one without a word of it on the line.
+const ASSIGNMENT = /(^|[\s;&|(){}`])[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/
+
+// Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push,
+// and so does a configuration given on the line (`git -c remote.origin.push=+HEAD push`).
+function isPlainArgv(argv: readonly string[], at: number): boolean {
+  if (argv.slice(1, at).some((word) => word === '-c' || word.startsWith('--config'))) return false
+  return argv.slice(at + 1).every((word) => (word.startsWith('-') ? PLAIN_PUSH_FLAGS.has(word) : PLAIN_PUSH_WORD.test(word)))
+}
+
+/*
+ * Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
+ * core's shell reader: each command of a list or a pipe, wrappers and assignments skipped, `eval`
+ * and `sh -c` read again at any depth, a wrapper written with its directory (`/usr/bin/env git push`)
+ * read through. A push whose words or environment the line does not show (a command substitution
+ * among them, a variable assigned on the line, `env`, a wrapper such as xargs that feeds it) is not
+ * plain. Throws when the line cannot be read.
+ */
+function pushes(command: string): boolean[] {
+  const assigned = ASSIGNMENT.test(command)
+  return readCommands(command).flatMap((cmd): boolean[] => {
+    const shown = cmd.substitutions.length === 0 && !assigned
+    const inner = innerLine(cmd.argv)
+    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown)
+    const { argv, wrappers } = unwrapPath(cmd.argv)
+    const at = gitSubcommand(argv)?.at
+    if (at === undefined || argv[at] !== 'push') return []
+    return [shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper)) && isPlainArgv(argv, at)]
+  })
+}
+
+// How the command pushes: not at all, only plainly, or with a push that may rewrite or delete on the
+// remote. A line the reader cannot read is taken for a forced push: the guard asks rather than lets it through.
+function pushKind(command: string): 'none' | 'plain' | 'forced' {
+  try {
+    const all = pushes(command)
+    if (all.length === 0) return 'none'
+    return all.every(Boolean) ? 'plain' : 'forced'
+  } catch {
+    return 'forced'
   }
 }
 
-// Whether a command line runs `git push`, read through core's shell reader: each command of a list
-// or a pipe, wrappers and assignments skipped, `sh -c` and `eval` read again. A line the reader
-// cannot read is taken for a push: the guard asks rather than lets it through.
-function runsGitPush(command: string): boolean {
-  try {
-    return simpleCommands(command).some(argv => {
-      if (argv[0] === 'eval') return runsGitPush(argv.slice(1).join(' '))
-      const at = gitSubcommand(argv)?.at
-      return at !== undefined && argv[at] === 'push'
-    })
-  } catch {
-    return true
-  }
-}
+export const PUSH_REFUSAL = 'norms: never force-push during a norms walkthrough unless the user allows it when asked. The user pushes; remind them to.'
 
-export const PUSH_REFUSAL = 'norms: never push during a norms walkthrough unless the user allows it when asked. The user pushes; remind them to.'
-
-// The question a push during a walkthrough asks the user, or null when no walkthrough guards it.
+// The question a forced push during a walkthrough asks the user, or null when no walkthrough guards it
+// (no push, or a plain one, which goes through and is only noted). A push is never granted by words in
+// a prompt (« I will push later » holds the word): the user answers the host's own question.
 export function pushQuestion(mode: Mode | undefined, command: string): string | null {
-  if (!mode || !runsGitPush(command)) return null
-  return `norms: push now, during /norms:${mode}? ${command.trim().slice(0, 200)}`
+  if (!mode || pushKind(command) !== 'forced') return null
+  return `norms: forced push now, during /norms:${mode}? ${command.trim().slice(0, 200)}`
+}
+
+// The finding for a plain push during a walkthrough: noted, never asked.
+export function pushDecision(mode: Mode | undefined, command: string): Verdict | null {
+  if (!mode || pushKind(command) !== 'plain') return null
+  return observe('norms.push.ungranted', 'norms: never push during a norms walkthrough. The user pushes; remind them to.')
 }
 
 // Whether the user allows the push: only their own Allow does; a failure to ask refuses.
@@ -126,7 +199,7 @@ async function userAllows($: any, question: string): Promise<boolean> {
 // What check.md 7.4 forbids in a commit message.
 const FORBIDDEN: RegExp[] = [/\bnorms?-[a-z]+(-[a-z]+)*/i, /\bnorms?\b/i, /\bclaude\b/i, /\btodo[- ]list\b/i]
 
-export function commitDecision(mode: Mode | undefined, lastPrompt: string | undefined, command: string): string | null {
+export function commitDecision(mode: Mode | undefined, lastPrompt: string | undefined, command: string): Verdict | null {
   if (mode !== 'check') return null
   const at = command.search(/\bgit(\s+(-C|-c)\s+\S+)*\s+commit\b/)
   if (at < 0) return null
@@ -135,9 +208,18 @@ export function commitDecision(mode: Mode | undefined, lastPrompt: string | unde
     const m = tail.match(re)
     if (!m) continue
     if (lastPrompt !== undefined && lastPrompt.toLowerCase().includes(m[0].toLowerCase())) continue
-    return `norms: the commit message must describe the code change only; "${m[0]}" names the check or its tooling. Rewrite it.`
+    return observe('norms.commit.message', `norms: the commit message must describe the code change only; "${m[0]}" names the check or its tooling. Rewrite it.`)
   }
   return null
+}
+
+// The one finding of a Bash call during a walkthrough, or null. A subagent's deletion is found before
+// anything else; then a plain push, then what the mode's rule says of the line: a subagent's writes, the
+// main loop's commit message.
+export function bashDecision(mode: Mode | undefined, lastPrompt: string | undefined, command: string, isAgent: boolean): Verdict | null {
+  const agent = isAgent ? agentBashDecision(mode, command) : null
+  if (agent?.irreversible) return agent
+  return pushDecision(mode, command) ?? agent ?? (isAgent ? null : commitDecision(mode, lastPrompt, command))
 }
 
 // The user's own words: typed, from the remote bridge, or a headless prompt.
@@ -236,8 +318,9 @@ export function register(on: any): void {
   for (const tool of ['Edit', 'Write', 'NotebookEdit']) {
     on('tool.call', { tool }, async ($: any, e: any, next: any) => {
       if (e.agentId) return next(e)
-      const deny = editDecision(mode, lastPrompt, String(e.file_path ?? e.notebook_path ?? ''))
-      return deny ? { deny } : next(e)
+      const verdict = editDecision(mode, lastPrompt, String(e.file_path ?? e.notebook_path ?? ''))
+      if (verdict) await observed($, verdict.code)
+      return next(e)
     }).catch(pass)
   }
 
@@ -245,7 +328,9 @@ export function register(on: any): void {
     const command = String(e.command ?? '')
     const question = pushQuestion(mode, command)
     if (question && !(await userAllows($, question))) return { deny: PUSH_REFUSAL }
-    const deny = e.agentId ? agentBashDecision(mode, command) : commitDecision(mode, lastPrompt, command)
-    return deny ? { deny } : next(e)
+    const verdict = bashDecision(mode, lastPrompt, command, Boolean(e.agentId))
+    if (verdict?.irreversible) return { deny: verdict.reason }
+    if (verdict) await observed($, verdict.code)
+    return next(e)
   }).catch(pass)
 }

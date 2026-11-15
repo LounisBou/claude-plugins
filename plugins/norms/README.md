@@ -60,13 +60,19 @@ mechanical work the markdown would otherwise hand the model:
 - `/norms:learn`: with no PR number the usage answers at once; otherwise each
   PR's resolved threads come from the `github` plugin's tool, with the rules
   CONTRIBUTING.md already holds, as a `<norms-learn>` block.
-- The walkthrough rules hold: no code edit on the report turn or after a
+- The walkthrough rules are watched: no code edit on the report turn or after a
   "pass" or "discuss" answer, no CONTRIBUTING.md edit before "add" or after
-  "skip", and under `/norms:check` no commit message naming the check or its
-  tooling. A `git push` during a walkthrough asks the user through the host's
-  dialog: only their Allow lets it through, and nobody there to answer refuses it;
-  words in a prompt grant nothing. A subagent's shell line during a walkthrough
-  must only read (no command that writes, no redirection but to `/dev/null`).
+  "skip", under `/norms:check` no commit message naming the check or its
+  tooling, no plain `git push`, and a subagent's shell line that only reads. A call
+  made against one goes through, and the journal (`<config>/norms/journal/`) keeps one
+  `escape` line under the rule's code (`norms.edit.ungranted`,
+  `norms.contributing.ungranted`, `norms.commit.message`, `norms.push.ungranted`,
+  `norms.agent.write`). Only the irreversible stays held: a forced or deleting
+  `git push` asks the user through the host's dialog, where only their Allow lets
+  it through and nobody there to answer refuses it (a push whose line does not show it
+  whole, with a variable set before it, behind `env`, a substitution or xargs, or
+  with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
+  `rm`, `rmdir` or `find -delete`, and a shell line the reader cannot read, are refused.
 - The walkthrough is armed by the typed command or by the main loop's Skill tool
   call that runs it; a Skill-armed check ends at its `check_done` once its record
   is written. A spawned session (`ORCHESTRATOR_SPAWNED`) has nobody to walk
@@ -90,7 +96,7 @@ mechanical work the markdown would otherwise hand the model:
 
 Every hook that fails passes the event on unchanged, and the markdown keeps
 its own instructions for each step, so a host without modules runs as before.
-The push guard is the exception: when nobody can be asked, the push is refused.
+The push question is the exception: when nobody can be asked, a forced push is refused.
 
 ## CONTRIBUTING.md stays with the project
 
