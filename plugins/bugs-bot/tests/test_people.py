@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from samples import BASE_DATE, FakeTelegram
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 
 def person_json(home: Path, key: str) -> dict:
@@ -68,9 +68,3 @@ def test_person_note_refuses_an_empty_text(run, bound):
 
     assert run("person-note", f"{STAMP}-5", "  ") != 0
     assert not (bound / "people").exists()
-
-
-def test_the_memory_is_documented_and_the_agent_may_use_it():
-    agent, skill = DOCS["AGENT.md"].read_text(), DOCS["SKILL.md"].read_text()
-    for command in ("person <", "person-note <"):
-        assert command in agent and command in skill

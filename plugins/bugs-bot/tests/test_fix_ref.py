@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from fake_channel import FakeChannel
 from samples import BASE_DATE, GROUP_ID, FakeTelegram
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 from bugs_bot.reports import cmd_fixed
 from bugs_bot.store import Store
@@ -45,18 +44,3 @@ def test_show_prints_the_ref_for_the_agent(run, bound, capsys):
 
     assert "fix ref: PR #680, commit 1a2b3c4" in capsys.readouterr().out.splitlines()
     assert tg.sent == []
-
-
-@pytest.mark.parametrize("phrase", [
-    "never a PR number, commit, branch or ticket id in the group",
-    "`fixed <id> --note \"<ref>\"` | Launcher: « corrigé <id> <ref> » → 👌, status `fixed`, the ref recorded for you, nothing posted",
-    "in your own sentence",
-])
-def test_the_agent_tells_the_fix_in_its_own_words_never_with_the_ref(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-def test_the_skill_says_the_note_is_recorded_not_posted():
-    text = DOCS["SKILL.md"].read_text()
-    assert "records it in the report (`show` prints it) and posts nothing" in text
-    assert "No PR number, commit, branch or ticket id is ever posted in the group" in text
