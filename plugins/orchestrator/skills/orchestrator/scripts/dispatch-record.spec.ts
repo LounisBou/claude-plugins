@@ -164,6 +164,8 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
   assert.equal(await cli(['review', r, '1', '--head', 'abc1234']), '0||')
   assert.match(await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'maybe']), /unknown norms value: maybe/)
   assert.equal(await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'tool']), '0||')
+  // A review records the head it read and raises no round: `round` and the verdict tool count them.
+  assert.equal(rows()[0]?.['rounds'], 1)
   assert.equal(await cli(['fixed', r, '1']), '1||ERROR: fixed: --head is required\n')
   assert.equal(await cli(['fixed', r, '1', '--head', 'def5678']), '0||')
   assert.equal(await cli(['fixed', r, '1', '--head', 'def5679']), '0||WARNING: fixed: row 1 already has its correction round at def5678: recording a second one anyway\n')
@@ -175,7 +177,7 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
   assert.equal(await cli(['defer', r, '2', '--ruling', 'later, 2026-11-03']), '0||')
   assert.equal(await cli(['escaped', r, '1']), '0||')
   const [one, two] = rows()
-  assert.deepEqual([one?.['rounds'], one?.['state'], one?.['verdict'], one?.['escaped']], [5, 'closed', 'ok', true])
+  assert.deepEqual([one?.['rounds'], one?.['state'], one?.['verdict'], one?.['escaped']], [3, 'closed', 'ok', true])
   assert.deepEqual(one?.['review'], { head: 'abc1234', norms: 'tool', at: '2026-11-08T10:11:12Z', fixed: { head: 'def5679', at: '2026-11-08T10:11:12Z' } })
   assert.deepEqual([two?.['rounds'], two?.['deferred']], [1, 'later, 2026-11-03'])
   assert.equal(await cli(['undefer', r, '2']), '0||')
