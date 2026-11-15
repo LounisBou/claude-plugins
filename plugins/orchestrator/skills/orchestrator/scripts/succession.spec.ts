@@ -80,6 +80,27 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   assert.deepEqual(['succession-brief.md', 'state.md'].filter(f => existsSync(join(w.briefs, f))), [])
 })
 
+test('a takeover from the state alone: a state file, an earlier succession brief or a handover note left anywhere around the record changes nothing of the print', () => {
+  const w = world()
+  assert.equal(w.run(), 0)
+  const alone = w.text()
+  // What the state holds is all of it: the open rows, their owners, the pull requests, the agents, the open question.
+  for (const part of ['open=2 label=API: routes', '2 api; ', 'acme/app#12 en cours (agent Agent: pr)', 'Agent: api', '[q-2] **Question 1 of 1**\nWhich schema?'])
+    assert.ok(alone.includes(part), `the print holds ${part}`)
+  assert.ok(!/\{\{[A-Z_]+\}\}/.test(alone), 'every placeholder filled')
+  // What a handover would leave, in the shape of what it would be read for, saying what the state does not. The
+  // record, the rulings, the goals and the owner file are the state itself and stay as they are.
+  const lie = '- Rows open (id, label, what remains): open=99 label=GHOST\n- Row owners: 99 ghost\n- Agents running (name and reference, brief path): Agent: ghost\n'
+  const note = `## Live state\n\n${lie}\n{"id":99,"label":"GHOST","state":"open"}\n[q-99] **Question 1 of 1**\nIs this read?\n`
+  const names = ['state.md', 'state-archive.md', 'succession-brief.md', 'succession-brief.prev.md', 'handover.md', 'HANDOVER.md', 'notes.md', 'dispatch-record.jsonl.handover', 'dispatch-record.jsonl.state']
+  for (const dirOf of [w.briefs, w.state, join(w.state, 'round'), join(w.state, 'todo'), dir])
+    for (const f of names) writeFileSync(join(dirOf, f), note)
+  w.out.length = 0
+  assert.equal(w.run(), 0)
+  assert.equal(w.text(), alone)
+  assert.ok(!/GHOST|ghost|open=99|Is this read/.test(w.text()))
+})
+
 test('the Live state: the open rows at level 1, their owners by agent, ruling or blocker, the ledger, the agents, the questions', () => {
   const w = world()
   assert.equal(w.run(), 0)
