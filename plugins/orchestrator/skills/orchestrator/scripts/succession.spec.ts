@@ -70,6 +70,7 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   const text = w.text()
   assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\nMode: build\n'))
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
+  assert.ok(text.includes('nothing more unless it lists open or deferred goals: then, in'))
   assert.ok(text.includes(`dispatch-record.sh goals ${w.record} status | grep -v '| met |'`))
   assert.ok(text.includes(`grep -v '\\[for: ' ${join(w.briefs, 'rulings.md')}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
@@ -138,7 +139,13 @@ test('the owner file read in the house shape: a name with its reference still fi
 test('the project sheet lists the open goals only: a goal ruled out or deferred is neither open nor met', () => {
   const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | ruled-out | b | p2 | |\n| G3 | open | c | p3 | |\n' })
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3; open: G3 open \(plan: p3\)\n/)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=G3 \(plan: p3\)\n/)
+})
+
+test('a deferred goal shows on the Project line beside open=none, so the table is read for it', () => {
+  const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | deferred | b | p2 | his words |\n| G3 | deferred | c | p3 | his words |\n' })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=none deferred=G2,G3\n/)
 })
 
 test('an open to-do item pointing to a closed or missing row is flagged; one pointing to an open row, a closed item or an item with no row is not', () => {
@@ -153,11 +160,11 @@ test('an open to-do item pointing to a closed or missing row is flagged; one poi
 test('the project sheet reads the objective, the spec goals.md names, the open goals with their plan', () => {
   const w = world()
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective a belt that holds; spec \/specs\/belt\.md; goals met=1\/2; open: G2 open \(plan: phase 2\)\n/)
+  assert.match(w.text(), /- Project: objective a belt that holds; spec \/specs\/belt\.md; goals met=1\/2 open=G2 \(plan: phase 2\)\n/)
   const v = world({ goals: null })
   assert.equal(v.run(), 0)
   assert.match(v.text(), /- Project: no goals\.md beside the record\n/)
-  assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0; installed: 3 merged PRs not installed, oldest 2 h')
+  assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open=none; installed: 3 merged PRs not installed, oldest 2 h')
 })
 
 test('the rulings carried out move to the archive before the print; the ones for an open row stay, out of what is read', () => {

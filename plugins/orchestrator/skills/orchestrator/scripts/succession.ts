@@ -291,7 +291,7 @@ export function forgeState(env: Env): (repo: string, pr: number) => string | und
   }
 }
 
-/** The project sheet from `goals.md`: the objective, the spec it names, the goals met and the open ones with their plan. */
+/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n open=none`, `open=` the open ones with their plan, and `deferred=` the deferred ones. */
 export function projectSheet(goals: string | undefined, installed: string): string {
   const parts: string[] = []
   if (goals === undefined) parts.push('no goals.md beside the record')
@@ -299,8 +299,9 @@ export function projectSheet(goals: string | undefined, installed: string): stri
     const value = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals)?.[1]?.trim() ?? ''
     const rows = goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
     const open = rows.filter(cells => cells[2] === 'open')
-    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`, `goals met=${rows.filter(cells => cells[2] === 'met').length}/${rows.length}`)
-    if (open.length > 0) parts.push(`open: ${open.map(cells => `${cells[1]} ${cells[2]} (plan: ${cells[4] || 'none'})`).join(', ')}`)
+    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`)
+    const deferred = rows.filter(cells => cells[2] === 'deferred').map(cells => cells[1])
+    parts.push(`goals met=${rows.filter(cells => cells[2] === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(cells => `${cells[1]} (plan: ${cells[4] || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
   }
   if (installed !== '') parts.push(`installed: ${installed}`)
   return parts.join('; ')
