@@ -11,7 +11,7 @@ query($owner:String!, $name:String!, $number:Int!) {
       reviewThreads(first:100) {
         nodes {
           id isResolved isOutdated path line
-          comments(first:50) { nodes { id body author { login } } }
+          comments(first:50) { nodes { id body authorAssociation author { login } } }
         }
       }
     }
