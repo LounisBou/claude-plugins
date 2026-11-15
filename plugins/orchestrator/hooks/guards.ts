@@ -503,11 +503,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The stop gate (hooks/stop_gate.py ported; the decisions in stop-gate.ts). The
   // classic events carry the settings payload's own fields — the shipped types give
   // classic.Stop the transcript path, the cwd and the last assistant message beside the
-  // module's — so the scope and the message are read off the event itself. The refusal
-  // answers through the module's own field, `block` carrying the reason: the classic
-  // decision's shape as the engine documents it. The shell gate that once answered the
-  // same stops is gone with the cutover — this handler is the only stop gate, its
-  // refusals deduplicated against nothing.
+  // module's — so the scope and the message are read off the event itself. Since the
+  // operator's ruling of 2026-11-15 the gate refuses nothing: each stop it would have held
+  // passes, with one `let through` log line and one escape in the journal. The shell gate
+  // that once answered the same stops is gone with the cutover — this handler is the only
+  // stop gate.
   on('classic.Stop', async ($: any, e: any, next: (e: any) => any) => {
     // The sweep's one shot, armed once the stop is known Orch-scoped: every passing
     // exit below calls it before next(e), a refusal never does, and the catch does too
@@ -742,8 +742,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, 'guards', `stop gate: ${String((err as Error)?.message ?? err)}`)
       }
       // The shell gate swept in a finally over its checks: a stop it could not read
-      // through passes all the same, and sweeps. Never after a refusal — a refusal
-      // returns above, before this.
+      // through passes all the same, and sweeps.
       await sweepAtStop?.()
       return next(e)
     }

@@ -69,7 +69,7 @@ test('a round that does not answer in time lets the stop go on', async () => {
     const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
     const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
     expect(out.answer).toBe(out.passed)
-  expect(out.observed).toBeUndefined()
+    expect(out.observed).toBeUndefined()
   }
 })
 
@@ -2338,7 +2338,6 @@ test('a re-fired stop whose operator wait holds no question passes untouched, no
   for (let i = 0; i < 3; i++) {
     const refired = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
     expect(refired.answer).toBe(refired.passed)
-  expect(refired.observed).toBeUndefined()
     expect(refired.observed).toBeUndefined()
   }
   expect(fx.ran.length).toBe(ran)
