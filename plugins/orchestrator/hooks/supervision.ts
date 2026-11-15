@@ -3346,7 +3346,7 @@ async function showGate($: any, reading: { context_percent: number; context_toke
 // per-file convention: the engine fences $ to the file that received it, so
 // guards.ts's identical reader cannot be imported, and each domain spells its
 // own over its own $.
-async function readBlock($: any, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
+export async function readBlock($: any, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)
   return bytesOfBase64(String(stdout ?? ''))
@@ -3355,7 +3355,7 @@ async function readBlock($: any, path: string, index: number, timeoutMs: number)
 // The transcript, found the gauge's own way (the guards' reader, spelled over
 // this file's $): by session id under the projects directory. A miss returns
 // '': the rename fallback then names nothing, and the launch name stands alone.
-async function transcriptPathOf($: any, sessionId: string): Promise<string> {
+export async function transcriptPathOf($: any, sessionId: string): Promise<string> {
   try {
     const projects = `${await configDir($)}/projects`
     for (const entry of await $.fs.list(projects)) {

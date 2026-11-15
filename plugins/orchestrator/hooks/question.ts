@@ -15,6 +15,7 @@
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
+import { consentPath } from '../core/consent-record.ts'
 import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
@@ -22,9 +23,11 @@ import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
+import { closesItself, forgetRelayed, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent } from './supervision.ts'
+import { scanTail } from './session-name.ts'
+import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
-import { logLine, stateDir, storeIo } from './module-io.ts'
+import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
 
@@ -568,6 +571,48 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
 }
 
 /**
+ * A consent he gave in words, with no question before it (`settle` with no id): recorded as the
+ * consent record of its subject only when the words are a message he typed himself in this
+ * session's tab, read from its transcript (a user turn of origin « human », never a message another
+ * session sent, a tool result or text an agent wrote), and judgeWords finds them a plain grant of
+ * that subject. The record's time is the turn's own. Answers the tool's reply.
+ */
+export async function settleWords($: Held, words: Words, now: Date = new Date()): Promise<Answer> {
+  const who = await whoAmI($)
+  if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor records a consent, once the host names it.')
+  const judged = judgeWords(words, now.getTime())
+  if ('refuse' in judged) return refuse(judged.refuse)
+  const session = await $.session.id()
+  const path = await transcriptPathOf($, session)
+  if (path === '') return refuse('nothing recorded: this session\'s transcript is not found, so it cannot show that he typed these words here.')
+  const read = Date.now() + 5000
+  const found = await scanTail(
+    async (file: string) => Number((await $.fs.stat(file)).size),
+    (file: string, index: number) => readBlock($, file, index, Math.max(1, read - Date.now())),
+    path, line => isHisTurn(line, words),
+  )
+  const turn = found.line === null ? null : humanTurn(found.line)
+  if (turn === null) {
+    return refuse(found.complete
+      ? 'nothing recorded: no message he typed in this tab says exactly these words (a message another session sent, a tool result and text an agent wrote are not his): answer is his message, whole, as he typed it.'
+      : 'nothing recorded: this session\'s transcript could not be read to its start, and the words are not in what was read; try again.')
+  }
+  const record = wordsRecord(words, judged.ok, who.role === 'coordinator' ? 'coordinator' : 'tab', turn.at)
+  if (record === undefined) return refuse('nothing recorded: the record this makes breaks the consent contract.')
+  try {
+    const file = consentPath(await configDir($), record)
+    const made = await $.process.run(['mkdir', '-p', '--', file.slice(0, file.lastIndexOf('/'))], { timeoutMs: 5000 })
+    if (made.exitCode !== 0) throw new Error(made.stderr || `mkdir exited ${made.exitCode}`)
+    await writeAtomic($, file, JSON.stringify(record) + '\n')
+  } catch (err) {
+    await logLine($, 'question', `the consent in words of ${words.subject.repo} not recorded: ${messageOf(err)}`)
+    return refuse(`nothing recorded: the record could not be written (${messageOf(err)}); settle again.`)
+  }
+  await logLine($, 'question', `consent in words recorded: ${record.entry} (${words.subject.kind} of ${words.subject.repo}), by ${record.by}, he said it at ${record.at}`)
+  return { result: `Recorded his consent, typed in this tab at ${record.at}: ${record.question.slice(record.question.lastIndexOf('— ') + 2)}. The record is ${record.entry}; its readers quote his message.` }
+}
+
+/**
  * His answer given in the coordinator's pane to a question asked with `ask`: the object read again
  * and written under its lock, answered by the pane, so a question settled, withdrawn or claimed in
  * its asker's tab meanwhile is left as it is; then its consent recorded and the answer sent to its
@@ -770,6 +815,7 @@ export function registerSettle(on: On<Held>): void {
         description: 'Closes a question of the round by its id; one asked with ask is sent its answer at once. '
           + 'outcome: `answered-here` (he answered in this tab; answer: his words or letter), `answered-by-message` (his answer to your own question reached you by a message; answer, and author: that session), '
           + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker. '
+          + 'With no id, consent_kind and consent_repo (consent_pr or consent_env, until for an exemption\'s limit): his message, whole as answer, recorded as a consent when he typed it in this tab. '
           + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -780,8 +826,14 @@ export function registerSettle(on: On<Held>): void {
             reason: { type: 'string' },
             author: { type: 'string' },
             work: { type: 'string' },
+            consent_kind: { type: 'string', enum: [...CONSENT_KINDS] },
+            consent_repo: { type: 'string' },
+            consent_pr: { type: 'integer' },
+            consent_env: { type: 'string', enum: [...DEPLOY_ENVS] },
+            until: { type: 'string' },
+            said_at: { type: 'string' },
           },
-          required: ['id', 'outcome'],
+          required: [],
         },
       })
     } catch (err) {
@@ -795,6 +847,11 @@ export function registerSettle(on: On<Held>): void {
 
   on('tool.call', { tool: `mcp__orchestrator__${SETTLE_TOOL}` }, async ($, e) => {
     if (e['agentId']) return refuse('a subagent settles nothing: only the main thread settles a question.')
+    if (asksWords(e)) {
+      const words = parseWords(e)
+      return 'error' in words ? refuse(words.error) : settleWords($, words.words)
+    }
+    if (e['id'] !== undefined && WORDS_FIELDS.some(field => e[field] !== undefined)) return refuse(`${WORDS_FIELDS.join(', ')} go with no id: a consent he gave in words, with no question before it. To answer a question, give its id alone.`)
     const parsed = parseSettle(e)
     return 'error' in parsed ? refuse(parsed.error) : settle($, parsed.request)
   }).catch(async ($, e, next) => {
