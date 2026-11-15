@@ -147,9 +147,18 @@ On macOS, a LaunchAgent runs the same command, in `~/Library/LaunchAgents/<label
 being the `Label` below (launchd expands no `~` and gives a job a minimal `PATH`, so both are
 written out; replace every `<…>` placeholder), loaded with
 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`. The marketplace update,
-the plugin updates and the choice of the commit are all `deploy.ts`'s own steps, so the agent
-carries no other command. `npm run deploy` runs by hand first: it creates `current` and the `deploys/lounisbou/` directory
-the log goes in, which launchd does not create:
+the plugin updates and the choice of the commit are all `deploy.ts`'s own steps. `npm run deploy`
+runs by hand first: it creates the `deploys/lounisbou/` directory the log goes in, which launchd
+does not create, whatever it finds, and `current` only once it has installed a green commit of
+`main` (with none yet it says so and leaves no `current`, so the agent has nothing to run until a
+later run installs one).
+
+`deploy.ts` runs no plugin's `install.sh`, which sets up what the host's plugin update does not
+(the orchestrator's state directory and short commands, the status bar's copy of its script in the
+config directory). A machine that has run one keeps it current by running it again after each
+deploy: the `install.sh` of the installed tree, `bash ~/.claude/deploys/lounisbou/current/plugins/<name>/install.sh`
+for `orchestrator` and `statusbar`, idempotent, as its own job on the same period (a second
+LaunchAgent or cron line) or by hand. The agent below is `deploy.ts` alone:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
