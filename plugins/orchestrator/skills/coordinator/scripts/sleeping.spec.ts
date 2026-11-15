@@ -31,6 +31,17 @@ describe('sleep', () => {
     assert.deepEqual(f.err, ['coordinator: sleep: refused: Orch: alpha is already sleeping'])
   })
 
+  it('records the mode a wake loads the rulebook with, and refuses another word', () => {
+    const f = fixture()
+    const { brief, dir } = project(f)
+    assert.equal(main(f.ctx, ['sleep', '--name', 'Orch: beta', '--brief', brief, '--dir', dir, '--model', 'm', '--effort', 'high', '--mode', 'later']), 1)
+    assert.deepEqual(f.err, ["coordinator: sleep: refused: the mode is build or investigate, got 'later'"])
+    assert.equal(main(f.ctx, ['sleep', '--name', 'Orch: beta', '--brief', brief, '--dir', dir, '--model', 'm', '--effort', 'high', '--mode', 'investigate']), 0)
+    assert.equal((records(f) as Array<Record<string, unknown>>)[0]?.['mode'], 'investigate')
+    assert.equal(sleepingLine({ name: 'Orch: beta', slept: 'T', dir: '/p', brief: '/r', model: 'm', effort: 'high', mode: 'investigate' }),
+      'sleeping Orch: beta | since T | /p | prs none | checkouts none | brief /r | model m | effort high | mode investigate')
+  })
+
   it('refuses what a wake could not start on, and records nothing', () => {
     const f = fixture()
     const { brief, dir } = project(f)
@@ -45,7 +56,7 @@ describe('sleep', () => {
       [['--name', 'Orch: b', '--brief', brief, '--dir', dir, '--model', 'm'], 'sleep: refused: no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)'],
       [['--name', 'Orch: b', ...base.slice(0, 6), '--effort', 'huge'], 'sleep: refused: unknown effort huge (low, medium, high, xhigh or max)'],
       [['--name', 'Orch: b', ...base, '--session', 'x y'], "sleep: refused: a session id reads letters, digits and hyphens, got 'x y'"],
-      [['--name', 'Orch: b', '--brief', brief], 'sleep: usage: sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'],
+      [['--name', 'Orch: b', '--brief', brief], 'sleep: usage: sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--mode build|investigate] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'],
       [['--name', 'Orch: b', ...base, '--pr', ''], 'sleep: --pr needs a value'],
       [['--name', 'Orch: b', ...base, '--checkout'], 'sleep: --checkout needs a value'],
       [['--name'], 'sleep: --name needs a value'],

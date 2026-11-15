@@ -8,7 +8,7 @@
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
 #   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
-#                        --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                        --effort <level> [--session <id>] [--mode build|investigate] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps

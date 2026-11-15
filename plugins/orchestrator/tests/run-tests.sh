@@ -10760,6 +10760,10 @@ check "a sleeping orchestrator is not missing, and its record outlives the coord
   "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDTPL" "outlives every succession, and nothing in it is woken or dropped but on his word")|$(flat_has "$COORDEND" "the sleeping record is kept")"
 check "a woken orchestrator skips the handshake with a predecessor already gone" "yes|yes" \
   "$(flat_has "$SUCC" "**Woken from a pause**")|$(flat_has "$SUCC" "step 4 is void — no « takeover confirmed », nothing to close")"
+# A pause writes no brief: the paused orchestrator replies with its dispatch record and its mode,
+# and the wake runs the takeover on that record, as a successor does.
+check "a pause replies with its dispatch record and mode, and the wake runs the takeover on it" "yes|yes|yes|no|no" \
+  "$(flat_has "$COORDSKILL" 'reply `paused-ready <dispatch record path> mode=<your mode> model=<model> effort=<effort>`')|$(flat_has "$COORDSKILL" 'succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'No brief is written: you reply `paused-ready <dispatch record path> mode=<your mode>')|$(flat_has "$COORDSKILL" 'standing succession brief')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'standing succession brief')"
 check "the sleeping command lists, asks one confirmation before a drop, and leaves the operator's things alone" "yes|yes|yes|yes" \
   "$(flat_has "$SLCMD" "The hooks module answers it on the spot, with no model turn")|$(flat_has "$SLCMD" "**Ask one confirmation**, naming what is left behind")|$(flat_has "$SLCMD" "It does NOT touch the pull requests, their branches or the checkouts: closing those is the operator's.")|$(flat_has "$SLCMD" "moved, never deleted, so a slip loses nothing")"
 check "the drop runs only on his yes, after the turn ends" "1" \
