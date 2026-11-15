@@ -3,7 +3,6 @@ coordinator-end	coordinator-end
 coordinator-decide	coordinator-decide
 orchestrator-agents	agents
 orchestrator-audit	audit
-orchestrator-calibrate	calibrate
 orchestrator-decide	decide
 orchestrator-install	install
 orchestrator-progress	progress

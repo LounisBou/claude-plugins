@@ -64,9 +64,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # the predecessor's gate: it carries one only if the option is given. `rotate` forwards it.
     # --keep-tool <name> / --drop-tool <name>: the session's tools are CHOSEN too (§65). Every
     # launched session is started with `--disallowedTools` naming the tools no session has
-    # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings, and, for any
-    # title but `Orch:` and `Coord:`, the three that move an orchestrator between machines
-    # (mcp__orchestrator__move_send, move_probe, end_session); an `Agent:` title also loses the four
+    # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings; an `Agent:` title also loses the four
     # only an orchestrator calls (mcp__orchestrator__review, supervision, settle,
     # declare_wait); an `Orch:` title also loses the
     # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement). --keep-tool removes a name from
@@ -219,7 +217,6 @@ $SCRIPT trust prune [--apply]      # entries of the trust record whose directory
 
 $SCRIPT tools [--transcript <path>]
     # loaded    | Artifact | 55250 | 12238 | Orch,Coord,Audit,Agent
-    # loaded    | mcp__orchestrator__move_send | 2013 | 446 | Audit,Agent
     # loaded    | SendFeedback | ? | ? | Orch,Coord,Audit,Agent     ← the reader's own session lacks it
     # deferred  | CronCreate | 10 | 2 | -
     # skills    | superpowers:brainstorming | 330 | 73 | -
@@ -263,7 +260,7 @@ An orchestrator's tab holds a tmux session of its own, its **home session**, on 
 - **A window's tab list is a cached copy.** Read a reorder back through the object you already held and it looks like a reorder that never happened — or reports the position the tab used to have. Re-fetch the app after any mutation.
 - **The tab is born in the anchor's window, whichever window is in front.** The anchor is now searched across every window, and an anchor that is not there is refused before a tab exists (`spawn: no session found on <tty>`).
 - **The title is the session's name.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), in the shape `spawn` gives above. `--title-free` is the escape and the dry run says when it is on.
-- **The tools a session is given are chosen, and the default is lean (§65).** The host sends every loaded tool's schema on every call; five tools no session has called and, for an agent or an auditor, the three that move an orchestrator weigh about 19,400 tokens per call. The launch names them in `--disallowedTools`, placed before the strict flag and the server file so the pair stays closed by `--permission-mode` (the option takes several values, like `--mcp-config`, and is never last). `--keep-tool` and `--drop-tool` change the set for one spawn; `tools` shows what exists and what each costs. The account's synced skills (`anthropic-skills:*`, never invoked) are hidden the same way, through the host's `syncClaudeAiSkills: false` in the launch's own `--settings`, which hides them for that session and moves nothing on disk (the same key in the operator's user settings would move the synced directory to the trash); `--keep-synced-skills` leaves them in. Artifact is removed by name, never by the host's `enableArtifact` setting, which also drops the « Scratchpad directory » line from the session's environment.
+- **The tools a session is given are chosen, and the default is lean (§65).** The host sends every loaded tool's schema on every call; five tools no session has called weigh about 19,400 tokens per call. The launch names them in `--disallowedTools`, placed before the strict flag and the server file so the pair stays closed by `--permission-mode` (the option takes several values, like `--mcp-config`, and is never last). `--keep-tool` and `--drop-tool` change the set for one spawn; `tools` shows what exists and what each costs. The account's synced skills (`anthropic-skills:*`, never invoked) are hidden the same way, through the host's `syncClaudeAiSkills: false` in the launch's own `--settings`, which hides them for that session and moves nothing on disk (the same key in the operator's user settings would move the synced directory to the trash); `--keep-synced-skills` leaves them in. Artifact is removed by name, never by the host's `enableArtifact` setting, which also drops the « Scratchpad directory » line from the session's environment.
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape while the session works, another once it idles. `--expect-title` compares titles with that glyph stripped from both sides.
 - **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the agent's tab and maximizes the one shown, so an agent with a review open is hidden. The tool reads hidden panes like visible ones; `close --tty` closes that SESSION alone and leaves the review pane and the tab.
 - **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the first connection asks macOS for permission once. `move` needs no Accessibility grant any more, does not bring the app to the front, and flickers no focus: the menu-driven version did all three.

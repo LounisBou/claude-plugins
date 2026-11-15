@@ -11,11 +11,9 @@ description: Use when this session is about to dispatch another one — an imple
 
 **Pay for judgment that nothing downstream re-checks.** Work whose output a machine or you re-check — a test suite, a quality gate, a « nothing observable changed » diff — runs at the cheapest tier that closes it: an error there is caught cheaply. Work that nothing re-checks — your own sequencing, a contract later phases consume, the final verification — runs at the top tier, because an error there is paid N times. The target is the cheapest pair observed to close a class IN ONE ROUND, and a pair comes from measurements and readings taken before the dispatch, never from how hard the phase looks. The cost that ranks pairs is the measured cost of a dispatch closed to satisfaction, its corrective rounds included; never read the subscription gauge to choose.
 
-How the tables are measured, generalised and exported: `references/calibration.md`.
-
 ## Pairs, tiers and the map
 
-A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; `--model` without `--effort` is refused, and so is an agent given neither `--tier` nor `--model` (decision 3 of `docs/agent-dispatches.md`). Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`. `spawn --tier` takes the effort from `--effort`, else from the map, else the effort the plugin ships for the tier — `standard` high, `light` medium — and `deep` runs at your own live effort, read on your transcript. **Read your map before dispatching a wave.** An unbound tier is not an error (the host applies its default model, the tier's effort still typed): when the work needs it, pick the model you judge fit — `--model <name> --effort <level>`, or the host's default on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn. The map is his and binds every project: a binding the mode check refuses is put to him. A pair `pick` returns for one class or one project goes in the brief, the record and `calibrate`'s project table, never in `models.json`, which the module keeps from your writes.
+A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; `--model` without `--effort` is refused, and so is an agent given neither `--tier` nor `--model` (decision 3 of `docs/agent-dispatches.md`). Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`. `spawn --tier` takes the effort from `--effort`, else from the map, else the effort the plugin ships for the tier — `standard` high, `light` medium — and `deep` runs at your own live effort, read on your transcript. **Read your map before dispatching a wave.** An unbound tier is not an error (the host applies its default model, the tier's effort still typed): when the work needs it, pick the model you judge fit — `--model <name> --effort <level>`, or the host's default on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn. The map is his and binds every project: a binding the mode check refuses is put to him. A pair `pick` returns for one class or one project goes in the brief and the record, never in `models.json`, which the module keeps from your writes.
 
 **A tier or a pair names a family alias, never a versioned identifier**; the launcher warns on a versioned binding.
 
@@ -26,42 +24,29 @@ A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, 
 Before each dispatch, run `routing.py pick --repo <checkout> --class <class> --record <record>
 --files <n> --lines <n>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`). It
 prints the pair and the table it came from (the order is below). Write the pair, its source and your reason in the
-brief. You may override it: say why. An entry marked `stale` was measured on a model the alias
-no longer resolves to; use it, and tell the operator in one line that a bench run would refresh
-it.
+brief. You may override it: say why.
 
 `--files` and `--lines` are the phase's size, given together or not at all: the files in the
 phase's scope and the lines the plan expects it to add and delete, test files left out. Given
-them, `pick` adds `size=small` or `size=large` to its first line, and an entry measured only on
-small work does not serve a large phase: it goes on down its order to the first entry measured
-on large work, or to the tier table, and prints `size=large beyond=<scope>`, naming the first
-scope it skipped. That scope was measured on smaller work than this phase: say so in the brief
-beside the pair and its source.
+them, `pick` adds `size=small` or `size=large` to its first line, and an entry whose `size` is
+`small` does not serve a large phase: it goes on down its order to the first entry that is not
+`small`, or to the tier table, and prints `size=large beyond=<scope>`, naming the first scope it
+skipped. That scope is stamped for smaller work than this phase: say so in the brief beside the
+pair and its source.
 
 **A phase beyond every measured size.** When `pick` served a large phase from a scope after a
-`beyond=`, or from the tier table, no table was measured at this size. Before dispatching the
+`beyond=`, or from the tier table, no table is stamped for this size. Before dispatching the
 phase, run a read-only search exploration at the `search` class's pair and write its summary
 (the files, the contracts, the decisions) into the brief: the pair is a guess, so give it a
 map.
 
-**The order `pick` reads, class by class:** the project's table, its profile's table, the global table (all three measured, in `<state dir>/routing/tables/`), the shipped profile then global defaults (`defaults/`, in tier form, read through the map), and last the tier table below, the map binding the tier the class falls to. `models.json` is the last fallback, not the default: it decides every class no table measures. A new project with no table of its own gets, for each class, the first of its profile's and the global table that measures it, and the tier map for the rest. Measured tables stay in the operator's state directory: `defaults/` ships only its README until the operator commits an `export`, so on a fresh install the same project falls to the tier map.
+**The order `pick` reads, class by class:** the project's table, its profile's table and the global table (in `<state dir>/routing/tables/`), the shipped profile then global defaults (`defaults/`, in tier form, read through the map), and last the tier table below, the map binding the tier the class falls to. `models.json` is the last fallback, not the default: it decides every class no table measures. A project with no table of its own gets, for each class, the first of its profile's and the global table that names it, and the tier map for the rest. `defaults/` ships only its README, so on a fresh install every project falls to the tier map.
 
 `routing.py profile <checkout>` prints the inferred `<language>/<kind>`; a `profile` in the project's manifest overrides it, and `pick` takes the override first. A line `pair=host-default` means the class's tier is unbound: the paragraph on unbound tiers above applies.
 
-## Calibrating a new project
-
-`/orchestrator-calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it: it runs steps 1 to 4 below in order, stops at the first failure, and leaves 5 and 6 to the operator. It refuses to run without his cap and never picks one. Run by hand, these are the `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
-
-1. `harvest <repo> --class <class> --pr <n> [--pr <n>]...`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`; its other options are in `references/calibration.md`.
-2. `ready <slug> <task-id>...`: the control run. Needs the manifest's `test_command` and `test_globs`. Runs the tests on each task's merged commit and marks it `ready`, or `void` when its own reference fails.
-3. `bench <slug> --max-usd <n>`: the spend cap, given by the operator and required; `--budget-usd` caps each trial. Needs ready tasks and the `deep` tier bound (the judge). Runs the grid of pairs on the ready tasks and appends each trial to `projects/<slug>/trials.jsonl`.
-4. `calibrate <slug>`: writes the project's table, `tables/project-<slug>.json`, which `pick` reads first.
-5. `generalize`: no argument. Pools every project's trials into `tables/profile-<language>-<kind>.json` (two projects of a profile or more) and `tables/global.json`.
-6. `export [--to <dir>]`, on the operator's word only: writes the profile and global tables in tier form into the plugin's `defaults/`, the only step that ships anything.
-
 ## The table
 
-The floor `pick` lands on when nothing is measured: the class's tier, through the map. The slug is the `--class` `pick` and the record take.
+The floor `pick` lands on when no table names the class: the class's tier, through the map. The slug is the `--class` `pick` and the record take.
 
 | Class of work | Slug | Tier | What re-reads its output |
 |---|---|---|---|
@@ -70,9 +55,9 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | The final verification phase (spec conformity, norms over the full diff, E2E) | `final-verification` | `deep` | nobody |
 | A behaviour phase with the contract already fixed | `behaviour-phase` | `standard` | the test suite, then the review round |
 | A conversion phase (move, rename, extract) | `conversion-phase` | `standard` | « nothing observable changed »: the suite judges |
-| A corrective phase on a findings list | `corrective` | `standard` | you, on the artifact: the diff, the decisive tests |
-| A review collector, a comments agent | `review-collector`, `comments` | `standard` | you verify every finding |
-| The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector, then you |
+| A corrective phase on a findings list | `corrective` | `standard` | the gate and a reader at its head: the diff, the decisive tests |
+| A review collector, a comments agent | `review-collector`, `comments` | `standard` | its line, by you; a comments agent's tree too |
+| The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector |
 | The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
@@ -90,7 +75,7 @@ For a phase that does not sit plainly on a row, take these before dispatching, f
 
 Read the third and the fourth concretely. **Blast radius** is high when the phase touches files > 3 or lines > 50 (the thresholds of `--files` and `--lines`, so the reading and `pick` agree), creates a new file, or touches more than one module. **Residual ambiguity** is high when one question or more is open on the phase. The counts of the blast radius are what `pick` is given.
 
-Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by measured cost per closed dispatch), never more, never as a running total: the readings are retaken at each dispatch.
+Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by cost), never more, never as a running total: the readings are retaken at each dispatch.
 
 ## The correction round runs one notch above its phase
 
@@ -102,7 +87,7 @@ A pull request's rounds are its check plan's `review` max.
 
 `pick` prints `explore=<pair>` (`corrective=` stays last) when the record allows a try one notch below: take it only when the five readings show at most one high, and open the row `--explore`.
 
-`summary` prints `frozen=<class>` after a failed exploration (the class reverts and is not explored again this build) and `promote=<class> <pair>` after three that closed in one round (dispatch the class on that pair, and fold it into the project's table with `routing.py calibrate <slug> --from-record <record>`).
+`summary` prints `frozen=<class>` after a failed exploration (the class reverts and is not explored again this build) and `promote=<class> <pair>` after three that closed in one round (dispatch the class on that pair).
 
 ## Escalate on evidence, one step, at a session boundary
 
@@ -139,7 +124,7 @@ dispatch-record.sh cost <record> <id> --session <session id>         # after eac
 dispatch-record.sh summary <record>
 ```
 
-`review` records the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the correction round (rounds: `review-thresholds.md`, « Thresholds a verdict never crosses ») at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
+`review` records the head it read, and `--norms` only when a norms check ran (`tool`) or the project ships none (`none`). `fixed` records the correction round (rounds: `review-thresholds.md`, « Thresholds a verdict never crosses ») at the head its reader verified; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` is the pre-check of what the github ready gate does not read, the surface and the screenshots' audit, never the ready. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
 
 The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed rows whose cost is complete, and prints `frozen=<class>` and `promote=<class> <pair>` for the explorations above.
 
