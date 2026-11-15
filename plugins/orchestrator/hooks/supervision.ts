@@ -30,7 +30,7 @@ import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentReco
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
@@ -2241,6 +2241,9 @@ export function register(on: On<Held>): void {
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
+// The bound on each read of a delivery's facts (git's three and gh's one, run at once): inside the relay's.
+const FACTS_BOUND_MS = 3000
+
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
 // coordinator and an auditor do, as one rule for every turn's end.
 export function entersRound(role: string | null): boolean {
@@ -2282,6 +2285,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const orchestrating = entersRound(role)
   if (!name || (!orchestrating && role !== 'agent')) return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
+  const whole = answer
   if (role === 'agent') answer = heldReport(answer)
   const wait = orchestrating ? parseWait(answer) : parseStatus(answer)
   const before = await readWait($, sessionId)
@@ -2347,7 +2351,11 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     return
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
-  const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context, answer)
+  // A delivery's facts are read on the repository, not taken from its report (relay.ts readDeliveryFacts).
+  const facts = wait?.kind === 'delivered'
+    ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS }), whole))
+    : null
+  const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
   const sent = orchestrating ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
