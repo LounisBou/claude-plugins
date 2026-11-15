@@ -102,14 +102,16 @@ what was read there.
 | 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32); each closed generation's measure is kept from now on (claude-plugins#262) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280, read on 2026-11-14 and not re-read; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
 | 22 | met | `npm run rules` (claude-plugins#33) | — |
 
-## The finish line — 1.0
+## The end of the program
 
-The program is finished on the day all of this holds:
+The program is finished when every goal of the table above is met and the version that holds them is
+installed where the operator works. No waiting period and no fixed protocol decide it. His words,
+2026-11-15: « 24 heures d'usage sur un projet produit, c'est pas de moi ça. Ça a été inventé par les
+agents et instauré comme une règle […] on peut tester l'objectif et tester tout ça beaucoup plus
+simplement ».
 
-1. Release 3 and release 3.1 are installed on the operator's MacBook and on IznoServer, and the
-   sessions on both are restarted (a running session keeps the version it loaded).
-2. Then 24 hours of the operator's own use on a product project, the nine figures below in
-   their target.
+The figures below are what the weekly report reads on a running orchestration: indicators of where
+the orchestration stands, not conditions of the end.
 
 | # | Figure | Target |
 |---|---|---|
@@ -123,20 +125,16 @@ The program is finished on the day all of this holds:
 | 8 | Lines of the method's code, release to release | net zero or less |
 | 9 | `main` red | never |
 
-After that the repository changes only on a fact from one of the operator's projects (his ruling of
-2026-11-14).
+### Nothing of the design is set aside (the operator's words, 2026-11-15)
 
-### Universal goals, closed where they are (decided B, 2026-11-15)
+- « le rangement interne des types strict, tu peux ne pas le mettre en priorité, mais ça n'empêche que ça doit être fait. Ton objectif est tout de même d'aller jusqu'au bout du développement »
+- « je veux qu'on livre l'ensemble du développement »
+- « Je ne dois pas être à un point de blocage. »
 
-Decided B on 2026-11-15T06:32:38Z by the coordinator, on the operator's delegation (« c'est à toi de décider ce qu'il y a de mieux pour avancer »): the 1.0 above is the finish line, and the goals below stay open beyond it.
-
-Four goals have no end of their own: each is closed where it stands, at `d540c0c6`, and moves
-again only on a fact from one of his projects.
-
-- **Goal 3, the remaining copies**: two stay, the session-name shape and cloudflare's read/write classification.
-- **Goal 5, strict typing everywhere**: every hook file but github's 8 and the orchestrator's 25 is strict, and the ratchet keeps it so.
-- **Goal 15, the outcome evals**: the harness, its nine cases and the 120 USD cap of the measure are in place, with no pilot and no measure run.
-- **Goal 21, the calibration**: the simulator and each pull request's difference exist, on 10 first-turn measures, too few to calibrate it.
+Goals 3, 5, 15 and 21 are therefore open like the others, after what slows his daily work: the two
+remaining copies (the session-name shape, cloudflare's read/write classification), strict typing of
+github's 8 hook files and the orchestrator's 25, the outcome measure run on the harness in place, and
+the calibration on more first-turn measures.
 
 ## Constraints
 

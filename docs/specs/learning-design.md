@@ -476,18 +476,18 @@ under 1,200 tokens.
    stable (0.47 refusals per session the first week, 1.42 the second, the github guard family
    having arrived between): hence one rate per guard source and role. Program goal 15 (« every
    release ») is read as this cadence.
-5. **What a regression does.** Recommended: **a regression in a code-computed grade blocks the
+5. **What a regression does.** *Taken 2026-11-15, the recommendation:* **a regression in a code-computed grade blocks the
    promotion it measures; a judge's grade only reports**. Block on every grade: decides on
    noise. Report only: a regression ships.
-6. **Where language packs live.** Recommended: **in the plugin whose role they serve** (norms'
+6. **Where language packs live.** *Taken 2026-11-15, the recommendation:* **in the plugin whose role they serve** (norms'
    review rules, routing's profiles), as data. One plugin per language: clean installs, many
    plugins and versions. Your configuration: personal, but then lessons do not reach other
    operators of these plugins.
-7. **Which repositories it learns from, and what a public pull request may name.** Recommended:
+7. **Which repositories it learns from, and what a public pull request may name.** *Taken 2026-11-15, the recommendation:*
    **every repository where the plugins run; a method pull request names only this repository's
    pull requests and counts the others under hashed ids**. Only this repository: safe, little
    data. Name everything: full provenance, private names in a public history.
-8. **A canary after the cutover.** Recommended: **none at first**: warn before enforce and
+8. **A canary after the cutover.** *Taken 2026-11-15, the recommendation:* **none at first**: warn before enforce and
    proof before merge cover a learned change; re-decide after L0's incident rate. Keep the
    `next` profile on `main` and pin the main profile to a released ref: a true canary, and a ref
    to advance.
@@ -501,31 +501,20 @@ under 1,200 tokens.
    refuse about 50 times a day, so the design's 2,000 events held 40 days, not 180: the count,
    not the age, would have bound. Git never forgets: dropping transcripts is a rewrite of the
    repository, not a delete. The host keeps its own copy 365 days (`cleanupPeriodDays`).
-10. **`/norms:learn`.** Recommended: **keep the command as an entry that hands threads to the
+10. **`/norms:learn`.** *Taken 2026-11-15, the recommendation:* **keep the command as an entry that hands threads to the
     distiller as external evidence**; the rule's text is the retrospective's, checked and
     reviewed. Keep it as it is: the injection path stays. Remove it: the one learning command
     projects use today disappears.
-11. **Eval cap per retrospective.** Recommended: **10 USD**, at most three prompt-rule
+11. **Eval cap per retrospective.** *Taken 2026-11-15, the recommendation:* **10 USD**, at most three prompt-rule
     candidates. 30 USD: more candidates proved per run. 0: code remedies only.
 
-### Resume condition for questions 5 to 8, 10 and 11
+### Questions 5 to 8, 10 and 11
 
-The operator's answer of 2026-11-14 (« A ») is to put them again, with their evidence, once the
-live events (the hooks' events, which carry each call's outcome and who refused it, since
-2026-11-14 17:22 Paris) hold all four of:
-
-| Measure | Threshold |
-|---|---|
-| days spanned by the live events | at least 14 |
-| sessions | at least 300 |
-| repositories with a session that ran the hooks | at least 3 |
-| refusals and tool errors | at least 50 |
-
-On the 15 days of backfilled summaries all four hold; the backfill carries neither pull request
-nor guard code, so it cannot stand in for them. At the time of the answer the live events held
-58 sessions, all in one repository, and 99 refusals and errors: the sessions floor is expected
-around 2026-11-17 and the days floor on 2026-11-28; the repositories floor waits for a second
-project to run a session with the hooks. The count is computed from the event files, not judged.
+Held on 2026-11-14 until 14 days of live events; taken on 2026-11-15 at their recommendation, on the
+operator's words: « pourquoi on est bloqué jusqu'au 28/11? […] avoir de la donnée pour que le plugin
+learning s'auto-améliore […] oui, mais pour le mettre en place, est-ce que c'est nécessaire? […] je
+veux qu'on livre l'ensemble du développement ». The data feeds the plugin once built; building it
+waits for none. Each answer stays open to one word of his.
 
 ## What to measure before building
 

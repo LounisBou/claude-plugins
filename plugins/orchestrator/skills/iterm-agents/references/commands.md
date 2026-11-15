@@ -141,6 +141,12 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   with or without a plugin directory) and takes and hands NO chain (chain=none): an
     #   auditor has none, and written into one it would anchor the orchestrator's next agent.
     #   --no-remote-control is refused there too; a typed audit title still is, off --auditor.
+    # --auditor [--of <tty>|self]: the auditor of an orchestrator, `--title "Audit: <subject>"`.
+    #   Lands immediately RIGHT of the orchestrator it audits, ahead of that orchestrator's
+    #   agents: this session, else the tab --of names (a session that is no orchestrator must
+    #   name it). The place is read after the spawn and repaired once;
+    #   the launch records the auditor as this session's, so `move` places it without --force.
+    #   --of is refused without --auditor.
     # --wake: a paused orchestrator relaunched on the operator's word, its predecessor already
     #   gone. Needs --title "Orch: <subject>", the one recorded at its pause. Its pair: the one
     #   the transcript of --resume <session> holds, else the recorded --model <id> --effort
@@ -183,8 +189,9 @@ $SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout]
 $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM | --leftmost) [--force]
     # places a tab immediately beside another (same window), or at the FIRST place of its
     # window with --leftmost, exclusive with --left-of and --right-of; idempotent, verified
-    # after the move. `self` is the calling session's own tty, found by walking up the
-    # process tree.
+    # after the move. An auditor's tab is refused without --force, except one this session
+    # launched (the launch recorded it). `self` is the calling session's own tty, found by
+    # walking up the process tree.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --model <name> --effort <level>] [--expect-title <s>] \
     [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>] \
