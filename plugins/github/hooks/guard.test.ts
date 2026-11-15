@@ -5,7 +5,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { EXEMPT_REFUSAL, register } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { parseLearningEvent } from '../core/learning.ts'
-import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_REFUSE, consentRecordOf } from '../core/consent-record.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
 // The writing rules read this file of the plugin, which no scenario below is about.
@@ -2555,6 +2555,24 @@ test('the operator\'s answer « Dispense valable jusqu\'au 16/11/2026 12h00 heur
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
   expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until, detail: '« ' + words + ' » — operator' })
+})
+
+// The record core writes from the operator's answer relayed by the coordinator (consentRecordOf, as the orchestrator's settle calls it), read by the record tool.
+test('the record core writes from the operator\'s sentence exempts a repository until 11:00 UTC, the instant its question states', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const repo = 'acme/thing'
+  const until = '2026-11-16T11:00:00Z'
+  const words = "Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
+  const record = consentRecordOf({
+    subject: { kind: 'e2e-exemption', repo }, entry: 'q-a', question: 'Exempt ' + repo + ' from E2E until ' + until + '?', answer: words,
+    choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], by: 'coordinator', at: '2026-11-03T10:00:00Z',
+  })
+  expect(record?.answer).toBe(words)
+  const seen = await world($, on, consentWorld({ a: record }, '/cfg/consents/' + repo))
+  const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', { repo, until }))
+  expect(out.deny).toBeUndefined()
+  expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
+  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until })
 })
 
 test('an expiry that is past, unreadable or given to a revocation is refused', async ($, on) => {
