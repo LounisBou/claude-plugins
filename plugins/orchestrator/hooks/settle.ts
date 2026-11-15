@@ -152,15 +152,16 @@ export function planPane(entry: Fields, text: string, me: Me, at: string): Plan 
 }
 
 // An object `ask` stored that his prompt claimed in its asker's tab, its turn ended: answered there
-// with his words, its consent recorded from `chosen`, the choice they name, when there is one.
-export function planClaimed(entry: Fields, chosen: string | null, at: string): Plan {
+// with his words, its consent recorded from `chosen`, the choice they name, when there is one; the
+// coordinator here that was shown it (`shown`) is told, so the question leaves its conversation too.
+export function planClaimed(entry: Fields, chosen: string | null, at: string, shown = false): Plan {
   const { claimed, ...rest } = entry
   const sender = fields(entry['sender'])
   const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
   const answer = { text: String(fields(claimed)?.['typed'] ?? ''), by: 'tab', at, settler: asker.name }
   return {
     entry: { ...rest, status: 'answered', answer, seq: Number(entry['seq'] ?? 0) + 1 },
-    asker, deliver: null, consentBy: chosen === null ? null : 'tab', consentText: chosen ?? '', relayed: false, told: false,
+    asker, deliver: null, consentBy: chosen === null ? null : 'tab', consentText: chosen ?? '', relayed: false, told: shown,
   }
 }
 

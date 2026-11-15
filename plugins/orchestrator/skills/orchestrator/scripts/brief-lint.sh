@@ -301,60 +301,6 @@ if grep -q '^## Live state' "$brief" 2>/dev/null; then
     fi
 fi
 
-# 16. A succession brief names its orchestration's rulings file, the operator's standing rulings
-#     that its successor reads whole before anything else: the line « - Standing rulings: `<path>` »
-#     the template writes. A brief that names none, or a file that is not there, is refused. The
-#     path is absolute or opens on `~/`, the home: the successor reads it from the project
-#     directory, not the brief's, so a relative path is refused. Each entry of the file, a line
-#     that starts with `- ` and the indented lines under it, opens on its date and carries his
-#     words between « and »,
-#     as `- <YYYY-MM-DDThh:mm:ssZ> « <his words, verbatim> » — <what it binds> (row N)`,
-#     a quote free to span lines: an entry without either is refused, naming the file and the
-#     entry's first line. The file's size is never counted in the brief's cap, and past 8,000
-#     characters it is one warning, never a refusal: the operator's words are not cut by a tool,
-#     the orchestrator moves out what is carried out or superseded. A path still a placeholder is
-#     check 1's.
-rulings_warn=8000
-if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
-    rl=$(grep -n -m1 '^- Standing rulings: `[^`]*`' "$brief" 2>/dev/null || true)
-    if [ -z "$rl" ]; then
-        say 1 "succession brief names no rulings file: add \"- Standing rulings: \`<briefs dir>/rulings.md\`\", the operator's standing rulings, verbatim and dated"
-    else
-        rl_line=${rl%%:*}
-        rulings=$(printf '%s' "$rl" | sed -E 's/^[0-9]+:- Standing rulings: `([^`]*)`.*$/\1/')
-        rel=
-        case "$rulings" in
-            '~/'*) rulings=$HOME/${rulings#\~/} ;;
-            /*|'{{'*) ;;
-            *) rel=1 ;;
-        esac
-        if [[ "$rulings" =~ ^\{\{[A-Za-z0-9_]+\}\}$ ]]; then
-            :
-        elif [ -n "$rel" ]; then
-            say "$rl_line" "rulings path is relative: $rulings — name it absolute, \`<briefs dir>/rulings.md\`: the successor reads it from the project directory"
-        elif [ ! -f "$rulings" ]; then
-            say "$rl_line" "rulings file not found: $rulings — write the standing rulings there, one dated and quoted entry each"
-        else
-            while IFS= read -r entry; do
-                n=${entry%%:*}; text=${entry#*:}
-                [[ "$text" =~ ^-\ [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\  ]] \
-                    || say "$rl_line" "$rulings:$n: rulings entry without its date: open it on the ruling's YYYY-MM-DDThh:mm:ssZ"
-                printf '%s' "$text" | grep -q '« *[^ ].*»' \
-                    || say "$rl_line" "$rulings:$n: rulings entry without his words: quote them verbatim between « and »"
-            done < <(awk '
-                function flush() { if (n) print n ":" text; n = 0 }
-                /^- / { flush(); n = NR; text = $0; next }
-                n && /^[ \t]+[^ \t]/ { sub(/^[ \t]+/, " "); text = text $0; next }
-                { flush() }
-                END { flush() }' "$rulings" 2>/dev/null || true)
-            rchars=$(LC_ALL=C tr -d '\200-\277' < "$rulings" | wc -c | tr -d ' ')
-            [ "$rchars" -le "$rulings_warn" ] \
-                || printf '%s:%s: warning: rulings file %s is %s characters, over %s: mark what is carried out [done: <ref>] or superseded [superseded: <date>], succession.sh takeover moves it out (not a finding)\n' \
-                    "$brief" "$rl_line" "$rulings" "$rchars" "$rulings_warn"
-        fi
-    fi
-fi
-
 # 18. A succession brief carries its mode on one line of its own, `Mode: build` or
 #     `Mode: investigate`, the line the launcher reads to start the successor on the rulebook with
 #     that mode as its argument. A mode said in a sentence is prose the successor may not act on:

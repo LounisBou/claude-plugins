@@ -444,6 +444,9 @@ test('the tab\'s plan: the claim goes, his words the answer by the tab, its cons
   expect(granted.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A', by: 'tab', at: 'T2', settler: ASKER } })
   expect(granted).toMatchObject({ deliver: null, consentBy: 'tab', consentText: 'A : yes', relayed: false, told: false })
   expect(planClaimed(claimed, null, 'T2')).toMatchObject({ consentBy: null, consentText: '' })
+  // The coordinator here that was shown the question is told it was answered in its asker's tab; one that was not is told nothing.
+  expect(planClaimed(claimed, null, 'T2').told).toBe(false)
+  expect(planClaimed(claimed, null, 'T2', true).told).toBe(true)
 })
 
 test('the withdrawal\'s plan: a question asked with ask withdrawn by its asker; the relay\'s entry withdrawn, or closed when the coordinator here was shown it', () => {
