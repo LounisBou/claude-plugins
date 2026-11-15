@@ -514,7 +514,7 @@ test('the takeover prints the answers to apply and the withdrawn questions to as
   assert.ok(text.includes('[q-a] merge order: B\n'))
   assert.ok(text.includes('[q-w] the sender\'s session ended\n_Subject_ : merge order\n_Context_ : Two pull requests touch one file.\n_Question_ : Which later?'))
   assert.ok(text.includes('[q-o] _Subject_ : merge order'))
-  assert.ok(!text.includes('[q-v]') && !text.includes('[q-a] _Subject_'))
+  assert.ok(!text.includes('[q-v]') && !text.includes('[q-a] _Subject_') && !text.includes('[q-a] the sender'))
 })
 
 test('the archive is read for the keys: a question answered a day ago, or withdrawn since, still holds its key', () => {
@@ -770,7 +770,13 @@ test('an answer is its letter when it opens on one, else its first sentence cut 
   assert.equal(answerMeaning('B — his words: « Non, à tout de suite »'), 'B')
   assert.equal(answerMeaning('Accorder (A)'), 'Accorder (A)')
   assert.equal(answerMeaning('Oui, j\'accorde 1.0 ce soir. Le reste attend.'), 'Oui, j\'accorde 1.0 ce soir.')
-  assert.equal(answerMeaning('Ordre : lighten d\'abord — decided by the orchestrator'), 'Ordre : lighten d\'abord')
+  // A free sentence opening on one capital word is no choice; a dash inside it keeps its condition.
+  assert.equal(answerMeaning('I think we should wait for the review.'), 'I think we should wait for the review.')
+  assert.equal(answerMeaning('A few of them are fine. Others not.'), 'A few of them are fine.')
+  assert.equal(answerMeaning('Oui — mais plus tard'), 'Oui — mais plus tard')
+  assert.equal(answerMeaning('e.g. foo. Bar'), 'e.g. foo.')
+  assert.equal(answerMeaning('C.'), 'C')
+  assert.equal(answerMeaning('« only a quote »'), '')
   assert.ok(answerMeaning('x'.repeat(400)).length <= 120)
 })
 
@@ -782,6 +788,9 @@ test('a row\'s ruling and note are one line, his quotation replaced by the id of
   assert.equal(oneLine('see « … » and « ok »', holders), 'see « … » and « … »')
   assert.equal(oneLine('plain note', holders), 'plain note')
   assert.ok(oneLine('word '.repeat(100), holders).length <= 200)
+  // A cut never lands inside the id token.
+  assert.ok(!oneLine(`${'w'.repeat(190)} « Q5 à Q8 reprises quand la télémétrie »`, holders).includes('[words:'))
+  assert.ok(oneLine(`${'w'.repeat(150)} « Q5 à Q8 reprises quand la télémétrie »`, holders).endsWith('[words: q-9]'))
   const rows = openRows([{ id: 7, label: 'X: y', state: 'open', deferred: 'ruling « Q5 à Q8 reprises quand la télémétrie »', note: 'Dispatched: Agent: api « Q5 à Q8 reprises quand la télémétrie »' }], holders)
   assert.match(rows[0]?.line ?? '', /^deferred=7 label=X: y ruling=ruling \[words: q-9\] note=Dispatched: Agent: api \[words: q-9\]$/)
   // What owners are read from stays whole: the printed line is the only one shortened.
@@ -804,6 +813,10 @@ test('a note several rows share is printed once, naming the rows; a note one row
   const row = (id: number, note: string) => ({ id, label: `R${id}: x`, state: 'open', note })
   const lines = rowLines(openRows([row(1, 'after the report (row 9)'), row(2, 'own note'), row(3, 'after the report (row 9)'), row(4, 'after the  report (row 9)')]))
   assert.deepEqual(lines, ['open=1 label=R1: x', 'open=2 label=R2: x note=own note', 'open=3 label=R3: x', 'open=4 label=R4: x', 'note of rows 1, 3, 4: after the report (row 9)'])
+  // Notes that differ only past the cap, or only in their unresolved quotations, are not one note.
+  const long = rowLines(openRows([row(1, `${'x'.repeat(250)}A`), row(2, `${'x'.repeat(250)}B`), row(3, 'see « one »'), row(4, 'see « two »'), row(5, '  ')]))
+  assert.ok(long.every(line => !line.startsWith('note of rows')))
+  assert.ok(long[4] === 'open=5 label=R5: x')
   const w = world({ rows: [row(1, 'shared-ruling-text'), row(2, 'shared-ruling-text'), row(3, 'other')].map(r => JSON.stringify(r)).join('\n') + '\n' })
   assert.equal(w.run(), 0)
   assert.equal(w.text().split('shared-ruling-text').length - 1, 1)
@@ -825,4 +838,17 @@ test('fill leaves a line out whose optional placeholder is empty, and keeps it f
   assert.equal(fill('a\n- list: {{X?}}\nb\n', {}), 'a\nb\n')
   assert.equal(fill('a\n- list: {{X?}}\nb\n', { X: 'x' }), 'a\n- list: x\nb\n')
   assert.equal(fill('a {{Y}}', { Y: '' }), 'a ')
+})
+
+test('a quotation a to-do item holds is named by its item through the takeover; answers all applied leave no answered section', () => {
+  const said = 'Je veux que le contexte à la naissance devienne un signal de dérive'
+  const item = { ...JSON.parse(todo(15, [1])), words: said }
+  const w = world({
+    rows: JSON.stringify({ id: 1, label: 'DRIFT: signal', state: 'open', blocker: 'none', note: `to-do words « ${said} »` }) + '\n',
+    todo: JSON.stringify(item) + '\n',
+    round: [storedAsk('q-1', 'answered'), storedAsk('q-2', 'answered', { answer: { text: 'A', by: 'tab', at: '2026-11-15T09:00:00.000Z', settler: NAME } })],
+  })
+  assert.equal(w.run(), 0)
+  assert.ok(w.text().includes('note=to-do words [words: to-do 15]'))
+  assert.ok(!w.text().includes('naissance') && !w.text().includes('Questions the operator answered'))
 })

@@ -339,16 +339,22 @@ export function oneLine(text: string, holders: readonly Holder[] = [], max = LIN
     const holder = key.length < QUOTE_MIN ? undefined : holders.find(h => flat(h.text).toLowerCase().includes(key))
     return holder === undefined ? '« … »' : `[words: ${holder.id}]`
   })
-  return cut(flat(cited), max)
+  const line = flat(cited)
+  if (line.length <= max) return line
+  // A cut never lands inside a `[words: id]` token: the id is what the line is for.
+  const open = line.lastIndexOf('[words:', max - 1)
+  const inside = open !== -1 && line.indexOf(']', open) >= max - 1
+  return cut(line, inside ? open + 1 : max)
 }
 
 /** The meaning of an answer in one line: its letter when it opens on one, else its first sentence. */
 export function answerMeaning(said: string): string {
   const text = flat(said.replace(/«[^»]*»/g, ' '))
-  const letter = /^([A-Z])(?![\p{L}\p{N}])/u.exec(text)
+  // A letter is a choice when nothing but a dash, a colon, a dot or a bracket follows it: « A few … » is a sentence.
+  const letter = /^([A-Z])(?=$|\s+[—–-]|[.:)])/u.exec(text)
   if (letter !== null) return letter[1] ?? ''
-  const sentence = /^.*?(?:[.!?](?=\s|$)| — |$)/u.exec(text)?.[0] ?? text
-  return cut(sentence.replace(/ — $/, '').trim(), LABEL_MAX)
+  const sentence = /^.*?(?:[.!?](?=\s+\p{Lu}|$)|$)/u.exec(text)?.[0] ?? text
+  return cut(sentence.trim(), LABEL_MAX)
 }
 
 /** One entry of the round, read for what a succession decides on: what makes it the same question as another, its status, its asker, its words. */
@@ -469,12 +475,12 @@ export function openRows(rows: readonly Row[], holders: readonly Holder[] = []):
     const surface = field(row['surface'], 'pr')
     const refs = [...refsOf(String(row['label'] ?? '')), ...(typeof surface === 'string' ? refsOf(surface) : [])]
     const heads = headsOf(row)
-    const meant = typeof row['note'] === 'string' && row['note'] !== '' ? oneLine(row['note'], holders) : ''
+    const meant = typeof row['note'] === 'string' ? oneLine(row['note'], holders) : ''
     const said = typeof row['deferred'] === 'string' && row['deferred'] !== '' ? { deferred: oneLine(row['deferred'], holders) } : {}
     const printed = { ...row, ...said }
     return {
       id: String(row['id']),
-      line: openLine({ ...printed, ...(meant === '' ? {} : { note: meant }) }),
+      line: openLine({ ...printed, note: meant }),
       bare: openLine({ ...printed, note: '' }),
       ...(meant === '' ? {} : { meant }),
       label: String(row['label'] ?? ''),
@@ -615,11 +621,13 @@ const list = (items: readonly string[]): string => (items.length === 0 ? 'none' 
 
 /** The open rows' lines: a note two rows or more share is printed once at the end, naming them. */
 export function rowLines(rows: readonly OpenRow[]): string[] {
-  const holders = new Map<string, string[]>()
-  for (const row of rows) if (row.meant !== undefined) holders.set(row.meant, [...(holders.get(row.meant) ?? []), row.id])
-  const shared = [...holders].filter(([, ids]) => ids.length > 1)
-  const lines = rows.map(row => (row.meant !== undefined && (holders.get(row.meant)?.length ?? 0) > 1 ? (row.bare ?? row.line) : row.line))
-  return [...lines, ...shared.map(([note, ids]) => `note of rows ${ids.join(', ')}: ${note}`)]
+  // Rows share a note when their whole notes are the same, not their shortened lines.
+  const sameAs = (row: OpenRow): string => flat(row.note ?? '')
+  const holders = new Map<string, OpenRow[]>()
+  for (const row of rows) if (row.meant !== undefined && row.meant !== '') holders.set(sameAs(row), [...(holders.get(sameAs(row)) ?? []), row])
+  const shared = [...holders.values()].filter(group => group.length > 1)
+  const lines = rows.map(row => (row.meant !== undefined && (holders.get(sameAs(row))?.length ?? 0) > 1 ? (row.bare ?? row.line) : row.line))
+  return [...lines, ...shared.map(group => `note of rows ${group.map(row => row.id).join(', ')}: ${group[0]?.meant ?? ''}`)]
 }
 
 const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
@@ -770,7 +778,7 @@ export function forgeOpenPrs(env: Env): OpenPrReader {
 /** The objective's first sentence: what follows it is the history of the goals, which goals.md keeps. */
 export function objectiveOf(aim: string): string {
   const text = flat(aim)
-  const end = /[.!?]\s+[A-Z]/.exec(text)
+  const end = /[.!?]\s+\p{Lu}/u.exec(text)
   return cut(end === null ? text.replace(/[.!?]$/, '') : text.slice(0, end.index), 300)
 }
 
@@ -951,7 +959,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     LIVE_PULL_REQUESTS: list(open.prs),
     LIVE_AGENTS: list((open.seats ?? []).map(agentLine)),
     LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
-    LIVE_ANSWERED: (open.settled?.answered ?? []).map(q => `[${q.id}] ${q.label}: ${q.said === '' ? '(no answer text recorded)' : answerMeaning(q.said)}`).join('\n'),
+    LIVE_ANSWERED: (open.settled?.answered ?? []).map(q => `[${q.id}] ${q.label}: ${answerMeaning(q.said) || '(no answer text recorded)'}`).join('\n'),
     LIVE_REASK: (open.settled?.reask ?? []).length === 0 ? 'none' : (open.settled?.reask ?? []).map(q => `[${q.id}] ${q.said === '' ? '(no reason recorded)' : q.said}\n${q.text}`).join('\n\n'),
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
