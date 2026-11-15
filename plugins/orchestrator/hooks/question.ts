@@ -332,12 +332,14 @@ export async function settleClaimed($: Held, kept: readonly string[], now: Date 
   const coordinator = await sessionRole($, session) === 'coordinator'
   for (const id of await openAskedIds($, takes)) {
     let refused = false
+    // Read before the lock, as the lock cannot: whether the coordinator here was shown it.
+    const shown = await closesItself($, id)
     const done = await closeOwnAsked($, id, takes, at, entry => {
       const asked = entry as unknown as Asked
       const typed = asked.claimed?.typed ?? ''
       const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? (coordinator && asked.consent ? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : undefined) : null
       refused = !!asked.consent && (!chosen || !grants(chosen.text))
-      return planClaimed(entry, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at)
+      return planClaimed(entry, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
     })
     if (done === null) continue
     await logLine($, 'question', `${id} answered in its asker's tab`)

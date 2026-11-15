@@ -740,7 +740,7 @@ else
   # The coordinator was shown the question (`round` listed it) and is never told it is settled:
   # the plan of an answer typed in its asker's tab carries `told: false` (hooks/settle.ts,
   # planClaimed), so closeRound tells no one, and settleClaimed (hooks/question.ts) does not either.
-  known_defect "(b) the coordinator, shown the question, is told once that it was answered in its sender's tab, within seconds of the turn's end" "1|yes" \
+  check "(b) the coordinator, shown the question, is told once that it was answered in its sender's tab, within seconds of the turn's end" "1|yes" \
     "$(tab_count "Settled in Orch: flow's tab")|$(fluid "$(after "$told")")"
 fi
 echo "delays (from the answer; a figure ≤ ~${FLOOR_MS} ms sits on the poll's floor): $DELAYS"
