@@ -75,9 +75,14 @@ export function parseDeclared(raw: unknown): Declared | string {
 /** The list `raw` holds (the file's object), or a sentence saying what is wrong with it. */
 export function parseDeployList(raw: unknown): DeployList | string {
   if (!isObject(raw)) return 'the file is not an object'
+  const listed: unknown = raw['repositories'] ?? []
+  const commanded: unknown = raw['commands'] ?? []
+  if (!Array.isArray(listed)) return '"repositories" is not a list of {"repo": "owner/name", "env": "dev"|"staging"|"prod"}'
+  if (!Array.isArray(commanded)) return '"commands" is not a list of declared commands'
+  const repositories: unknown[] = listed
+  const commands: unknown[] = commanded
   const grants: Grant[] = []
-  // A value that is no list is iterated as it is: one that cannot be throws, as a file that cannot be read does.
-  for (const entry of (raw['repositories'] ?? []) as Iterable<unknown>) {
+  for (const entry of repositories) {
     const env = isObject(entry) ? envOf(entry['env']) : undefined
     if (!isObject(entry) || typeof entry['repo'] !== 'string' || !REPO.test(entry['repo']) || env === undefined || env !== entry['env']) {
       return '"repositories" is not a list of {"repo": "owner/name", "env": "dev"|"staging"|"prod"}'
@@ -85,7 +90,7 @@ export function parseDeployList(raw: unknown): DeployList | string {
     grants.push({ repo: entry['repo'], env })
   }
   const declared: Declared[] = []
-  for (const entry of (raw['commands'] ?? []) as Iterable<unknown>) {
+  for (const entry of commands) {
     const one = parseDeclared(entry)
     if (typeof one === 'string') return '"commands": ' + one
     declared.push(one)

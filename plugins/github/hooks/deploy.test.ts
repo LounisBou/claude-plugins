@@ -35,6 +35,9 @@ test('a malformed list file is refused with what is wrong, not read in part', ()
   const bad: unknown[] = [
     [], { repositories: ['acme/infra'] }, { repositories: [{ repo: INFRA }] }, { repositories: [{ repo: 'infra', env: 'prod' }] },
     { repositories: [{ repo: INFRA, env: 'production' }] }, { commands: [{ repo: INFRA, kind: 'cron' }] },
+    // A value that is no list, one that cannot be iterated included, is said so and never thrown.
+    { repositories: 5 }, { repositories: { repo: INFRA, env: 'prod' } }, { repositories: 'acme/infra' },
+    { commands: 5 }, { commands: { repo: INFRA, kind: 'script', path: 'a.sh' } }, { commands: true },
   ]
   for (const raw of bad) expect(typeof parseDeployList(raw), JSON.stringify(raw)).toBe('string')
 })
