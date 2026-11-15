@@ -42,7 +42,8 @@ findings come in one table (severity, agent, `file:line`, issue, proposed fix).
 The record counts the ERROR findings as open and passes the WARNING and INFO
 ones as non-blocking: its detail reads like
 `0 fixed, 3 passed (non-blocking, automatic), 0 open`, so a reader can tell an
-automatic pass from an operator's. The result is `pass` when nothing is open,
+automatic pass from an operator's. These figures are computed from the findings the
+agents reported; the ones the call gives are not read. The result is `pass` when nothing is open,
 `fail` otherwise. A finding set aside as not critical, with its reason (`setAside`
 and `reason` of the tool), is not open: the detail keeps the reason. Typing the command in your own session stays interactive.
 
@@ -69,7 +70,8 @@ mechanical work the markdown would otherwise hand the model:
   `norms.contributing.ungranted`, `norms.commit.message`, `norms.push.ungranted`,
   `norms.agent.write`). Only the irreversible stays held: a forced or deleting
   `git push` asks the user through the host's dialog, where only their Allow lets
-  it through and nobody there to answer refuses it (a push whose line does not show it
+  it through and nobody there to answer refuses it; their Allow or Deny is kept in the
+  journal as one `answer` line (`norms.answer.push.granted`, `norms.answer.push.refused`) (a push whose line does not show it
   whole, with a variable set before it, behind `env`, a substitution or xargs, or
   with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
   `rm`, `rmdir`, `unlink` or `find -delete` (or `find -exec` of one), and a shell line the reader
@@ -88,8 +90,13 @@ mechanical work the markdown would otherwise hand the model:
   at the head commit the check ended on. The findings are the ones the check's
   agents reported, each ending its answer with a JSON block the module reads:
   the call is refused when no agent reported, when one gave no readable block,
-  or when its figures do not account for every finding once. Commits made after the check may only
-  touch the files it read. It leaves none, and says why on a `record:` line of
+  or when its figures do not account for every finding once. A finding said fixed
+  with no commit since the check is counted open. Commits made after the check may only
+  touch the files it read. Once the pull request is read, the same call keeps the check's
+  findings in the journal, one `finding` line each: the agent and the severity as its code
+  (`norms.magic-values.error`), the file as its path, the pull request as its subject, and
+  nothing of the finding's text. Every line of the journal names the pull request the check
+  reads, once the module read it. It leaves none, and says why on a `record:` line of
   the report, when `/norms:check` did not compute its scope in the session, the
   branch has no pull request, tracked files have changes, a later commit touches
   a file the check did not read, or the `github` plugin is absent, older, or

@@ -27,9 +27,12 @@
 
 import { gitSubcommand, innerLine, readCommands, simpleCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 import { isSpawned } from '../core/env.ts'
+import { fieldsOf, type Hook, type Host, type On } from '../core/host.ts'
 import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
-import { observed } from './observe.ts'
+import { askAllow, observed, type JournalHost } from './observe.ts'
 import { clearMark } from './record.ts'
+
+type GuardHost = JournalHost & Host<'state'>
 
 export type Mode = 'check' | 'learn'
 
@@ -225,14 +228,6 @@ export function pushDecision(mode: Mode | undefined, command: string): Verdict |
   return observe('norms.push.ungranted', 'norms: never push during a norms walkthrough. The user pushes; remind them to.')
 }
 
-// Whether the user allows the push: only their own Allow does; a failure to ask refuses.
-async function userAllows($: any, question: string): Promise<boolean> {
-  try {
-    return (await $.ui.ask(question, ['Allow', 'Deny'])) === 'Allow'
-  } catch {
-    return false
-  }
-}
 
 // What check.md 7.4 forbids in a commit message.
 const FORBIDDEN: RegExp[] = [/\bnorms?-[a-z]+(-[a-z]+)*/i, /\bnorms?\b/i, /\bclaude\b/i, /\btodo[- ]list\b/i]
@@ -286,7 +281,7 @@ export function endSkillCheck(): void {
   if (viaSkill && mode === 'check') resetGuards()
 }
 
-const pass = ($: any, e: any, next: any) => next(e)
+const pass: Hook<GuardHost> = (_$, e, next) => next(e)
 
 // The commands that arm a mode. Only these are hooked: a command.run hook with no
 // matcher sits in every command's chain, and the host then names norms beside
@@ -305,16 +300,16 @@ const LEARN_SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:learn$/ }
 
 // Whether the session was spawned, so nobody types in it. An unreadable variable is no
 // variable: the guards arm.
-export async function spawned($: any): Promise<boolean> {
+export async function spawned($: Host<'env'>): Promise<boolean> {
   const value: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
   return isSpawned(typeof value === 'string' ? value : undefined)
 }
 
-export function register(on: any): void {
+export function register(on: On<GuardHost>): void {
   for (const [command, armed] of Object.entries(MODES)) {
-    on('command.run', { command }, async ($: any, e: any, next: any) => {
+    on('command.run', { command }, async (_$, e, next) => {
       mode = armed
-      lastPrompt = `/${command} ${String(e.args ?? '')}`.trim()
+      lastPrompt = `/${command} ${String(e['args'] ?? '')}`.trim()
       viaSkill = false
       return next(e)
     }).catch(pass)
@@ -323,52 +318,53 @@ export function register(on: any): void {
   // Run by a session through the Skill tool: the host runs no command.run, so the mode is
   // armed at the tool call, for the main loop only.
   for (const [matcher, armed] of [[CHECK_SKILL_MATCHER, 'check'], [LEARN_SKILL_MATCHER, 'learn']] as const) {
-    on('tool.call', matcher, async ($: any, e: any, next: any) => {
-      if (e.agentId || await spawned($)) return next(e)
+    on('tool.call', matcher, async ($, e, next) => {
+      if (e['agentId'] || await spawned($)) return next(e)
       mode = armed
-      lastPrompt = `/norms:${armed} ${String(e.args ?? '')}`.trim()
+      lastPrompt = `/norms:${armed} ${String(e['args'] ?? '')}`.trim()
       viaSkill = true
       return next(e)
     }).catch(pass)
   }
 
   // Any other command ends the mode: its slash prompt follows its command.run.
-  on('prompt.submit', async ($: any, e: any, next: any) => {
-    const text = String(e.text ?? '')
+  on('prompt.submit', async (_$, e, next) => {
+    const text = String(e['text'] ?? '')
     const command = promptCommand(text)
     if (command !== undefined && !command.startsWith('norms:')) resetGuards()
-    if (USER_ORIGINS.includes(String(e.origin?.kind))) lastPrompt = text
+    if (USER_ORIGINS.includes(String(fieldsOf(e['origin'])?.['kind']))) lastPrompt = text
     return next(e)
   }).catch(pass)
 
-  on('turn.complete', async ($: any, e: any, next: any) => {
-    if (!e.agentId && e.isAborted) resetGuards()
+  on('turn.complete', async (_$, e, next) => {
+    if (!e['agentId'] && e['isAborted']) resetGuards()
     return next(e)
   }).catch(pass)
 
   // The module's one session.end hook: the host refuses a second one without a matcher.
-  on('session.end', async ($: any, e: any, next: any) => {
+  on('session.end', async ($, e, next) => {
     resetGuards()
     await clearMark($)
     return next(e)
   }).catch(pass)
 
   for (const tool of ['Edit', 'Write', 'NotebookEdit']) {
-    on('tool.call', { tool }, async ($: any, e: any, next: any) => {
-      if (e.agentId) return next(e)
-      const verdict = editDecision(mode, lastPrompt, String(e.file_path ?? e.notebook_path ?? ''))
+    on('tool.call', { tool }, async ($, e, next) => {
+      if (e['agentId']) return next(e)
+      const verdict = editDecision(mode, lastPrompt, String(e['file_path'] ?? e['notebook_path'] ?? ''))
       if (verdict) await observed($, verdict.code)
       return next(e)
     }).catch(pass)
   }
 
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
-    const command = String(e.command ?? '')
-    const verdict = bashDecision(mode, lastPrompt, command, Boolean(e.agentId))
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = String(e['command'] ?? '')
+    const verdict = bashDecision(mode, lastPrompt, command, Boolean(e['agentId']))
     // A deletion is refused before the user is asked about a push on the same line: the answer would change nothing.
     if (verdict?.irreversible) return { deny: verdict.reason }
     const question = pushQuestion(mode, command)
-    if (question && !(await userAllows($, question))) return { deny: PUSH_REFUSAL }
+    // Only the user's own Allow lets the push through: a Deny, or nobody there to answer, refuses it.
+    if (question && (await askAllow($, 'push', question)) !== true) return { deny: PUSH_REFUSAL }
     if (verdict) await observed($, verdict.code)
     return next(e)
   }).catch(pass)
