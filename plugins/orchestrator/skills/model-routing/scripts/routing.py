@@ -230,7 +230,7 @@ CLASS_TIERS = {
     "contract-phase": "deep", "final-verification": "deep",
     "behaviour-phase": "standard", "conversion-phase": "standard", "corrective": "standard",
     "review-collector": "standard", "comments": "standard", "review-lens": "standard",
-    "search": "light",
+    "screenshot-audit": "standard", "search": "light",
 }
 # Work nothing downstream re-checks: never explored.
 NEVER_EXPLORED = {"orchestrator", "successor", "decision-round", "contract-phase", "final-verification"}
