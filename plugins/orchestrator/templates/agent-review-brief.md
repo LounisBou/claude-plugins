@@ -58,6 +58,5 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 ## 7. Resource envelope
 
 - Kill what you start, and prove it with `ps` before your final report. Delete nothing in your scratchpad; anything else you built is removed by its literal path, never through a shell variable (`rm $S/x` stops on the host's check).
-- Kill only what you started, by the pid you recorded in a file (`cmd & echo $! > <file>`, then `kill $(cat <file>)`): `pkill`, `killall` and `kill $(pgrep …)` are refused in a launched session.
 - Scratch (intermediate results, generated scripts, outputs that do not belong in the repository) lives in your own session's host scratchpad directory, which your system context names — never in a directory this brief or you invent. Do not delete it: the checkout it belongs to is deleted when your session is closed, and takes it along.
 {{RESOURCE_ENVELOPE}}
