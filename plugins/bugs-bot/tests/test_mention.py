@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-from conftest import REPO_ROOT
 from samples import BASE_DATE, GROUP_ID, FakeTelegram, message
 
 STAMP = "20261002-083000"
@@ -193,36 +191,3 @@ def test_backfill_skips_reports_that_already_have_an_id_and_unknown_names(run, b
 def test_backfill_unbound_refuses(run, home, capsys):
     assert run("backfill-authors") != 0
     assert "no .bugs-bot.json here or above" in capsys.readouterr().err
-
-
-# -- the method is written down --------------------------------------------------------
-
-DOCS = {
-    "AGENT.md": REPO_ROOT / "agent" / "AGENT.md",
-    "SKILL.md": REPO_ROOT / "skills" / "bugs-bot" / "SKILL.md",
-}
-
-
-@pytest.mark.parametrize("phrase", ["vérifier <id>", "demander <id>", "--mention"])
-def test_agent_instructions_know_the_mention_phrases(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-@pytest.mark.parametrize("phrase", ["Talking to a reporter", "DEPLOYED", "bugs-bot deployed", "vérifier <id>", "backfill-authors"])
-def test_skill_states_the_ask_fix_verify_method(phrase):
-    assert phrase in DOCS["SKILL.md"].read_text()
-
-
-@pytest.mark.parametrize("file, phrases", [
-    ("AGENT.md", ["Answer a follow-up yourself", "never their fault", "still relay"]),
-    ("SKILL.md", ["Answer every word a tester sends", "Pas de soucis, c'est que c'était pas clair"]),
-])
-def test_the_agent_answers_a_testers_follow_up_warmly(file, phrases):
-    text = DOCS[file].read_text()
-    for phrase in phrases:
-        assert phrase in text
-
-
-def test_the_voice_rule_is_in_the_skill_and_the_agent_points_to_it():
-    assert "### The voice" in DOCS["SKILL.md"].read_text()
-    assert "The voice" in DOCS["AGENT.md"].read_text()

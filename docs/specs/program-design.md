@@ -83,7 +83,7 @@ what was read there.
 | 2 | met | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check`; the operator installs from the `lounisbou` catalogue in his own profile, the plan's separate one having been left, and `npm run deploy` installs each green commit of `main` on his MacBook by itself (claude-plugins#264, claude-plugins#266, claude-plugins#272; `d540c0c6` is the commit installed) | — (the install on IznoServer is a step of the finish line below) |
 | 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: the session-name shape (`coordinator.sh`, statusbar's prefixes) and the read/write classification of cloudflare (`hooks/register.ts`, `engine/cf.py`, `engine/cf-write.py`) |
 | 4 | partly met | typed in core with a version: PR records, the `tests` kind of a stacked pull request's light CI included (tested from both sides, `scripts/contracts.test.ts`; claude-plugins#242), consent records (claude-plugins#78), the learning events and the install record, the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`); the launcher's `spawn` line and the `ListAgents` reading are core's | `deck.json` and the declared wait kinds are not typed in core, and the launcher's command lines carry no version (`docs/contracts.md`) |
-| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, implement, learning, norms, pr-review, statusbar and telemetry, and eleven of the orchestrator's, one of them by import | 33 hook files are outside the strict check, github's 8 and the orchestrator's 25; 9 of them still type `$` as `any` |
+| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, implement, learning, norms, pr-review, statusbar and telemetry, and eleven of the orchestrator's, one of them by import; every plugin's hook tests run in its suite, so in CI (`claude plugin test`) | 33 hook files are outside the strict check, github's 8 and the orchestrator's 25; 9 of them still type `$` as `any` |
 | 6 | met | `ci/plugins.json`: twelve plugins, eleven block on Linux and macOS, drift on Linux and only at the release and the night (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); a pull request runs the Linux suites of what it changes, `main` every plugin but drift on Linux, macOS the release and each night (`scripts/plugin-matrix.ts`) | — |
 | 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
 | 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); norms' pass is held to the findings its agents report, the figures passed to `check_done` having to account for each once (claude-plugins#181); a check plan is accepted only from the orchestrator (claude-plugins#164); a stacked pull request's `tests` record is written by github's light CI alone (claude-plugins#242) | the E2E record: `mcp__github__record` writes the `pass` the running session states, on a clean checkout; no tool computes it |
@@ -227,10 +227,14 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 - `tests/test_tm_bugs.py:394`: fails by the calendar (the purge reads the wall clock, `pull.py:24,113`). **Fixed** (#25).
 - `hooks/guard.ts:83-124`: the group-post guard fails open. **Fixed** (#16).
 - `hooks/core.ts` (`selfOf`, `peersOf`) parses `ListAgents` text; the launcher path and the measure-file layout are hard-coded. **Fixed**: core's `orchestration.ts`.
-- `agent/AGENT.md`, `skills/bugs-bot/SKILL.md`: about 13k tokens per agent run, a dated ruling at `AGENT.md:17`; about 62 test reads of `.md` wording. **Open**
-  (13,138 tokens in `npm run context`'s resident-agent scenario; the dated ruling is at `AGENT.md:16`).
-- Suspected: tester text and images reach the orchestrator with only prose protection; `--image` (`images.py:77`) posts any local image. **Partly**: only
-  PNG, JPEG or WebP of 10 MB or less; the first suspicion is not read yet.
+- `agent/AGENT.md`, `skills/bugs-bot/SKILL.md`: about 13k tokens per agent run, a dated ruling at `AGENT.md:17`; about 62 test reads of `.md` wording. **Fixed**: the agent
+  reads `AGENT.md` alone, which now holds the voice (5,959 tokens in `npm run context`'s resident-agent scenario, from 11,468); the quoted
+  ruling and the rules said in both files are gone, and so are the tests that read a document's wording.
+- Suspected: tester text and images reach the orchestrator with only prose protection; `--image` (`images.py:77`) posts any local image. **Fixed** for the images: only
+  PNG, JPEG or WebP of 10 MB or less. The first suspicion is read and true: the agent, a model, copies the report's text into its message to
+  the launcher, and only the prose of `AGENT.md` and `SKILL.md` says it is data (`hooks/guard.ts` reads what goes out to the group, nothing coming in).
+  **Open: a choice.** The agent keeps sending the tester's text in its message, and the launcher has the bug in front of it at once; or it sends
+  only the report's id, and the launcher runs `bugs-bot show <id>` to read the text as a command's output, one more step for each bug.
 
 **github**
 - `hooks/ready.ts:476`: the records guard matches the text `pr-records/`; a built path or `rec""ord.py` passes, so a record can be forged; NotebookEdit is not covered (`register.ts:1438`). **Fixed** (#31).
@@ -240,49 +244,60 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 - Every guard ends in `.catch(… next(e))` (`register.ts:1435,1450`): fails open. **Fixed** (#15).
 - `auto-merge.json` is read-modify-write without a lock. **Fixed** (#36).
 - `register.ts:254`, `guards.ts:278`: WRITING.md (about 3.3k tokens) is read whole once per session and once per subagent before any authoring call.
-  **Partly** (#41): split into one file per kind under `engine/writing/`, each still read whole.
+  **Fixed** (#41): one file per kind under `engine/writing/`, named by the tool's description (`hooks/register.ts:2177`), and no guard asks for a read
+  before a call any more; a commit reads 514 tokens, a comment 380, a pull request 2,004 (`npm run context`).
 - Suspected: `image-upload` pushes any local file to a `pr-assets` branch once allowed for the session. **Fixed** (#31): images only.
 
 **norms**
 - `hooks/record.ts:71-104`: the pass is computed from figures the model passes in; `:35-39` stores the scope's head and never compares it at `check_done`.
   **Partly** (#28, #77, #181): the head is compared and later commits may touch only the files the check
-  read; the figures the model passes must account once for each finding its agents reported, and the pass is still `open === 0` over them.
+  read; the figures the model passes must account once for each finding its agents reported, and the pass is still `open === 0` over them
+  (`hooks/record.ts:268`). **Open: a choice.** The check keeps the model's word on which findings it fixed, with one round of agents as today; or the
+  agents run again after the fixes and the pass is what they still report, a second round of agents for each check that fixed something.
 - `hooks/guards.ts:50`: `/\bpush/i` on the last prompt grants a push (« don't push » included). **Fixed** (#28): the host's dialog.
 - The agents declared « read-only » carry `Bash`. **Fixed** (#28) by a guard on their shell.
 - `hooks/check.ts:83` couples to `ORCHESTRATOR_SPAWNED`; `scripts/resolve_base.sh:31` calls raw `gh`. **Fixed** (#28).
-- Suspected: `/norms:learn` writes reviewer text into project rules, an injection path. **Open**: not read yet.
+- Suspected: `/norms:learn` writes reviewer text into project rules, an injection path. **Dropped**: the threads reach the model fenced and named as
+  data (`hooks/learn.ts:56-73`), the rule proposed is the model's own sentence, and none is written to `CONTRIBUTING.md` before the person has read it
+  and said « add », one rule at a time (`commands/learn.md:15-16,119`).
 
 **pr-review**
 - `hooks/loop.ts:57-63`: `start` then `findings {keys: []}` records a clean pass with no review run and no pinned head. **Fixed** (#18).
 - `hooks/policy.ts:43,60`: `grantsEdit`, `grantsPush` match the word (« don't fix this one », « do not push yet » grant). **Fixed** (#17).
 - `runsGitPush` misses `sh -c` and `eval`. **Fixed** (#29).
 - `install.sh:49-150` installs and signs in gh a second way; the fallback writes the fixed `/tmp/claude-pr-review-request.json`. **Fixed** (#29, #37).
-- `skills/auto-fix-loop`: up to 5 review passes, against the orchestrator's one review and one correction round; aligned when it runs under orchestration. **Open**: `MAX_PASSES` is 5; the one-pass
-  reviewer mode (`review_only`) exists and `/implement:review` uses it, the orchestrator's templates do not.
+- `skills/auto-fix-loop`: up to 5 review passes, against the orchestrator's one review and one correction round; aligned when it runs under orchestration. **Fixed**: `MAX_PASSES` is core's cap
+  of review rounds, 3 (`hooks/state.ts:84`), and a session the orchestrator spawned runs the rounds of its pull request's check plan
+  (`hooks/loop.ts:439-455,559`). The orchestrator's review brief runs its own readers and never the loop, so `review_only` has no place in it.
 
 **implement**
-- The implementer runs `implement:check` on its own work. **Partly** (#20): kept as a
-  self-check; the review is `/implement:review`, in another session.
+- The implementer runs `implement:check` on its own work. **Fixed** (#20): the check is a
+  self-check that writes no record (nothing in `plugins/implement` calls `mcp__github__record`); the review is `/implement:review`, in another session.
 - `hooks/core.ts:402`: any prompt with « agent » lifts the subagent refusal. **Fixed** (#30).
 - `hooks/core.ts:420-438`: the check's read-only guard misses `sed -i` and redirections. **Fixed** (#30).
 - `hooks/core.ts:441`: the host's commit attribution is silenced during feature, phase and close.
   Kept: it is the repository's rule (no attribution, `docs/conventions.md`).
 - `tests/run-tests.sh:109`: a locale-dependent wording lint. **Fixed** (#30).
 - Open decision for the operator: implement reserved to solo work and refused in orchestrated briefs, or merged into the implementer brief.
-  Still open; today no orchestrator brief names implement.
+  Today no orchestrator brief names implement. **Open: a choice.** Implement stays the method of a person working alone and an orchestrated agent
+  follows its brief only, two ways of working that never mix; or its phases go into the implementer brief, and every delivery, alone or
+  orchestrated, has the same plan, state file and gate commits, in a longer brief.
 
 **statusbar**
 - `statusline/statusline.sh:122-130`: `date -r <epoch>` is macOS-only; on GNU the reset times vanish silently. **Fixed** (#22).
 - `install.sh:200-211`: overwrites a foreign `statusLine` (backup only), not atomic, replaces a symlinked `settings.json` by a file. **Partly** (#22): atomic, through the
-  symlink, with a backup; a foreign `statusLine` is still replaced, with a message.
+  symlink, with a backup; a foreign `statusLine` is still replaced, with a message (`install.sh:216-221`). **Open: a choice.** The install replaces
+  another tool's status line and says so, the old command kept in the backup, one command as today; or it stops when it finds one and asks before
+  replacing it, one more answer to give at install (non-goal 2 weighs against it).
 - `statusline/statusline.sh:20` sources its config file as code at every redraw. **Fixed** (#22).
 - Suspected: `git status` without `GIT_OPTIONAL_LOCKS=0` can take `index.lock` beside agents; `launcher.sh:10` takes the first install path. **Fixed** (#22).
 
 **orchestrator** — `orchestrator-refoundation-design.md`, whose « State on main » holds its state.
 
 **Every plugin** — TypeScript handlers typed `$: any` with no tsconfig; TypeScript tests that run only inside the host (`claude-code/testing`), to be made runnable in CI or replaced by tests of pure modules.
-**Partly**: see goal 5. The suites of cloudflare, implement, norms and the orchestrator run
-`claude plugin test`; those of bugs-bot, github, pr-review and statusbar do not.
+**Partly**: see goal 5. Every plugin that has hook tests (bugs-bot, cloudflare, github, implement,
+norms, the orchestrator, pr-review and statusbar) runs them in its suite with `claude plugin test`,
+so CI runs them; cloudflare's suite alone skips them when `claude` is not on PATH.
 
 ## Non-goals
 

@@ -157,29 +157,6 @@ def test_a_half_given_or_malformed_predecessor_is_refused(run, bound, home, extr
     assert not (home / "state.json").exists()
 
 
-# -- AGENT.md carries both sides of the protocol ----------------------------------------------
-
-
-def test_agent_md_carries_both_sides_of_the_succession():
-    text = AGENT_MD.read_text()
-
-    for needle in (
-        "measure file",
-        "bugs-bot plugin-path orchestrator",
-        "gate --measure",
-        "agent-prompt --launcher",
-        "--predecessor-tty",
-        "spawn",
-        "--successor",
-        "--prompt-file",
-        "--dir <repo>",
-        "relève confirmée",
-        "handed over",
-        "--expect-title",
-    ):
-        assert needle in text, needle
-
-
 def test_gate_set_names_the_file_it_cannot_write(run, bound, monkeypatch, capsys):
     before = project_file().read_text()
 

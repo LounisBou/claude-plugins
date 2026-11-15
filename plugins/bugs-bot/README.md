@@ -145,7 +145,7 @@ refuses to run over a non-empty project directory.
 ## Tests
 
 ```
-tests/run-tests.sh        # the suite's entry point, as CI runs it: python3 -m pytest -q
+tests/run-tests.sh        # the suite's entry point, as CI runs it: python3 -m pytest -q, then claude plugin test .
 python3 -m pytest -q      # no network, no PM2, no real ~/.bugs-bot: every location is overridden
 claude plugin test .      # the hooks module, against the host's own engine, every child and file faked
 claude plugin validate .  # the manifest and what the module hooks

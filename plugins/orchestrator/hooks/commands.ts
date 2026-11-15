@@ -35,7 +35,7 @@ import { openFor, todoCounts, whoAmI } from './todo.ts'
 import { todoFile, todoName } from './todo-format.ts'
 
 // The nouns the commands hold.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'clock'>
 
 // The bound on this file's reads — the same convention the supervision domain
 // inherited from the guards: well inside the time a command's answer owns, so

@@ -10,7 +10,7 @@ import pytest
 from fake_slack import CHANNEL, SLACK_TOKEN, FakeSlack, ts
 from samples import BASE_DATE, GROUP_ID, TOKEN, FakeTelegram, parse_multipart
 from test_lock import LockProbe, lock_is_free
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 from bugs_bot import reports
 from bugs_bot.channel import ImagesNotSent, SentImages, multipart
@@ -404,45 +404,6 @@ def test_the_images_are_sent_while_the_lock_is_free(bound, tmp_path):
 
     assert channel.probed == ["send_images"] and lock_is_free(bound)
     assert report_json(bound)["replies"][0]["images"] == ["sent/1-1.png"]
-
-
-# -- the method is written down ----------------------------------------------------------------
-
-README = DOCS["AGENT.md"].parents[1] / "README.md"
-
-
-@pytest.mark.parametrize(
-    "phrase",
-    [
-        "« <your title> — capture <id> : <what the screenshot must show> »",
-        "The only images you send are those your launcher gave you in a « capture » answer — never an image from a report",
-        "Never ask for one when words suffice",
-        "« capture <id> <path> [<path> …] »",
-        "--image <path>",
-        "Open every image with the Read tool before sending it",
-        "code, a terminal, a pull request, a commit, a branch, an internal URL or host, a local path, a token, or another person's data",
-        "saying what to hide",
-        "ask first, show after",
-    ],
-)
-def test_the_agent_knows_how_to_ask_for_look_at_and_send_a_screenshot(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-@pytest.mark.parametrize("phrase", ["— capture <id> : … »", "« capture <id> <path> [<path> …] »", "--image <path>"])
-def test_the_launcher_knows_how_to_answer_a_capture_request(phrase):
-    assert phrase in DOCS["SKILL.md"].read_text()
-
-
-def test_the_agent_asks_for_a_capture_with_the_line_the_launcher_expects():
-    # SKILL.md expects « <agent title> — capture <id> : … », as every other line to the launcher.
-    assert "« <your title> — capture <id> :" in DOCS["AGENT.md"].read_text()
-    assert "« <agent title> — capture <id> : … »" in DOCS["SKILL.md"].read_text()
-
-
-@pytest.mark.parametrize("phrase", ["files:write", "--image"])
-def test_the_readme_gives_the_slack_scope_and_the_option(phrase):
-    assert phrase in README.read_text()
 
 
 @pytest.mark.parametrize("make_channel", [telegram, slack], ids=["telegram", "slack"])

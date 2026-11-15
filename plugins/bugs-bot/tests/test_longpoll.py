@@ -233,4 +233,3 @@ def test_pm2_config_runs_the_long_poll_form():
 
     assert "pull --watch" in text and "--every" not in text.split("module.exports", 1)[1]
     assert "kill_timeout" in text
-
