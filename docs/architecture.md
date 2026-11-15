@@ -159,9 +159,9 @@ release still raises the versions other machines install.
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
-| prompt budgets and duplicates within their ceilings (a pull request may lower a ceiling after a cut; no ceiling rises outside the release, a rise CI does not refuse) | `npm run prompts`, `ci/prompts.json` |
-| tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
-| rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
+| prompt budgets and duplicates against their ceilings (a report: a warning and the run's summary, never a red check; a line of the weekly report) | `npm run prompts`, `ci/prompts.json` |
+| tokens by scenario, and the pull request's difference (a report in the run's summary, a warning when the script fails) | `npm run context`, `ci/scenarios.json` |
+| rules a prompt states that nothing holds (a report in the run's summary; a line of the weekly report) | `npm run rules` |
 | the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 | the repository rules and every blocking cell passed, as one check the default branch requires (`/github:protect apply ci`, once that job runs on `main`) | the `ci` job, named by `packages/core/src/readiness.ts` |
