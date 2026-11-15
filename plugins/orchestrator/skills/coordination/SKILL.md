@@ -154,9 +154,7 @@ message from a session on this machine is not presented: ask its sender to ask i
 in the pane before it is due is never presented: `round --all` lists it, close it as answered from
 the pane. One you
 presented and he then answered in the pane is closed by the module, and one he answered in your
-tab while the pane still showed it, by one `settle`; neither is presented again. Besides,
-the module writes one line in your conversation for each new question, pane open or not,
-computed from the round, with no turn of yours: a notice, never a question to present before it is due. When he tells you to
+tab while the pane still showed it, by one `settle`; neither is presented again. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
