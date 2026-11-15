@@ -188,3 +188,46 @@ test('github\'s refusal counts no round, and a check plan counts none either', a
   expect(out).toEqual({ result: WRITTEN })
   expect(roundsOf(planned.files)).toEqual({ 1: 1, 2: 0 })
 })
+
+// The row the call names (`record` + `row`) is the row whose round is raised, whatever the labels say.
+const NAMED = { record: RECORD, findings: '' }
+
+test('a verdict that names its row raises that row, not the other row whose label or verdict names the pull request', async () => {
+  const rows = [
+    line({ id: 42, label: 'the fix of the round count' }),
+    line({ id: 46, label: 'wave 16', verdict: 'rebased onto acme/app#12' }),
+    line({ id: 47, label: 'acme/app#12' }),
+  ].join('\n') + '\n'
+  const fx = fake({ rows })
+  const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 42 })
+  expect(roundsOf(fx.files)).toEqual({ 42: 1, 46: 0, 47: 0 })
+  expect(out.result).toContain(`rounds: row 42 of ${RECORD} raised to 1`)
+})
+
+test('a verdict that names a row whose label names no pull request raises it, with no "none raised" line', async () => {
+  const fx = fake({ rows: line({ id: 5, label: 'a label naming none' }) + '\n' })
+  const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 5 })
+  expect(roundsOf(fx.files)).toEqual({ 5: 1 })
+  expect(out.result).toContain(`rounds: row 5 of ${RECORD} raised to 1`)
+  expect(out.result).not.toContain('none raised')
+})
+
+test('a verdict that names a row the record does not hold falls to the row that names the pull request', async () => {
+  const fx = fake()
+  const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 99 })
+  expect(roundsOf(fx.files)).toEqual({ 1: 1, 2: 1 })
+  expect(out.result).toContain(`rounds: row 2 of ${RECORD} raised to 1`)
+})
+
+test('with no row named, the repository of a label is read whatever its case, and a prefix or another repository is no match', async () => {
+  const rows = [
+    line({ id: 1, label: 'acme/app#123' }),
+    line({ id: 2, label: 'acme/application#12' }),
+    line({ id: 3, label: 'other/app#12' }),
+    line({ id: 4, label: 'Acme/App#12' }),
+  ].join('\n') + '\n'
+  const fx = fake({ rows })
+  const out = await handler()(fx.dollar, VERDICT)
+  expect(roundsOf(fx.files)).toEqual({ 1: 0, 2: 0, 3: 0, 4: 1 })
+  expect(out.result).toContain('row 4')
+})

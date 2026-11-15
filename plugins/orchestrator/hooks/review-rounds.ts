@@ -35,9 +35,11 @@ function rowsOf(text: string): { index: number; row: Row }[] {
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '')
 
 // The pull request's row names it by its label or its verdict, `owner/name#7` or `name#7`.
+// A reference is a whole token; the repository reads whatever its case, as GitHub does.
 function names(row: Row, repo: string, pr: number): boolean {
   const name = repo.split('/').at(-1) ?? repo
-  return prRefsOf(`${textOf(row['label'])} ${textOf(row['verdict'])}`).some(ref => ref === `${repo}#${pr}` || ref === `${name}#${pr}`)
+  const wanted = [`${repo}#${pr}`, `${name}#${pr}`].map(ref => ref.toLowerCase())
+  return prRefsOf(`${textOf(row['label'])} ${textOf(row['verdict'])}`).some(ref => wanted.includes(ref.toLowerCase()))
 }
 
 // What git says in `cwd`: one trimmed line, or null.
@@ -54,14 +56,37 @@ async function repositoryOf($: any, given: string, cwd: string | undefined): Pro
   return /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec((await git($, cwd, ['remote', 'get-url', 'origin'])) ?? '')?.[1] ?? null
 }
 
+// Raises `rounds` of the row `id` of `path`: the new count, or 0 when the row is gone.
+async function raise($: any, path: string, id: number): Promise<number> {
+  let raised = 0
+  await updateOver(storeIo($), path, current => {
+    const lines = (current ?? '').split('\n')
+    const target = rowsOf(current ?? '').find(r => r.row['id'] === id)
+    if (target === undefined) return undefined
+    raised = (typeof target.row['rounds'] === 'number' ? target.row['rounds'] : 0) + 1
+    lines[target.index] = JSON.stringify({ ...target.row, rounds: raised })
+    return lines.join('\n')
+  })
+  return raised
+}
+
 /**
- * Raises the `rounds` of the row of `pr` in the records of this orchestration, and answers the line
- * the verdict's answer carries: which row was raised, or why none was. Open rows come before closed
- * ones; two rows left naming it are not guessed between. The verdict is the one writer of `rounds`
- * for a review round: `dispatch-record.sh review` records the head and raises nothing.
+ * Raises the `rounds` of a row, and answers the line the verdict's answer carries: which row was
+ * raised, or why none was. The row the call names (`at`: its record and id) is the row, whatever the
+ * labels say; one the record does not hold falls to the search. Without one, the row of `pr` is
+ * found in the records of this orchestration by the reference its label or verdict names; open rows
+ * come before closed ones and two rows left naming it are not guessed between. The verdict is the
+ * one writer of `rounds` for a review round: `dispatch-record.sh review` records the head and
+ * raises nothing.
  */
-export async function countRound($: any, input: { pr: number; repo: string; dir?: string; cwd?: string }): Promise<string> {
+export async function countRound($: any, input: { pr: number; repo: string; dir?: string; cwd?: string; at?: { record: string; row: number } }): Promise<string> {
   try {
+    if (input.at !== undefined) {
+      const { record, row: id } = input.at
+      // A row the record does not hold, or a write that fails, falls to the search: it says the same failure, or finds the row naming the pull request.
+      const raisedNamed = await raise($, record, id).catch(() => 0)
+      if (raisedNamed > 0) return `rounds: row ${id} of ${record} raised to ${raisedNamed}`
+    }
     const cwd = input.dir ?? input.cwd
     const repo = await repositoryOf($, input.repo, cwd)
     if (repo === null) return `rounds: none raised, the repository of the pull request is not known: give repo`
@@ -80,15 +105,7 @@ export async function countRound($: any, input: { pr: number; repo: string; dir?
     if (matched.length === 0) return `rounds: no dispatch-record row names ${ref}, none raised: open its row with a label naming ${ref}`
     const [row, ...others] = matched
     if (row === undefined || others.length > 0) return `rounds: none raised, rows ${matched.map(m => m.id).join(', ')} all name ${ref}`
-    let raised = 0
-    await updateOver(storeIo($), row.path, current => {
-      const lines = (current ?? '').split('\n')
-      const target = rowsOf(current ?? '').find(r => r.row['id'] === row.id)
-      if (target === undefined) return undefined
-      raised = (typeof target.row['rounds'] === 'number' ? target.row['rounds'] : 0) + 1
-      lines[target.index] = JSON.stringify({ ...target.row, rounds: raised })
-      return lines.join('\n')
-    })
+    const raised = await raise($, row.path, row.id)
     return raised === 0 ? `rounds: none raised, row ${row.id} is gone from ${row.path}` : `rounds: row ${row.id} of ${row.path} raised to ${raised}`
   } catch (err) {
     await logLine($, 'review', `rounds of ${input.repo}#${input.pr} not counted: ${messageOf(err)}`).catch(() => undefined)
