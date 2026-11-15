@@ -12,6 +12,7 @@ import { launcherOf } from '../core/orchestration.ts'
 import { messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
+import { observed, RENAME_PENDING_CODE } from './observe.ts'
 
 // The nouns naming holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt'>
@@ -155,11 +156,13 @@ export function register(on: On<Held>): void {
   })
 
   // While a rename waits for the turn's end, a call that would hand an agent the old
-  // name is refused: the main thread's own, the one the rename was asked from.
+  // name is observed: the main thread's own, the one the rename was asked from, goes
+  // through with one line in the log and one escape in the journal.
   for (const tool of ['Bash', 'SendMessage']) {
     on('tool.call', { tool }, async ($, e, next) => {
       if (pending !== null && !e.agentId && addressesAnAgent(tool, String(e['command'] ?? ''))) {
-        return { deny: heldForName(pending) }
+        await logLine($, 'naming', `let through: ${heldForName(pending)}`)
+        await observed($, RENAME_PENDING_CODE)
       }
       return next(e)
     }).catch(async ($, e, next) => {

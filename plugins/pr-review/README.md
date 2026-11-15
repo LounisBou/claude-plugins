@@ -97,13 +97,17 @@ lives in the github plugin (`plugins/github/engine/REFERENCE.md`).
 skills cannot do without it: under `claude -p` or an older host it does not load,
 and every skill keeps its own route.
 
-- **The Iron Rules, held.** While `start-review` or `process-comments` runs, a code
+- **The Iron Rules, watched.** While `start-review` or `process-comments` runs, a code
   change waits for the user's own `fix` (process-comments: `1` or `3`, or an
   alias carrying `fix`), a publication on the PR for `post now`, a resolve in
-  process-comments for `1` or `4`, and `git push` for `push`. A refused call tells
-  the model which word lifts it. The walkthrough's own files under
-  `/tmp/claude-pr-review-*` are never refused. A review is never submitted with
-  an event other than `COMMENT`.
+  process-comments for `1` or `4`, and `git push` for `push`. A call made without the
+  word goes through, and the journal (`<config>/pr-review/journal/`) keeps one `escape`
+  line under the rule's code. Only the irreversible stays refused: a forced or
+  deleting push (a push whose line sets a variable or runs `env` counts as forced), until
+  the user allows it when asked, a deleted comment, and a review submitted with an event
+  other than `COMMENT`, in either skill, and also through the Bash route while the github
+  tool is listed. The walkthrough's own files under
+  `/tmp/claude-pr-review-*` are never noted.
 - **Never a trap.** `end review` typed by the user, an interrupted turn (Esc), a
   `/clear` and the skill's own closing line each end those rules at once.
   `auto-fix-loop` is autonomous and runs under none of them.
@@ -113,8 +117,8 @@ and every skill keeps its own route.
   runs — answering the open items, the counts, the tier and the line to announce.
 - **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
   findings and fix log, held outside the model's memory. While a loop runs and
-  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop is refused once,
-  naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
+  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop goes through
+  and the journal keeps one line. Any prompt the user types, or an interrupted turn, ends that watch.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
   plugin's ready guard. The verdict is computed, not reported: during a pass, each
@@ -127,8 +131,8 @@ and every skill keeps its own route.
   its agentId for a SendMessage, and keeps its place); an agent still without a readable
   block (or one that fails) leaves the severity unknown, and the record's detail and
   `findings`' answer name that agent by its `subagent_type`. A background agent whose
-  turn ends in error or aborted is silent at once, and a stop is held while an agent
-  without its block waits to be asked again. Every agent launched during a pass is a
+  turn ends in error or aborted is silent at once, and a stop while an agent
+  without its block waits to be asked again goes through, noted in the journal. Every agent launched during a pass is a
   reader of it, whatever its type, but a norms agent (`norms:…`), left as it is.
   A clean review writes `pass`. A loop stopped by the pass limit writes `fail`. A reviewer's loop (`review_only`) ends
   after its one pass and records its findings' verdict. A `fail` is judged by the
@@ -148,8 +152,8 @@ and every skill keeps its own route.
   session and each skill reads that it passed.
 
 The matcher reads the command an answer starts with, after an optional `ok,` or
-`yes,`. It refuses consent given in other words (`go ahead`, `yes`, `please apply
-it`), as the skills themselves do, and a command inside a negation, an aside or a
+`yes,`. It notes consent given in other words (`go ahead`, `yes`, `please apply
+it`) as no grant, as the skills themselves do, and a command inside a negation, an aside or a
 question (`don't fix this one`, `why not post now`, `fix?`). `hooks/tests/policy.test.ts`
 pins each of those cases.
 

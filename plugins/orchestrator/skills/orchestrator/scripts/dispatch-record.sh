@@ -121,7 +121,7 @@
 # while its plan had moved three of the spec's five goals « after the build », and no row was
 # ever opened for them. So `open` refuses while no `goals.md` sits beside the record (a build
 # with no spec says `goals <record> init --spec none`), warns on every open goal no phase
-# carries, and the stop gate refuses `waiting: done` while a goal is open, lacks evidence, or
+# carries, and the stop gate observes `waiting: done` while a goal is open, lacks evidence, or
 # was ruled out without the operator's words. `goals init` registers the record even before its
 # first row, so the gate finds the goals from the first write.
 #
