@@ -11806,6 +11806,52 @@ fi
 check "the self-review is ordered, its readers allowed, its section read first, the round sized by risk" "yes|yes|yes|yes|yes|yes|yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" "- Self-review (\`method:lifecycle\`): each finding fixed")|$(spells "$ROOT/templates/agent-phase-brief.md" "and the self-review's \`orchestrator:lens\` readers only")|$(spells "$ROOT/templates/agent-phase-brief.md" "The « Self-review » section (§4) goes in too.")|$(spells "$ORCH_REFS/standing-rules.md" "the \`orchestrator:lens\` readers of its own self-review (\`method:lifecycle\`)")|$(spells "$ORCH_REFS/brief.md" "then the self-review (\`method:lifecycle\`).")|$(spells "$ROOT/templates/agent-review-brief.md" "(its « Self-review » section first)")|$(spells "$ORCH_REFS/review-round.md" "reads the pull request's « Self-review » section first, and you size its readers by risk — full for security, guards and data, one pass for docs and small fixes.")"
 
+# The launchers of the TypeScript commands run the first node able to run it (22.18, 23.6, 24 and
+# later), not the first one on PATH: a version manager's pinned 22.13 comes first on a machine and
+# runs none of it. Stubs stand for the nodes (the version on -p, a line saying who ran otherwise);
+# `tools` holds the two programs the launchers use, so no real node is on the PATH of a case.
+NT="$WORK/node-ts"
+mkdir -p "$NT/old" "$NT/new" "$NT/tools"
+printf '#!/bin/sh\n[ "$1" = -p ] && { echo 22.13.0; exit 0; }\necho "old ran $*"\n' > "$NT/old/node"
+printf '#!/bin/sh\n[ "$1" = -p ] && { echo 24.1.0; exit 0; }\necho "new ran $*"\n' > "$NT/new/node"
+chmod +x "$NT/old/node" "$NT/new/node"
+ln -s "$(command -v bash)" "$NT/tools/bash"
+ln -s "$(command -v dirname)" "$NT/tools/dirname"
+SC="$ROOT/skills/orchestrator/scripts"
+nt_ok=""; nt_old=""; nt_fb=""; nt_none=""
+for nt in "rhythm|$SC/rhythm.sh|rhythm.ts" "succession|$SC/succession.sh|succession.ts" "workspace|$SC/workspace.sh|workspace.ts" \
+  "ci-watch|$SC/ci-watch.sh|ci-watch.ts" "dispatch-record|$SC/dispatch-record.sh|dispatch-record.ts" \
+  "short-commands|$ROOT/short-commands.sh|short-commands.ts" "coordinator|$ROOT/skills/coordinator/scripts/coordinator.sh|coordinator.ts"; do
+  IFS='|' read -r ntname ntsh ntts <<<"$nt"
+  ntarg=--help; [ "$ntname" = coordinator ] && ntarg=lookup
+  nt_ok="$nt_ok$(PATH="$NT/old:$NT/new:$NT/tools" NODE_TS_FALLBACKS= "$ntsh" "$ntarg" 2>&1 | sed "s|$ROOT/||;s|^new ran --no-warnings .*/\([a-z-]*\.ts\) |new:\1 |")|"
+  nt_old="$nt_old$(PATH="$NT/old:$NT/tools" NODE_TS_FALLBACKS= "$ntsh" "$ntarg" 2>&1; echo "exit $?")|"
+  nt_fb="$nt_fb$(PATH="$NT/old:$NT/tools" NODE_TS_FALLBACKS="$NT/new/node" "$ntsh" "$ntarg" 2>&1 | cut -c1-8)|"
+  nt_none="$nt_none$(PATH="$NT/tools" NODE_TS_FALLBACKS= "$ntsh" "$ntarg" 2>&1; echo "exit $?")|"
+done
+check "each launcher skips a node too old for TypeScript and runs the next one of PATH" \
+  "new:rhythm.ts --help|new:succession.ts --help|new:workspace.ts --help|new:ci-watch.ts --help|new:dispatch-record.ts --help|new:short-commands.ts --help|new:coordinator.ts lookup|" "$nt_ok"
+check "each launcher falls back to a known place when no node of PATH can" \
+  "new ran |new ran |new ran |new ran |new ran |new ran |new ran |" "$nt_fb"
+check "each launcher names the version found and what is needed, and exits 1, when no node can" \
+  "rhythm: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|succession: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|workspace: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|ci-watch: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|dispatch-record: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|short-commands: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|coordinator: no node able to run TypeScript: found 22.13.0 ($NT/old/node); needs node 22.18, 23.6 or later
+exit 1|" "$nt_old"
+check "each launcher says no node was found, and exits 1, when there is none" \
+  "rhythm: node not found: needs node 22.18, 23.6 or later
+exit 1|succession: node not found: needs node 22.18, 23.6 or later
+exit 1|workspace: node not found: needs node 22.18, 23.6 or later
+exit 1|ci-watch: node not found: needs node 22.18, 23.6 or later
+exit 1|dispatch-record: node not found: needs node 22.18, 23.6 or later
+exit 1|short-commands: node not found: needs node 22.18, 23.6 or later
+exit 1|coordinator: node not found: needs node 22.18, 23.6 or later
+exit 1|" "$nt_none"
+
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
 [ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"
