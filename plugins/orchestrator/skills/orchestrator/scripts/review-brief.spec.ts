@@ -135,11 +135,12 @@ test('--index is the path the review agent writes its index to: it fills the tem
   assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /\*\*Your index\*\*, `\/b\/new-index\.md`, a new file/)
   const set = FIELDS(); set[set.indexOf('--index') + 1] = 'rel/index.md'
   assert.match(run(set).err, /--index is an absolute path/)
+  rmSync(join(dir, 'review-12.md'))
   const renamed = FIELDS(); renamed[renamed.indexOf('--index')] = '--report'
   const done = run(renamed)
   assert.equal(done.code, 2)
   assert.match(done.err, /--report is no longer a flag: the review's index path is --index/)
-  assert.match(done.err, /not the implementer's report/)
+  assert.match(done.err, /never the implementer's report/)
   assert.equal(existsSync(join(dir, 'review-12.md')), false)
 })
 
