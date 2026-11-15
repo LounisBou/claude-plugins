@@ -4,8 +4,8 @@
 // once when another session settles it, its consent recorded, the work its answer asks recorded as a
 // to-do of the asker; and the relay's entry closed by its own sender as the answered tool closed it.
 import { expect, test } from 'claude-code/testing'
-import { askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
-import { parseSettle, type SettleRequest } from '../settle.ts'
+import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
+import { parseSettle, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
 import { waitKey } from '../supervision.ts'
 import { entryFingerprint, type RoundEntry } from '../round.ts'
@@ -320,4 +320,56 @@ test('the coordinator\'s settle of an open operator entry of an older release is
   }
   expect([entryOf(m, 'r-3'), entryOf(m, 'r-4')]).toEqual([older, remote])
   expect(m.sent).toEqual([])
+})
+
+// --- the planners every module close goes through (closeRound) ----------------------------------------
+
+const ME = { session: 's-coord', name: COORD, role: 'coordinator' }
+const object = (over: Record<string, unknown> = {}) => ({
+  v: 2, id: 'q-1', sender: { session: 's-ask', name: ASKER, role: 'orchestrator', machine: 'box-1' }, subject: 's', context: 'c', ask: 'a',
+  choices: [{ letter: 'A', text: 'yes' }], recommended: 'A', why: null, blocks: 'b', status: 'open', at: 'T0', answer: null, seq: 3, ...over,
+})
+
+test('the pane\'s plan: an open question answered and sent to its asker now, a replica sent to its owner, its seq the owner\'s; none closed or claimed', () => {
+  expect(planPane(object({ status: 'answered' }), 'A : yes', ME, 'T1')).toBeNull()
+  expect(planPane(object({ claimed: { typed: 'B', at: 'T1' } }), 'A : yes', ME, 'T1')).toBeNull()
+  const here = planPane(object(), 'A : yes', ME, 'T1')!
+  expect(here).toMatchObject({ deliver: 'now', consentBy: 'pane', consentText: 'A : yes', relayed: false, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
+  expect(here.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A : yes', by: 'pane', at: 'T1', settler: COORD } })
+  const origin = { machine: 'box-2', address: 'bridge:peer' }
+  const there = planPane(object({ origin }), 'A : yes', ME, 'T1')!
+  expect(there).toMatchObject({ deliver: 'remote', consentBy: null })
+  expect(there.entry).toMatchObject({ status: 'answered', seq: 3, origin, delivery: { state: 'pending', at: 'T1', attempts: 0 } })
+})
+
+test('the tab\'s plan: the claim goes, his words the answer by the tab, its consent from the choice they name only', () => {
+  const claimed = object({ claimed: { typed: 'A', at: 'T1' } })
+  const granted = planClaimed(claimed, 'A : yes', 'T2')
+  expect('claimed' in granted.entry).toBe(false)
+  expect(granted.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A', by: 'tab', at: 'T2', settler: ASKER } })
+  expect(granted).toMatchObject({ deliver: null, consentBy: 'tab', consentText: 'A : yes', relayed: false, told: false })
+  expect(planClaimed(claimed, null, 'T2')).toMatchObject({ consentBy: null, consentText: '' })
+})
+
+test('the withdrawal\'s plan: a question asked with ask withdrawn by its asker; the relay\'s entry withdrawn, or closed when the coordinator here was shown it', () => {
+  const asked = planWithdrawal(object(), 'ended', 'T1', true)
+  expect(asked.entry).toMatchObject({ status: 'withdrawn', seq: 4, answer: { text: 'ended', by: 'sender', at: 'T1', settler: ASKER } })
+  expect(asked).toMatchObject({ deliver: null, consentBy: null, relayed: false, told: false })
+  const quiet = planWithdrawal(relayed(), 'ended', 'T1', false)
+  expect(quiet.entry).toMatchObject({ status: 'withdrawn', answer: { text: 'ended', by: 'sender', at: 'T1' } })
+  expect(quiet).toMatchObject({ relayed: true, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
+  expect(planWithdrawal(relayed(), 'ended', 'T1', true).entry).toMatchObject({ status: 'closed', answer: { text: 'withdrawn: ended' } })
+  expect(planWithdrawal(relayed({ origin: { machine: 'box-2', address: 'bridge:peer' } }), 'ended', 'T1', false).asker.remote).toBe(true)
+})
+
+// The pane's answer goes through closeRound, which pushes a question to a coordinator on another
+// machine: the pane is the coordinator's own, so nothing but the answer is sent.
+test('the pane\'s answer to a question asked here sends its asker the answer and pushes nothing', async () => {
+  const m = machine()
+  m.files.set(`${MODULE}/coordinator.json`, JSON.stringify({ name: COORD, tty: '/dev/ttys009' }))
+  const id = await asked(m)
+  m.sent.length = 0
+  await answerAskedFromPane(m.coordinator, id, 'B : acme/app#2 first', AT)
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'pane' } })
+  expect(m.sent.map(s => s.text)).toEqual([expect.stringMatching(/^\[module\] The operator answered your question/)])
 })

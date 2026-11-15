@@ -306,6 +306,24 @@ test('a prompt he types claims the asker\'s open questions; the turn\'s end answ
   expect(after.get(second.id)!.claimed).toBeUndefined()
 })
 
+// The kept question's reopening is written first; when that write fails it stays claimed, and the
+// close that follows still leaves it: the wait keeps it, his words answer it at no turn's end.
+test('a question the wait keeps whose reopening cannot be written is never answered by the turn\'s end', async () => {
+  const { dollar, files, logs } = world()
+  await ask(dollar, { ...FULL, urgent: undefined })
+  const [kept] = stored(files)
+  await claimAsked(dollar, 'composer', 'B', NOW)
+  const run = dollar.process.run
+  let refused = 0
+  dollar.process.run = async (argv: readonly string[]) => {
+    if (argv[0] === 'mv' && argv[3] === `${ROUND}/${kept.id}.json` && refused++ === 0) return { exitCode: 1, stdout: '', stderr: 'refused' }
+    return run(argv)
+  }
+  await settleClaimed(dollar, [kept.id], new Date('2026-11-14T15:01:00Z'))
+  expect(stored(files)[0]).toMatchObject({ status: 'open', claimed: { typed: 'B' } })
+  expect(logs.some(line => line.includes(`${kept.id} answered in its asker's tab`))).toBe(false)
+})
+
 test('a consent question answered « Accorder » in the asker\'s tab is recorded as that consent; other words record none', async () => {
   const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
   const records = async (typed: string) => {
