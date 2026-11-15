@@ -3,4 +3,4 @@
 type: regex
 ---
 
-/opt/dev-home/\.claude/plugins/cache/lounisbou/orchestrator/0\.34\.0/skills/orchestrator/scripts/brief\.sh phase\b
+/opt/dev-home/\S*/orchestrator/0\.34\.0/skills/orchestrator/scripts/brief\.sh phase\b

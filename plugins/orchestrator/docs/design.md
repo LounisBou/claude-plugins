@@ -289,14 +289,11 @@ evals/rereads-the-artifact-before-answering/prompt.md
 evals/rereads-the-artifact-before-answering/graders/rereads-item-and-premise.md
 evals/rereads-the-artifact-before-answering/graders/rereads-pr-state.md
 evals/writes-a-well-formed-phase-brief/prompt.md
-evals/writes-a-well-formed-phase-brief/graders/address-named.md
-evals/writes-a-well-formed-phase-brief/graders/brief-written.md
-evals/writes-a-well-formed-phase-brief/graders/context-gate.md
+evals/writes-a-well-formed-phase-brief/graders/brief-command.md
 evals/writes-a-well-formed-phase-brief/graders/exact-address.md
-evals/writes-a-well-formed-phase-brief/graders/never-end-turn-waiting.md
+evals/writes-a-well-formed-phase-brief/graders/from-the-state.md
 evals/writes-a-well-formed-phase-brief/graders/no-host-variable.md
-evals/writes-a-well-formed-phase-brief/graders/not-backgrounded.md
-evals/writes-a-well-formed-phase-brief/graders/timeout-and-tail.md
+evals/writes-a-well-formed-phase-brief/graders/not-typed.md
 evals/announces-then-takes-over/prompt.md
 evals/announces-then-takes-over/graders/agent-p8-addressed.md
 evals/announces-then-takes-over/graders/agent-review-addressed.md
