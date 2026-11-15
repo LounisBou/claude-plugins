@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { capture, hookOf, hostOf } from './capture.ts'
+import { capture, hookOf, hooksOn, hostOf } from './capture.ts'
 import type { Host, On } from './host.ts'
 
 type Mod = Host<'env' | 'ui'>
@@ -19,6 +19,7 @@ test('the hooks a module registers are kept in order, with their matchers and ne
   assert.deepEqual(await demo.handler($, { command: 'demo', args: 'hi' }, async () => undefined), { text: 'hi /home/u' })
   assert.deepEqual(await demo.net?.($, { command: 'demo', args: 'x' }, async e => ({ through: e })), { through: { command: 'demo', args: 'x' } })
   assert.equal(hookOf(hooks, 'session.start').net, undefined)
+  assert.deepEqual(hooksOn(hooks, 'command.run').map(h => h.matcher), [{ command: 'demo' }])
 })
 
 test('a hook not registered is said, with its matcher', () => {

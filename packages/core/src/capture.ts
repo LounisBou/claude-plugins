@@ -36,6 +36,11 @@ export function capture<H>(register: (on: On<H>) => void): Array<Captured<H>> {
   return hooks
 }
 
+/** Every hook on `event`, whatever its matcher, in their order. */
+export function hooksOn<H, K extends keyof Events>(hooks: ReadonlyArray<Captured<H>>, event: K): Array<CapturedOn<H, K>> {
+  return hooks.filter((h): h is CapturedOn<H, K> => h.event === event)
+}
+
 /** The first hook on `event` whose matcher is `matcher` (none: a hook without one). */
 export function hookOf<H, K extends keyof Events>(hooks: ReadonlyArray<Captured<H>>, event: K, matcher?: Matcher): CapturedOn<H, K> {
   const wanted = JSON.stringify(matcher ?? null)
