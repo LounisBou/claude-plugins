@@ -279,11 +279,11 @@ ctx_gate_tokens() {
 }
 
 # The operator's open questions: the count the orchestrator publishes in the machine's deck.json
-# (its `round`), the file D3vDeck reads. Core's contracts say where it lies (the module's directory
+# (its `round`), the file the Stream Deck reads. Core's contracts say where it lies (the module's directory
 # in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it),
 # its version, its name and how old its stamp may be (deck-reader.json). Prints "<open> <urgent>" when
 # some are open; nothing when none are, when the file is absent, torn, of another version or older
-# than the bound: a frozen deck is no news of the present. Reads only; nothing here is written.
+# than the bound, either way (a stamp from the future is no live file either): a frozen deck is no news of the present. Reads only; nothing here is written.
 open_questions() {
   local reader="$here/../core/deck-reader.json" state file version stale
   [ -f "$contract" ] && [ -f "$reader" ] || return 0
@@ -297,7 +297,7 @@ open_questions() {
   jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
     select(.version == $version and (.generated_at | type) == "string"
            and (.round.open | type) == "number" and (.round.urgent | type) == "number")
-    | select(($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000 <= $stale and .round.open > 0)
+    | select((($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000 | fabs) <= $stale and .round.open > 0)
     | "\(.round.open) \(.round.urgent)"' "$state/$file" 2>/dev/null
 }
 

@@ -339,7 +339,8 @@ Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
 # deck_at <age in seconds> -> the stamp of a deck written that long ago, as the orchestrator writes it
 deck_at() {
   local epoch=$((NOW - $1))
-  { date -u -r "$epoch" +%Y-%m-%dT%H:%M:%S.000Z || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%S.000Z; } 2>/dev/null
+  { date -u -r "$epoch" +%Y-%m-%dT%H:%M:%S.000Z || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%S.000Z; } 2>/dev/null ||
+    { echo "deck_at: no date form formats an epoch" >&2; exit 1; }
 }
 
 # deck_state <name> <deck text> -> the state directory holding that deck
@@ -365,6 +366,7 @@ check_deck "open questions show their count" "$(deck_state open "$(deck_text 3 0
 check_deck "urgent ones are told apart" "$(deck_state urgent "$(deck_text 3 2 5)")" "plain │ ✋ 3 (2 urgent)"
 check_deck "a deck written two minutes ago still counts" "$(deck_state fresh "$(deck_text 1 0 120)")" "plain │ ✋ 1"
 check_deck "a deck written four minutes ago is frozen: nothing" "$(deck_state stale "$(deck_text 3 1 240)")" "plain"
+check_deck "a deck stamped ten minutes ahead is no live file: nothing" "$(deck_state future "$(deck_text 3 1 -600)")" "plain"
 check_deck "no deck file shows nothing" "$WORK/state-missing" "plain"
 check_deck "a deck caught mid-write shows nothing" "$(deck_state torn "$(deck_text 3 1 5 | head -c 40)")" "plain"
 check_deck "a deck of another version shows nothing" "$(deck_state version "$(deck_text 3 1 5 99)")" "plain"

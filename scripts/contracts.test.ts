@@ -15,6 +15,7 @@ import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
 import { parseRoundQuestion } from '../packages/core/src/round-question.ts'
 import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
+import { DECK_REFRESH_MS } from '../plugins/orchestrator/hooks/deck.ts'
 import { GOLDEN_DECK } from '../plugins/orchestrator/hooks/tests/golden-deck.ts'
 
 describe('pull request records: github writes, core reads', () => {
@@ -105,6 +106,10 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
     assert.equal(show(fresh(1_000)), '✋ 1 (1 urgent)')
     assert.equal(show(fresh(DECK_STALE_AFTER_MS + 60_000)), '')
     assert.equal(show(GOLDEN_DECK), '')
+  })
+
+  it('keeps its bound above the orchestrator\'s refresh, so a live file is never taken for a frozen one', () => {
+    assert.ok(DECK_STALE_AFTER_MS >= 2 * DECK_REFRESH_MS)
   })
 
   it('reads the file name, the version and the bound from the data core writes', () => {
