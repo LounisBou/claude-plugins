@@ -17,10 +17,10 @@ import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learni
 import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
-  'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
+  'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const WRITES = new Set(['open', 'round', 'review', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'escaped', 'cost'])
+const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'escaped', 'cost'])
 // The writes of the pull request ledger (core's pr-ledger.ts): lines of the record that are no rows.
 const LEDGER_WRITES = new Set(['pr', 'pr-archive'])
 const GOAL_WRITES = new Set(['init', 'plan', 'met', 'rule-out', 'defer', 'reopen'])
@@ -567,6 +567,41 @@ function review(ctx: Context, id: string, args: readonly string[]): void {
   noteStep(ctx, 'review', id, 'review', 'end', head)
 }
 
+// The results a verdict takes: the review record's own (hooks/review.ts writes both).
+const RESULTS = ['pass', 'fail', 'accepted']
+/** The few words of a verdict: one line the orchestrator reads, never the findings themselves. */
+export const VERDICT_WORDS_MAX = 120
+
+/**
+ * `verdict`: level 1 of a review, the only one the orchestrator reads. The verdict, its few words
+ * and the path of the review session's findings index (level 2, one line per finding, each
+ * pointing at its detail file, level 3) go in the row's review; a new review round voids it, a
+ * correction keeps it, and it counts no round.
+ */
+function verdict(ctx: Context, id: string, args: readonly string[]): void {
+  const found = options(ctx, 'verdict', args, ['--head', '--result', '--words', '--findings'])
+  const head = last(found, '--head')
+  const result = last(found, '--result')
+  const words = last(found, '--words').trim()
+  const findings = last(found, '--findings')
+  if (head === '') die(ctx, 'verdict: --head is required')
+  if (head.length < 7) die(ctx, `verdict: head ${head} is too short to identify a commit (7 characters at least)`)
+  if (!RESULTS.includes(result)) die(ctx, `verdict: --result is ${RESULTS.join(', ').replace(/, (?=[^,]*$)/, ' or ')}, got: ${result || 'nothing'}`)
+  if (words === '') die(ctx, 'verdict: --words "<a few words>" is required')
+  if (words.includes('\n') || words.length > VERDICT_WORDS_MAX) die(ctx, `verdict: --words is one line of at most ${VERDICT_WORDS_MAX} characters: the findings stay in their index`)
+  if (findings !== '' && !findings.startsWith('/')) die(ctx, `verdict: --findings is the absolute path of the review's findings index, got: ${findings}`)
+  if (text(or(field(rowOf(ctx, id)['review'], 'head'), '')) === '') warn(ctx, `verdict: row ${id} has no review recorded: recording the verdict anyway`)
+  const at = stamp(ctx)
+  rewrite(ctx, id, r => {
+    const reviewed = field(r, 'review')
+    const object = typeof reviewed === 'object' && reviewed !== null && !Array.isArray(reviewed) ? (reviewed as Row) : {}
+    // The rounds the row counted when the verdict fell: a pass at 1 is a first-pass success.
+    object['verdict'] = { head, result, words, findings: findings === '' ? null : findings, rounds: asNumber(r['rounds']), at }
+    r['review'] = object
+  })
+  say(ctx, `row ${id}: ${result} — ${words} — findings: ${findings || 'none'}`)
+}
+
 function fixed(ctx: Context, id: string, args: readonly string[]): void {
   const head = last(options(ctx, 'fixed', args, ['--head']), '--head')
   if (head === '') die(ctx, 'fixed: --head is required')
@@ -729,9 +764,11 @@ async function cost(ctx: Context, id: string, args: readonly string[]): Promise<
 
 /** A row still open, as a successor reads it: deferred with the ruling it waits on, or open. */
 export function openLine(row: Row): string {
-  return truthy(row['deferred'])
+  const line = truthy(row['deferred'])
     ? `deferred=${text(row['id'])} label=${text(row['label'])} ruling=${text(row['deferred'])}`
     : `open=${text(row['id'])} label=${text(row['label'])}`
+  const v = field(row['review'], 'verdict')
+  return truthy(v) ? `${line} verdict=${text(field(v, 'result'))}@${text(field(v, 'head')).slice(0, 7)} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : line
 }
 
 const isOpen = (row: Row): boolean => row['state'] === 'open'
@@ -913,7 +950,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   if (cmd === 'open') return open(ctx, rest)
   if (cmd === 'summary') return summary(ctx, rest)
   if (cmd === 'goals') return goals(ctx, rest)
-  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)`)
+  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)`)
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)
@@ -927,6 +964,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     return
   }
   if (cmd === 'review') return review(ctx, id, args)
+  if (cmd === 'verdict') return verdict(ctx, id, args)
   if (cmd === 'fixed') return fixed(ctx, id, args)
   if (cmd === 'surface') return surface(ctx, id, args)
   if (cmd === 'audit') return audit(ctx, id, args)
