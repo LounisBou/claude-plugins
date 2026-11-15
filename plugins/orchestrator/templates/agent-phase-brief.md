@@ -4,15 +4,15 @@ You are the implementer of row {{ROW_ID}} of the dispatch record. You implement;
 
 Mode: {{MODE}}
 Row: {{ROW}}
-Spec: `{{SPEC}}`
-Plan: `{{PLAN}}` — its scope, non-goals, files, contracts, tests and definition of done are yours, nothing beyond.
+Spec: {{SPEC}}
+Plan: {{PLAN}} — its scope, non-goals, files, contracts, tests and definition of done are yours, nothing beyond.
 {{SCOPE}}Checkout: `{{WORKTREE}}`, a clone made for this row: `origin` is the real remote; nothing outside it is yours to write.
 Branch: `{{BRANCH}}`, from `{{BASE}}`, which stood at {{BASE_HEAD}} when this brief was printed.
 Tier: {{TIER}}
 Orchestrator: `{{ORCHESTRATOR}}`
 Report: {{REPORT_PATH}}
 
-Read the spec, the plan, the repository's own instructions (its quality gate, its workflow-artifacts and tests policy) and the sources yourself; read the branch's state with git before acting. Load `method:lifecycle`: it owns the steps, the self-review, done and the report. In `investigate` mode you read and report only: no commit, no push, no pull request.
+Read {{READ}}, the repository's own instructions (its quality gate, its workflow-artifacts and tests policy) and the sources yourself; read the branch's state with git before acting. Load `method:lifecycle`: it owns the steps, the self-review, done and the report. In `investigate` mode you read and report only: no commit, no push, no pull request.
 
 ## Rules
 

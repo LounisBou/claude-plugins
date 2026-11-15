@@ -320,7 +320,7 @@ export function gateText(name: string, tokens: number, percent: number): string 
 // read its own figure, so the stand-down starts from this line, not from its brief alone.
 export function gateSelfText(tokens: number, percent: number): string {
   return `[module] Your context is ${tokens.toLocaleString('en-US')} (${percent}%): you are at your context gate. `
-    + 'Finish the unit in hand, write your hand-over, then stop.'
+    + 'Finish the unit in hand, then stop and give your orchestrator two lines: what is in flight, the decisions taken.'
 }
 
 // The deduplication key of an agent's turn that ended without its status line, kept in the

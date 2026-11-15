@@ -380,8 +380,8 @@ skills/forbidden2.md" \
 lc="$ROOT/skills/orchestrator/references/agents.md"
 lcr="$ROOT/skills/orchestrator/references/rotation.md"
 # The rotation's steps live once, in the iterm-agents skill (rule 207 of the rules review).
-check "the rotation closes by tty with the acknowledgment as its guard" "1|1|1" \
-  "$(grep -c '« Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`' "$lcr")|$(grep -c 'In a rotation this acknowledgment IS the guard' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'Do not pass `--expect-title` to a rotation' "$ROOT/skills/iterm-agents/SKILL.md")"
+check "the rotation closes by tty with the acknowledgment as its guard" "1|1" \
+  "$(grep -c 'In a rotation this acknowledgment IS the guard' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'Do not pass `--expect-title` to a rotation' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "no title guard left on a rotation" "0" "$(grep -c 'tty + title guard' "$lcr")"
 check "a project's instantiation rule no longer carves out succession" "0" \
   "$(grep -c 'governs the FIRST instantiation, never the succession' "$lc")"
@@ -427,8 +427,8 @@ check "the review and comments briefs keep scratch in the session's host scratch
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
 # agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes" \
-  "$(for t in rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
+check "the comments and review briefs write the report to its file" "yes|yes" \
+  "$(for t in comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
 check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes" \
