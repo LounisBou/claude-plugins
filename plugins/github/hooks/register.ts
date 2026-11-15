@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types/index.d.ts'
 import { reasonOf, type Events, type FsEntry, type Host, type On } from '../core/host.ts'
-import { carriesText, lint, NEGATIVE_FILE, parsePhrases } from './writing.ts'
+import { carriesText, isGeonative, lint, NEGATIVE_FILE, parsePhrases, writesDescription } from './writing.ts'
 import { CONSENT_GRANT, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_REFUSE, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, grants, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
   AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
@@ -181,7 +181,7 @@ async function permit(
   if (!autoMerge && leavesDraft(e.command)) await observed($, OBSERVED.draftLeave)
 
   // A text that breaks a writing rule goes as it is, observed.
-  if (lint(e.command, args, lastTyped, await negativePhrases($, e.command)).length > 0) await observed($, OBSERVED.writing)
+  if (await breaksWriting($, e.command, args, e)) await observed($, OBSERVED.writing)
 
   const reserved = reservedToPerson(e.command, autoMerge)
   if (reserved) return ask($, reserved + ' ' + describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -239,7 +239,7 @@ async function bashLint($: Mod, line: string): Promise<void> {
           + reasonOf(err))
       }
     }
-    if (lint(text.command, args, lastTyped, await negativePhrases($, text.command)).length > 0) {
+    if (await breaksWriting($, text.command, args, { repo: text.repo })) {
       await observed($, OBSERVED.writing)
       return
     }
@@ -518,6 +518,28 @@ async function readTargetRepo($: Mod, e: Named, dir?: string): Promise<string | 
   const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000, ...(dir ? { cwd: dir } : {}) })
   const match = r.exitCode === 0 ? GITHUB_ORIGIN.exec(String(r.stdout).trim()) : null
   return match ? match[1] + '/' + match[2] : undefined
+}
+
+// Whether a text breaks a writing rule. The four sections of a description bind a GeoNative repository
+// only: a description that breaks a rule under the template is read again for the repository it goes to,
+// which is looked up then and not before (every other text, and every text that passes, costs no lookup).
+async function breaksWriting($: Mod, command: string, args: Record<string, unknown>, target: Named): Promise<boolean> {
+  const phrases = await negativePhrases($, command)
+  if (lint(command, args, lastTyped, phrases).length === 0) return false
+  if (!writesDescription(command)) return true
+  return lint(command, args, lastTyped, phrases, await geonativeTarget($, target)).length > 0
+}
+
+// Whether the template of a description, its four sections, binds the repository a call is for: the
+// repository is GeoNative's (isGeonative), or the checkout cannot name it, where the template is kept
+// rather than a problem hidden.
+async function geonativeTarget($: Mod, e: Named): Promise<boolean> {
+  try {
+    const repo = await targetRepo($, e)
+    return repo === undefined || isGeonative(repo)
+  } catch {
+    return true
+  }
 }
 
 // Whether a write goes to a repository in auto-merge. Any doubt answers no,
