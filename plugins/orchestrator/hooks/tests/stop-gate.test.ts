@@ -180,17 +180,17 @@ test('a chain file with one corrupt line reads as empty', () => {
   // non-atomic write must not anchor on a stranger's surviving entry.
   expect(chainEntries('{"tab_id":"T1","tty":"/dev/ttys002","owner":"17"}\nnot json\n{"tab_id":"T2","tty":"/dev/ttys003","owner":"17"}\n')).toEqual([])
   expect(chainEntries('{"tab_id":"T1","tty":"/dev/ttys002"}\n{"tty":"/dev/ttys003"}\n'))
-    .toEqual([{ tab_id: 'T1', tty: '/dev/ttys002' }])
+    .toEqual([{ tab_id: 'T1', tty: '/dev/ttys002', owner: '', resident: false }])
 })
 
 test('own agents are the owner entries that still run one, residents apart', () => {
   const rows = listing('w1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3\nw1/t3 | /dev/ttys003 | ✳ Agent: idle | Agent: idle-p3\nw1/t4 | /dev/ttys004 | ✳ Agent: resident | Agent: resident-p3\nw1/t5 | /dev/ttys005 | a plain shell | (host default)\n')
   const entries = [
-    { tab_id: 'T1', tty: '/dev/ttys002', owner: '17' },
-    { tab_id: 'T2', tty: '/dev/ttys003', owner: '17' },
+    { tab_id: 'T1', tty: '/dev/ttys002', owner: '17', resident: false },
+    { tab_id: 'T2', tty: '/dev/ttys003', owner: '17', resident: false },
     { tab_id: 'T3', tty: '/dev/ttys004', owner: '17', resident: true },
-    { tab_id: 'T4', tty: '/dev/ttys005', owner: '17' },
-    { tab_id: 'T5', tty: '/dev/ttys006', owner: 'someone-else' },
+    { tab_id: 'T4', tty: '/dev/ttys005', owner: '17', resident: false },
+    { tab_id: 'T5', tty: '/dev/ttys006', owner: 'someone-else', resident: false },
   ]
   const { agents, resident } = ownAgents(rows, entries, '17')
   expect(agents).toEqual([

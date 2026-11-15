@@ -14,7 +14,8 @@
 // relayed again. Pure on
 // purpose: the handler holds the $ (the engine fences it to the file that received it) and
 // passes its reads in here.
-import { MACHINE_LINE, URGENT_LINE, blocksNothing, chainEntries } from './stop-gate.ts'
+import { MACHINE_LINE, URGENT_LINE, blocksNothing } from './stop-gate.ts'
+import { chainTtyOf, parseChain } from '../core/chain-entries.ts'
 import { machineLine, reportStatus } from '../core/method.ts'
 import type { SessionRow } from './supervision.ts'
 import { cutAt, shorten, VERDICT_LIMIT, verdictOf } from '../core/verdict.ts'
@@ -351,11 +352,12 @@ export function noStatusText(name: string, context: string | null, text: string 
 // every chain counts. Null when no chain counts.
 export function chainOwnerTty(chains: readonly { name: string; mtimeMs: number; text: string }[], tty: string,
   ownerLives?: (ownerTty: string) => boolean): string | null {
-  const named = chains.filter(c => c.name.endsWith('.jsonl') && chainEntries(c.text).some(e => e.tty === tty)
-    && (ownerLives === undefined || ownerLives(`/dev/${c.name.slice(0, -'.jsonl'.length)}`)))
+  const named = chains.flatMap(c => {
+    const owner = chainTtyOf(c.name)
+    return owner !== undefined && parseChain(c.text).some(e => e.tty === tty) && (ownerLives === undefined || ownerLives(owner)) ? [{ owner, mtimeMs: c.mtimeMs }] : []
+  })
   if (named.length === 0) return null
-  const last = named.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a))
-  return `/dev/${last.name.slice(0, -'.jsonl'.length)}`
+  return named.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a)).owner
 }
 
 // The coordinator's name out of its record (coordinator.sh's <state>/coordinator.json),
