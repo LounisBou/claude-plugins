@@ -859,10 +859,16 @@ export function retrospectiveStartArgv(root: string, configDir: string): string[
 // orchestrator's decision on each finding (`decision`), each declared wait (`wait`), and the
 // method's failures (`failure`). The envelope is version 1's; `fact` holds the kind's own fields,
 // each present, null when unknown. Version 1's kinds keep version 1: a refusal is still a refusal.
+// Version 3 adds one kind and changes none: `dispatch`, each write of the orchestrator's dispatch
+// record as its script performed it (the subcommand, the row, the class and the pair it runs on, a
+// one-word verdict), so a reader takes it from its owner rather than from a command line. Each kind
+// is written at the version it entered with (`kind_versions`), so a reader of an older release still
+// reads the kinds it knows.
 
 export const AUDIT_CONTRACT = {
-  version: 2,
-  kinds: ['link', 'step', 'review', 'decision', 'wait', 'failure'],
+  version: 3,
+  kinds: ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'],
+  kind_versions: { link: 2, step: 2, review: 2, decision: 2, wait: 2, failure: 2, dispatch: 3 },
   steps: ['implement', 'review', 'correction', 'ci-wait', 'merge'],
   edges: ['start', 'end'],
   verdicts: ['pass', 'fail', 'accepted'],
@@ -872,6 +878,10 @@ export const AUDIT_CONTRACT = {
   waits: [...WAIT_KINDS, 'tool'],
   wait_on: ['operator', 'tool'],
   failures: ['fix-after-merge', 'verdict-overridden', 'succession-lost-state'],
+  // The dispatch record's writes (`dispatch-record.sh <sub>`), the tiers and efforts a row runs on.
+  dispatch_subs: ['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'blocker', 'note', 'escaped', 'cost', 'goals', 'pr', 'pr-archive'],
+  tiers: ['deep', 'standard', 'light'],
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   prs_max: 8,
   // The fields of each kind's fact, in order.
   facts: {
@@ -881,10 +891,15 @@ export const AUDIT_CONTRACT = {
     decision: ['decision', 'severity', 'file', 'line'],
     wait: ['wait', 'edge', 'span', 'on'],
     failure: ['failure', 'count', 'prs'],
+    dispatch: ['sub', 'record', 'row', 'class', 'tier', 'model', 'effort', 'verdict'],
   },
   patterns: {
     goal: '^G[0-9]{1,4}$',
     result: '^[a-z][a-z-]{0,31}$',
+    // A dispatch's class, as the record names it.
+    class: '^[a-z0-9][a-z0-9_-]{0,39}$',
+    // A model as the host names it: an alias or an identifier, with its context mark (`[1m]`).
+    model: String.raw`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$`,
     // A pull request named with its repository: `name#7` or `owner/name#7`.
     pr_ref: String.raw`^(?:[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+#[1-9][0-9]*$`,
   },
@@ -896,6 +911,9 @@ export const AUDIT_VERSION = audit.version
 export const AUDIT_KINDS = audit.kinds
 
 export type AuditKind = (typeof audit.kinds)[number]
+export type DispatchSub = (typeof audit.dispatch_subs)[number]
+export type Tier = (typeof audit.tiers)[number]
+export type Effort = (typeof audit.efforts)[number]
 export type Step = (typeof audit.steps)[number]
 export type Edge = (typeof audit.edges)[number]
 export type Verdict = (typeof audit.verdicts)[number]
@@ -912,13 +930,25 @@ export interface Facts {
   readonly decision: { readonly decision: Decision; readonly severity: FindingSeverity | null; readonly file: string | null; readonly line: number | null }
   readonly wait: { readonly wait: JournalWaitKind; readonly edge: Edge; readonly span: string | null; readonly on: WaitOn | null }
   readonly failure: { readonly failure: Failure; readonly count: number | null; readonly prs: readonly string[] }
+  readonly dispatch: {
+    readonly sub: DispatchSub
+    readonly record: string | null
+    readonly row: number | null
+    readonly class: string | null
+    readonly tier: Tier | null
+    readonly model: string | null
+    readonly effort: Effort | null
+    readonly verdict: string | null
+  }
 }
 
-export type AuditEvent = { [K in AuditKind]: Envelope & { readonly v: 2; readonly kind: K; readonly fact: Facts[K] } }[AuditKind]
+export type AuditEvent = { [K in AuditKind]: Envelope & { readonly v: (typeof audit.kind_versions)[K]; readonly kind: K; readonly fact: Facts[K] } }[AuditKind]
 
 const AUDIT_PATTERNS = {
   goal: new RegExp(audit.patterns.goal),
   result: new RegExp(audit.patterns.result),
+  class: new RegExp(audit.patterns.class),
+  model: new RegExp(audit.patterns.model),
   prRef: new RegExp(audit.patterns.pr_ref),
 }
 
@@ -939,17 +969,22 @@ const FACT_CHECKS: { readonly [K in AuditKind]: (fact: Fields) => boolean } = {
   wait: f => isOneOf(audit.waits, f['wait']) && isOneOf(audit.edges, f['edge']) && nullable(f['span'], isId)
     && nullable(f['on'], (o): o is WaitOn => isOneOf(audit.wait_on, o)),
   failure: f => isOneOf(audit.failures, f['failure']) && nullable(f['count'], isCount) && isRefs(f['prs']),
+  dispatch: f => isOneOf(audit.dispatch_subs, f['sub']) && nullable(f['record'], isPath) && nullable(f['row'], isLine)
+    && nullable(f['class'], (c): c is string => matches(AUDIT_PATTERNS.class, c)) && nullable(f['tier'], (t): t is Tier => isOneOf(audit.tiers, t))
+    && nullable(f['model'], (m): m is string => matches(AUDIT_PATTERNS.model, m)) && nullable(f['effort'], (e): e is Effort => isOneOf(audit.efforts, e))
+    && nullable(f['verdict'], (r): r is string => matches(AUDIT_PATTERNS.result, r)),
 }
 
-/** The audit event `raw` holds, or undefined: version 1's envelope, a kind of version 2 and exactly its fact's fields. */
+/** The audit event `raw` holds, or undefined: version 1's envelope, a kind at the version it is written at, and exactly its fact's fields. */
 export function parseAuditEvent(raw: unknown): AuditEvent | undefined {
-  const read = envelopeOf(raw, AUDIT_VERSION, ['fact'])
-  if (!read) return undefined
-  const kind = read.top['kind']
+  const kind = typeof raw === 'object' && raw !== null ? (raw as Fields)['kind'] : undefined
   if (!isOneOf(audit.kinds, kind)) return undefined
+  const version = audit.kind_versions[kind]
+  const read = envelopeOf(raw, version, ['fact'])
+  if (!read) return undefined
   const fact = fieldsOf(read.top['fact'], audit.facts[kind])
   if (!fact || !FACT_CHECKS[kind](fact)) return undefined
-  return { v: AUDIT_VERSION, kind, ...read.envelope, fact } as AuditEvent
+  return { v: version, kind, ...read.envelope, fact } as AuditEvent
 }
 
 /** An entry of a journal, of either version, read by its own version's reader. */
@@ -988,7 +1023,7 @@ export function learningEvent(input: EventInput & { readonly kind: LearningKind 
 
 /** An audit event from what its writer knows, or undefined when a field breaks the contract. */
 export function auditEvent<K extends AuditKind>(input: EventInput & { readonly kind: K; readonly fact: Facts[K] }): AuditEvent | undefined {
-  return parseAuditEvent({ v: AUDIT_VERSION, kind: input.kind, ...envelopeFrom(input), fact: input.fact })
+  return parseAuditEvent({ v: audit.kind_versions[input.kind], kind: input.kind, ...envelopeFrom(input), fact: input.fact })
 }
 
 /**
