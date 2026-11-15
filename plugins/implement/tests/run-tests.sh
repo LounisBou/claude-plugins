@@ -460,11 +460,11 @@ check "the module's tests pass in the host's kit" "0" \
   "$(claude plugin test "$ROOT" >/dev/null 2>&1; echo $?)"
 
 # The self-review before the pull request is the method's: close and phase point at it, phase says
-# its lens readers wait for the guard's release.
+# its lens readers run, the journal keeping one line for each.
 check "close and phase point at the method's self-review" "1|1" \
   "$(grep -c 'self-review comes after the last step below and before the pull request opens' "$ROOT/skills/close/SKILL.md")|$(grep -c 'the self-review before the pull request, consent, ready' "$ROOT/skills/phase/SKILL.md")"
-check "phase says its lens readers are refused until the guard's release" "1" \
-  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'lens readers are subagents this guard refuses: they run after `implement:close`, or once `/implement:release-guard` has released it.')"
+check "phase says its lens readers run, one journal line each" "1" \
+  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'Its lens readers are read-only subagents that run when the self-review asks for them; the journal keeps one line for each, which is not a refusal.')"
 
 echo
 echo "$pass passed, $fail failed"

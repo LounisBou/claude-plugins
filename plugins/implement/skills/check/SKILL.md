@@ -34,9 +34,11 @@ A verification with no output quoted was not done. A claim with no evidence is a
 `FAIL`, not a doubt — `superpowers:verification-before-completion` states the same
 rule for the work this skill reads.
 
-With this plugin's hooks module loaded, an edit, a `git add` and a `git commit` are
-also refused at the call from this skill's start until its verdict line is written
-under the table, its turn ends, or the user speaks.
+With this plugin's hooks module loaded, a removal (`rm`, `rmdir`) is refused at the call
+from this skill's start until its verdict line is written under the table, its turn ends,
+or the user speaks. An edit, a `git add`, a `git commit` and any other write into the tree
+are not refused: the module's journal keeps one line for each, and the repair still
+belongs to the caller.
 
 ---
 
