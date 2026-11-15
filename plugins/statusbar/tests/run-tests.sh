@@ -17,6 +17,10 @@ trap 'rm -rf "$WORK"' EXIT
 pass=0
 fail=0
 
+# The orchestrator's deck is the machine's, not the suite's: no case reads the one of the machine
+# the suite runs on. The cases of the question count name their own state directory.
+export ORCHESTRATOR_STATE_DIR="$WORK/no-orchestrator"
+
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 # config_with FLAG=VAL ... -> path to a settings file
@@ -322,6 +326,74 @@ check "three empty fields in a row do not shift current_dir" "$ALL_ON" \
     \"rate_limits\":{\"five_hour\":{\"used_percentage\":10,\"resets_at\":$IN_2H}}}" \
 "plain
 ctx: 5% │ 5h: 10% ▓░░░░░░░░░ → 2h13 │ +1/-0"
+
+echo "== open questions: the deck's round =="
+
+# The orchestrator publishes deck.json under its state directory and rewrites it at least once a
+# minute; the status line shows the round's open count while the file is fresh. A file stamped more
+# than three minutes ago (core's deck-reader.json) is a frozen one and shows nothing.
+Q_ONLY=$(config_with SHOW_DIRECTORY=1 SHOW_BRANCH=0 SHOW_PR=0 SHOW_MODEL=0 SHOW_SESSION_NAME=0 \
+  SHOW_CONTEXT=0 SHOW_USAGE=0 SHOW_LINES_CHANGED=0)
+Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
+
+# deck_at <age in seconds> -> the stamp of a deck written that long ago, as the orchestrator writes it
+deck_at() {
+  local epoch=$((NOW - $1))
+  { date -u -r "$epoch" +%Y-%m-%dT%H:%M:%S.000Z || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%S.000Z; } 2>/dev/null ||
+    { echo "deck_at: no date form formats an epoch" >&2; exit 1; }
+}
+
+# deck_state <name> <deck text> -> the state directory holding that deck
+deck_state() {
+  mkdir -p "$WORK/state-$1"
+  printf '%s\n' "$2" > "$WORK/state-$1/deck.json"
+  printf '%s' "$WORK/state-$1"
+}
+
+# deck_text <open> <urgent> <age> [<version>]
+deck_text() {
+  printf '{"version":%s,"generated_at":"%s","machine":"m","round":{"open":%s,"urgent":%s,"oldest_since":null}}' \
+    "${4:-3}" "$(deck_at "$3")" "$1" "$2"
+}
+
+# check_deck <name> <state dir> <expected output>
+check_deck() {
+  ORCHESTRATOR_STATE_DIR="$2" check "$1" "$Q_ONLY" "$Q_PAYLOAD" "$3"
+}
+
+check_deck "no open question shows nothing" "$(deck_state none "$(deck_text 0 0 5)")" "plain"
+check_deck "open questions show their count" "$(deck_state open "$(deck_text 3 0 5)")" "plain │ ✋ 3"
+check_deck "urgent ones are told apart" "$(deck_state urgent "$(deck_text 3 2 5)")" "plain │ ✋ 3 (2 urgent)"
+check_deck "a deck written two minutes ago still counts" "$(deck_state fresh "$(deck_text 1 0 120)")" "plain │ ✋ 1"
+check_deck "a deck written four minutes ago is frozen: nothing" "$(deck_state stale "$(deck_text 3 1 240)")" "plain"
+check_deck "a deck stamped ten minutes ahead is no live file: nothing" "$(deck_state future "$(deck_text 3 1 -600)")" "plain"
+check_deck "no deck file shows nothing" "$WORK/state-missing" "plain"
+check_deck "a deck caught mid-write shows nothing" "$(deck_state torn "$(deck_text 3 1 5 | head -c 40)")" "plain"
+check_deck "a deck of another version shows nothing" "$(deck_state version "$(deck_text 3 1 5 99)")" "plain"
+shapeless='{"version":3,"generated_at":"'"$(deck_at 5)"'","round":{"open":"3"}}'
+check_deck "a round without figures shows nothing" "$(deck_state shape "$shapeless")" "plain"
+check_deck "a deck without a stamp shows nothing" "$(deck_state unstamped '{"version":3,"round":{"open":3,"urgent":0}}')" "plain"
+
+# The state directory is the config directory's claude-orchestrator unless ORCHESTRATOR_STATE_DIR names one.
+mkdir -p "$WORK/qconfig/claude-orchestrator"
+deck_text 2 0 5 > "$WORK/qconfig/claude-orchestrator/deck.json"
+actual=$(printf '%s' "$Q_PAYLOAD" | env -u ORCHESTRATOR_STATE_DIR CLAUDE_CONFIG_DIR="$WORK/qconfig" STATUSBAR_CONFIG="$Q_ONLY" bash "$SCRIPT" | strip_ansi)
+if [ "$actual" = "plain │ ✋ 2" ]; then
+  printf '  ok   %s\n' "without ORCHESTRATOR_STATE_DIR the deck is the config directory's"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "without ORCHESTRATOR_STATE_DIR the deck is the config directory's" "$actual"; fail=$((fail + 1))
+fi
+
+# The count is yellow, red once one of the questions is urgent.
+count_color() {
+  ORCHESTRATOR_STATE_DIR="$1" STATUSBAR_CONFIG="$Q_ONLY" bash "$SCRIPT" <<<"$Q_PAYLOAD" | sed -n 1p | sed -n "s/.*│ \(${ESC}\[[0-9;]*m\)✋.*/\1/p"
+}
+[ "$(count_color "$WORK/state-open")" = "${ESC}[0;33m" ] \
+  && { printf '  ok   %s\n' "the count is yellow"; pass=$((pass + 1)); } \
+  || { printf '  FAIL %s\n' "the count is yellow"; fail=$((fail + 1)); }
+[ "$(count_color "$WORK/state-urgent")" = "${ESC}[0;31m" ] \
+  && { printf '  ok   %s\n' "the count is red when one is urgent"; pass=$((pass + 1)); } \
+  || { printf '  FAIL %s\n' "the count is red when one is urgent"; fail=$((fail + 1)); }
 
 echo "== settings =="
 

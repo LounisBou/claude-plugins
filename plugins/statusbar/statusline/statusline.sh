@@ -278,6 +278,29 @@ ctx_gate_tokens() {
   jq -r '.gate_tokens // empty' "$file" 2>/dev/null
 }
 
+# The operator's open questions: the count the orchestrator publishes in the machine's deck.json
+# (its `round`), the file the Stream Deck reads. Core's contracts say where it lies (the module's directory
+# in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it),
+# its version, its name and how old its stamp may be (deck-reader.json). Prints "<open> <urgent>" when
+# some are open; nothing when none are, when the file is absent, torn, of another version or older
+# than the bound, either way (a stamp from the future is no live file either): a frozen deck is no news of the present. Reads only; nothing here is written.
+open_questions() {
+  local reader="$here/../core/deck-reader.json" state file version stale
+  [ -f "$contract" ] && [ -f "$reader" ] || return 0
+  IFS=' ' read -r state file version stale <<<"$(jq -r --slurpfile o "$contract" \
+    '"\($o[0].measure.module_dir) \(.file) \(.deck_version) \(.stale_after_ms)"' "$reader" 2>/dev/null)"
+  [ -n "$stale" ] || return 0
+  if [ -n "${ORCHESTRATOR_STATE_DIR:-}" ]; then state=$ORCHESTRATOR_STATE_DIR
+  else state="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$state"
+  fi
+  [ -f "$state/$file" ] || return 0
+  jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
+    select(.version == $version and (.generated_at | type) == "string"
+           and (.round.open | type) == "number" and (.round.urgent | type) == "number")
+    | select((($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000 | fabs) <= $stale and .round.open > 0)
+    | "\(.round.open) \(.round.urgent)"' "$state/$file" 2>/dev/null
+}
+
 # >= 80% is roughly the auto-compaction threshold: context loss is close.
 if [ "$show_ctx" = "1" ]; then
   cpct=${ctx_pct%%.*}
@@ -313,6 +336,16 @@ fi
 if [ "$show_lines" = "1" ] && is_number "$lines_add" && is_number "$lines_del" &&
    [ $(( lines_add + lines_del )) -gt 0 ]; then
   line2=$(join_sep "$line2" "${GREEN}+${lines_add}${RESET}/${RED}-${lines_del}${RESET}")
+fi
+
+# The count closes the first line: yellow, red once one of the questions is urgent.
+read -r q_open q_urgent <<<"$(open_questions)"
+if is_number "$q_open" && [ "$q_open" -gt 0 ]; then
+  if is_number "$q_urgent" && [ "$q_urgent" -gt 0 ]; then
+    line1=$(join_sep "$line1" "${RED}✋ ${q_open} (${q_urgent} urgent)${RESET}")
+  else
+    line1=$(join_sep "$line1" "${YELLOW}✋ ${q_open}${RESET}")
+  fi
 fi
 
 [ -n "$line1" ] && printf '%s\n' "$line1"

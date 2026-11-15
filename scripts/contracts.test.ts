@@ -1,12 +1,13 @@
 // Each contract between plugins, tested across its owner and its readers: what the owner
 // writes, core's reader accepts (docs/contracts.md).
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
-import { DECK_VERSION, deckSessions, parseDeck } from '../packages/core/src/deck.ts'
+import { DECK_FILE, DECK_VERSION, deckSessions, parseDeck } from '../packages/core/src/deck.ts'
+import { DECK_READER_CONTRACT, DECK_STALE_AFTER_MS } from '../packages/core/src/deck-reader.ts'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
@@ -14,6 +15,7 @@ import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
 import { parseRoundQuestion } from '../packages/core/src/round-question.ts'
 import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
+import { DECK_REFRESH_MS } from '../plugins/orchestrator/hooks/deck.ts'
 import { GOLDEN_DECK } from '../plugins/orchestrator/hooks/tests/golden-deck.ts'
 
 describe('pull request records: github writes, core reads', () => {
@@ -80,6 +82,39 @@ describe('deck.json: the orchestrator writes, core reads', () => {
     for (const over of [{ version: DECK_VERSION + 1 }, { orchestrators: [{ name: 'Orch: x' }] }, { round: { open: '1', urgent: 0, oldest_since: null } }, { sleeping: 'none' }, { coordinator: undefined }]) {
       assert.equal(parseDeck(JSON.stringify({ ...golden, ...over })), null, JSON.stringify(over))
     }
+  })
+})
+
+describe('deck.json: the orchestrator writes, statusbar reads the open questions', () => {
+  const show = (deck: string): string => {
+    const state = mkdtempSync(join(tmpdir(), 'deck-state-'))
+    writeFileSync(join(state, DECK_FILE), deck)
+    const config = join(state, 'statusline-config.txt')
+    writeFileSync(config, 'SHOW_DIRECTORY=0\nSHOW_BRANCH=0\nSHOW_PR=0\nSHOW_MODEL=0\nSHOW_SESSION_NAME=0\nSHOW_CONTEXT=0\nSHOW_USAGE=0\nSHOW_LINES_CHANGED=0\n')
+    try {
+      // The script's exit status follows its last line: 1 when the second line is empty, as here.
+      return spawnSync('bash', ['plugins/statusbar/statusline/statusline.sh'], {
+        input: '{}', encoding: 'utf8', env: { ...process.env, ORCHESTRATOR_STATE_DIR: state, STATUSBAR_CONFIG: config },
+      }).stdout.replace(/\x1b\[[0-9;]*m/g, '').trim()
+    } finally {
+      rmSync(state, { recursive: true, force: true })
+    }
+  }
+
+  it('shows the count of the round the orchestrator writes, while the file is fresh', () => {
+    const fresh = (age: number): string => GOLDEN_DECK.replace('2026-10-28T14:00:00.000Z', new Date(Date.now() - age).toISOString())
+    assert.equal(show(fresh(1_000)), '✋ 1 (1 urgent)')
+    assert.equal(show(fresh(DECK_STALE_AFTER_MS + 60_000)), '')
+    assert.equal(show(GOLDEN_DECK), '')
+  })
+
+  it('keeps its bound above the orchestrator\'s refresh, so a live file is never taken for a frozen one', () => {
+    assert.ok(DECK_STALE_AFTER_MS >= 2 * DECK_REFRESH_MS)
+  })
+
+  it('reads the file name, the version and the bound from the data core writes', () => {
+    const data: unknown = JSON.parse(readFileSync('plugins/statusbar/core/deck-reader.json', 'utf8'))
+    assert.deepEqual(data, { $comment: (data as { $comment: string }).$comment, ...DECK_READER_CONTRACT })
   })
 })
 
