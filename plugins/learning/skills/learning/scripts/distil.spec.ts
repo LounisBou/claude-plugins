@@ -120,6 +120,12 @@ test('an external event forms no cluster; a computed, an operator\'s and a revie
   for (const trust of ['computed', 'operator', 'review'] as const) assert.equal(signatures(three({ trust })).length, 1, trust)
 })
 
+test("a reviewer's thread /norms:learn checked counts, external as it is: its code is the one the contract names", () => {
+  const thread: Shape = { kind: 'finding', code: 'norms.thread', trust: 'external', paths: ['src/a.ts'] }
+  assert.deepEqual(signatures(three(thread)), ['finding:norms.thread:source:typescript'])
+  assert.deepEqual(signatures(three({ ...thread, code: 'norms.other' })), [])
+})
+
 function scratch(work: (config: string) => void): void {
   const config = mkdtempSync(join(tmpdir(), 'learning-distil-'))
   try {

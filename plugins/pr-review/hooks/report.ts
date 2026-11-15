@@ -5,12 +5,14 @@
 // block is read here, and the loop counts the Critical and Important ones.
 // An agent that ends without a readable block makes the pass's count unknown.
 
+import { fieldsOf } from '../core/host.ts'
 import { blocks } from '../core/readiness.ts'
 
 export type Severity = 'critical' | 'important' | 'suggestion'
 export type Finding = { severity: Severity; file: string; summary: string }
 
-const SEVERITIES: readonly string[] = ['critical', 'important', 'suggestion']
+const SEVERITIES: readonly Severity[] = ['critical', 'important', 'suggestion']
+const isSeverity = (value: string): value is Severity => SEVERITIES.some((s) => s === value)
 
 export const REPORT_REQUEST = '\n\nEnd your answer with one fenced ```json block holding '
   + '{"findings": [{"severity": "critical" | "important" | "suggestion", "file": "<path>", "summary": "<one line>"}]}: '
@@ -41,18 +43,20 @@ export function reportOf(text: string): Finding[] | null {
   if (!Array.isArray(list)) return null
   const findings: Finding[] = []
   for (const item of list) {
-    const severity = String((item as any)?.severity ?? '').toLowerCase()
-    if (!SEVERITIES.includes(severity)) return null
-    findings.push({ severity: severity as Severity, file: String((item as any)?.file ?? ''), summary: String((item as any)?.summary ?? '') })
+    const fields = fieldsOf(item) ?? {}
+    const severity = String(fields['severity'] ?? '').toLowerCase()
+    if (!isSeverity(severity)) return null
+    findings.push({ severity, file: String(fields['file'] ?? ''), summary: String(fields['summary'] ?? '') })
   }
   return findings
 }
 
 // The text of a tool's answer: a string, content blocks, or { result | text }.
-export function answerText(answer: any): string {
-  const body = answer?.result ?? answer?.text ?? answer
+export function answerText(answer: unknown): string {
+  const fields = fieldsOf(answer)
+  const body = fields?.['result'] ?? fields?.['text'] ?? answer
   if (typeof body === 'string') return body
-  if (Array.isArray(body)) return body.map((part: any) => (typeof part === 'string' ? part : String(part?.text ?? ''))).join('\n')
+  if (Array.isArray(body)) return body.map((part: unknown) => (typeof part === 'string' ? part : String(fieldsOf(part)?.['text'] ?? ''))).join('\n')
   return ''
 }
 

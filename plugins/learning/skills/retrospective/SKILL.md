@@ -37,6 +37,9 @@ C="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
    - `target`: the repository it lands in, `owner/name`;
    - `proof`: `{"type": "test", "path": "<the test's path>"}`, or for a prompt rule
      `{"type": "eval-case", "case": "<id>"}`.
+   A `guard` remedy ships in warn, its phase a constant of its plugin's code (core's
+   `learnedDecision`), raised to `enforce` only when core's `guardPhase` answers it. A rule for a
+   project's `CONTRIBUTING.md` enters only after the person says « add ».
 5. Keep it, one candidate a call:
 
 ```bash

@@ -4,11 +4,26 @@
 // script writes through journal-sync.ts. Writing is an observation: the caller catches what this
 // throws, logs it, and lets its own decision stand.
 import { foldDropped, journalEntryOf, journalFileOf, JOURNAL_FOLD_FILE, prunable } from './learning.ts'
+import type { Host } from './host.ts'
 import { removeArgv, withLockOver, writeAtomicOver, type StoreIo } from './store-io.ts'
 
 export interface JournalIo extends StoreIo {
   /** The names of the entries of `dir`, none when it does not exist. */
   readonly list: (dir: string) => Promise<readonly string[]>
+}
+
+/** The journal's I/O over a hooks module's host: files through `$.fs`, the rename and the removal through `$.process`. */
+export function journalIoOf($: Host<'fs' | 'process' | 'clock'>): JournalIo {
+  return {
+    write: (path, text) => $.fs.write(path, text),
+    read: (path) => $.fs.read(path).then((text) => String(text), () => undefined),
+    run: (argv) => $.process.run(argv, { timeoutMs: 5000 }),
+    mtimeMs: (path) => $.fs.stat(path).then((stat) => stat.mtimeMs, () => undefined),
+    sleep: (ms) => $.clock.sleep(ms),
+    now: Date.now,
+    tag: () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    list: (dir) => $.fs.list(dir).then((entries) => entries.map((entry) => String(entry.name)), () => []),
+  }
 }
 
 /** The identifier of the event a journal path names. */
