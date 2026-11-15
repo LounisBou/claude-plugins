@@ -101,7 +101,7 @@ export function pruneRulings(text: string, archive: string, closed: ReadonlySet<
 }
 
 /**
- * What a takeover prints of the rulings file, the live ones: every line but the entries marked
+ * What a takeover reads of the rulings file, the live ones: every line but the entries marked
  * `[for: <ref>]` (read by grep when a task reaches that item) and those marked superseded, which a
  * later ruling replaces, even when the prune kept one whose replacement it cannot find.
  */
