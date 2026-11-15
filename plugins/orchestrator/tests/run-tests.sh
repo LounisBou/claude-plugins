@@ -5922,6 +5922,33 @@ check "a successor's takeover ends its predecessor's host before it takes window
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
 export ORCHESTRATOR_HOST_CLI="$host_cli_kept"
+# A takeover kills its predecessor only on its « handed over », read on its transcript after the
+# « takeover confirmed » it answers, or on a transcript left idle; it never claims a hand-over it
+# did not read, and it waits while the predecessor still writes.
+HOT="$WORK/takeover-transcript.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"handed over"}]}}' \
+  '{"type":"user","message":{"content":"takeover confirmed"}}' > "$HOT"
+res=$(ipy "
+print(ia.handed_over('$HOT'))
+open('$HOT', 'a').write('{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"input\":{\"message\":\"handed over\"}}]}}\\n')
+print(ia.handed_over('$HOT'))
+ia.rotated_session = lambda tty: 's-pred'
+ia.transcript_of_session = lambda sid: '$HOT'
+print(ia.await_handover('/dev/ttys966', idle=300, sleep=lambda s: None))
+open('$HOT', 'a').write('{\"type\":\"user\",\"message\":{\"content\":\"takeover confirmed\"}}\\n')
+import os
+t = [os.path.getmtime('$HOT')]
+naps = []
+def nap(s):
+    naps.append(s)
+    t[0] += s
+print(ia.await_handover('/dev/ttys966', idle=300, sleep=nap, clock=lambda: t[0]))
+print(len(naps) > 0)
+ia.transcript_of_session = lambda sid: None
+print(ia.await_handover('/dev/ttys966'))" 2>&1)
+check "a takeover waits for the predecessor's handed over, or an idle transcript, and says which" \
+  "False|True|1|1|True|1" \
+  "$(printf '%s\n' "$res" | sed -n 1p)|$(printf '%s\n' "$res" | sed -n 2p)|$(printf '%s\n' "$res" | grep -c '^takeover: « handed over » read on ')|$(printf '%s\n' "$res" | grep -c '^takeover: no « handed over » on .*; its transcript was idle 30[0-9]s$')|$(printf '%s\n' "$res" | sed -n 5p)|$(printf '%s\n' "$res" | grep -c '^takeover: no transcript of the session on /dev/ttys966 was found: no « handed over » read$')"
 
 echo "== iterm-agents: closing a home tab ends its server =="
 # The operator closes the tab of an orchestrator's home session and expects the orchestrator

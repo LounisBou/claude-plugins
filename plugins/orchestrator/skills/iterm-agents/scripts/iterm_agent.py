@@ -631,6 +631,9 @@ PROBE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_PROBE_TIMEOUT", "8"))
 # failure. A host CLI takes a moment to unwind; ten seconds is room for that and nothing
 # like room for a session that is not going.
 CLOSE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_CLOSE_TIMEOUT", "10"))
+# How long a predecessor's transcript stays untouched before a takeover that read no « handed
+# over » on it closes it all the same: an idle prompt, nothing in flight.
+TAKEOVER_IDLE = int(os.environ.get("ORCHESTRATOR_TAKEOVER_IDLE", "300"))
 # Once that wait is over, how long a host is given to die of SIGTERM before it is sent
 # SIGKILL, and then to leave the table after SIGKILL.
 TERM_GRACE = int(os.environ.get("ORCHESTRATOR_TERM_GRACE", "5"))
@@ -3819,9 +3822,60 @@ def close_home_tab(tty, socket, expect, listed=None):
     sys.stdout.flush()
 
 
+def handed_over(path):
+    """Whether a transcript carries the predecessor's « handed over »: an assistant entry naming
+    it after the last entry that carries « takeover confirmed » (anywhere in the transcript when
+    none does). A line that is not JSON is skipped."""
+    seen = False
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                low = line.lower()
+                if "handed over" not in low and "takeover confirmed" not in low:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                said = json.dumps(entry.get("message", ""), ensure_ascii=False).lower()
+                if entry.get("type") == "assistant" and "handed over" in said:
+                    seen = True
+                elif "takeover confirmed" in low:
+                    seen = False
+    except OSError:
+        return False
+    return seen
+
+
+def await_handover(tty, idle=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a takeover's kill, for the predecessor's « handed over » on its transcript
+    (the session its host on `tty` registered), or for that transcript to stay untouched `idle`
+    seconds. Answers the line that says which: a hand-over is said only where it was read."""
+    idle = TAKEOVER_IDLE if idle is None else idle
+    sid = rotated_session(tty)
+    path = transcript_of_session(sid) if sid else None
+    if not path:
+        return ("takeover: no transcript of the session on %s was found: no « handed over » read"
+                % tty)
+    while True:
+        if handed_over(path):
+            return "takeover: « handed over » read on %s" % path
+        try:
+            quiet = clock() - os.path.getmtime(path)
+        except OSError:
+            return "takeover: the transcript %s is gone: no « handed over » read" % path
+        if quiet >= idle:
+            return ("takeover: no « handed over » on %s; its transcript was idle %ds"
+                    % (path, int(quiet)))
+        sleep(min(5, max(1, idle - quiet)))
+
+
 def cmd_takeover(args):
     """A successor's close of its predecessor inside their home session: the predecessor's
-    window 0 killed, guarded by its name and proved on the process table and the server, then
+    « handed over » waited for on its transcript (or an idle transcript), then its window 0
+    killed, guarded by its name and proved on the process table and the server, then
     the successor's own window moved to index 0 without taking the operator's view; window 0
     is selected only if the operator was on it."""
     if not args.tty:
@@ -3844,6 +3898,10 @@ def cmd_takeover(args):
     if stable_title(args.expect) not in stable_title(pred.name):
         die("takeover: refused: the window on %s is named '%s', which does not contain '%s'"
             % (args.tty, pred.name, args.expect))
+    # The predecessor may still be writing its last turn: its « handed over », or a transcript
+    # left idle, comes before the kill, and the line says which was seen.
+    print(await_handover(args.tty))
+    sys.stdout.flush()
     viewed = tmux_out(["display-message", "-p", "-t", pred.window, "#{window_active}"],
                       "takeover").strip() == "1"
     # Read once the name is checked and before the kill: the process the succession ends,
