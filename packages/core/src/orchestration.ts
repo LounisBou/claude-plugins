@@ -9,6 +9,9 @@ export const MODULE_DIR = 'claude-orchestrator'
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'
 export const MEASURE_VERSION = 1
+/** The round files' directory under the module's, one `<id>.json` each, and the directory under it that keeps the old ones. */
+export const ROUND_DIR = 'round'
+export const ROUND_ARCHIVE_DIR = 'archive'
 
 /** The context gate's defaults: a percentage of the window, and a number of tokens. */
 export const GATE_PERCENT = 80

@@ -11,6 +11,8 @@ import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '..
 import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
+import { parseRoundQuestion } from '../packages/core/src/round-question.ts'
+import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
 
 describe('pull request records: github writes, core reads', () => {
   it('reads every record github engine writes', () => {
@@ -171,5 +173,45 @@ describe('learning events: the orchestrator\'s scripts write, core reads', () =>
     assert.ok(events.every(event => event !== undefined))
     assert.deepEqual(events.map(event => event?.kind).sort(), ['escape', 'link', 'link', 'step', 'step', 'step', 'step'])
     rmSync(config, { recursive: true, force: true })
+  })
+})
+
+describe('round questions: the orchestrator settles, core reads', () => {
+  const SESSION = '60ed5626-9879-4041-892a-5db0ff0bad69'
+  const AT = '2026-11-15T10:05:00.000Z'
+  const choices = [{ letter: 'A', text: 'Ship it now' }, { letter: 'B', text: 'Wait for the review' }]
+  // The object `ask` stores (question.ts `askedEntry`) and the entry the relay writes (round.ts `roundEntry`), open.
+  const asked: Fields = {
+    v: 2, id: 'q-60ed5626-987-mhz1abcd-0f3k', sender: { session: SESSION, name: 'Orch: demo [a1b2c3]', role: 'orchestrator', machine: 'here' },
+    subject: 'the release', context: 'words', ask: 'Ship?', choices, recommended: 'B', why: 'words', blocks: 'the release', status: 'open', at: '2026-11-15T10:00:00.000Z', answer: null, seq: 1,
+  }
+  const relayed: Fields = {
+    id: `${SESSION}-0badf00d`, from: 'Orch: demo [a1b2c3]', session: SESSION, kind: 'done', since: '2026-11-15T10:00:00.000Z', blocks: null, question: 'words',
+    choices, recommendation: 'A', status: 'open', at: '2026-11-15T10:00:01.000Z', answer: null,
+  }
+  const asker = { session: SESSION, name: 'Orch: demo [a1b2c3]', role: 'orchestrator' }
+  const coordinator = { session: 'c', name: 'Coord: machine', role: 'coordinator' }
+  const written = (plan: Plan | { error: string } | null): unknown => {
+    assert.ok(plan !== null && !('error' in plan), JSON.stringify(plan))
+    return JSON.parse(JSON.stringify(plan.entry))
+  }
+
+  it('reads both open forms, and every close the settle plans write, with who settled it and the letter', () => {
+    assert.deepEqual([parseRoundQuestion(asked)?.status, parseRoundQuestion(relayed)?.kind], ['open', 'done'])
+    const closes: [unknown, string, string, boolean, string | null][] = [
+      [written(planPane(asked, 'Ship it now', coordinator, AT)), 'answered', 'pane', false, 'A'],
+      [written(planClaimed({ ...asked, claimed: { typed: 'b', at: AT } }, 'Wait for the review', AT)), 'answered', 'tab', false, 'B'],
+      [written(planAsked(asked, { id: String(asked['id']), outcome: 'answered-here', text: 'something else', author: null, work: null }, asker, AT)), 'answered', 'tab', false, null],
+      [written(planAsked(asked, { id: String(asked['id']), outcome: 'answered-by-message', text: 'A', author: 'Coord: machine', work: null }, asker, AT)), 'answered', 'message', false, 'A'],
+      [written(planAsked(asked, { id: String(asked['id']), outcome: 'withdrawn', text: 'moot', author: null, work: null }, coordinator, AT)), 'withdrawn', 'coordinator', true, null],
+      [written(planWithdrawal(asked, 'its session ended', AT, false)), 'withdrawn', 'sender', true, null],
+      [written(planWithdrawal(relayed, 'its session ended', AT, true)), 'closed', 'sender', true, null],
+      [written(planRelayed(relayed, { id: String(relayed['id']), outcome: 'answered-here', text: 'A', author: null, work: null }, coordinator, AT, true)), 'closed', 'coordinator', false, 'A'],
+      [written(planRelayed(relayed, { id: String(relayed['id']), outcome: 'withdrawn', text: 'merged meanwhile', author: null, work: null }, coordinator, AT, true)), 'closed', 'coordinator', true, null],
+    ]
+    for (const [entry, status, by, withdrawn, letter] of closes) {
+      const read = parseRoundQuestion(entry)
+      assert.deepEqual([read?.status, read?.session, read?.asker, read?.answer], [status, SESSION, 'Orch: demo [a1b2c3]', { at: AT, by, withdrawn, letter }], JSON.stringify(entry))
+    }
   })
 })
