@@ -6,10 +6,17 @@
 // typed or run through the Skill tool (hooks/check.ts sets the mark), so the record follows its own scope. A
 // failure never throws out of the handler: the answer is one `record:` line,
 // the path written or `none` with the reason.
+// The same call leaves the check's findings in the module's journal (hooks/observe.ts), one event
+// per finding an agent reported, once the pull request they belong to is read.
 import type { NormsScopeMark } from '../types/index.d.ts'
 import { endSkillCheck, spawned } from './guards.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
+import { findingEvent } from '../core/learning.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
-import { agentText, noteReport, reportOf, reported, resetReports } from './findings.ts'
+import { agentText, noteReport, reportOf, reported, resetReports, type Found } from './findings.ts'
+import { journal, noteSubject, resetSubject } from './observe.ts'
+
+export type RecordHost = Host<'env' | 'fs' | 'process' | 'session' | 'state' | 'ui' | 'tool' | 'clock'>
 
 export const CHECK_DONE_TOOL = 'mcp__norms__check_done'
 const GH_TOOL = 'mcp__github__gh'
@@ -46,6 +53,12 @@ export const CHECK_DONE_SCHEMA = {
 type Mark = NormsScopeMark
 let fallback: Mark | undefined
 
+// The pull request the last lookup found, with its repository: the scope's mark reads it, so the
+// events of the check name their pull request from its first line on, at no call of its own.
+let lastPull: { repo: string; pr: number } | undefined
+// Whether the running check's findings are in the journal: once per check.
+let isJournaled = false
+
 // The mark read back from the state, or undefined for anything that is not one.
 export function asMark(value: unknown): Mark | undefined {
   if (typeof value !== 'object' || value === null) return undefined
@@ -58,10 +71,9 @@ export function asMark(value: unknown): Mark | undefined {
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
 // reports has been dealt with all the same.
-function warn($: any, line: string): void {
+function warn($: Host<'ui'>, line: string): void {
   try {
-    const sent = $.ui.log(line)
-    if (sent && typeof sent.catch === 'function') sent.catch(() => undefined)
+    Promise.resolve($.ui.log(line)).catch(() => undefined)
   } catch {
     // No line drawn.
   }
@@ -69,24 +81,34 @@ function warn($: any, line: string): void {
 
 // `dir`: the repository the check read, so that a later shell `cd` into another repository is not
 // taken for the reviewed one.
-export async function markScope($: any, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
+export async function markScope($: RecordHost, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
   const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
   // A new check starts from no findings: the agents it runs report them again.
   resetReports()
+  isJournaled = false
+  // What the check's events are about: its head, its repository, and its pull request when the
+  // scope's own lookup found it in that repository.
+  const repo = await repositoryOf($, dir).catch(() => undefined)
+  resetSubject()
+  noteSubject({ repo, head, pr: lastPull !== undefined && lastPull.repo === repo ? lastPull.pr : null })
+  lastPull = undefined
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, mark)
     fallback = undefined
-  } catch (err: any) {
+  } catch (err) {
     fallback = mark
-    warn($, `norms: the scope mark could not be kept in the session state, it is kept in memory: ${String(err?.message ?? err).trim()}`)
+    warn($, `norms: the scope mark could not be kept in the session state, it is kept in memory: ${reasonOf(err).trim()}`)
   }
 }
 
 // Called from the module's one session.end hook, in guards.ts: the host refuses a second
 // session.end hook without a matcher.
-export async function clearMark($: any): Promise<void> {
+export async function clearMark($: Host<'state'>): Promise<void> {
   fallback = undefined
+  lastPull = undefined
+  isJournaled = false
   resetReports()
+  resetSubject()
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, null)
   } catch {
@@ -95,7 +117,7 @@ export async function clearMark($: any): Promise<void> {
 }
 
 // The state first, then the memory copy; neither leaves no mark, and check_done refuses.
-async function readMark($: any): Promise<Mark | undefined> {
+async function readMark($: Host<'state'>): Promise<Mark | undefined> {
   try {
     const stored = asMark((await $.state.get({ plugin: 'norms', key: 'scopeMark' }))?.value)
     if (stored) return stored
@@ -106,7 +128,7 @@ async function readMark($: any): Promise<Mark | undefined> {
 }
 
 // The repository the last /norms:check of this session read, or undefined when no mark names one.
-export async function markedDir($: any): Promise<string | undefined> {
+export async function markedDir($: Host<'state'>): Promise<string | undefined> {
   return (await readMark($))?.dir
 }
 
@@ -121,7 +143,7 @@ export function repoOf(url: string): string | undefined {
 // else the repository of the session's project root (a shell `cd` into a scratchpad or /tmp moves
 // the session's directory out of the checkout, never its project root). Undefined when neither is a
 // repository, or when the host cannot answer: git then runs in the session's directory and says why.
-export async function repositoryDir($: any): Promise<string | undefined> {
+export async function repositoryDir($: Host<'process' | 'session'>): Promise<string | undefined> {
   try {
     const here = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: GIT_TIMEOUT_MS })
     const top = String(here.stdout).trim()
@@ -143,8 +165,8 @@ export type Lookup = { pull?: Pull | undefined } | { why: string }
 
 const NO_GITHUB = 'the github plugin is absent or older than 0.12.0'
 
-async function pullList($: any, repo: string, command: string, args: Record<string, unknown>): Promise<Pull[] | { why: string }> {
-  let answer: any
+async function pullList($: Host<'tool'>, repo: string, command: string, args: Record<string, unknown>): Promise<Pull[] | { why: string }> {
+  let answer: unknown
   try {
     answer = await $.tool.call({ tool: GH_TOOL, command, args, repo })
   } catch {
@@ -153,8 +175,8 @@ async function pullList($: any, repo: string, command: string, args: Record<stri
   const read = textOf(answer)
   if ('why' in read) return read
   try {
-    const pulls = JSON.parse(read.text)
-    if (Array.isArray(pulls)) return pulls
+    const pulls: unknown = JSON.parse(read.text)
+    if (Array.isArray(pulls)) return pulls.map(pull => (fieldsOf(pull) ?? {}) as Pull)
   } catch {
     // Not JSON: said below.
   }
@@ -162,29 +184,41 @@ async function pullList($: any, repo: string, command: string, args: Record<stri
 }
 
 // The open pull request of `branch` in `repo`.
-export async function branchPull($: any, repo: string, branch: string): Promise<Lookup> {
+export async function branchPull($: Host<'tool'>, repo: string, branch: string): Promise<Lookup> {
   const pulls = await pullList($, repo, 'pr-get', { branch, format: 'raw' })
-  return Array.isArray(pulls) ? { pull: pulls[0] } : pulls
+  return Array.isArray(pulls) ? found(repo, pulls[0]) : pulls
+}
+
+// The pull request a lookup answers, remembered with its repository when it has a number.
+function found(repo: string, pull: Pull | undefined): Lookup {
+  const pr = numberOf(pull)
+  if (pr !== undefined) lastPull = { repo, pr }
+  return { pull }
+}
+
+const numberOf = (pull: Pull | undefined): number | undefined => {
+  const pr = Number(pull?.number)
+  return Number.isInteger(pr) && pr >= 1 ? pr : undefined
 }
 
 // The open pull request of `repo` whose head is `head`: a detached head names no branch to ask
 // about, its commit does. Several such pull requests are refused, naming them: none is the one.
-export async function openPullAt($: any, repo: string, head: string): Promise<Lookup> {
+export async function openPullAt($: Host<'tool'>, repo: string, head: string): Promise<Lookup> {
   const pulls = await pullList($, repo, 'pr-list', { format: 'raw' })
   if (!Array.isArray(pulls)) return pulls
-  const found = pulls.filter(p => p?.head?.sha === head)
-  if (found.length > 1) {
-    return { why: `${found.length} open pull requests have the head ${head.slice(0, 12)}: ${found.map(p => `${repo}#${String(p?.number)}`).join(', ')}` }
+  const at = pulls.filter(p => fieldsOf(p.head)?.['sha'] === head)
+  if (at.length > 1) {
+    return { why: `${at.length} open pull requests have the head ${head.slice(0, 12)}: ${at.map(p => `${repo}#${String(p.number)}`).join(', ')}` }
   }
-  return { pull: found[0] }
+  return found(repo, at[0])
 }
 
 // The repository of the checkout in `dir`, owner/name, or undefined for an origin that names none.
-export async function repositoryOf($: any, dir?: string): Promise<string | undefined> {
+export async function repositoryOf($: Host<'process'>, dir?: string): Promise<string | undefined> {
   return repoOf(await git($, ['git', 'remote', 'get-url', 'origin'], dir))
 }
 
-async function git($: any, argv: string[], dir?: string): Promise<string> {
+async function git($: Host<'process'>, argv: string[], dir?: string): Promise<string> {
   const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS, ...(dir ? { cwd: dir } : {}) })
   if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${String(r.stderr).trim() || 'exit ' + r.exitCode}`)
   return String(r.stdout)
@@ -200,42 +234,66 @@ const wroteRecord = (answer: { result: string; isError?: boolean }) => !answer.i
 
 // The answer of a tool called through $.tool.call, as text, or the reason it
 // gave none.
-function textOf(answer: any): { text: string } | { why: string } {
-  if (answer?.deny) return { why: String(answer.deny).trim() }
-  const text = String(answer?.result ?? answer?.text ?? '').trim()
-  if (answer?.isError) return { why: text || 'the tool failed' }
-  return { text }
+function textOf(raw: unknown): { text: string } | { why: string } {
+  const answer = answerOf(raw)
+  if (answer.deny !== undefined) return { why: answer.deny }
+  if (answer.isError) return { why: answer.text || 'the tool failed' }
+  return { text: answer.text }
 }
 
-export async function checkDone($: any, input: any): Promise<{ result: string; isError?: boolean }> {
+// The agent a report came from, as a part of an event's code: `norms:norms-variable-naming` is `variable-naming`.
+const agentCode = (type: string): string => {
+  const name = type.replace(/^norms:(?:norms-)?/, '')
+  return /^[a-z0-9][a-z0-9-]*$/.test(name) ? name : 'agent'
+}
+
+// The check's findings into the journal, once per check: one event per finding, its code the agent
+// and the severity it reported, its path the file. Nothing of the summary enters.
+async function journalFindings($: RecordHost, findings: readonly Found[], dir: string | undefined): Promise<void> {
+  if (isJournaled) return
+  isJournaled = true
+  if (findings.length === 0) return
+  await journal($, known => findings.map(f => findingEvent({
+    ...known(), code: `norms.${agentCode(f.agent)}.${f.severity}`, severity: f.severity, file: f.file, ...(dir ? { root: dir } : {}),
+  })))
+}
+
+export async function checkDone($: RecordHost, input: Events['tool.call']): Promise<{ result: string; isError?: boolean }> {
   const checked = await readMark($)
   if (!checked) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
-  const open = count(input?.open)
-  const fixed = count(input?.fixed)
-  const passed = count(input?.passed)
-  const setAside = input?.setAside === undefined ? 0 : count(input.setAside)
-  if (open === undefined || fixed === undefined || passed === undefined || setAside === undefined) {
+  const given = { open: count(input['open']), fixed: count(input['fixed']), passed: count(input['passed']), setAside: input['setAside'] === undefined ? 0 : count(input['setAside']) }
+  if (given.open === undefined || given.fixed === undefined || given.passed === undefined || given.setAside === undefined) {
     return { result: 'norms: open, fixed, passed and setAside are whole numbers, 0 or more', isError: true }
   }
+  const isAuto = input['auto'] === true
   // A point set aside keeps its reason in the record, in one line.
-  const reason = typeof input?.reason === 'string' ? input.reason.replace(/\s+/g, ' ').trim() : ''
-  if (setAside > 0 && reason === '') return { result: 'norms: findings set aside need their reason', isError: true }
-  // The pass is computed from what the agents reported: every finding is open, fixed, passed or set
-  // aside, once. Figures that leave one out, or invent one, are not the check's.
+  const reason = typeof input['reason'] === 'string' ? input['reason'].replace(/\s+/g, ' ').trim() : ''
+  if (given.setAside > 0 && reason === '') return { result: 'norms: findings set aside need their reason', isError: true }
+  // The pass is computed from what the agents reported.
   const known = reported()
   if ('why' in known) return { result: `norms: ${known.why}`, isError: true }
   const total = known.findings.length
-  if (open + fixed + passed + setAside !== total) {
+  const blocking = known.findings.filter(f => f.severity === 'error').length
+  let { open, fixed, passed } = given
+  const setAside = isAuto ? Math.min(given.setAside, blocking) : given.setAside
+  if (isAuto) {
+    // An automatic check edits nothing and has nobody to pass an ERROR, so its figures are the
+    // findings' own: nothing fixed, every WARNING and INFO passed, every ERROR open but the ones
+    // set aside. The figures given are not read.
+    fixed = 0
+    passed = total - blocking
+    open = blocking - setAside
+  } else if (open + fixed + passed + setAside !== total) {
+    // An interactive check's findings are passed and fixed by the person: the figures say which,
+    // and account for every finding once. Figures that leave one out, or invent one, are not the check's.
     return { result: `norms: the agents reported ${total} finding(s) and open + fixed + passed + setAside add up to ${open + fixed + passed + setAside}: every finding is open, fixed, passed or set aside, once`, isError: true }
   }
-  // An automatic check has nobody to pass an ERROR: only WARNING and INFO findings are passed.
-  const blocking = known.findings.filter(f => f.severity === 'error').length
-  if (input?.auto === true && passed > total - blocking) {
-    return { result: `norms: an automatic check passes only WARNING and INFO findings: ${total - blocking} reported, ${passed} passed`, isError: true }
-  }
+  // What the check's events are about, as far as this call reads it.
+  let dir = checked.dir
+  let unfixed = 0
   try {
     // The repository the check read, not the one a later shell `cd` landed in.
-    const dir = checked.dir ?? await repositoryDir($)
+    dir = checked.dir ?? await repositoryDir($)
     // First, so the reason is clear: a record is written on a clean checkout.
     if ((await git($, ['git', 'status', '--porcelain', '-uno'], dir)).trim() !== '') {
       return { result: none('the tracked files have changes') }
@@ -251,22 +309,31 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
         const named = unread.slice(0, 5).join(', ') + (unread.length > 5 ? ', …' : '')
         return { result: none(`commits since the check touch files it did not read (${named}): run /norms:check again`) }
       }
+    } else if (fixed > 0) {
+      // A fix is a commit (check.md 7.4), and the checkout is clean at the head the check read:
+      // nothing was fixed, and the findings said fixed are open.
+      unfixed = fixed
+      open += fixed
+      fixed = 0
     }
     const repo = await repositoryOf($, dir)
     if (!repo) return { result: none('the origin remote names no GitHub repository') }
     // A branch asks for its own pull request; a detached head (a review checkout) names none, its
     // commit may.
     const branch = (await git($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim()
-    const found = branch === 'HEAD' ? await openPullAt($, repo, head) : await branchPull($, repo, branch)
-    if ('why' in found) return { result: none(found.why) }
-    const pr = Number(found.pull?.number)
-    if (!Number.isInteger(pr) || pr < 1) return { result: none('the branch has no pull request') }
+    const pull = branch === 'HEAD' ? await openPullAt($, repo, head) : await branchPull($, repo, branch)
+    if ('why' in pull) return { result: none(pull.why) }
+    const pr = numberOf(pull.pull)
+    if (pr === undefined) return { result: none('the branch has no pull request') }
+    // The findings are the ones of the head the check read.
+    noteSubject({ repo, pr, head: checked.head })
+    await journalFindings($, known.findings, dir)
     let recorded: { text: string } | { why: string }
     try {
       recorded = textOf(await $.tool.call({
         tool: RECORD_TOOL, pr, repo, kind: 'norms',
         result: open === 0 ? 'pass' : 'fail',
-        detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}${setAside > 0 ? `, ${setAside} set aside (${reason})` : ''}, ${open} open`,
+        detail: `${fixed} fixed, ${passed} passed${isAuto ? ' (non-blocking, automatic)' : ''}${setAside > 0 ? `, ${setAside} set aside (${reason})` : ''}, ${open} open${unfixed > 0 ? ` (${unfixed} said fixed with no commit since the check)` : ''}`,
         ...(dir ? { dir } : {}),
       }))
     } catch {
@@ -282,52 +349,53 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
       report: reportPathOf(`report: ${recorded.text}`),
     })
     return { result: `record: ${recorded.text}\n${line}` }
-  } catch (err: any) {
-    return { result: none(String(err?.message ?? err).trim()) }
+  } catch (err) {
+    return { result: none(reasonOf(err).trim()) }
   }
 }
 
-export function register(on: any): void {
-  on('session.start', async ($: any, e: any, next: any) => {
+export function register(on: On<RecordHost>): void {
+  on('session.start', async ($, e, next) => {
     // In the tool list from the start (isDeferred false): check.md calls it
     // at its last step, and behind tool search the model would skip it.
     try {
       await $.tool.register({
         name: 'check_done', description: CHECK_DONE_DESCRIPTION, inputSchema: CHECK_DONE_SCHEMA, isDeferred: false,
       })
-    } catch (err: any) {
+    } catch (err) {
       // Not listed: the report goes without a record line, and the session says why.
-      warn($, `norms: mcp__norms__check_done could not be registered, the report goes without a record line: ${String(err?.message ?? err).trim()}`)
+      warn($, `norms: mcp__norms__check_done could not be registered, the report goes without a record line: ${reasonOf(err).trim()}`)
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
   // The findings of each norms agent, read from its answer. The hook never changes the call's input.
   // An agent that fails, is launched in the background or answers without a readable block leaves
   // its findings unknown; its answer reaches the session as it came, and it runs once.
-  on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
-    const type = String(e.subagent_type ?? '')
+  on('tool.call', { tool: 'Agent' }, async (_$, e, next) => {
+    const type = String(e['subagent_type'] ?? '')
     if (!type.startsWith('norms:')) return next(e)
-    let answer: any
+    let answer: unknown
     try {
       answer = await next(e)
-    } catch (err: any) {
+    } catch (err) {
       noteReport(type, null)
-      return { result: String(err?.message ?? err), isError: true }
+      return { result: reasonOf(err), isError: true }
     }
     try {
-      noteReport(type, answer?.isError || answer?.deny ? null : reportOf(agentText(answer)))
+      const read = answerOf(answer)
+      noteReport(type, read.isError || read.deny !== undefined ? null : reportOf(agentText(answer)))
     } catch {
       noteReport(type, null)
     }
     return answer
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: CHECK_DONE_TOOL }, async ($: any, e: any) => {
+  on('tool.call', { tool: CHECK_DONE_TOOL }, async ($, e) => {
     const answer = await checkDone($, e)
     // The main loop's call only (a subagent's is not the walkthrough's), and only once the
     // record is written: a refused call leaves the guards armed.
-    if (!e.agentId && wroteRecord(answer)) endSkillCheck()
+    if (!e['agentId'] && wroteRecord(answer)) endSkillCheck()
     return answer
   })
     .catch(async () => ({ result: none('the norms module failed'), isError: false }))
