@@ -172,6 +172,17 @@ test('an open row with blocker none, no live agent and no open pull request is r
   expect((await readUnattended(running, 's-orch', NOW))?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
 })
 
+test('a row whose until time has passed is ready, one before it is not; a measure is never ready', async () => {
+  const { dollar, files } = world()
+  files.set(RECORD, readyRecord([
+    ROW(31, 'WAKEUP: at ten', { blocker: 'until 2026-11-14T10:00:00Z' }),
+    ROW(32, 'LATEWAKE: at noon', { blocker: 'until 2026-11-14T12:00:00Z' }),
+    ROW(33, 'SPEED: p95', { blocker: 'measure p95 under 300 ms' }),
+  ]))
+  expect((await readUnattended(dollar, 's-orch', NOW))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP' }])
+  expect((await readUnattended(dollar, 's-orch', Date.parse('2026-11-14T12:00:00Z')))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP' }, { id: 32, keyword: 'LATEWAKE' }])
+})
+
 test('an open pull request in the ledger holds its row, with no agent running; the launcher is asked once, and only when a row may be ready', async () => {
   // Line 7 names Agent: seven; the listing shows nobody running, so the pull request alone holds row 25.
   const { dollar, files, runs } = world({ launcher: 'w1/t1 | /dev/ttys001 | zsh | zsh' })
