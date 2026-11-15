@@ -8,28 +8,24 @@ repository; the event's contract is `packages/core/src/learning.ts`.
 
 - `/learning:health`: the journals under `${CLAUDE_CONFIG_DIR:-~/.claude}` (each plugin's
   `<plugin>/journal/`) over the contract's window: refusals per guard code, findings by severity,
-  answers and escapes, and the files that are not events of the contract. Two more sections only
-  print, and refuse nothing: the guard codes with refusals in the journals and none in the window,
-  one line each (code, plugin, days since the last refusal), proposed for removal, and the decided
-  removals the repository still holds (« Decided removals »). The hooks module answers it from
+  answers and escapes, and the files that are not events of the contract. One more section only
+  prints, and refuses nothing: the guard codes with refusals in the journals and none in the window,
+  one line each (code, plugin, days since the last refusal), proposed for removal. The hooks module answers it from
   `skills/learning/scripts/health.ts`; the markdown command runs the same script where the module
   does not load.
 
-## Decided removals
+## The distiller
 
-A removal the operator decides is written in the project's rulings file
-(`<config dir>/claude-orchestrator/briefs/<project>/rulings.md`) on one line of this form, the
-last thing on the line:
+`skills/learning/scripts/distil.ts --config <dir>` computes the candidates of the journals, with no
+model, and prints one JSON line each: the version 1 events of the window, grouped by signature (kind,
+code, the finding's severity, the classes of its paths, its languages), a group being a candidate at
+three events from two pull requests. An event names a pull request when it holds both its repository
+and its number; an `external` event forms no cluster. The same journals at the same time give the same
+lines. The signature, the thresholds and the candidate's validator are core's
+(`packages/core/src/learning.ts`, `signatureOf`, `CANDIDATE_CONTRACT`, `parseCandidate`). A journal
+that cannot be read is said on the error stream, and nothing is proposed.
 
-```
-- <ISO UTC> « <his words> » — removal: <repo path>[::<symbol>]
-```
-
-`<repo path>` is relative to the repository root, with no `..`; `<symbol>` is an identifier, read as
-a whole word. `/learning:health` reads the rulings of every project under the configuration
-directory and lists, as « not delivered », each line whose path exists in the repository of the
-working directory (and, with a symbol, whose file still holds it), with the date it was decided.
-The section says `none` when nothing is left. A line of another form is not read.
+## What the report holds
 
 A guard that has never refused leaves no event, so it is not listed as silent: the section holds the
 codes the journals have seen refuse.

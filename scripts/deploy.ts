@@ -25,16 +25,14 @@ import { join } from 'node:path'
 import { configDir } from '../packages/core/src/paths.ts'
 import { readText, withLock, writeAtomic } from '../packages/core/src/store.ts'
 import { lockOf } from '../packages/core/src/store-io.ts'
+import { DEPLOY_MARKETPLACE as MARKETPLACE, DEPLOY_STATE_FILE, DEPLOY_STATE_VERSION as STATE_VERSION, DEPLOYS_DIR, parseDeployState as parseState, type DeployState as State } from '../packages/core/src/deploy-state.ts'
 import { processIo, type Io } from './lib/io.ts'
 import { isEntry, isRecord } from './lib/plugins.ts'
 import { WORKFLOW_PATH } from './tested-tree.ts'
 
 export const REPOSITORY = 'LounisBou/claude-plugins'
-/** The catalogue's name (`.claude-plugin/marketplace.json`), which the host keys installs by. */
-export const MARKETPLACE = 'lounisbou'
-/** Under the host's configuration directory: `<marketplace>/<sha>/`, `installed.json`, `current`. */
-export const DEPLOYS_DIR = 'deploys'
-export const STATE_VERSION = 1
+// The state file's shape, its validator and the layout's names are core's (deploy-state.ts): a running session reads them too.
+export { DEPLOYS_DIR, MARKETPLACE, parseState, STATE_VERSION, type State }
 /** A directory left this recently (replaced, rolled back from, or extracted) may still be read by a running session; kept. */
 export const KEEP_MS = 14 * 24 * 3_600_000
 const COMMAND_TIMEOUT_MS = 5 * 60_000
@@ -44,64 +42,6 @@ const SHA = /^[0-9a-f]{40}$/
 const REPO = /^[\w.-]+\/[\w.-]+$/
 /** A write in flight, left only by a run that died, since a run holds the lock. */
 const TEMPORARY = '.tmp-'
-
-export interface Installed {
-  readonly commit: string
-  /** ISO time of the install. */
-  readonly at: string
-}
-
-/** The last run that failed: when, and its error in one line. */
-export interface Failure {
-  readonly at: string
-  readonly message: string
-}
-
-export interface State {
-  readonly version: typeof STATE_VERSION
-  readonly repo: string
-  readonly marketplace: string
-  /** Newest first; the first is the installed commit. */
-  readonly history: readonly Installed[]
-  /** Commits left by a rollback, never deployed again. */
-  readonly skipped: readonly string[]
-  /** Plugins of the marketplace still to update to the installed commit (an update failed). */
-  readonly pending: boolean
-  /** Each plugin's version at the installed commit, stamped. */
-  readonly plugins: Readonly<Record<string, string>>
-  /** The last run's failure, until a run succeeds. */
-  readonly lastError?: Failure
-}
-
-function installedOf(value: unknown): Installed {
-  if (!isRecord(value) || typeof value['commit'] !== 'string' || !SHA.test(value['commit']) || typeof value['at'] !== 'string') {
-    throw new Error('installed.json: a history entry is not {commit, at}')
-  }
-  return { commit: value['commit'], at: value['at'] }
-}
-
-/** The state file's text validated, or an error naming what is wrong. */
-export function parseState(text: string): State {
-  const raw: unknown = JSON.parse(text)
-  if (!isRecord(raw) || raw['version'] !== STATE_VERSION) throw new Error(`installed.json: not version ${STATE_VERSION}`)
-  const { repo, marketplace, history, skipped, pending, plugins, lastError } = raw
-  if (typeof repo !== 'string' || marketplace !== MARKETPLACE) throw new Error(`installed.json: no repo, or a marketplace other than ${MARKETPLACE}`)
-  if (!Array.isArray(history) || history.length === 0) throw new Error('installed.json: no history')
-  if (typeof pending !== 'boolean') throw new Error('installed.json: pending is not a boolean')
-  if (!Array.isArray(skipped) || !skipped.every(sha => typeof sha === 'string' && SHA.test(sha))) throw new Error('installed.json: skipped is not a list of commits')
-  if (!isRecord(plugins) || !Object.values(plugins).every(version => typeof version === 'string')) throw new Error('installed.json: plugins is not {name: version}')
-  if (lastError !== undefined && (!isRecord(lastError) || typeof lastError['at'] !== 'string' || typeof lastError['message'] !== 'string')) throw new Error('installed.json: lastError is not {at, message}')
-  return {
-    version: STATE_VERSION,
-    repo,
-    marketplace,
-    history: history.map(installedOf),
-    skipped: skipped.filter((sha): sha is string => typeof sha === 'string'),
-    pending,
-    plugins: Object.fromEntries(Object.entries(plugins).map(([name, version]) => [name, String(version)])),
-    ...(lastError === undefined ? {} : { lastError: { at: String(lastError['at']), message: String(lastError['message']) } }),
-  }
-}
 
 /** The newest commit with a successful push run (`only`, when given), from the API's list of runs, newest first; null when none. */
 export function greenCommit(runs: unknown, only?: string): string | null {
@@ -401,7 +341,7 @@ function prune(paths: Paths, state: State, now: number): void {
 
 export function run(args: readonly string[], io: Io, host: Host = processHost()): number {
   const root = join(configDir(io.env), DEPLOYS_DIR, MARKETPLACE)
-  const paths: Paths = { root, state: join(root, 'installed.json') }
+  const paths: Paths = { root, state: join(root, DEPLOY_STATE_FILE) }
   try {
     if (args.includes('--status')) {
       const state = readState(paths)

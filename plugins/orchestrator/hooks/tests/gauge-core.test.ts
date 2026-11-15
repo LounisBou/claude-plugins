@@ -1,6 +1,6 @@
 // hooks/tests/gauge-core.test.ts
 import { expect, test } from 'claude-code/testing'
-import { tripGate, parseMeasure, measureFilePath } from '../gauge-core.ts'
+import { tripGate, parseMeasure, measureFilePath, newerInstalled } from '../gauge-core.ts'
 import { currentReading, driftAnnouncement, writeMeasure, takeDrift, register as registerGauge } from '../gauge.ts'
 import { logLineOf, disk, emptied, MEASURES } from './fakes.ts'
 
@@ -406,4 +406,45 @@ test('the measure file carries its version and the session\'s gate in tokens on 
   expect(await gateOf('g-tokens', 1000000, { ORCHESTRATOR_CONTEXT_GATE_TOKENS: '250000' })).toBe(250000)
   expect(await gateOf('g-percent', 200000, { ORCHESTRATOR_CONTEXT_GATE: '50' })).toBe(100000)
   takeDrift()
+})
+
+// The newer installed commit: the session's own is its plugin root's deploy directory, the
+// installed one the state file beside it, read through an injected reader.
+const OWN = 'a'.repeat(40)
+const NEWER = 'b'.repeat(40)
+const DEPLOYED_ROOT = `/cfg/deploys/lounisbou/${OWN}/plugins/orchestrator`
+const deployState = (...history: string[]): string => JSON.stringify({
+  version: 1, repo: 'owner/name', marketplace: 'lounisbou', history: history.map(commit => ({ commit, at: '2026-01-01T00:00:00Z' })), skipped: [], pending: false, plugins: {},
+})
+const reading = (text: string) => {
+  const paths: string[] = []
+  return { paths, read: async (path: string) => { paths.push(path); return text } }
+}
+
+test('a session running the installed commit is told nothing', async () => {
+  expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(OWN)).read, null)).toBe(null)
+})
+
+test('a commit installed over the session\'s own is named, read from the state file beside its directory', async () => {
+  const file = reading(deployState(NEWER, OWN))
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null)).toEqual({ own: OWN, installed: NEWER })
+  expect(file.paths).toEqual(['/cfg/deploys/lounisbou/installed.json'])
+})
+
+test('a commit already told is not told again, and the next one is', async () => {
+  const later = 'c'.repeat(40)
+  expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(NEWER, OWN)).read, NEWER)).toBe(null)
+  expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(later, NEWER, OWN)).read, NEWER)).toEqual({ own: OWN, installed: later })
+})
+
+test('a plugin that does not run from a deploy directory reads nothing and is told nothing', async () => {
+  const file = reading(deployState(NEWER))
+  expect(await newerInstalled('/cfg/plugins/cache/lounisbou/orchestrator/1.2.3', file.read, null)).toBe(null)
+  expect(file.paths).toEqual([])
+})
+
+test('a state file that cannot be read, or is not valid, is silence', async () => {
+  expect(await newerInstalled(DEPLOYED_ROOT, async () => { throw new Error('ENOENT') }, null)).toBe(null)
+  expect(await newerInstalled(DEPLOYED_ROOT, reading('not json').read, null)).toBe(null)
+  expect(await newerInstalled(DEPLOYED_ROOT, reading('{"version":2}').read, null)).toBe(null)
 })
