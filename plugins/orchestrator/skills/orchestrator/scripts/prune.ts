@@ -1,5 +1,5 @@
-// prune — what a takeover reads is only what is live: the rulings file and the state file pruned
-// at each succession, what is moved appended to an archive beside each, which no takeover reads.
+// prune — what a takeover reads is only what is live: the rulings file pruned at each takeover,
+// what is moved appended to an archive beside it, which no takeover reads.
 //
 // A ruling moves only on its orchestrator's marker, written at the end of its entry when its
 // work is merged or closed, or when a later ruling replaces it:
@@ -14,9 +14,7 @@
 //                                        row <ref> numbers (`row N`, `rows N–M`, `rows N, M`) is
 //                                        closed in the dispatch record, it moves as a `done` one
 //
-// The state file's journal moves by its dates: in the section of its latest
-// `- <YYYY-MM-DDThh:mm:ssZ> LIVE SUMMARY` line, each dated line older than that summary, with the
-// undated lines under it. A file with no marker, or a state file with no live summary, stays whole.
+// A file with no marker stays whole.
 import { basename, dirname, join } from 'node:path'
 import { readText, update, withLock, writeAtomic } from '../../../core/store.ts'
 
@@ -36,7 +34,6 @@ export interface Pruned {
 const ISO = '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 const MARKER = new RegExp(`\\[(standing|(done|for): ([^\\]]*[^\\]\\s][^\\]]*)|superseded: (${ISO}))\\]\\s*$`)
 const DATED = new RegExp(`^- (${ISO}) `)
-const SUMMARY = new RegExp(`^- (${ISO}) LIVE SUMMARY\\b`)
 
 /** The marker an entry ends on, if any. */
 export function markerOf(entry: string): Marker | undefined {
@@ -106,47 +103,6 @@ export function pruneRulings(text: string, archive: string, closed: ReadonlySet<
 /** What a takeover reads of the rulings file: every line but the entries marked `[for: <ref>]`. */
 export function readAtTakeover(text: string): string {
   return entries(text).filter(group => !(group.entry && markerOf(group.lines.join('\n'))?.kind === 'for')).flatMap(group => group.lines).join('\n')
-}
-
-/** The state file pruned: the journal of its live summary's section older than that summary. */
-export function pruneState(text: string): Pruned {
-  const lines = text.split('\n')
-  let summary = -1
-  lines.forEach((line, i) => {
-    const date = SUMMARY.exec(line)?.[1]
-    if (date !== undefined && (summary === -1 || date >= (SUMMARY.exec(lines[summary] ?? '')?.[1] ?? ''))) summary = i
-  })
-  if (summary === -1) return { kept: text, moved: [], warnings: [] }
-  const since = SUMMARY.exec(lines[summary] ?? '')?.[1] ?? ''
-  const heading = (line: string) => /^#{1,6} /.test(line)
-  let start = summary
-  while (start > 0 && !heading(lines[start - 1] ?? '')) start--
-  let end = summary
-  while (end < lines.length && !heading(lines[end] ?? '')) end++
-  const kept = lines.slice(0, start)
-  const moved: string[] = []
-  let block: string[] = []
-  let date: string | undefined
-  const flush = () => {
-    let last = block.length
-    while (last > 0 && block[last - 1] === '') last--
-    if (date !== undefined && date < since) {
-      moved.push(block.slice(0, last).join('\n'))
-      kept.push(...block.slice(last))
-    } else kept.push(...block)
-    block = []
-  }
-  for (const line of lines.slice(start, end)) {
-    const dated = DATED.exec(line)?.[1]
-    if (dated !== undefined) {
-      flush()
-      date = dated
-    }
-    block.push(line)
-  }
-  flush()
-  kept.push(...lines.slice(end))
-  return { kept: kept.join('\n'), moved, warnings: [] }
 }
 
 /** The archive beside a file: `rulings.md` → `rulings-archive.md`. */

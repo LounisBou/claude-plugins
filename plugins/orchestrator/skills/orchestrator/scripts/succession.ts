@@ -1,117 +1,92 @@
-// succession — the orchestrator's succession brief, generated from the state (decision 0007).
+// succession — the takeover, read from the state alone (decision 0007).
 //
-//   succession.sh live <brief> --next "<the next step>" [--note "<judgment>"]... [--promote <n>=<path>]...
-//   succession.sh check <brief>
-//   (either: [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>])
+//   succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor's tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]
 //
-// The orchestration's name and its dispatch record are read from the brief itself (the
-// predecessor it names, its « Dispatch record » line) unless given; the session id, when given,
-// also matches the round's entries written under it.
+// One owner per fact: the dispatch record's rows hold the work (state, blocker, note, verdict line),
+// the to-do list holds the operator's words and the rows each item turned into, the rulings file
+// holds his rulings, the goals file the spec it names; agents, pull requests and checkouts are read
+// live. So no succession brief is written: the successor runs this command, which prints the fixed
+// instructions of `templates/orchestrator-succession-brief.md` filled from those files, then the
+// Live state, and nothing of it lands in a file.
 //
-// `live` rewrites the brief's « Live state » from the files that hold it — the dispatch record's
-// open rows and its pull request ledger (each open pull request with its repository, its number
-// and who is on it), the deck's agents of this orchestrator, the round's open questions
-// of this session, verbatim — and adds only what needs judgment: the next step and the notes. A
-// note carries the generation it was written in; at the next generation it is promoted into an
-// artifact (`--promote <n>=<path>`, the path of the decision, ruling or record it now lives in) or
-// dropped, never carried: each one dropped is said on stderr. At most NOTES_MAX notes of at most
-// NOTE_CHARS characters each. The brief's size is printed, the measure of the generation.
+// The Live state: the open rows at level 1; their owners, an open row's live agent by its label
+// word, « ruling » for a deferred one, else its blocker checked on its artifact (the pull request
+// merged, the row closed, the release installed): fallen and with no agent, READY NOT STARTED; an
+// open row with no blocker recorded reads NO OWNER; the record's pull request ledger; the deck's
+// agents of this orchestration; the round's open questions, verbatim; the to-do items pointing to a
+// row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
+// and the merged pull requests not installed.
 //
-// `live` also brings the brief's takeover reading steps to the template's lean form (`leanSteps`): a
-// standing brief keeps the orders of the template it came from, and says on stderr how many it changed.
-//
-// `live` then prunes the rulings and state files the brief names (`prune.ts`): what is carried
-// out, superseded or older than the live summary moves to an archive beside each, never read at
-// takeover; and it archives the round's entries settled over a day ago (round-archive's rule). It prints what moved and the characters a takeover reads, brief and both files,
-// before and after: after, the rulings without their entries for one open item.
-//
-// `check` refuses (exit 1) a brief that misses an open item of the state: an open row, an open
-// pull request, a running agent or a pending question, each one it misses named.
+// The orchestration's name is the record's owner (`<record>.owner`) unless given. Before printing,
+// the command moves the rulings carried out or superseded, and those for rows the record closed, to
+// the archive beside the rulings file (`prune.ts`), and the round's entries settled over a day ago
+// (round-archive's rule): what a takeover reads is only what is live. Its measure goes to stderr.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readText, writeAtomic } from '../../../core/store.ts'
+import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
-import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
+import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
 import { ledgerLines, prKey, statusText } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
-import { pruneFile, pruneRulings, pruneState, readAtTakeover, type Pruned, type PruneResult } from './prune.ts'
-import { recordNamedIn } from './lib/record-paths.ts'
-import { auditRun, pointerOf, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
-import { prRefsOf } from '../../../core/learning.ts'
+import { pruneFile, pruneRulings, readAtTakeover, type PruneResult } from './prune.ts'
+import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
+import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 
 export const USAGE =
-  'usage: succession.sh live|check <brief> [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
+  'usage: succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]'
 
-export const NOTES_MAX = 5
-export const NOTE_CHARS = 300
-export const HEADER = '# Orchestrator succession brief'
-
-/** The fields of the Live state, by the start of their line in the template. */
-export const FIELDS = {
-  rows: '- Rows open (',
-  prs: '- Pull requests open (',
-  agents: '- Agents running (',
-  questions: "- The operator's open questions",
-  next: '- The next step:',
-  owners: '- Row owners (',
-  installed: '- Installed plugin (',
-  notes: '- Notes of judgment (',
-} as const
+const here = dirname(fileURLToPath(import.meta.url))
+/** The fixed text of the successor's instructions, in the plugin. */
+export const TEMPLATE = join(here, '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
 
 export interface Request {
-  readonly command: 'live' | 'check'
-  readonly brief: string
+  readonly record: string
+  readonly mode: string
+  readonly tty: string
   readonly name: string
   readonly session: string
-  readonly record: string
-  readonly next: string
-  readonly notes: readonly string[]
-  readonly promotions: ReadonlyMap<number, string>
+  readonly worktree: string
 }
 
 /** The request the command line makes, or the reason it is refused. */
-export function parseArgs(argv: readonly string[]): Request | { readonly error: string } {
-  const [command = '', brief = '', ...rest] = argv
-  if (command !== 'live' && command !== 'check') return { error: USAGE }
-  if (brief === '') return { error: USAGE }
+export function parseArgs(argv: readonly string[], cwd: string): Request | { readonly error: string } {
+  const [command = '', record = '', ...rest] = argv
+  if (command !== 'takeover' || record === '' || record.startsWith('--')) return { error: USAGE }
   const values: Record<string, string> = {}
-  const notes: string[] = []
-  const promotions = new Map<number, string>()
   for (let k = 0; k < rest.length; k += 2) {
     const flag = rest[k] ?? ''
     const value = rest[k + 1]
+    if (!['--mode', '--tty', '--name', '--session', '--worktree'].includes(flag)) return { error: `unknown argument: ${flag} (${USAGE})` }
     if (value === undefined) return { error: `${flag} needs a value` }
-    if (flag === '--note') notes.push(value.trim())
-    else if (flag === '--promote') {
-      const match = /^([0-9]+)=(.+)$/.exec(value)
-      if (!match) return { error: `--promote takes <n>=<path>, the note's number and the artifact it now lives in: ${value}` }
-      promotions.set(Number(match[1]), match[2] ?? '')
-    } else if (['--name', '--session', '--record', '--next'].includes(flag)) values[flag.slice(2)] = value
-    else return { error: `unknown argument: ${flag} (${USAGE})` }
+    values[flag.slice(2)] = value
   }
-  if (command === 'live' && !values['next']?.trim()) return { error: '--next is required: the next step is the successor\'s first decision' }
-  if (notes.some(note => note === '')) return { error: 'a --note is empty' }
-  if (notes.length > NOTES_MAX) return { error: `${notes.length} notes: at most ${NOTES_MAX}; promote the others into an artifact` }
-  const long = notes.find(note => note.length > NOTE_CHARS)
-  if (long !== undefined) return { error: `a note is ${long.length} characters, over ${NOTE_CHARS}: ${long.slice(0, 60)}…` }
-  return {
-    command, brief, name: values['name'] ?? '', session: values['session'] ?? '', record: values['record'] ?? '',
-    next: (values['next'] ?? '').trim(), notes, promotions,
-  }
+  const mode = values['mode'] ?? ''
+  if (mode !== 'build' && mode !== 'investigate') return { error: '--mode build|investigate is required: the mode the successor was launched in' }
+  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree: values['worktree'] ?? cwd }
 }
 
-/** One open question of the round, as the brief carries it. */
+/** One open question of the round, as the takeover prints it. */
 export interface Question {
   readonly id: string
   readonly text: string
 }
 
+/** An open row, as the takeover reads it. */
+export interface OpenRow {
+  readonly id: string
+  readonly line: string
+  readonly label?: string
+  readonly ruling?: string
+  /** What the row waits on; undefined when none was recorded. */
+  readonly blocker?: string
+}
+
 /** What the state holds open for this orchestrator. */
 export interface OpenState {
-  readonly rows: readonly { readonly id: string; readonly line: string; readonly label?: string; readonly ruling?: string }[]
+  readonly rows: readonly OpenRow[]
   readonly prs: readonly string[]
   readonly agents: readonly string[]
   readonly questions: readonly Question[]
@@ -180,11 +155,21 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
+/** The open rows of a record's rows, as the takeover reads them. */
+export function openRows(rows: readonly Row[]): OpenRow[] {
+  return rows.filter(row => row['state'] === 'open').map(row => ({
+    id: String(row['id']),
+    line: openLine(row),
+    label: String(row['label'] ?? ''),
+    ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
+    ...(typeof row['blocker'] === 'string' ? { blocker: row['blocker'] } : {}),
+  }))
+}
+
 /** Reads the state this orchestrator holds open from the files that keep it. */
 export function readOpen(request: Request, env: Env): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
-  const rows = parseRecord(recordText).filter(row => row['state'] === 'open')
   // The ledger names each pull request it attends with its own repository: the deck lists numbers
   // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
   // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
@@ -193,45 +178,57 @@ export function readOpen(request: Request, env: Env): OpenState {
   const round = join(state, 'round')
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
-    rows: rows.map(row => ({ id: String(row['id']), line: openLine(row), label: String(row['label'] ?? ''), ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '' })),
+    rows: openRows(parseRecord(recordText)),
     prs,
     agents,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
   }
 }
 
-/** A note as the brief keeps it: its number, the generation it was written in, its text. */
-export interface Note {
-  readonly generation: number
-  readonly text: string
-}
-
-const GENERATION = /^<!-- generation: ([0-9]+) -->$/m
-const NOTE = /\[g([0-9]+)\] (.+?)(?= · \[g[0-9]+\] |$)/g
-
-/** The generation a brief was last written at, 0 when it never was. */
-export function generationOf(brief: string): number {
-  return Number(GENERATION.exec(brief)?.[1] ?? 0)
-}
-
-/** The notes a brief carries, in order. */
-export function notesOf(brief: string): Note[] {
-  const line = brief.split('\n').find(l => l.startsWith(FIELDS.notes))
-  const value = line?.slice(line.indexOf('): ') + 3) ?? ''
-  return [...value.matchAll(NOTE)].map(m => ({ generation: Number(m[1]), text: (m[2] ?? '').trim() }))
-}
-
 const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.join('; '))
 
 const alnum = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
 
+/** Whether a blocker has fallen, read on its artifact: fallen, still standing, or not readable now. */
+export type Fall = 'fallen' | 'standing' | 'unread'
+
+/** The facts a blocker is checked against: the record's rows, a pull request's state on the forge, the installed copy. */
+export interface Artifacts {
+  readonly rows: readonly Row[]
+  /** `MERGED`, `OPEN` or `CLOSED`; undefined when the forge cannot be read. */
+  readonly prState: (repo: string, pr: number) => string | undefined
+  /** `notInstalled`'s line: '' when it cannot be read. */
+  readonly installed: () => string
+}
+
+/** A blocker checked on its artifact. */
+export function fallOf(blocker: string, facts: Artifacts): Fall {
+  if (blocker === 'none') return 'fallen'
+  const row = /^row ([0-9]+) closed$/.exec(blocker)
+  if (row) {
+    const found = facts.rows.find(r => r['id'] === Number(row[1]))
+    return found === undefined ? 'unread' : found['state'] === 'closed' ? 'fallen' : 'standing'
+  }
+  const pr = /^PR ([^#\s]+)#([0-9]+) merged$/.exec(blocker)
+  if (pr) {
+    const state = facts.prState(pr[1] ?? '', Number(pr[2]))
+    return state === undefined ? 'unread' : state === 'MERGED' ? 'fallen' : 'standing'
+  }
+  if (blocker === 'release installed') {
+    const line = facts.installed()
+    return line === '' ? 'unread' : line.startsWith('0 ') ? 'fallen' : 'standing'
+  }
+  return 'unread'
+}
+
 /**
  * Who works each open row, from the facts the state holds: the agents of the deck carry the row's
- * label word as their name (`Agent: takeoverlean` for `TAKEOVERLEAN: …`, listed without its role prefix), no record names the
- * agent of a row. A deferred row reads « ruling », an open row with neither a live agent nor a
- * ruling reads « NO OWNER », so that it is seen at takeover, not found idle later.
+ * label word as their name (`Agent: takeoverlean` for `TAKEOVERLEAN: …`, listed without its role
+ * prefix). A deferred row reads « ruling »; a row with no agent reads its blocker checked on its
+ * artifact: READY NOT STARTED once it has fallen, `blocked: <blocker>` while it stands, `blocker
+ * unread: <blocker>` when its artifact cannot be read; a row with no blocker recorded reads NO OWNER.
  */
-export function ownersOf(open: OpenState): string[] {
+export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () => 'unread'): string[] {
   return open.rows.map(row => {
     if ((row.ruling ?? '') !== '') return `${row.id} ruling`
     const word = alnum(/^[A-Za-z0-9]+/.exec(row.label ?? '')?.[0] ?? '')
@@ -239,19 +236,30 @@ export function ownersOf(open: OpenState): string[] {
       const own = alnum(name.replace(/^Agent:\s*/, ''))
       return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
     })
-    return `${row.id} ${agent === undefined ? 'NO OWNER' : agent.replace(/^Agent:\s*/, '')}`
+    if (agent !== undefined) return `${row.id} ${agent.replace(/^Agent:\s*/, '')}`
+    if (row.blocker === undefined) return `${row.id} NO OWNER`
+    const fell = fall(row.blocker)
+    return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : fell === 'standing' ? `blocked: ${row.blocker}` : `blocker unread: ${row.blocker}`}`
   })
+}
+
+/** The open to-do items of the orchestration that point to a row the record closed or does not hold. */
+export function todoStray(todoText: string, rows: readonly Row[]): string[] {
+  return openTodos(todoItems(todoText)).flatMap(item => (item.rows ?? []).flatMap(id => {
+    const row = rows.find(r => r['id'] === id)
+    if (row === undefined) return [`to-do ${item.id} → row ${id} missing`]
+    return row['state'] === 'closed' ? [`to-do ${item.id} → row ${id} closed`] : []
+  }))
 }
 
 /**
  * The merged pull requests of the project's main that touch this plugin since the commit the
  * installed copy was built from, `<n> merged PRs not installed, oldest <h> h`: a git log against
- * the sha the host recorded for its install, read in the brief's worktree on its local `origin/main`
+ * the sha the host recorded for its install, read in the worktree on its local `origin/main`
  * (no fetch). Empty where any of it cannot be read: a line is said only when it is known.
  */
-export function notInstalled(brief: string, env: Env, now: Date): string {
+export function notInstalled(worktree: string, env: Env, now: Date): string {
   try {
-    const worktree = /worktree `([^`{}]+)`/.exec(brief)?.[1] ?? ''
     if (worktree === '' || worktree === 'none') return ''
     const installed = JSON.parse(readText(join(configDir(env), 'plugins', 'installed_plugins.json')) ?? '{}') as { plugins?: Record<string, { gitCommitSha?: unknown }[]> }
     const entry = Object.entries(installed.plugins ?? {}).find(([key]) => key.startsWith('orchestrator@'))?.[1]?.[0]
@@ -269,128 +277,61 @@ export function notInstalled(brief: string, env: Env, now: Date): string {
   }
 }
 
-/** The Live state's lines, generated: each field the template names, the notes last. */
-export function liveLines(open: OpenState, next: string, notes: readonly Note[], generation: number, installed = ''): Map<string, string> {
-  const questions = open.questions.map(q => `[${q.id}] ${q.text}`)
-  return new Map([
-    [FIELDS.rows, `- Rows open (id, label, what remains): ${list(open.rows.map(row => row.line))}`],
-    [FIELDS.prs, `- Pull requests open (number, head, where each stands): ${list(open.prs)}`],
-    [FIELDS.agents, `- Agents running (name and reference, brief path): ${list(open.agents)}`],
-    [FIELDS.questions, `- The operator's open questions, each verbatim (its \`Question i of N\` block whole), with its round entry id, or \`none\`: ${questions.length === 0 ? 'none' : questions.join('\n\n')}`],
-    [FIELDS.next, `- The next step: ${next}`],
-    [FIELDS.owners, `- Row owners (an open row's live agent by its label word, « ruling » for a deferred one, « NO OWNER » for neither): ${list(ownersOf(open))}`],
-    ...(installed === '' ? [] : [[FIELDS.installed, `- Installed plugin (merged on main since the installed copy was built, by git log): ${installed}`] as [string, string]]),
-    [FIELDS.notes, `- Notes of judgment (generation ${generation}, at most ${NOTES_MAX}; each is promoted into an artifact or dropped at the next succession): ${notes.length === 0 ? 'none' : notes.map(n => `[g${n.generation}] ${n.text}`).join(' · ')}`],
-  ])
-}
-
-/**
- * The brief with its Live state rewritten: the section's prose stays, and everything from its
- * first field to the next heading is the generated fields; the generation is marked under the
- * header. The generator owns the fields: a hand edit of them is gone at the next generation.
- */
-export function rewrite(brief: string, lines: ReadonlyMap<string, string>, generation: number): string | { readonly error: string } {
-  const all = brief.split('\n')
-  const start = all.findIndex(line => line.startsWith('## Live state'))
-  if (start === -1) return { error: 'the brief has no « Live state » section: instantiate templates/orchestrator-succession-brief.md' }
-  let end = all.findIndex((line, i) => i > start && /^#{1,2} /.test(line))
-  if (end === -1) end = all.length
-  const first = all.findIndex((line, i) => i > start && i < end && line.startsWith('- '))
-  const prose = all.slice(start + 1, first === -1 ? end : first)
-  while (prose.length > 0 && prose[prose.length - 1] === '') prose.pop()
-  const head = all.slice(0, start + 1).filter(line => !GENERATION.test(line))
-  const top = head.findIndex(line => line.startsWith(HEADER))
-  head.splice(top + 1, 0, '', `<!-- generation: ${generation} -->`)
-  const body = [...head, ...prose, '', ...lines.values(), '', ...all.slice(end)]
-  return body.join('\n').replace(/\n{3,}/g, '\n\n')
-}
-
-/** The successor's reference beside these scripts: an installed copy may lack it, and its pointer is then left as it is. */
-const successorReference = fileURLToPath(new URL('../references/succession-successor.md', import.meta.url))
-
-/**
- * The takeover's reading steps of a standing brief, in the form the template gives them now. A
- * standing brief is kept from one generation to the next and only its Live state is rewritten, so
- * it keeps the reading orders of the template it came from: the whole rulings file, the whole goals
- * table, every project's checkouts. Each stale order below is replaced by its lean form, the
- * rulings file read by `grep -v` on its entries for one open item, the goals without their met
- * rows, the checkouts of the brief's own project; a brief already lean is left as it is.
- */
-export function leanSteps(brief: string, rulings: string, successor = true): { readonly text: string; readonly refreshed: number; readonly left: number } {
-  const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
-  // A title that is no `owner/name` or `name` (spaces, parentheses) is no argument of a command: that step is left alone.
-  // The replacement strings read `$` as a pattern: a path carrying one is escaped.
-  const lit = (value: string): string => value.replaceAll('$', '$$$$')
-  const steps: [RegExp, string][] = [
-    ...(rulings === '' || rulings === 'none' ? [] : [[
-      /^1\. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole\.$/m,
-      `1. Read the rulings that bind now, \`grep -v '\\[for: ' ${lit(rulings)}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`,
-    ] as [RegExp, string]]),
-    [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
-    ...(!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/.test(project) ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
-    // The pointer moves only where the successor reference is installed beside these scripts; else it stays, and is counted.
-    ...(successor ? [[/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'] as [RegExp, string]] : []),
-  ]
-  let text = brief
-  let refreshed = 0
-  for (const [stale, lean] of steps) {
-    const next = text.replace(stale, lean)
-    if (next !== text) refreshed++
-    text = next
-  }
-  // A stale order worded otherwise is not rewritten: it is counted, so that the caller says it.
-  const left = [/Read the rulings file WHOLE/, /goals [^`\n]* status`, read whole/, /workspace\.sh list`/, /`references\/lifecycle\.md`, « Succession/].filter(marker => marker.test(text)).length
-  return { text, refreshed, left }
-}
-
-/** The open items of the state a brief does not name: each row id, pull request, agent and question id. */
-export function missingItems(brief: string, open: OpenState): string[] {
-  const live = liveSection(brief)
-  const missing: string[] = []
-  for (const row of open.rows) if (!new RegExp(`(?:open|deferred)=${row.id}\\b`).test(live)) missing.push(`dispatch row ${row.id}`)
-  for (const pr of open.prs) {
-    const key = pr.split(' ')[0] ?? pr
-    if (!live.includes(key)) missing.push(`pull request ${key}`)
-  }
-  for (const agent of open.agents) if (!live.includes(agent)) missing.push(`agent ${agent}`)
-  for (const question of open.questions) if (!live.includes(question.id)) missing.push(`question ${question.id}`)
-  return missing
-}
-
-function liveSection(brief: string): string {
-  const start = brief.indexOf('## Live state')
-  if (start === -1) return ''
-  const rest = brief.slice(start + 1)
-  const end = rest.search(/\n#{1,2} /)
-  return end === -1 ? rest : rest.slice(0, end)
-}
-
-/** The orchestration's name and dispatch record as the brief names them, when it does. */
-export function namedIn(brief: string): { name: string; record: string } {
-  return {
-    name: /SUCCESSOR ORCHESTRATOR of `([^`{}]+)`/.exec(brief)?.[1] ?? '',
-    record: recordNamedIn(brief),
+/** A pull request's state on the forge (`gh pr view`), undefined when it cannot be read. */
+export function forgeState(env: Env): (repo: string, pr: number) => string | undefined {
+  return (repo, pr) => {
+    try {
+      const state = execFileSync('gh', ['pr', 'view', String(pr), '-R', repo, '--json', 'state', '-q', '.state'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
+      }).trim()
+      return state === '' ? undefined : state
+    } catch {
+      return undefined
+    }
   }
 }
 
-/** The rulings and state files a brief names, `~/` read as the home; '' where it names none. */
-export function prunedFilesOf(brief: string, home: string): { rulings: string; state: string } {
-  const path = (found: string | undefined) => (found === undefined ? '' : found.startsWith('~/') ? join(home, found.slice(2)) : found)
-  return {
-    rulings: path(/^- Standing rulings: `([^`{}]+)`/m.exec(brief)?.[1]),
-    state: path(/state file `([^`{}]+)`/.exec(brief)?.[1]),
+/** The project sheet from `goals.md`: the objective, the spec it names, the goals met and the open ones with their plan. */
+export function projectSheet(goals: string | undefined, installed: string): string {
+  const parts: string[] = []
+  if (goals === undefined) parts.push('no goals.md beside the record')
+  else {
+    const value = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals)?.[1]?.trim() ?? ''
+    const rows = goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
+    const open = rows.filter(cells => cells[2] !== 'met')
+    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`, `goals met=${rows.length - open.length}/${rows.length}`)
+    if (open.length > 0) parts.push(`open: ${open.map(cells => `${cells[1]} ${cells[2]} (plan: ${cells[4] || 'none'})`).join(', ')}`)
   }
+  if (installed !== '') parts.push(`installed: ${installed}`)
+  return parts.join('; ')
 }
 
-function prune(path: string, how: (text: string, archive: string) => Pruned, now: Date, io: Io): PruneResult {
-  if (path === '' || path === 'none') return { moved: 0, before: 0, after: 0, warnings: [] }
-  const result = pruneFile(path, how, now)
+/** The project a takeover names to `workspace.sh list`: the worktree's `origin` as `owner/name`, else the record's directory. */
+export function projectOf(worktree: string, record: string): string {
+  try {
+    const url = execFileSync('git', ['-C', worktree, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).trim()
+    const found = /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1]
+    if (found !== undefined) return found
+  } catch {
+    // No git, no origin: the record's directory names the project.
+  }
+  return basename(dirname(record))
+}
+
+/** The fixed instructions filled: each placeholder of the template by its value. */
+export function fill(template: string, values: Readonly<Record<string, string>>): string {
+  return template.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key: string) => values[key] ?? whole)
+}
+
+function prune(path: string, closed: ReadonlySet<number>, now: Date, io: Io): PruneResult {
+  if (!existsSync(path)) return { moved: 0, before: 0, after: 0, warnings: [] }
+  const result = pruneFile(path, (text, archive) => pruneRulings(text, archive, closed), now)
   for (const warning of result.warnings) io.err(`succession: ${path}: ${warning}\n`)
   return result
 }
 
 // The round's entries settled over a day ago, moved to its archive as `round-archive` moves them:
-// a move that fails is said, and the succession goes on.
+// a move that fails is said, and the takeover goes on.
 function archiveRound(state: string, now: Date, io: Io): number {
   try {
     return archiveSettled(join(state, 'round'), now)
@@ -400,78 +341,69 @@ function archiveRound(state: string, now: Date, io: Io): number {
   }
 }
 
-export function main(argv: readonly string[], env: Env, io: Io, now: () => Date = () => new Date(), journal?: Journal): number {
-  const parsed = parseArgs(argv)
+export interface Deps {
+  readonly cwd: string
+  readonly now: () => Date
+  readonly prState?: (repo: string, pr: number) => string | undefined
+}
+
+export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
+  const parsed = parseArgs(argv, deps.cwd)
   if ('error' in parsed) {
     io.err(`succession: ${parsed.error}\n`)
     return 2
   }
-  const brief = readText(parsed.brief)
-  if (brief === undefined || !brief.startsWith(HEADER)) {
-    io.err(`succession: ${parsed.brief} is no orchestrator succession brief (its first line is « ${HEADER} — <project> »)\n`)
+  const recordText = readText(parsed.record)
+  if (recordText === undefined) {
+    io.err(`succession: no dispatch record at ${parsed.record}\n`)
     return 2
   }
-  const named = namedIn(brief)
-  const request: Request = { ...parsed, name: parsed.name || named.name, record: parsed.record || named.record }
-  if (request.name === '' || request.record === '') {
-    io.err(`succession: the brief names no ${request.name === '' ? 'predecessor (« SUCCESSOR ORCHESTRATOR of `<name>` »)' : '« Dispatch record » path'}: pass --${request.name === '' ? 'name' : 'record'}\n`)
+  const name = parsed.name || (readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() || ''
+  if (name === '') {
+    io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration: pass --name "<Orch: x>"\n`)
     return 2
   }
+  const template = readText(TEMPLATE)
+  if (template === undefined) {
+    io.err(`succession: the plugin's template ${TEMPLATE} cannot be read\n`)
+    return 2
+  }
+  const now = deps.now()
+  const all = parseRecord(recordText)
+  const rulingsFile = join(dirname(parsed.record), 'rulings.md')
+  const rulings = prune(rulingsFile, new Set(all.filter(row => row['state'] === 'closed').map(row => Number(row['id']))), now, io)
+  const round = archiveRound(stateRoot(env), now, io)
+  const request: Request = { ...parsed, name }
   const open = readOpen(request, env)
-  if (request.command === 'check') {
-    const missing = missingItems(brief, open)
-    if (missing.length === 0) {
-      io.out(`complete: ${open.rows.length} rows, ${open.prs.length} pull requests, ${open.agents.length} agents, ${open.questions.length} questions\n`)
-      return 0
-    }
-    for (const item of missing) io.err(`succession: the brief misses ${item}: run succession.sh live\n`)
-    // A brief that would hand over less than the state holds: the method's failure, counted, its words left out.
-    const pointer = pointerOf(resolve(parsed.brief), env)
-    writeAudit(journal, auditRun(env, now()), 'failure', 'orchestrator.succession.lost-state',
-      { failure: 'succession-lost-state', count: missing.length, prs: prRefsOf(missing.join(' ')) },
-      { evidence: pointer === null ? [] : [{ type: 'record', path: pointer }] })
-    return 1
-  }
-  const generation = generationOf(brief) + 1
-  const old = notesOf(brief)
-  for (const [n, path] of request.promotions) {
-    if (n < 1 || n > old.length) {
-      io.err(`succession: --promote ${n}: the brief carries ${old.length} notes\n`)
-      return 2
-    }
-    if (!existsSync(path)) {
-      io.err(`succession: --promote ${n}=${path}: no such artifact\n`)
-      return 2
-    }
-  }
-  old.forEach((note, i) => {
-    const promoted = request.promotions.get(i + 1)
-    io.err(promoted === undefined
-      ? `succession: note ${i + 1} of generation ${note.generation} dropped: ${note.text}\n`
-      : `succession: note ${i + 1} of generation ${note.generation} promoted to ${promoted}\n`)
+  let installed: string | undefined
+  const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
+  const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine }
+  const owners = ownersOf(open, blocker => fallOf(blocker, facts))
+  const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
+  const project = projectOf(parsed.worktree, parsed.record)
+  const text = fill(template, {
+    PROJECT: project,
+    MODE: parsed.mode,
+    PREDECESSOR_NAME_PATTERN: name,
+    AGENT_NAME_PATTERN: 'Agent: <subject>',
+    RULINGS_FILE: existsSync(rulingsFile) ? rulingsFile : 'none',
+    SCRIPTS: here,
+    DISPATCH_RECORD: parsed.record,
+    LAUNCHER: join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh'),
+    PREDECESSOR_TTY: parsed.tty,
+    LIVE_ROWS: list(open.rows.map(row => row.line)),
+    LIVE_OWNERS: list(owners),
+    LIVE_PULL_REQUESTS: list(open.prs),
+    LIVE_AGENTS: list(open.agents),
+    LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
+    LIVE_TODO: list(stray),
+    PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
-  const notes = request.notes.map(text => ({ generation, text }))
-  const written = rewrite(brief, liveLines(open, request.next, notes, generation, notInstalled(brief, env, now())), generation)
-  if (typeof written !== 'string') {
-    io.err(`succession: ${written.error}\n`)
-    return 2
-  }
-  const files = prunedFilesOf(written, env['HOME'] ?? '')
-  const lean = leanSteps(written, files.rulings, existsSync(successorReference))
-  writeAtomic(request.brief, lean.text)
-  if (lean.refreshed > 0) io.err(`succession: ${lean.refreshed} reading step(s) of the brief brought to the template's lean form\n`)
-  if (lean.left > 0) io.err(`succession: ${lean.left} reading step(s) of the brief still follow an older template (whole rulings, whole goals, every checkout or the lifecycle.md pointer): word them as templates/orchestrator-succession-brief.md does\n`)
-  // A ruling for rows all closed in the dispatch record is carried out: it moves as a `done` one.
-  const closed = new Set(parseRecord(readText(request.record) ?? '').filter(row => row['state'] === 'closed').map(row => Number(row['id'])))
-  const rulings = prune(files.rulings, (text, archive) => pruneRulings(text, archive, closed), now(), io)
-  const state = prune(files.state, pruneState, now(), io)
-  const round = archiveRound(stateRoot(env), now(), io)
-  // Before: the rulings file read whole. After: the part a takeover reads, its entries for one open item left out.
-  const read = files.rulings === '' || files.rulings === 'none' ? 0 : readAtTakeover(readText(files.rulings) ?? '').length
-  const takeover = (side: 'before' | 'after') => lean.text.length + (side === 'before' ? rulings.before : read) + state[side]
-  io.out(`generation=${generation} chars=${lean.text.length} rows=${open.rows.length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} notes=${notes.length} pruned=rulings:${rulings.moved},state:${state.moved},round:${round} takeover_chars=${takeover('before')}->${takeover('after')}\n`)
+  io.out(text.endsWith('\n') ? text : `${text}\n`)
+  const read = existsSync(rulingsFile) ? readAtTakeover(readText(rulingsFile) ?? '').length : 0
+  io.err(`takeover: chars=${text.length} rulings_read=${read} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=rulings:${rulings.moved},round:${round}\n`)
   return 0
 }
 
 /* node:coverage ignore next */
-if (isEntry(import.meta.url)) process.exitCode = main(process.argv.slice(2), process.env, processIo, () => new Date(), scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)))
+if (isEntry(import.meta.url)) process.exitCode = main(process.argv.slice(2), process.env, processIo)
