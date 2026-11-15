@@ -45,7 +45,7 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 - You write nothing and post nothing: no edit, no commit, no comment on the pull request, no reply to anyone but the orchestrator.
 - The worktree shares its source's `.git/config`, and a change there reaches the session that owns it too: no git configuration write of any kind, `-c` on the command line only, never `git config`.
 - No implementation delegates; sub-agents are readers only.
-- No re-run of the project's full test suite; a targeted command that decides a finding is allowed, wrapped in a timeout and piped to `tail` in the same call.
+- No re-run of the project's full test suite; a targeted command that decides a finding is allowed, wrapped in a timeout and piped to `tail` in the same call; pass `timeout: 600000` too, or the host backgrounds it at 120 s.
 - If a finding needs something outside this list to be shown, say so in the report instead of doing it.
 
 ## 6. Communication
