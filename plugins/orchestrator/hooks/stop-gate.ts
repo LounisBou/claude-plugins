@@ -14,7 +14,6 @@
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
-import { machineLine } from '../core/method.ts'
 import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
 import type { Host } from './host.ts'
@@ -183,12 +182,6 @@ export function blocksNothing(line: string): boolean {
   if (matched === null) return false
   const reason = (matched[1] ?? '').trim().replace(/\.$/, '').trim()
   return NOTHING_BLOCKED.test(reason) && !NAMES_SOMETHING.test(reason)
-}
-// The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
-const HANDED_OVER = /^handed over$/i
-// Whether the message ends on the predecessor's last word, `handed over`.
-export function endsOnHandOver(message: string): boolean {
-  return HANDED_OVER.test(machineLine(message))
 }
 
 // --- the launcher's listing (stop_gate.py:187-219) ---------------------------------------
@@ -409,17 +402,16 @@ export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
 // are read. The wait it decides on is the one the turn declared (`declared`, declare_wait):
-// a turn that declared none ended on no wait, whatever its last line says. The one line still
-// read off the message is the predecessor's `handed over`, which is no wait. `null` — something
+// a turn that declared none ended on no wait, whatever its last line says. `null` — something
 // will wake the orchestrator — releases the stop; a
 // `{ blocks }` answer is the release the declared wait grants, kept for the log the
 // shell gate writes (its cost figures are read there); 'read-what-is-left' hands the
 // decision to the done branch, which needs the checkouts and the records.
 //
 // Three releases the shell gate did not know, each a state the orchestrator's own
-// skill puts it in: the predecessor of a succession — its last line `handed over`, or
-// a session that has handed over (`handedOver`: it spawned its successor, or asked to
-// end) ending on `waiting: done`, its agents and rows now the successor's; a declared
+// skill puts it in: the predecessor of a succession, a session that has handed over
+// (`handedOver`: it spawned its successor, or asked to end) ending on a declared done,
+// its agents and rows now the successor's; a declared
 // block, honoured before the « stand it down » refusal — an idle agent may be waiting
 // on the very answer the block names; and a ci-watch this session started, still
 // running (`watching`), whose exit wakes it as an agent's idle notice would — and since,
@@ -455,7 +447,6 @@ export function checkWake(facts: {
   agents: readonly OwnAgent[]
   resident: boolean
   delivered: readonly string[]
-  message: string
   declared?: DeclaredWait | null
   handedOver?: boolean
   watching?: boolean
@@ -470,7 +461,6 @@ export function checkWake(facts: {
   const matched = MACHINE_LINE.exec(last)
   const busy = facts.agents.some(a => a.state === 'busy')
   const running = facts.background ?? []
-  if (endsOnHandOver(facts.message)) return null
   if (facts.handedOver && matched && matched[2]) return null
   // A wait on the operator that blocks nothing asks him nothing: the line that fits is named.
   if (blocksNothing(last)) return { case: 'blocks-nothing', reason: blocksNothingReason(busy, running) }
