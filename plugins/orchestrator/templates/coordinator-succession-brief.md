@@ -7,13 +7,9 @@ word on a point outranks this brief and the rulebook both.
 
 ## Your first task, in this exact order
 
-1. **Read** the rulebook and the notes `{{NOTES_FILE}}` (the pull requests each orchestrator holds,
-   the flags sent, and the sessions already announced to). That list is yours as it stands:
-   « Announcing newcomers » compares against it from here on, so you do not re-send the start
-   message to a session it already names.
-   Then run `{{COORDINATOR_SH}}` with `sleeping`: the orchestrators paused on the operator's word. That
-   record is yours as it stands, outlives every succession, and nothing in it is woken or
-   dropped but on his word.
+1. **Read** the rulebook, then the notes once, capped: `head -c 4000 {{NOTES_FILE}}` (the pull
+   requests each orchestrator holds, the flags sent, and the sessions already announced to).
+   That list is yours as it stands: you do not re-send the start message to a session it names.
    Then the round file `{{ROUND_FILE}}` (« none » when no round is open): the open decision round, every question received
    with its sender and status. Carry the round on from its first question not yet sent, grouped by sender as the
    rulebook says; nothing in it is dropped, and the end line counts it whole.
@@ -46,13 +42,11 @@ word on a point outranks this brief and the rulebook both.
 
    The script says « replaced a stale record: {{PREDECESSOR}} »; `lookup` then prints your
    name. A refusal stops you here, reported to the operator verbatim.
-6. **Announce yourself** to every `Orch:` session a fresh `ListAgents` shows, one
+6. **Announce yourself** to every `Orch:` session step 2's `ListAgents` showed, one
    `SendMessage` each, this text verbatim, the brackets filled:
 
-   > The coordinator of this machine is now `<your exact name and reference>`, since
-   > <date -u +%FT%TZ>, taking over from `{{PREDECESSOR}}`. Nothing else changes: every
-   > question meant for the operator still comes to me, and asking me the facts stays
-   > optional and never a gate.
+   > The coordinator of this machine is now `<your exact name and reference>`, taking over
+   > from `{{PREDECESSOR}}`. Nothing else changes; reply nothing.
 
 7. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab
    is closed, and the `collision` and `unread` lines its `facts` prints, run now with
@@ -62,10 +56,3 @@ word on a point outranks this brief and the rulebook both.
 
 - Subject: `Coord: {{SUBJECT}}`.
 - State directory: `{{STATE_DIR}}` — the record and the notes.
-- Your context: the module measures it every turn — read the live state with
-  /orchestrator-status, your own session's row included; if your session's row
-  is not there yet, say so and give no figure rather than estimating — a row is
-  written after a session's turns, and a first read can precede the first of
-  them; at the gate —
-  the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 —
-  you succeed yourself, in the rulebook's order. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
