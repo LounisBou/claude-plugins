@@ -1167,7 +1167,10 @@ async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Pro
 async function wakeForDue($: any): Promise<void> {
   const store = await readStore($)
   const local = store.rows
-  const relayed = (await readRound($)).map(found => found.entry)
+  const round = await readRound($)
+  await withdrawOlder($, round)
+  // An operator entry of an older release is withdrawn above, never told nor due.
+  const relayed = round.map(found => found.entry).filter(entry => entry.kind === 'done')
   // The questions asked with `ask`, told and due as the relay's entries are, read through them only;
   // one claimed by his prompt in its asker's tab has left the pane, and is neither told nor due
   // until that turn's end, while its id stays one the round holds.
@@ -1190,6 +1193,38 @@ async function wakeForDue($: any): Promise<void> {
     return
   }
   await addIds($, await wokenPath($), due.map(entry => entry.id), id => present.has(id))
+}
+
+// The words an older release's operator question is refused or withdrawn with: this release
+// enters none, no pane draws one, and its sender is told to ask it with ask.
+export function olderQuestionText(id: string, done: 'not entered' | 'withdrawn'): string {
+  return `Your question ${id} was ${done}: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`
+}
+
+// Each open operator entry of an older release still in the round, read in the coordinator's own
+// session: withdrawn, by the coordinator, then its sender told — a session of this machine by a
+// message, one of another machine by an answer on the line its ask came by, which clears its
+// wait there. Written before it is told, so a notice is never sent twice; a notice not delivered,
+// or a failure, is one log line.
+async function withdrawOlder($: any, round: readonly { path: string; entry: RoundEntry }[]): Promise<void> {
+  for (const { path, entry } of round) {
+    if (entry.kind !== 'operator' || entry.status !== 'open') continue
+    try {
+      const at = new Date().toISOString()
+      const text = olderQuestionText(entry.id, 'withdrawn')
+      const answer: RoundAnswer = { text: `withdrawn: ${text}`, by: 'coordinator', at }
+      const written = await changeEntry($, path, fresh => !fresh || fresh.status !== 'open' || fresh.kind !== 'operator' ? null : { ...fresh, status: 'withdrawn', answer })
+      if (!written) continue
+      await logLine($, 'supervision', `round: an operator question of an older release withdrawn: ${entry.id}`)
+      const origin = entry.origin
+      const sent = origin
+        ? await $.session.send({ to: origin.address, text: (origin.line === 'q' ? qAnswerLine : answerLine)(entry.id, entry.since, 'withdrawn', at, text) })
+        : await $.session.send({ to: { sessionId: entry.session }, text: `[module] ${text}` })
+      if (!sent?.isDelivered) await logLine($, 'supervision', `round: the withdrawal of ${entry.id} was not delivered: ${sent?.reason ?? 'no answer'}`)
+    } catch (err) {
+      await logLine($, 'supervision', `round: ${entry.id}: ${(err as Error).message}`)
+    }
+  }
 }
 
 // The entries the coordinator's conversation was told of, `<state>/round-told.json`, a JSON list
@@ -2604,7 +2639,7 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
       await logLine($, 'supervision', `receive: an operator question from ${asked.machine} refused, its release asks by its machine line: ${asked.entry.id}`)
       step = 'the refusal'
       const at = new Date().toISOString()
-      const readable = `Your question ${asked.entry.id} was not entered: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`
+      const readable = olderQuestionText(asked.entry.id, 'not entered')
       const line = byEvent ? qAnswerLine : answerLine
       const sent = await $.session.send({ to: from, text: line(asked.entry.id, asked.entry.since, 'refused', at, readable) })
       if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the refusal of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
