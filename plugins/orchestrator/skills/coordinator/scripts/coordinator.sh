@@ -20,7 +20,7 @@
 #                            ones, the urgent first, each level grouped by sender, after one line
 #                            counting the answered and the withdrawn ones it leaves out;
 #                            --all prints those too, the answered then the withdrawn
-#                            (--by-urgency prints the same order)
+#                            (--by-urgency prints the same order, every question's text)
 #   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
 #
@@ -58,7 +58,8 @@
 # chosen in the coordinator's pane and sent to the asking orchestrator, then for each withdrawn one),
 # a line
 #   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | remote on <machine> | sender gone]
-# followed by the question's lines, each indented by four spaces. Without --all, the first line is
+# followed, for an entry the coordinator presents (a due one, a closing proposal) and for every one
+# with --all or --by-urgency, by the question's lines, each indented by four spaces. Without --all, the first line is
 #   settled: <n> answered, <n> withdrawn (round --all prints them)
 # when the round holds any of them, and none of theirs is printed: they are done, and a round that
 # keeps them whole grows with every question ever asked. « remote on <machine> » marks a
@@ -72,7 +73,7 @@
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
 # skipped. Each set is in the round's order: the urgent entries first, then the others; within
 # each level grouped by sender, the groups by their earliest wait in it, each in the order its
-# waits began. round --by-urgency prints the same lines in the same order. An answered entry's lines end on
+# waits began. round --by-urgency prints the same order. An answered entry's lines end on
 #     answered from the pane at <UTC time>: <letter> : <choice text>
 # and those of an entry its sender withdrew on
 #     withdrawn by the sender at <UTC time>: <why>
@@ -622,12 +623,12 @@ remote_machines() {
 }
 
 cmd_round() {
-    local pane=false all=false
+    local pane=false all=false text=false
     while [ $# -gt 0 ]; do
         case "$1" in
-            --all) all=true; shift ;;
-            # Still accepted: the decision round asks for it, and it prints the one order.
-            --by-urgency) shift ;;
+            --all) all=true; text=true; shift ;;
+            # The decision round asks for it: the one order, every question's text.
+            --by-urgency) text=true; shift ;;
             *) die "round: unexpected argument $1" ;;
         esac
     done
@@ -643,7 +644,7 @@ cmd_round() {
     entries=$(round_entries)
     # An entry whose sender's sessions file is absent keeps its place, and its header says the
     # sender is gone: the session ended with its question still open.
-    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson all "$all" --argjson remote "$remote" '
+    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson all "$all" --argjson text "$text" --argjson remote "$remote" '
         # Grouped by sender, the groups by their earliest wait, each in the order its waits began.
         def grouped: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
@@ -664,7 +665,7 @@ cmd_round() {
         | (if (.origin | type) == "object" and $remote[.from] != null then " | remote on \($remote[.from])" elif gone then " | sender gone" else "" end) as $gone
         | (if due then " | due" else "" end) as $due
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
-          (.question | select(. != "") | split("\n")[] | "    " + .),
+          (select($text or due or .kind != "operator") | .question | select(. != "") | split("\n")[] | "    " + .),
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
           (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): \(if (.answer.text | type) == "string" and .answer.text != "" then .answer.text else "a later turn the operator typed in waits on something else" end)"),
           (select(.status == "withdrawn" and .answer.by? == "tab") | "    withdrawn in the sender\u0027s tab at \(.answer.at // "?"): \(.answer.text // "")\(if (.answer.typed | type) == "string" and .answer.typed != "" then " — he typed: \(.answer.typed | gsub("\\s*\n\\s*"; " "))" else "" end)"),
