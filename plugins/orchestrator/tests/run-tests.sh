@@ -2792,8 +2792,9 @@ check "--account-connectors still hands over the chosen servers' file, unchanged
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd --account-connectors | sed -n 's/^mcp=//p')"
 check "--account-connectors pre-answers the project's own server dialog" "1" \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- '"enableAllProjectMcpServers":true')"
+# These read the settings with no install record: a role's plugin cuts are checked in the lean section.
 check "--account-connectors merges into the one --settings JSON already on the launch" "1" \
-  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")"
+  "$(CLAUDE_CONFIG_DIR="$WORK/no-install-record" mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")"
 check "the dry run says the option is on, and off by default" "1|1" \
   "$(mcpd --account-connectors | grep -c '^account_connectors=yes$')|$(mcpd | grep -c '^account_connectors=no$')"
 # No catalogue at all: still drops strict and still pre-answers, and still writes no file —
@@ -2831,11 +2832,11 @@ check "a plain spawn never carries remote control" "0" \
 # up with the setting that turns that default off; only a successor carries the flag
 # instead, never both.
 check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
-  "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(CLAUDE_CONFIG_DIR="$WORK/no-install-record" shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a successor carries the flag, and not the setting" "1|0" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch: f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
 check "--successor --no-remote-control carries the setting" "1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\"}}'")"
+  "$(CLAUDE_CONFIG_DIR="$WORK/no-install-record" succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\"}}'")"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
 # The derived name is held to the SAME shape as a typed one (§42), which retires the
@@ -10888,29 +10889,40 @@ if shard_has 2; then
 # `--disallowedTools` takes several values like `--mcp-config`, so it sits before another
 # option; the roles read their title.
 LEANSTATE="$WORK/leanstate"; mkdir -p "$LEANSTATE/chains"
+# The host's install record this section reads: the plugins a role turns off are found there.
+LCFG_HAD=${CLAUDE_CONFIG_DIR+x}; LCFG_WAS=${CLAUDE_CONFIG_DIR-}
+export CLAUDE_CONFIG_DIR="$WORK/leanconf"; mkdir -p "$CLAUDE_CONFIG_DIR/plugins"
+printf '{"plugins":{"pr-review@m":[],"pr-review-toolkit@o":[],"superpowers@o":[],"norms@m":[],"method@m":[]}}\n' \
+  > "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json"
+LEANOFFAGENT='"enabledPlugins":{"pr-review@m":false,"pr-review-toolkit@o":false}'
+LEANOFFORCH='"enabledPlugins":{"pr-review@m":false,"pr-review-toolkit@o":false,"superpowers@o":false,"norms@m":false}'
 lean() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 leanl() { lean "$@" | sed -n 's/^launch=//p'; }
 # The words between --disallowedTools and the next option, one line.
 leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-config|mcp-config|permission-mode) /'; }
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
-# The tools only an orchestrator calls: an implementer agent is never given them.
-LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
+# The tools only an orchestrator calls: an implementer agent is never given them, nor what an
+# implementer never calls.
+LEANFOUR="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
+LEANIMPL="AskUserQuestion mcp__cloudflare mcp__bugs-bot mcp__pr-review"
+LEANAGENT="$LEANFOUR $LEANIMPL"
 # The servers an orchestrator never calls: its agents run them.
-LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
-# A coordinator and an auditor lose those and the review tools too.
-LEANWATCH="$LEANORCH mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record"
+LEANSERVERS="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
+LEANORCH="$LEANSERVERS mcp__pr-review ReadNotifications"
+# A coordinator and an auditor lose those servers and the review tools too.
+LEANWATCH="$LEANSERVERS mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record"
 check "an agent loses the five unused tools and the four only an orchestrator calls" "$LEANBASE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and the four servers it never calls, and keeps the four" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
-check "a title of no role is read as an agent's: it loses all nine" "$LEANBASE $LEANAGENT" \
+check "a title of no role is read as an agent's: it loses all thirteen" "$LEANBASE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
 check "an auditor loses the five and the review tools, and keeps the four only an orchestrator calls" "$LEANBASE $LEANWATCH" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
-check "--keep-tool brings one of the four back to an agent" "$LEANBASE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
+check "--keep-tool brings one of the four back to an agent" "$LEANBASE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait $LEANIMPL" \
   "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
 check "the coordinator's successor keeps the four and loses the review tools" "$LEANBASE $LEANWATCH" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
@@ -10919,7 +10931,7 @@ check "a successor keeps the four and loses the four servers, as an orchestrator
 check "a woken orchestrator and an opened one keep the four and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
   "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement,mcp__pr-review,ReadNotifications$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
   "$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent: x' | leanset | grep -c .)|$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
@@ -10936,12 +10948,12 @@ check "--drop-tool given the same name twice removes it once, on the launch line
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
-check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
+check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses mcp__norms" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement mcp__pr-review ReadNotifications|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
 check "--drop-tool on a name the role keeps removes it" "$LEANBASE $LEANORCH mcp__orchestrator__end_session" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement --keep-tool mcp__pr-review --keep-tool ReadNotifications | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings --keep-tool mcp__cloudflare --keep-tool mcp__bugs-bot --keep-tool mcp__norms --keep-tool mcp__implement --keep-tool mcp__pr-review --keep-tool ReadNotifications | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
@@ -10951,7 +10963,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c "^SendFeedback Workflow ScheduleWakeup ReportFindings $LEANWATCH WebSearch$")"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review ReadNotifications$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c "^SendFeedback Workflow ScheduleWakeup ReportFindings $LEANWATCH WebSearch$")"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
@@ -10965,7 +10977,7 @@ check "rotate reads a padded name without its padding" "SendFeedback Workflow Sc
 
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
 # listed here (§65).
-check "an agent's settings cut the synced skills, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+check "an agent's settings cut the synced skills, the pr-review plugins, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,'"$LEANOFFAGENT"',"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
   "$(leanl --title 'Agent: x' | leansettings)"
 check "an agent's settings carry no compaction window, and no switch for the 1M window" "0|0" \
   "$(leanl --title 'Agent: x' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent: x' | grep -c 'DISABLE_1M_CONTEXT')"
@@ -10973,16 +10985,20 @@ check "no role's settings carry a compaction window: the host's own setting appl
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit: tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord: ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent: x' | grep -c 'AUTO_COMPACT_WINDOW')"
 check "no role exports a percentage gate: the gate is a token count" "0|0|0|0|0" \
   "$(orchv gspawn --title 'Orch: gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit: gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(succ "$PSTAB" --successor | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(crdl --coordinator-successor --title 'Coord: ops' | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
-check "an orchestrator's settings cut the synced skills and the countdown" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+check "an orchestrator's settings cut the synced skills, the plugins it never uses and the countdown" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,'"$LEANOFFORCH"',"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leansettings)"
-check "a successor, an auditor and the coordinator's successor carry the cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+check "a successor, an auditor and the coordinator's successor carry the cuts and no setting for remote control" '{"syncClaudeAiSkills":false,'"$LEANOFFORCH"',"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit: tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord: ops' | leansettings)"
+check "--keep-tool mcp__pr-review keeps the pr-review plugins too; a coordinator and an auditor turn no plugin off" "0|0|0|0" \
+  "$(leanl --title 'Agent: x' --keep-tool mcp__pr-review | grep -c enabledPlugins)|$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__pr-review | grep -c 'pr-review@m')|$(audl --auditor --title 'Audit: tm' | grep -c enabledPlugins)|$(crdl --coordinator-successor --title 'Coord: ops' | grep -c enabledPlugins)"
+check "a missing install record turns no plugin off, and the spawn goes on" "0|1" \
+  "$(CLAUDE_CONFIG_DIR="$WORK/leanconf-none" leanl --title 'Agent: x' | grep -c enabledPlugins)|$(CLAUDE_CONFIG_DIR="$WORK/leanconf-none" lean --title 'Agent: x' | grep -c '^launch=')"
 check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact | grep -c enableArtifact)|$(orchv leanl --title 'Orch: x' --successor --no-remote-control | grep -c enableArtifact)|$(audl --auditor --title 'Audit: tm' | grep -c enableArtifact)"
-check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,'"$LEANOFFAGENT"',"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | leansettings)"
 
-check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
+check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,'"$LEANOFFAGENT"',"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
   "$(leanl --title 'Agent: x' --keep-synced-skills | leansettings)|$(audl --auditor --title 'Audit: tm' --keep-synced-skills | leansettings)|$(lean --title 'Agent: x' --keep-synced-skills | sed -n 's/^synced_skills=//p')|$(lean --title 'Agent: x' | sed -n 's/^synced_skills=//p')"
 # The launch line first: a rotation that refused the option prints none, and a count of
 # zero on an empty output would pass.
@@ -11054,6 +11070,8 @@ check "no session id and no --transcript is refused, naming both ways out" "1|1"
   "$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools >/dev/null 2>&1; echo $?)|$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools 2>&1 | grep -c 'CLAUDE_CODE_SESSION_ID is unset; pass --transcript <path>')"
 check "a session with no transcript and a missing file are each refused" "1|1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none toolsx | grep -c 'tools: no transcript for session s-none')|$(toolsx --transcript "$WORK/absent.jsonl" | grep -c 'tools: transcript not found')"
+
+if [ -n "$LCFG_HAD" ]; then export CLAUDE_CONFIG_DIR="$LCFG_WAS"; else unset CLAUDE_CONFIG_DIR; fi
 
 fi
 
