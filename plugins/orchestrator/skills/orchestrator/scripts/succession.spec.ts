@@ -347,7 +347,7 @@ function flowWorld() {
   writeFileSync(`${w.record}.owner`, '')
   const config = join(dir, 'config')
   mkdirSync(join(config, 'sessions'), { recursive: true })
-  writeFileSync(join(config, 'sessions', '7.json'), '{"sessionId":"s-flow","name":"Orch: flow [88d177]","updatedAt":9}')
+  writeFileSync(join(config, 'sessions', '7.json'), '{"sessionId":"s-flow","name":"Orch: flow [a1b2c3]","updatedAt":9}')
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 's-flow' }
   const forge: Record<string, { repo: string; pr: number; head: string }[]> = {
     'acme/flow': [{ repo: 'acme/flow', pr: 31, head: fixed }, { repo: 'acme/flow', pr: 40, head: 'd'.repeat(40) }],
