@@ -59,7 +59,7 @@ from this repository's catalogue (`docs/migration.md`).
 12. Force-push protection lives on the forge, with a command that checks and applies it.
 13. The verified defects of each plugin are fixed, each with a test that fails when its fix is reverted.
 14. Each plugin's prompt budget is measured by CI, and the orchestrator's always-loaded method is about 2,000 tokens.
-15. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured at every release.
+15. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured monthly and before any learned method change merges (the operator's answer « A » of 2026-11-14 to question 4 of `learning-design.md`).
 16. The operator's configuration is adapted on its own branch with no stale reference.
 17. The cutover criteria of the migration document are met.
 18. Every strict part of the code holds the coverage floor of the conventions.
@@ -70,8 +70,9 @@ from this repository's catalogue (`docs/migration.md`).
 
 ## State on main (2026-11-15)
 
-What the code on `main` (`d540c0c6`, release 3.1) holds for each goal, read from the code and CI
-on 2026-11-15, not from the history, rows 5, 6, 9, 14, 17 and 18 again at `775d7fdc`; the previous reading was `b36f7ae2` (2026-11-14). Pull
+What the code on `main` holds for each goal, read from the code and CI on 2026-11-15, not from the
+history: rows 4, 5, 6, 13, 15 and 17 at `4ca6f735` (claude-plugins#342), the others at `775d7fdc`
+or `d540c0c6` (release 3.1). Pull
 requests are named with the repository, `claude-plugins#N`. « Open » says what is left and why;
 a goal is met only when its row says so, and a met row names its pull requests. Goals 2, 16 and
 17 are about the operator's machines and configuration, outside this repository: their rows say
@@ -82,26 +83,26 @@ what was read there.
 | 1 | met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is run without a shell, its command split into words (`_check_argv`), and refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | — |
 | 2 | met | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check`; the operator installs from the `lounisbou` catalogue in his own profile, the plan's separate one having been left, and `npm run deploy` installs each green commit of `main` on his MacBook by itself (claude-plugins#264, claude-plugins#266, claude-plugins#272; `d540c0c6` is the commit installed) | — (the install on IznoServer is the cutover's step 2, goal 17) |
 | 3 | met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); cloudflare's read/write classification is data in `hooks/register.ts`, read by `engine/cf.py`; pr-review runs github's installer (claude-plugins#29) | — |
-| 4 | partly met | typed in core with a version: PR records, the `tests` kind of a stacked pull request's light CI included (tested from both sides, `scripts/contracts.test.ts`; claude-plugins#242), consent records (claude-plugins#78), the learning events and the install record, the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`); the launcher's `spawn` line and the `ListAgents` reading are core's | `deck.json` and the declared wait kinds are not typed in core, and the launcher's command lines carry no version (`docs/contracts.md`) |
-| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, github, implement, learning, norms, pr-review, statusbar and telemetry, and twelve of the orchestrator's, one of them by import; every plugin's hook tests run in its suite, so in CI (`claude plugin test`) | 26 hook files are outside the strict check, the orchestrator's, 8 of them typing `$` as `any`; under the check, 20 hook files of bugs-bot, cloudflare, implement, norms, pr-review and statusbar type their handlers' `$` as `any`, 190 times, against « No `any` » (`docs/conventions.md`) |
-| 6 | met | `ci/plugins.json`: twelve plugins block on Linux and macOS, drift running only at the release and the night (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); a pull request runs the Linux suites of what it changes, `main` every plugin but drift on Linux, macOS the release and each night (`scripts/plugin-matrix.ts`) | — |
+| 4 | partly met | typed in core with a version: PR records, the `tests` kind of a stacked pull request's light CI included (tested from both sides, `scripts/contracts.test.ts`; claude-plugins#242), consent records (claude-plugins#78), the learning events and the install record, the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`), `deck.json`, the declared wait kinds and the state directories (claude-plugins#335); the launcher's `spawn` line and the `ListAgents` reading are core's | the rows of `docs/contracts.md` whose « Target » is not reached: the launcher's command lines carry no version, the dispatch record's events are read from its command lines, pushed heads are known only to the session that pushed, the orchestrator's plans are not read through `method.ts`, the round files' path and the weekly report's registry name are not core's, the old question lines between machines remain, and `ListAgents` waits on the host |
+| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, github (claude-plugins#334), implement, learning, norms, pr-review, statusbar and telemetry, and 16 of the orchestrator's 38; every plugin's hook tests run in its suite, so in CI (`claude plugin test`) | 22 of the orchestrator's hook files are outside the strict check, `supervision.ts` typing `$` as `any` 121 times; under the check, 12 hook files of bugs-bot, cloudflare, implement, norms, pr-review and statusbar type their handlers' `$` as `any`, 129 times, against « No `any` » (`docs/conventions.md`) |
+| 6 | met | `ci/plugins.json`: twelve plugins block on Linux and macOS, drift on macOS since claude-plugins#337 and only at the release, the night and for a change of its own files (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); a pull request runs the Linux suites of what it changes, `main` every plugin but drift on Linux, macOS the release and each night (`scripts/plugin-matrix.ts`) | — |
 | 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
 | 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); norms' pass is held to the findings its agents report, the figures passed to `check_done` having to account for each once (claude-plugins#181); a check plan is accepted only from the orchestrator (claude-plugins#164); a stacked pull request's `tests` record is written by github's light CI alone (claude-plugins#242); an E2E `pass` or `fail` is computed by `mcp__github__record` from a run it performs or a Bash run of the session it observed, the pushed heads kept on disk for every session | an E2E `pass` or `fail` with no run (one made on another machine) is still written on the session's word, marked `stated, not computed` and observed; the E2E waiver and `not-applicable` rest on the session's word, held to a quoted, dated sentence and to files with no runtime |
 | 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78); the orchestrator's stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, claude-plugins#179), and reads tool waits itself (claude-plugins#268); an operator wait is declared on the questions asked with `ask`, no question block in the wait (claude-plugins#240, claude-plugins#271); the stop gate in `hooks/guards.ts` reads no last line: the deferred ending and the hand-over come from the declaration and the successor's spawn | the turn's end in `hooks/supervision.ts` still reads an orchestrator's machine line (`parseWait`), an agent's `status:` line (`parseStatus`) and « handed over » (`handsOver`, `hooks/relay.ts`); `mcp__github__record` takes an E2E or norms waiver and an E2E exemption on the operator's words quoted with their date in `detail`, held to a quote and a date and read from no consent record (`quotedWordsRefusal`, `plugins/github/hooks/register.ts`) |
 | 10 | met for the guards listed in the defects | github (claude-plugins#15), bugs-bot (claude-plugins#16), norms' push guard (claude-plugins#28) refuse when they cannot decide | — |
 | 11 | met | `npm run permissions`; the installer rules of `docs/contracts.md` (claude-plugins#21) | — |
 | 12 | met | `/github:protect [apply]` (claude-plugins#21); the orchestrator's local push guard removed (claude-plugins#72) | — |
-| 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly |
+| 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly; four are « Open: a choice », today's behaviour kept in each until the operator picks: bugs-bot's tester text, norms' second round of agents, implement under orchestration, statusbar's foreign status line |
 | 14 | met | `ci/prompts.json` held by CI (claude-plugins#1); the simulator (claude-plugins#32); `npm run context`: the orchestrator's start is 2,153 tokens in `build`, 1,552 in `investigate` | — |
-| 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; the release pull request asks whether to re-run the measure (`docs/architecture.md`, « Release »), and nothing runs without the operator's yes |
+| 15 | met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97). One measure: `~/dev/workspaces/outcome-runs/measure-1/` (`report.md`, `report.json`) on the operator's MacBook, from 2026-11-09 22:48 to 2026-11-10 02:42 (Paris), after claude-plugins#97, six cases, one run per arm, 40.50 USD of a 120 USD cap. Single session: 14.13 USD and 2,576 s for the six, about 2.36 USD and 7 minutes a pull request; orchestration: 26.37 USD and 8,649 s, about 4.40 USD and 24 minutes. Grades, single against orchestration: suite 4 and 4 of the 4 cases it grades, intent 4 and 5 of 6, blocking review findings 3 and 2; the reference tests pass in neither arm | the figures are outside the repository; each case ran once per arm, so the gap between the arms is one draw (`outcome-orchestration-arm.md`, review note 1); the next measure is due by 2026-12-10, or before a learned method change merges, asked by the release pull request (`docs/architecture.md`, « Release »), paid runs being the operator's |
 | 16 | partly met, outside this repository | the operator's configuration (`~/.claude`, branch `home` of `claude-code`) was adapted on `next-home` and merged (claude-code#43, 2026-11-10); its plugins are enabled as `@lounisbou` | no sweep for a stale reference was run: his repository is outside this one |
-| 17 | partly met | `docs/migration.md`: CI is green on `main` and every plugin blocks on both platforms; the cutover's step 1 is taken (claude-code#43) and the catalogue is installed on the MacBook | criterion 2 is every goal of this table and criterion 3 goal 15, not met; no rehearsal (criterion 4) is recorded, and the stale-reference sweep (criterion 5) is goal 16's; the install on IznoServer and the restart of the sessions (the cutover's step 2) are not recorded |
+| 17 | partly met | `docs/migration.md`: CI is green on `main` and every plugin blocks on both platforms; the cutover's step 1 is taken (claude-code#43) and the catalogue is installed on the MacBook | criterion 2 is every goal of this table, not met; criterion 3 compares the orchestration with the current version, which measure-1 (single session against orchestration, goal 15) does not; no rehearsal (criterion 4) is recorded, and the stale-reference sweep (criterion 5) is goal 16's; the install on IznoServer and the restart of the sessions (the cutover's step 2) are not recorded |
 | 18 | met for the strict parts | claude-plugins#1: `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured: nothing in the repository or CI runs `coverage.py`, though the conventions set the floor for Python too |
 | 19 | met | `plugins/method` (the kernel and its references), core's `method.ts`; implement and the orchestrator point at `method:lifecycle` (claude-plugins#19, claude-plugins#67, claude-plugins#74) | none: the orchestrator reads an agent's status line and the operator's question block through core's `method.ts` (`reportStatus`, `parseChoices`, …), its own parsers removed |
 | 20 | met | `/implement:review` runs the review in another session (claude-plugins#20) | the operator's open decision on implement in orchestrated briefs (below) |
 | 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32); each closed generation's measure is kept from now on (claude-plugins#262) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280, read on 2026-11-14 and not re-read; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
 | 22 | met | `npm run rules` (claude-plugins#33) | — |
-| — | two disagreements between designs, open | goal 15 and goal 9 of `orchestrator-refoundation-design.md` want the outcome measure at every release, question 4 of `learning-design.md` and `docs/architecture.md` (« Release ») monthly and before a learned method change; goal 3 of `orchestrator-refoundation-design.md` wants the orchestrator's Python reduced to a thin iTerm2 adapter, non-goal 4 below ports no Python engine | neither is settled: which cadence goal 15 is held to, and whether `routing.py`, `goals.py`, `draft_guard.py` and the logic of `iterm_agent.py` are engines kept or scripts to port |
+| — | a disagreement between designs, open | goal 3 of `orchestrator-refoundation-design.md` wants every bash script ported and the orchestrator's Python reduced to a thin iTerm2 adapter; non-goal 4 below ports no Python engine. The ports run meanwhile: `brief-lint.sh` (claude-plugins#341) and `install.sh` (claude-plugins#340) are done, `coordinator.sh`, `goals.py` and `iterm_agent.py` are in progress on unmerged branches | not settled: whether `routing.py`, `goals.py`, `draft_guard.py` and the logic of `iterm_agent.py` are engines kept or scripts to port |
 
 ## The end of the program
 
@@ -118,13 +119,22 @@ the orchestration stands, not conditions of the end.
 |---|---|---|
 | 1 | Time an executable row spends without an agent | none above 15 minutes |
 | 2 | Merge to in service | 2 hours at most, with no gesture of the operator |
-| 3 | Working context of any role | 200k tokens at most; the operator put this ceiling off on 2026-11-14 until the generations are measured, so it counts once he puts it back |
+| 3 | Working context of any role | 200k tokens at most; not held until the generations are measured |
 | 4 | Life of an orchestrator generation | 2 hours at least |
 | 5 | First turn of a takeover | 60k tokens at most |
 | 6 | Row to merge | median of 1 hour at most |
 | 7 | A question put to the operator again | none |
-| 8 | Lines of the method's code, release to release | net zero or less |
+| 8 | Tokens a session loads (skills, references, templates, commands, briefs, hook text printed into a conversation), release to release, by `npm run context` and `npm run -s prompts` | net zero or less |
 | 9 | `main` red | never |
+
+Figure 8 counts what sessions read, not executable code. His words, 2026-11-15: « l'allègement, il
+concerne les briefs, le code, le token, pas le code en TypeScript qui ne prend pas de token ». Read by
+`npm run -s prompts` at `9b4b4395` (release 3.1's state) and at `4ca6f735`: 150,835 then 149,719
+prompt tokens over the twelve plugins, net −1,116 (bugs-bot −1,365, the orchestrator −781; github
++318, learning +733, method +53, these three over their budgets); no release has been cut since, and
+briefs and hook text are not in this count. A note, not the figure's measure: from `9b4b4395` (2026-11-15 07:20) to `4ca6f735`, `git diff --shortstat --
+plugins packages` gives +25,408 / −6,528 lines, net +18,880: +11,450 in the generated
+`plugins/*/core/` copies, +3,981 in tests, +3,449 in the rest.
 
 ### Nothing of the design is set aside (the operator's words, 2026-11-15)
 
@@ -132,9 +142,8 @@ the orchestration stands, not conditions of the end.
 - « je veux qu'on livre l'ensemble du développement »
 - « Je ne dois pas être à un point de blocage. »
 
-Goals 5, 15 and 21 are therefore open like the others, after what slows his daily work: strict typing of
-github's 9 hook files and the orchestrator's 26, the outcome measure run on the harness in place, and
-the calibration on more first-turn measures.
+Goals 5 and 21 are therefore open like the others, after what slows his daily work: strict typing of
+the orchestrator's 22 remaining hook files, and the calibration on more first-turn measures.
 
 ## Constraints
 
@@ -161,12 +170,12 @@ the calibration on more first-turn measures.
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
 | 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported the same day; its refactoring is `orchestrator-refoundation-design.md`, run here alongside. |
-| 8 | Prompts and evals | 14, 15, 21, 22 | Spend caps, set by the operator: « Eval spend caps » below. |
+| 8 | Prompts and evals | 14, 15, 21, 22 | Spend caps: « Eval spend caps » below. |
 | 9 | Configuration and cutover | 16, 17 | |
 
 ## Eval spend caps (phase 8)
 
-Set by the operator, passed as `--max-cost-usd` or stopped by hand at the figure. The behaviour
+Passed as `--max-cost-usd` or stopped by hand at the figure. The behaviour
 suites' baselines cost 0.31 to 0.42 USD a run of a case; the outcome figures are a first
 estimate, corrected after the pilot.
 
@@ -250,8 +259,9 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 **norms**
 - `hooks/record.ts:71-104`: the pass is computed from figures the model passes in; `:35-39` stores the scope's head and never compares it at `check_done`.
   **Partly** (#28, #77, #181): the head is compared and later commits may touch only the files the check
-  read; the figures the model passes must account once for each finding its agents reported, and the pass is still `open === 0` over them
-  (`hooks/record.ts:268`). **Open: a choice.** The check keeps the model's word on which findings it fixed, with one round of agents as today; or the
+  read; the figures the model passes must account once for each finding its agents reported, an automatic check's figures are the
+  findings' own and a finding said fixed with no commit since the check counts as open (#342); the pass is still `open === 0` over them
+  (`hooks/record.ts`). **Open: a choice.** The check keeps the model's word on which findings it fixed, with one round of agents as today; or the
   agents run again after the fixes and the pass is what they still report, a second round of agents for each check that fixed something.
 - `hooks/guards.ts:50`: `/\bpush/i` on the last prompt grants a push (« don't push » included). **Fixed** (#28): the host's dialog.
 - The agents declared « read-only » carry `Bash`. **Fixed** (#28) by a guard on their shell.
@@ -303,7 +313,7 @@ so CI runs them; cloudflare's suite alone skips them when `claude` is not on PAT
 1. Moving the orchestrator, coordinator or auditor out of iTerm sessions.
 2. Any new permission prompt, approval step or operator chore.
 3. Changing `deck.json`'s format.
-4. Porting the Python engines to TypeScript.
+4. Porting the Python engines to TypeScript; open against goal 3 of `orchestrator-refoundation-design.md` (last row of « State on main »).
 5. New features outside the goals above.
 
 The next spec of the program is `method-drift-design.md`, correcting the drift of the method: pull requests no longer go all the way.

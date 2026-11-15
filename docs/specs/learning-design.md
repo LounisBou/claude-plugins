@@ -1,8 +1,8 @@
 # The learning system — design
 
 **Status: the operator has answered questions 4 and 9.**
-They answered « A » to each on 2026-11-14, and questions 5 to 8, 10 and 11 are taken at their
-recommendation. The design is decided or scheduled only as the answers say;
+They answered « A » to each on 2026-11-14. Questions 5 to 8, 10 and 11 are taken at the
+recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator. The design is decided or scheduled only as the answers say;
 the program builds it (« Questions 5 to 8, 10 and 11 » below). Built on `main`: the plugins'
 journals, `plugins/learning` with `/learning:health` and the distiller's candidates
 (`skills/learning/scripts/distil.ts`), and the learning event contract of phase L2
@@ -474,20 +474,20 @@ under 1,200 tokens.
    two days; the free measure has 85 sessions at 3 days and 580 at 7 days, over the 300-session
    floor, and its per-session rates settle at 3 to 7 days, not at one. A refusal total is not
    stable (0.47 refusals per session the first week, 1.42 the second, the github guard family
-   having arrived between): hence one rate per guard source and role. Program goal 15 (« every
-   release ») is read as this cadence.
-5. **What a regression does.** *Taken 2026-11-15, the recommendation:* **a regression in a code-computed grade blocks the
+   having arrived between): hence one rate per guard source and role. Program goal 15 states
+   this cadence.
+5. **What a regression does.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:* **a regression in a code-computed grade blocks the
    promotion it measures; a judge's grade only reports**. Block on every grade: decides on
    noise. Report only: a regression ships.
-6. **Where language packs live.** *Taken 2026-11-15, the recommendation:* **in the plugin whose role they serve** (norms'
+6. **Where language packs live.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:* **in the plugin whose role they serve** (norms'
    review rules, routing's profiles), as data. One plugin per language: clean installs, many
    plugins and versions. Your configuration: personal, but then lessons do not reach other
    operators of these plugins.
-7. **Which repositories it learns from, and what a public pull request may name.** *Taken 2026-11-15, the recommendation:*
+7. **Which repositories it learns from, and what a public pull request may name.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:*
    **every repository where the plugins run; a method pull request names only this repository's
    pull requests and counts the others under hashed ids**. Only this repository: safe, little
    data. Name everything: full provenance, private names in a public history.
-8. **A canary after the cutover.** *Taken 2026-11-15, the recommendation:* **none at first**: warn before enforce and
+8. **A canary after the cutover.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:* **none at first**: warn before enforce and
    proof before merge cover a learned change; re-decide after L0's incident rate. Keep the
    `next` profile on `main` and pin the main profile to a released ref: a true canary, and a ref
    to advance.
@@ -501,20 +501,21 @@ under 1,200 tokens.
    refuse about 50 times a day, so the design's 2,000 events held 40 days, not 180: the count,
    not the age, would have bound. Git never forgets: dropping transcripts is a rewrite of the
    repository, not a delete. The host keeps its own copy 365 days (`cleanupPeriodDays`).
-10. **`/norms:learn`.** *Taken 2026-11-15, the recommendation:* **keep the command as an entry that hands threads to the
+10. **`/norms:learn`.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:* **keep the command as an entry that hands threads to the
     distiller as external evidence**; the rule's text is the retrospective's, checked and
     reviewed. Keep it as it is: the injection path stays. Remove it: the one learning command
     projects use today disappears.
-11. **Eval cap per retrospective.** *Taken 2026-11-15, the recommendation:* **10 USD**, at most three prompt-rule
+11. **Eval cap per retrospective.** *Taken at the recommendation by the session that ran the correction, on 2026-11-15; not an answer of the operator:* **10 USD**, at most three prompt-rule
     candidates. 30 USD: more candidates proved per run. 0: code remedies only.
 
 ### Questions 5 to 8, 10 and 11
 
-Held on 2026-11-14 until 14 days of live events; taken on 2026-11-15 at their recommendation, on the
-operator's words: « pourquoi on est bloqué jusqu'au 28/11? […] avoir de la donnée pour que le plugin
-learning s'auto-améliore […] oui, mais pour le mettre en place, est-ce que c'est nécessaire? […] je
-veux qu'on livre l'ensemble du développement ». The data feeds the plugin once built; building it
-waits for none. Each answer stays open to one word of his.
+Held on 2026-11-14 until 14 days of live events. Taken at the recommendation by the session that ran
+the correction, on 2026-11-15; not an answer of the operator. His words of 2026-11-15, which ask to
+build without waiting for the data and answer none of these questions: « pourquoi on est bloqué
+jusqu'au 28/11? […] avoir de la donnée pour que le plugin learning s'auto-améliore […] oui, mais pour
+le mettre en place, est-ce que c'est nécessaire? […] je veux qu'on livre l'ensemble du
+développement ». Each answer is his to change.
 
 ## What to measure before building
 
