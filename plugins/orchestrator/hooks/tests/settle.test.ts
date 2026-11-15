@@ -507,7 +507,7 @@ test('an answer of the operator is kept in the journal as what was asked and how
 
 // --- the machine-wide decide: no coordinator live ----------------------------------------------
 
-const OTHER = 'Orch: other [d4e5f6]'
+const OTHER = 'Orch: other [a1b2c3]'
 const COORD_PID = '4242'
 
 // A machine where a second orchestrator (s-other) and an implementer agent (s-agent) are named, and
@@ -515,7 +515,7 @@ const COORD_PID = '4242'
 function decideMachine(record: Record<string, unknown> | null, listing: string | null = `${COORD_PID} Ss ttys009\n`) {
   const m = machine()
   m.files.set(`${SESSIONS}/s-other`, row('orchestrator', OTHER))
-  m.files.set(`${SESSIONS}/s-agent`, row('agent', 'Agent: worker [aa11bb]'))
+  m.files.set(`${SESSIONS}/s-agent`, row('agent', 'Agent: worker [a1b2c3]'))
   if (record !== null) m.files.set(`${MODULE}/coordinator.json`, JSON.stringify(record))
   const as = (session: string): World => {
     const dollar = m.as(session)
