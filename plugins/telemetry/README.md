@@ -54,9 +54,8 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 
 ## Retention
 
-The operator's answer of 2026-11-14 (`docs/specs/learning-design.md`, question 9): the day files of
-events are kept for ever (a few MB a day, about a tenth of that packed), and the raw transcripts
-90 days in the logs repository. Git never forgets, so dropping them is a rewrite of the
+The day files of events are kept for ever (a few MB a day, about a tenth of that packed), and the
+raw transcripts 90 days in the logs repository (`docs/specs/learning-design.md`, question 9). Git never forgets, so dropping them is a rewrite of the
 repository, once a year, and the operator's act: no command, hook or schedule does it.
 
 ### Yearly rewrite

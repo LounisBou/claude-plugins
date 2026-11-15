@@ -79,8 +79,8 @@ published facts hold what the command line gives.
 ## What is not recorded (secrets win over « toutes les données »)
 
 No prompt, answer, message, tool output, file content, question text or option label in the
-events: the least revealing default, until the operator rules otherwise. The operator's order of
-2026-11-14 puts the raw transcripts, redacted, in the logs repository beside the events (below).
+events: the least revealing default, until the operator rules otherwise. The raw transcripts, redacted, go in the logs repository beside
+the events (below).
 A Bash command line is kept redacted and cut to 400 characters; other tools keep their name and the enumerated arguments
 named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80. The
 events carry these fields whole: the writer redacts each whole value, then cuts it (never inside
@@ -166,8 +166,7 @@ reading every line:
   whose `project` is that repository (`owner/name` of the session's git remote, read once at its
   start, the same from any worktree; the directory's last segment when it has no remote).
 
-Raw transcripts are exported, redacted (the operator's order of 2026-11-14: everything goes into
-the logs repository, indexed like the rest). The export copies the transcript of each session the
+Raw transcripts are exported, redacted, into the logs repository, indexed like the rest. The export copies the transcript of each session the
 day files name to `machines/<machine>/transcripts/<session>.jsonl`, after passing it through
 `lib/redact.ts`: each line parsed, each string and each key redacted at any depth; a line that is
 no JSON becomes a mark, never text (a value of `~/.env` sits in it as JSON wrote it, or cut short),
