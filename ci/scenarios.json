@@ -18,6 +18,7 @@
     "learning: retrospective": ["learning/skills/retrospective/SKILL.md"],
     "orchestrator: start (build)": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"],
     "orchestrator: start (investigate)": ["orchestrator/skills/orchestrator/SKILL.md"],
+    "orchestrator: dispatch a phase": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/skills/orchestrator/references/brief.md"],
     "orchestrator: succession": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/templates/orchestrator-succession-brief.md"]
   }
 }
