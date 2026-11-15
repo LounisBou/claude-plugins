@@ -3,7 +3,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Context, RunResult } from './context.ts'
+import type { Context, RunOptions, RunResult } from './context.ts'
 
 export interface Fixture {
   readonly ctx: Context
@@ -16,8 +16,8 @@ export interface Fixture {
 }
 
 export interface FixtureOptions {
-  readonly env?: Readonly<Record<string, string>>
-  readonly run?: (command: string, args: readonly string[]) => RunResult
+  readonly env?: Readonly<Record<string, string | undefined>>
+  readonly run?: (command: string, args: readonly string[], options?: RunOptions) => RunResult
   readonly running?: (pid: number) => boolean
   readonly here?: string
 }
@@ -38,9 +38,9 @@ export function fixture(options: FixtureOptions = {}): Fixture {
     now: () => NOW,
     out: line => { out.push(line) },
     err: line => { err.push(line) },
-    run: (command, args) => {
+    run: (command, args, runOptions) => {
       runs.push([command, ...args])
-      return options.run?.(command, args) ?? { status: 1, stdout: '', stderr: '' }
+      return options.run?.(command, args, runOptions) ?? { status: 1, stdout: '', stderr: '' }
     },
     sleep: ms => { slept.push(ms) },
     isRunning: options.running ?? (() => false),
