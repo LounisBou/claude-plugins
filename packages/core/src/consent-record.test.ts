@@ -73,21 +73,31 @@ describe('consent records', () => {
     assert.equal(opensChoice('peut-être', choices), false)
   })
 
-  it('takes the limit of an answer that is the limit of the question, the same instant read in Paris time, and no other', () => {
+  it('takes the limit of an exemption\'s answer that is the limit of the question, the same instant read in Paris time, and no other: its words kept whole', () => {
     const exemption = { kind: 'e2e-exemption' as const, repo: 'Acme/App' }
     const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
     const sentence = "Accorder la dispense de app et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
     const asked = (until: string) => `Exempt acme/app from E2E until ${until}?`
     const given = (answer: string, question: string) => consentAnswer(answer, choices, { subject: exemption, question })
-    assert.equal(given(sentence, asked('2026-11-16T11:00:00Z')), 'Accorder')
-    assert.equal(given("Accorder, valable jusqu'au 16/11/2026 11:00 UTC", asked('2026-11-16T11:00:00Z')), 'Accorder')
-    assert.equal(given("Accorder jusqu'au 2026-11-16T11:00:00Z, merci", asked('2026-11-16T11:00:00Z')), 'Accorder')
-    assert.equal(given("Accorder jusqu'au 16/07/2026 12h00 heure de Paris", asked('2026-07-16T10:00:00Z')), 'Accorder')
+    assert.equal(given(sentence, asked('2026-11-16T11:00:00Z')), sentence)
+    assert.equal(given("Accorder, valable jusqu'au 16/11/2026 11:00 UTC", asked('2026-11-16T11:00:00Z')), "Accorder, valable jusqu'au 16/11/2026 11:00 UTC")
+    assert.equal(given("Accorder jusqu'au 2026-11-16T11:00:00Z, merci", asked('2026-11-16T11:00:00Z')), "Accorder jusqu'au 2026-11-16T11:00:00Z, merci")
+    assert.equal(given("Accorder jusqu'au 16/07/2026 12h00 heure de Paris", asked('2026-07-16T10:00:00Z')), "Accorder jusqu'au 16/07/2026 12h00 heure de Paris")
     for (const until of ['2026-11-16T12:00:00Z', '2026-11-16T10:00:00Z', '2026-11-17T11:00:00Z']) assert.equal(given(sentence, asked(until)), '', until)
     assert.equal(given(sentence, 'Exempt acme/app from E2E?'), '')
     assert.equal(given(sentence.replace('de app', 'de lib/other'), asked('2026-11-16T11:00:00Z')), '')
     assert.equal(given(sentence.replace('jusqu\'au 16/11/2026 12h00', 'jusqu\'au 16/11/2026'), asked('2026-11-16T11:00:00Z')), '')
     assert.equal(given(`${sentence} Seulement le e2e`, asked('2026-11-16T11:00:00Z')), '')
+  })
+
+  it('takes no limit of an answer for a kind that expires nothing, even the question\'s own', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    const sentence = "Accorder, valable jusqu'au 16/11/2026 12h00 heure de Paris"
+    const question = 'Allow it until 2026-11-16T11:00:00Z?'
+    for (const subject of [{ kind: 'e2e-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'norms-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'auto-merge' as const, repo: 'Acme/App' }, { kind: 'auto-deploy' as const, repo: 'Acme/App', env: 'prod' as const }]) {
+      assert.equal(consentAnswer(sentence, choices, { subject, question }), '', subject.kind)
+    }
+    assert.equal(consentAnswer('Accorder, merci', choices, { subject: { kind: 'auto-merge' as const, repo: 'Acme/App' }, question }), 'Accorder')
   })
 
   it('names another pull request or repository in the words, not the subject\'s own', () => {

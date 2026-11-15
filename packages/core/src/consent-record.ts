@@ -132,11 +132,15 @@ export function givenAnswer(answer: string, choices: readonly { letter: string; 
  * its text (« A : yes »), and the text of that choice is the operator's word; a letter that is not
  * among the question's choices is nothing to quote (''). Any other answer is quoted whole, unless
  * `leading` (the question's subject): an answer that opens with a choice (leadingChoice) is then
- * that choice's text, and one that opens with it and adds a limit is nothing to quote ('').
+ * that choice's text, or its own words whole for an exemption's grant, which github reads in them, and one that opens with it and adds a limit is nothing to quote ('').
  */
 export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[], leading?: { subject: ConsentSubject; question?: string }): string {
-  const chosen = answersChoice(answer, choices) ?? (leading ? leadingChoice(answer, choices, leading.subject, leading.question) : undefined)
+  const chosen = answersChoice(answer, choices)
   if (chosen) return chosen.text.trim()
+  const opening = leading ? leadingChoice(answer, choices, leading.subject, leading.question) : undefined
+  // An exemption is read from the whole answer (it must name the repository and the exemption, and quotes its limit): its words are kept.
+  if (opening && leading?.subject.kind === 'e2e-exemption' && grants(opening.text)) return answer.trim()
+  if (opening) return opening.text.trim()
   // An answer that opens with a choice and adds a limit is not quoted whole: it records nothing, and the asker asks again.
   if (leading && opensChoice(answer, choices)) return ''
   const given = givenAnswer(answer, choices)
@@ -255,7 +259,8 @@ export function leadingChoice<C extends { letter: string; text: string }>(typed:
   const text = spaced(first.text).toLowerCase()
   if (candidates[1] !== undefined && spaced(candidates[1].text).toLowerCase() === text) return undefined
   if (!grants(first.text)) return first
-  const rest = withoutOwnSubject(withoutStatedLimit(said.slice(text.length), question), subject)
+  // Only an exemption carries a limit of its own (`until`, which expires it): no other kind's record expires, so a limit there is never the question's.
+  const rest = withoutOwnSubject(subject.kind === 'e2e-exemption' ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject)
   if (/[?;]/.test(rest)) return undefined
   const words = rest.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []
   return words.every(word => CONFIRMATION.has(word)) ? first : undefined

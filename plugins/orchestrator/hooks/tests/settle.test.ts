@@ -316,7 +316,7 @@ test('the coordinator settling its own ask that asks consent takes the same path
   expect(recordsOf(m).map(r => [r.entry, r.answer, r.by])).toEqual([[second, 'Accorder', 'coordinator']])
 })
 
-test('the coordinator\'s settle of an exemption question that states its expiry, answered with his sentence worded in Paris time, records « Accorder »; another instant records none', async () => {
+test('the coordinator\'s settle of an exemption question that states its expiry, answered with his sentence worded in Paris time, records his sentence whole; another instant records none, and a waiver question with a limit records none', async () => {
   const exemption = { consent_kind: 'e2e-exemption', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
   const sentence = "Accorder la dispense de app et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
   const m = machine()
@@ -330,7 +330,11 @@ test('the coordinator\'s settle of an exemption question that states its expiry,
   const wrong = await ask('2026-11-16T12:00:00Z')
   const refused = await settle(m.coordinator, request(wrong, { text: sentence }), AT)
   expect(refused.result).toContain('The consent is not recorded')
-  expect(recordsOf(m).map(r => [r.entry, r.answer, r.by, r.subject.kind])).toEqual([[right, 'Accorder', 'coordinator', 'e2e-exemption']])
+  expect(recordsOf(m).map(r => [r.entry, r.answer, r.by, r.subject.kind])).toEqual([[right, sentence, 'coordinator', 'e2e-exemption']])
+  askTurnStarted()
+  const waiver = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'waiver', question: 'Waive E2E on acme/app#7 until 2026-11-16T11:00:00Z?', ...CONSENT_ASK }, NOW)).result)![1]
+  expect((await settle(m.coordinator, request(waiver, { text: sentence }), AT)).result).toContain('adds words after its choice')
+  expect(recordsOf(m).length).toBe(1)
 })
 
 test('an orchestrator settling its own wait that asks consent records none: its words are its own, and a withdrawal records none', async () => {
