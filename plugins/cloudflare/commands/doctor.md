@@ -17,7 +17,7 @@ is found and starts caddy with the envfile, that the envfile is private
 token is valid, with its DNS edit right when the token may read its own
 policies. It changes nothing and never prints a token or an envfile value.
 
-Read the exit code and tell the user which class of problem it names:
+Tell the user what its exit code names:
 
 | Code | Meaning | Remedy |
 |---|---|---|

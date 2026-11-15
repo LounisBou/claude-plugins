@@ -14,7 +14,6 @@ says where the token goes and exits 12. The config file is
 `$CLAUDE_CLOUDFLARE_CONFIG`, else `~/.config/claude-cloudflare/config.json`; every
 key is optional. The script never prints, writes or logs a token.
 
-It then runs the same checks as `/cloudflare:doctor`, whose table names each exit
-code.
+It then runs `/cloudflare:doctor`'s checks.
 
 $ARGUMENTS
