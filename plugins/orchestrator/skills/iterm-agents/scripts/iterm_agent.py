@@ -645,6 +645,9 @@ PROBE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_PROBE_TIMEOUT", "8"))
 # failure. A host CLI takes a moment to unwind; ten seconds is room for that and nothing
 # like room for a session that is not going.
 CLOSE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_CLOSE_TIMEOUT", "10"))
+# How long a predecessor's transcript stays untouched before a takeover that read no « handed
+# over » on it closes it all the same: an idle prompt, nothing in flight.
+TAKEOVER_IDLE = int(os.environ.get("ORCHESTRATOR_TAKEOVER_IDLE", "300"))
 # Once that wait is over, how long a host is given to die of SIGTERM before it is sent
 # SIGKILL, and then to leave the table after SIGKILL.
 TERM_GRACE = int(os.environ.get("ORCHESTRATOR_TERM_GRACE", "5"))
@@ -3833,9 +3836,60 @@ def close_home_tab(tty, socket, expect, listed=None):
     sys.stdout.flush()
 
 
+def handed_over(path):
+    """Whether a transcript carries the predecessor's « handed over »: an assistant entry naming
+    it after the last entry that carries « takeover confirmed » (anywhere in the transcript when
+    none does). A line that is not JSON is skipped."""
+    seen = False
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                low = line.lower()
+                if "handed over" not in low and "takeover confirmed" not in low:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                said = json.dumps(entry.get("message", ""), ensure_ascii=False).lower()
+                if entry.get("type") == "assistant" and "handed over" in said:
+                    seen = True
+                elif "takeover confirmed" in low:
+                    seen = False
+    except OSError:
+        return False
+    return seen
+
+
+def await_handover(tty, idle=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a takeover's kill, for the predecessor's « handed over » on its transcript
+    (the session its host on `tty` registered), or for that transcript to stay untouched `idle`
+    seconds. Answers the line that says which: a hand-over is said only where it was read."""
+    idle = TAKEOVER_IDLE if idle is None else idle
+    sid = rotated_session(tty)
+    path = transcript_of_session(sid) if sid else None
+    if not path:
+        return ("takeover: no transcript of the session on %s was found: no « handed over » read"
+                % tty)
+    while True:
+        if handed_over(path):
+            return "takeover: « handed over » read on %s" % path
+        try:
+            quiet = clock() - os.path.getmtime(path)
+        except OSError:
+            return "takeover: the transcript %s is gone: no « handed over » read" % path
+        if quiet >= idle:
+            return ("takeover: no « handed over » on %s; its transcript was idle %ds"
+                    % (path, int(quiet)))
+        sleep(min(5, max(1, idle - quiet)))
+
+
 def cmd_takeover(args):
     """A successor's close of its predecessor inside their home session: the predecessor's
-    window 0 killed, guarded by its name and proved on the process table and the server, then
+    « handed over » waited for on its transcript (or an idle transcript), then its window 0
+    killed, guarded by its name and proved on the process table and the server, then
     the successor's own window moved to index 0 without taking the operator's view; window 0
     is selected only if the operator was on it."""
     if not args.tty:
@@ -3858,6 +3912,10 @@ def cmd_takeover(args):
     if stable_title(args.expect) not in stable_title(pred.name):
         die("takeover: refused: the window on %s is named '%s', which does not contain '%s'"
             % (args.tty, pred.name, args.expect))
+    # The predecessor may still be writing its last turn: its « handed over », or a transcript
+    # left idle, comes before the kill, and the line says which was seen.
+    print(await_handover(args.tty))
+    sys.stdout.flush()
     viewed = tmux_out(["display-message", "-p", "-t", pred.window, "#{window_active}"],
                       "takeover").strip() == "1"
     # Read once the name is checked and before the kill: the process the succession ends,
@@ -4181,6 +4239,23 @@ def plugins_off(role, keep=()):
     if not isinstance(plugins, dict):
         return {}
     return {key: False for key in plugins if key.partition("@")[0] in names}
+
+
+def carried_tools(words, title):
+    """`(keep, drop)`: what a running session's launch line (`words`, its host's argv) removed
+    beyond, or left out of, the default set of `title`'s role, so a rotation's replacement is
+    given the same tools. A launch that removed nothing by `--disallowedTools` carries nothing:
+    it was not made by this launcher."""
+    words = list(words or [])
+    if "--disallowedTools" not in words:
+        return [], []
+    at = words.index("--disallowedTools") + 1
+    removed = []
+    while at < len(words) and not words[at].startswith("-"):
+        removed.append(words[at])
+        at += 1
+    default = default_removed(title_role(title))
+    return ([n for n in default if n not in removed], [n for n in removed if n not in default])
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -5685,6 +5760,19 @@ def cmd_rotate(args):
     found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
     # And who the old session is, read before the spawn too: after it, the tty may hold another.
     old = old_session(args.old_tty, found_on, title, window, args.expect)
+    # The tools the old agent's launch kept or dropped beyond its role's default set follow it to
+    # the replacement, read on its host's launch line; a --keep-tool or --drop-tool given to the
+    # rotation wins over what is carried.
+    if old["host"]:
+        keep, drop = carried_tools(host_argv(old["host"][0]), asked.title or old["title"])
+        given = set(asked.keep_tool or []) | set(asked.drop_tool or [])
+        keep = [n for n in keep if n not in given]
+        drop = [n for n in drop if n not in given]
+        asked.keep_tool = list(asked.keep_tool or []) + keep
+        asked.drop_tool = list(asked.drop_tool or []) + drop
+        if keep or drop:
+            print("rotate: tools carried from the old launch: kept %s; dropped %s"
+                  % (", ".join(keep) or "none", ", ".join(drop) or "none"), file=sys.stderr)
     # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
     # live model and effort, read on that agent's transcript — not on its tier's, which its
     # orchestrator may have escalated since. A tier, or a model with its effort, is the
