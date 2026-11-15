@@ -67,7 +67,7 @@ Verified against the repository. The design reuses each piece named here before 
 | Norms result | `plugins/norms/hooks/record.ts:131,170` | norms | **model-reported**: `pass` is `open === 0`, `open` passed in by the model (the program's norms defect, still open) |
 | Rounds, review head, the correction round, escapes, cost per dispatch | the dispatch record, JSON lines (`plugins/orchestrator/skills/orchestrator/scripts/dispatch-record.sh`, header) | orchestrator | the orchestrator's act (`escaped` is its judgment) |
 | A tier drop that cost a round or an escape freezes the class; three one-round closes promote it | `dispatch-record.ts:810-826` (`frozen=`, `promote=`) | orchestrator | computed from the rows |
-| The operator's rulings, verbatim and dated | `<briefs dir>/rulings.md` (`skills/orchestrator/references/succession-predecessor.md:6`), `defer`/`rule-out`/waiver arguments of `dispatch-record.sh` | orchestrator | operator |
+| The operator's rulings, verbatim and dated | the round's entries (`<state dir>/round/`, `hooks/question.ts`), the to-do list, `defer`/`rule-out`/waiver arguments of `dispatch-record.sh` | orchestrator | operator |
 | Token use and list-price cost per session and period | `deck.json` (`plugins/orchestrator/hooks/usage.ts`, `deck.ts`) | orchestrator | computed |
 | Check runs per head | the forge | CI | computed; read by github's ready gate (`hooks/ready.ts`, `Gate.ci`) |
 | Resolved review threads | the forge, read by `pr-threads --format resolved-threads` | reviewers | **external text** |
@@ -532,7 +532,7 @@ unless said.
 | Did `/norms:learn` add rules, and did they hold? | commits `docs(contributing): update project code norms from PR review feedback` in your projects, and later findings on the same files | in those projects' history |
 | Does a retrospective pay? | the first one's token cost against the candidates it closed | after L5; the deck measures it |
 | Can evals decide? | variance of the orchestrator's baselines per case, outcome pilot's grades | baselines in `plugins/orchestrator/evals/`; the outcome pilot has not run |
-| What do you correct? | your rulings and denials | `rulings.md` per orchestration; denials are not recorded |
+| What do you correct? | your rulings and denials | the round's answered questions; denials are not recorded |
 
 If refusals and findings are too few to reach three events from two pull requests within a
 window, the design keeps its contract and writers and defers L5 until they are.

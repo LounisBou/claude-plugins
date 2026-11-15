@@ -151,13 +151,13 @@ Everything that protects the secrets, production, merge and leaving draft outsid
 ### 11.7 Context cuts
 
 - `pr-status` returns a summary of a few lines; the full JSON only on request (`json: true`).
-- `rulings.md` read by index, not in full at each resumption; it is the source of the operator's decisions that the relay takes over (end of questions asked again).
+- The operator's decisions read in the round's answered questions, by item, not in full at each resumption; the relay answers from them (end of questions asked again).
 - The orchestrator opens without the tools it does not call (cloudflare, bugs-bot, norms, implement: ≈ 8.5 k tokens), through `--drop-tool`.
 - Reports and briefs in files, one line in the thread (work item 92); short messages between sessions.
 
 ### 11.8 Questions that no longer go up
 
-Merge, leaving draft and Ready in a repository in auto-merge; successions and handovers; tool workarounds (decide, note the defect, continue); state notes without a question; a question already settled in `rulings.md`.
+Merge, leaving draft and Ready in a repository in auto-merge; successions and handovers; tool workarounds (decide, note the defect, continue); state notes without a question; a question already answered in the round.
 
 ### 11.9 Order and measure
 

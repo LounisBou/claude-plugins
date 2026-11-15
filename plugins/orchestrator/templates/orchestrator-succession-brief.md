@@ -27,7 +27,7 @@ VERIFY each « Live state » item on the artifacts, ONE named command each, outp
 
 Measure, wait and close: `references/succession-successor.md`, « Succession — the successor ».
 
-1. Read the rulings that bind now, `grep -v '\[for: ' {{RULINGS_FILE}}`, the rulebook and THIS text, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it.
+1. Read the rulebook and THIS text, and nothing else whole.
 2. The Analysis above; then the Project line's goals, nothing more unless it lists open or deferred goals: then, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1: its state, blocker, owner, note and verdict line.
 3. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, asking nothing back (its state is below, its fill on `/orchestrator-status`), and subscribe to its idle notice (`notify_when_idle: true`). Then `workspace.sh list {{PROJECT}}`: delete no checkout before you know its phase.
 4. His standing order: you ALWAYS close your predecessor, one the launcher did not open included, and ask him nothing. Then message the predecessor "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over » (five minutes without it, read its screen with `screen --tty`; close on a prompt with nothing in flight). Then CLOSE ITS TAB, the first line on tabs, the second in a home session (never `close` there), its success line the proof:
@@ -53,7 +53,7 @@ Printed by `succession.sh takeover` from the dispatch record, the to-do list, th
 
 ## Standing context
 
-- Standing rulings: `{{RULINGS_FILE}}`. The `-archive.md` files beside it are never read at takeover.
+- State directory: `{{STATE_DIR}}`. His answers are its `round/`, his requests the to-do list: read as `references/succession-successor.md`, « His words », says.
 - Read by section (`grep -n` the heading, `sed -n <from>,<to>p`), never whole at takeover, never several in one `cat`. Absent: `none`, never an invented path.
 - Dispatch record: `{{DISPATCH_RECORD}}`, read before routing (`orchestrator:model-routing`).
 
