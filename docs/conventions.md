@@ -63,9 +63,12 @@ changed by a pull request that edits this file and the code it governs together.
 ## Tests and coverage
 
 - Coverage is a floor, not a target: 85 % of lines and functions, 80 % of branches, for
-  TypeScript (node's coverage, `npm test` fails under it) and for Python (`coverage.py
-  --fail-under`). The Python floor is not measured yet: nothing runs `coverage.py`
-  (`specs/program-design.md`, goal 18). A part joins the measure the day it is strict. A test is written for a
+  TypeScript (node's coverage, `npm test` fails under it). A plugin's Python is held to its own
+  floor in `ci/python-coverage.json`: CI runs the suite under `coverage.py`, every Python process
+  it starts measured, lines and branches counted together, and fails under the floor
+  (`scripts/python-coverage.ts`, `coverage report --fail-under`). That floor is the figure measured,
+  rounded down; it only rises (« Ratchets »). A suite split in parts is measured where it runs
+  whole. A part joins the measure the day it is strict. A test is written for a
   behaviour worth protecting, never to raise a percentage.
 - What cannot run under a test (a process entry point, a call into the host or an outside API)
   is a thin adapter around tested logic, so the floor is reached without tests of plumbing.
@@ -136,7 +139,8 @@ changed by a pull request that edits this file and the code it governs together.
 ## Ratchets
 
 Some coverage grows one step at a time: the TypeScript under the strict check
-(`tsconfig.json`) and the platforms where a suite blocks (`ci/plugins.json`).
+(`tsconfig.json`), the platforms where a suite blocks (`ci/plugins.json`) and each plugin's Python
+coverage floor (`ci/python-coverage.json`).
 A ratchet only tightens. A pull request that loosens one is refused unless it says why in its
 description and the operator accepts it. The prompt budgets and the duplicate ceiling
 (`ci/prompts.json`) fall the same way, but CI only reports them.

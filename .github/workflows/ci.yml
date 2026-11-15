@@ -143,7 +143,8 @@ jobs:
         run: |
           # Bun from the npm registry: its GitHub release downloads fail on a forge outage.
           npm install --global --silent @anthropic-ai/claude-code@2.1.319 bun@1.4.4
-          python -m pip install --quiet pytest
+          # coverage.py holds each plugin's Python to its floor (ci/python-coverage.json).
+          python -m pip install --quiet pytest coverage==7.10.6
           if [ "$RUNNER_OS" = Linux ]; then
             # The Ubuntu mirrors failed from the runner's DNS on 2026-11-11. apt is given its own
             # retries for downloads; the install itself gets three attempts. The setting stays for
@@ -200,10 +201,12 @@ jobs:
           SUITE_SHARD: ${{ matrix.shard }}
         # A suite not yet green here reports its failure as a warning, so the pull request is red
         # only when a blocking check fails. The warning quotes the suite's last line: a count of
-        # failed cases reads apart from a suite that died before its summary.
+        # failed cases reads apart from a suite that died before its summary. A plugin with a
+        # Python floor runs its suite under coverage.py and fails under the floor
+        # (scripts/python-coverage.ts); the others run their suite alone.
         run: |
           set -o pipefail
-          if plugins/${{ matrix.plugin }}/tests/run-tests.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"; then exit 0; fi
+          if node --experimental-strip-types --no-warnings scripts/python-coverage.ts ${{ matrix.plugin }} 2>&1 | tee "$RUNNER_TEMP/suite.log"; then exit 0; fi
           if [ "$BLOCKING" = true ]; then exit 1; fi
           last=$(tail -n 1 "$RUNNER_TEMP/suite.log")
           echo "::warning title=${{ matrix.plugin }} on ${{ matrix.os }}::the suite fails here, its last line: ${last}; it does not block until it is green (ci/plugins.json)"
