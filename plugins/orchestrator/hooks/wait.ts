@@ -29,7 +29,6 @@ export const BLOCKS_MAX = 300
 
 const KIND_NEEDS: Record<WaitKind, string> = {
   operator: 'what the questions asked with `ask` block',
-  tool: 'what is watched: the command, monitor or subagent you started in the background',
   done: '',
   deferred: 'the deferred items: their count (« 3 items ») or their ids',
 }
@@ -124,8 +123,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         isDeferred: false,
         description: 'Declares what will wake this session once its turn ends, before ending the turn: '
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
-          + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
+          + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
           + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env. '
           + 'An `operator` wait waits on the questions this session asked with `ask`. '

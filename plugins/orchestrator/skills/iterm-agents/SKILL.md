@@ -77,7 +77,7 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 ## Window and tab hygiene
 
-**A finished agent's window or tab is closed, not left open.** The approval that closes a phase stands the agent down and closes its place in the same move (`list`, `close --tty --expect-title`, `ps`). An implementer is stood down at the verification of its delivery, never kept through its review round, unless its next phase is dispatched to it at that verification; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, the hidden-pane entry).
+**A finished agent's window or tab is closed, not left open.** The merge that closes a phase stands the agent down and closes its place in the same move (`list`, `close --tty --expect-title`, `ps`). Until then the implementer stays, the kept review findings sent to it. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, the hidden-pane entry).
 
 **A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title read from `list` seconds before (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
 

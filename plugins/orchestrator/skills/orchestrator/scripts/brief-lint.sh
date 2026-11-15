@@ -199,64 +199,8 @@ done < <(LC_ALL=C awk -v implementer="$(is_class implementer && echo 1 || echo 0
     }
 ' "$brief" 2>/dev/null || true)
 
-# 9. An implementer's duties end at its delivery: the final report, then the stand-down.
-#    A brief that orders anything after it (stand by, stay until merged, clean up after the
-#    merge) leaves a finished tab idle for hours, and nothing refused those briefs or the
-#    orchestrator's stop with those agents idle. Post-merge cleanup is the orchestrator's and
-#    the sweep's; a red after delivery goes to a fresh session. A clause that FORBIDS the duty
-#    ("never stand by") reads the opposite way and raises nothing, by the same rule as
-#    check 7. One finding per phrase and line; the cleanup phrase covers its own "after merge".
-#    A phrase quoted (backticks, guillemets) or inside a fence is a mention, not an order.
-#    « until merged » is on the list: no agent waits for the merge, nor for the checks that
-#    precede it (check 10).
-if is_class implementer; then
-    while IFS=$'\t' read -r pd_n pd_msg; do
-        [ -n "${pd_n:-}" ] || continue
-        say "$pd_n" "$pd_msg"
-    done < <(LC_ALL=C awk "$AWK_CLAUSES"'
-        # The text with every quoted span removed: a phrase in backticks or in guillemets (two
-        # bytes each under the C locale) is mentioned, not ordered. An unclosed opener is kept.
-        function cut(text, opener, closer,   a, rest, b) {
-            while ((a = index(text, opener)) > 0) {
-                rest = substr(text, a + length(opener))
-                b = index(rest, closer)
-                if (b == 0) break
-                text = substr(text, 1, a - 1) " " substr(rest, b + length(closer))
-            }
-            return text
-        }
-        function unquoted(text) {
-            return cut(cut(text, "`", "`"), "\302\253", "\302\273")
-        }
-        BEGIN {
-            infence = 0
-            n = 0
-            phrase[++n] = "clean(-| )?up[^.;]*after (the )?merge"; name[n] = "cleanup after merge"
-            phrase[++n] = "(^|[^a-z])after (the )?merge"; name[n] = "after merge"; plain[n] = 1
-            phrase[++n] = "(^|[^a-z])once merged"; name[n] = "once merged"
-            phrase[++n] = "(^|[^a-z])stand by([^a-z]|$)"; name[n] = "stand by"
-            phrase[++n] = "(^|[^a-z])standing by([^a-z]|$)"; name[n] = "standing by"
-            phrase[++n] = "(^|[^a-z])stay until merged"; name[n] = "stay until merged"
-            phrase[++n] = "(^|[^a-z])until merged"; name[n] = "until merged"; subsumed[n] = 6
-            phrase[++n] = "(^|[^a-z])stay available"; name[n] = "stay available"
-        }
-        {
-            if ($0 ~ /^[[:space:]]*```/) { infence = !infence; next }
-            if (infence) next
-            lower = unquoted(tolower($0))
-            cleanup = 0; told_it = 0
-            for (i = 1; i <= n; i++) {
-                if (plain[i] && cleanup) continue
-                if (subsumed[i] && told_it == subsumed[i]) continue
-                if (ordered(lower, phrase[i])) {
-                    if (i == 1) cleanup = 1
-                    told_it = i
-                    printf "%d\tduty after delivery (%s): an implementer is stood down at its final report; post-merge work is the orchestrator'"'"'s and the sweep'"'"'s\n", NR, name[i]
-                }
-            }
-        }
-    ' "$brief" 2>/dev/null || true)
-fi
+# 9. Retired with the operator's ruling of 2026-11-14 (the executor lives until its pull request
+#    merges, the kept findings sent to it); the number stays unused.
 
 # 10. An agent never waits on CI: the orchestrator keeps one background watch per pull
 #     request (`ci-watch.sh`) and an agent's delivery ends at the push. An implementer brief

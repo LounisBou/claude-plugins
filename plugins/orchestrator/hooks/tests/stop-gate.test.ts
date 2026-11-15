@@ -12,7 +12,7 @@ import {
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, TOOL_LINE, type DeclaredWait,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
 import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
@@ -284,8 +284,6 @@ function declaredBy(message: string): DeclaredWait | null {
   const matched = MACHINE_LINE.exec(line)
   if (matched?.[1]) return { kind: 'operator', blocks: matched[1].trim(), ...(URGENT_LINE.test(line) ? { urgent: true as const } : {}) }
   if (matched?.[2]) return { kind: 'done', blocks: '' }
-  const tool = TOOL_LINE.exec(line)
-  if (tool) return { kind: 'tool', blocks: tool[1].trim() }
   if (/^waiting:\s*operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:$/i.test(line)) return { kind: 'operator', blocks: '' }
   const ids = deferredIds(line)
   return ids === null ? null : { kind: 'deferred', blocks: ids }
@@ -299,9 +297,9 @@ const AGENT_IDLE = { label: 'Agent: idle-p3', state: 'idle' as const, tty: '/dev
 test('an idle agent delivered of its pull request is flagged for the log before anything else, not refused', () => {
   const held = checkWake({
     agents: [AGENT_IDLE, AGENT_BUSY], resident: false,
-    delivered: ['Agent: idle-p3 (pull request #160, OPEN)'], message: 'anything',
+    delivered: ['Agent: idle-p3 (pull request #160, MERGED)'], message: 'anything',
   })
-  expect(held).toEqual({ warn: 'idle-delivered', detail: 'Agent: idle-p3 (pull request #160, OPEN)' })
+  expect(held).toEqual({ warn: 'idle-delivered', detail: 'Agent: idle-p3 (pull request #160, MERGED)' })
 })
 
 test('a busy agent passes, the blocks line passes, the done line asks for the facts', () => {
@@ -354,7 +352,6 @@ test('the wake check decides on the declared wait alone: the same line written b
   expect(gateWake({ ...none, message: 'x', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
   expect(gateWake({ ...none, message: 'x', declared: { kind: 'done', blocks: '' } })).toBe('read-what-is-left')
   expect(gateWake({ ...none, message: 'x', declared: { kind: 'deferred', blocks: '2 items' } })).toBe('read-what-is-left')
-  expect(gateWake({ ...none, message: 'x', declared: { kind: 'tool', blocks: 'the deploy run' }, watching: true })).toEqual({ tool: 'the deploy run' })
   // The model's own last line, with no declaration, is no wait: nothing wakes it.
   for (const line of ['waiting: operator — blocks: the report', 'waiting: done', 'waiting: deferred — 2 items', 'waiting: tool — the deploy run', 'waiting: your call?', 'Your call?']) {
     expect(gateWake({ ...none, message: `x\n${line}` })).toMatchObject(refused)
@@ -732,14 +729,14 @@ test('a stop with nothing to wake the orchestrator passes, the log naming nothin
   expect(declared.answer).toBe(declared.passed)
 })
 
-test('an idle agent delivered of its open pull request is no longer refused: the log names it', async () => {
+test('an idle agent delivered of its merged pull request is not refused: the log names it', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({
     listing: IDLE_ROW,
     chain: '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n',
-    agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
+    agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED"}',
   })
-  await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
 })
 
 test('the transcript is read from the event, not by hunting the projects directory', async () => {
@@ -1194,11 +1191,11 @@ test('the agent on a tty is found by its host record, or by the basename of an a
   // HOST_CLI an absolute path and the agent typed as a bare name: the old pattern
   // matched only the exact path and found no agent process on the tty.
   const { handlers } = mounted()
-  const pr = { agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}' }
+  const pr = { agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED"}' }
   const bare = fakeDollar({ ...pr, listing: IDLE_ROW, chain: IDLE_OWNED, agentRow: '   77 hostcli --resume x\n', selfBin: '/opt/homebrew/bin/hostcli', env: { ORCHESTRATOR_HOST_CLI: '/opt/homebrew/bin/hostcli' } })
-  await warnsNotRefuses(handlers, bare, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, bare, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
   const wrapped = fakeDollar({ ...pr, listing: IDLE_ROW, chain: IDLE_OWNED, agentRow: '   77 /usr/bin/node /x/cli.js\n', hostRecord: '{"pid":77,"sessionId":"s-a","status":"idle"}' })
-  await warnsNotRefuses(handlers, wrapped, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, wrapped, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
 })
 
 test("a declared block is honoured before « stand it down »: the idle agent may wait on that answer", async () => {
@@ -1334,7 +1331,7 @@ test('the wake decision: an awaited notice wakes, and a handed-over session is n
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', awaiting: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', handedOver: true })).toBeNull()
   // A delivered idle agent is still told: a subscription does not lift it.
-  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
+  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
 })
 
 test('a ci-watch this session started, still running, will wake it; a stranger\'s will not', async () => {
@@ -1381,8 +1378,8 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: [], resident: false, delivered: [], message: '`handed over`.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done', handedOver: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
-  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
-  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
+  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
+  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
   // A bare question declares no wait: it wakes nothing.
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
@@ -1544,63 +1541,10 @@ test('a stop that ends on no machine line while a background process of the sess
   expect(out.answer).toBe(out.passed)
 })
 
-test('waiting: tool passes while a background process of the session runs, and passes with a warn line when none does', async () => {
-  const { handlers } = mounted()
-  const message = { last_assistant_message: 'Deploys started.\nwaiting: tool — the deploy monitor' }
-  const watched = fakeDollar({ ps: MONITOR_PS })
-  const passed = await stop(handlers['classic.Stop'], watched.dollar, stopEvent(message))
-  expect(passed.answer).toBe(passed.passed)
-  expect(watched.written.some(l => l.endsWith('| stop gate: check1 tool the deploy monitor'))).toBe(true)
-  const idle = fakeDollar({ ps: `  820     1 ${shellOf('sleep 9')}\n` })
-  const unseen = await stop(handlers['classic.Stop'], idle.dollar, stopEvent(message))
-  expect(unseen.answer).toBe(unseen.passed)
-  expect(idle.written.some(l => l.endsWith('| stop gate: warn tool-not-running the deploy monitor'))).toBe(true)
-  expect(idle.written.some(l => l.includes('check1 tool'))).toBe(false)
-})
-
-// An orchestrator ended its turn on a tool line with nothing of its own in flight, the gate let
-// it end, and it sat idle. The host's own list of the session's background work, carried on the
-// stop, decides the line now; the process table only adds to it.
-const TOOL_WAIT = { last_assistant_message: 'Deploy started.\nwaiting: tool — the deploy run' }
+// The host's own list of the session's background work, carried on the stop, decides what will
+// wake it; the process table only adds to it.
 const SHELL_TASK = { id: 'b1', type: 'shell', status: 'running', description: 'deploy', command: 'bash deploy.sh' }
 const NOTHING_PS = `  820     1 ${shellOf('sleep 9')}\n`
-
-test('a tool line is refused when the host says nothing of the session runs, the short form first', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [], session_crons: [] }))
-  const reason = String((held.answer as any).block)
-  expect(reason.startsWith('Nothing of yours runs in the background')).toBe(true)
-  expect(reason).toContain('Launch it with run_in_background')
-  expect(reason).toContain('declare done')
-  expect(held.passed).toBe(null)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool-not-running'))).toBe(true)
-})
-
-test('a tool line passes while a background command of the session runs, and is refused once it completed', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  // The old false refusal: a real background task the parent chain does not see.
-  const running = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [SHELL_TASK] }))
-  expect(running.answer).toBe(running.passed)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool the deploy run'))).toBe(true)
-  const done = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [] }))
-  expect(String((done.answer as any).block)).toContain('Nothing of yours runs in the background')
-})
-
-test('a tool line passes with an idle subscription not yet fired, a scheduled wake-up, or a process of its own', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  await handlers['tool.call:SendMessage'](fx.dollar, SUBSCRIBE, SENT)
-  const subscribed = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [] }))
-  expect(subscribed.answer).toBe(subscribed.passed)
-  const base = { agents: [], resident: false, delivered: [], message: TOOL_WAIT.last_assistant_message }
-  expect(checkWake({ ...base, tasks: hostTasks([], [{ id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'x' }]) })).toEqual({ tool: 'the deploy run' })
-  expect(checkWake({ ...base, tasks: [], background: ['tail -f deploy.log'] })).toEqual({ tool: 'the deploy run' })
-  expect(checkWake({ ...base, tasks: [], watching: true })).toEqual({ tool: 'the deploy run' })
-  expect(checkWake({ ...base, tasks: [], agents: [AGENT_BUSY] })).toEqual({ tool: 'the deploy run' })
-  expect((checkWake({ ...base, tasks: [], hostUnread: true }) as any).case).toBe('tool-not-running')
-})
 
 test('the host task list names each task by what it runs, and is null when the host gives none', () => {
   expect(hostTasks(undefined, [])).toBe(null)
@@ -1611,27 +1555,8 @@ test('the host task list names each task by what it runs, and is null when the h
 })
 
 // The host's list carries a status per task and only promises a string: a task it lists as
-// finished wakes nothing, so a tool line resting on it alone is refused. A status not known to
-// be terminal, or none, still counts — a wrong list must never refuse a real wait.
-test('a tool line is refused when the only task the host lists has finished', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [{ ...SHELL_TASK, status: 'completed' }], session_crons: [] }))
-  expect(String((held.answer as any).block).startsWith('Nothing of yours runs in the background')).toBe(true)
-  expect(held.passed).toBe(null)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool-not-running'))).toBe(true)
-})
-
-test('a tool line passes with a running task, or one whose status is not known to be terminal', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  const { status: _, ...unstated } = SHELL_TASK
-  for (const task of [SHELL_TASK, { ...SHELL_TASK, status: 'paused' }, { ...SHELL_TASK, status: 'settling' }, unstated]) {
-    const waited = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [task], session_crons: [] }))
-    expect(waited.answer).toBe(waited.passed)
-  }
-})
-
+// finished wakes nothing. A status not known to be terminal, or none, still counts — a wrong
+// list must never refuse a real wait.
 test('the host task list leaves out a completed, failed, killed or stopped task', () => {
   const settled = ['completed', 'failed', 'killed', 'stopped'].map(status => ({ ...SHELL_TASK, status, command: `bash ${status}.sh` }))
   expect(hostTasks(settled, [])).toEqual([])
@@ -1639,25 +1564,9 @@ test('the host task list leaves out a completed, failed, killed or stopped task'
     .toEqual(['bash deploy.sh', 'search'])
 })
 
-// A predecessor waiting on its successor's confirmation was told « tool-not-running » live: its
-// successor's « takeover confirmed » wakes it, as at its other endings.
+// A predecessor waiting on its successor's confirmation: its successor's « takeover confirmed » wakes it.
 const SUCCESSOR_SPAWN = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
-const TAKEOVER_WAIT = { last_assistant_message: 'Successor spawned.\nwaiting: tool — takeover confirmation of « Orch: belt [b7f1] »' }
 
-test('a tool line of a session that handed over passes with nothing in flight', () => {
-  const base = { agents: [], resident: false, delivered: [], message: TAKEOVER_WAIT.last_assistant_message, tasks: [] }
-  expect(checkWake({ ...base, handedOver: true })).toEqual({ tool: 'takeover confirmation of « Orch: belt [b7f1] »' })
-  expect((checkWake({ ...base, handedOver: false }) as any).case).toBe('tool-not-running')
-})
-
-test('the predecessor that spawned its successor passes its tool line at the stop, the host listing nothing', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  await handlers['tool.call'](fx.dollar, SUCCESSOR_SPAWN, async () => ({ result: { stdout: 'spawned' } }))
-  const waiting = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TAKEOVER_WAIT, background_tasks: [], session_crons: [] }))
-  expect(waiting.answer).toBe(waiting.passed)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool takeover confirmation of « Orch: belt [b7f1] »'))).toBe(true)
-})
 
 // The plain ending with nothing to wake it is refused on the same list; without one it is only logged.
 const PLAIN = { last_assistant_message: 'Both reviews are dispatched.' }
@@ -1697,10 +1606,10 @@ test('a plain ending passes with a subscription not yet fired, or after the hand
 })
 
 // A question still open in the round blocks only the work that depends on its answer: the turns that
-// advance the rest end on their tool line or on none, the answer waking the session, never asked again.
-test('a tool line or a plain ending passes while the session\'s question is open in the round, the host listing nothing', async () => {
+// advance the rest end on no wait, the answer waking the session, never asked again.
+test('a plain ending passes while the session\'s question is open in the round, the host listing nothing', async () => {
   const { handlers } = mounted()
-  for (const ending of [TOOL_WAIT, PLAIN]) {
+  for (const ending of [PLAIN]) {
     const open = fakeDollar({ ps: NOTHING_PS, round: { 'q-a1b2c3-1.json': ASKED_HERE } })
     const waiting = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
     expect(waiting.answer).toBe(waiting.passed)
@@ -1712,18 +1621,17 @@ test('a tool line or a plain ending passes while the session\'s question is open
 
 // Only this session's question wakes it: another session's open in the same round holds the stop
 // as none would.
-test('another session\'s question open in the round wakes no tool line nor plain ending of this session', async () => {
+test('another session\'s question open in the round wakes no plain ending of this session', async () => {
   const { handlers } = mounted()
-  for (const ending of [TOOL_WAIT, PLAIN]) {
+  for (const ending of [PLAIN]) {
     const other = fakeDollar({ ps: NOTHING_PS, round: { 'q-d4e5f6-1.json': askedHere({ id: 'q-d4e5f6-1', sender: { session: 'd4e5f6', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
     const held = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
     expect(held.passed).toBe(null)
   }
 })
 
-test('an open question wakes a tool line or a plain ending, and a line spelling no machine line is no refusal of its own', () => {
+test('an open question wakes a plain ending, and a line spelling no machine line is no refusal of its own', () => {
   const base = { agents: [], resident: false, delivered: [], tasks: [] as string[], questionOpen: true }
-  expect(checkWake({ ...base, message: TOOL_WAIT.last_assistant_message })).toEqual({ tool: 'the deploy run' })
   expect(checkWake({ ...base, message: PLAIN.last_assistant_message })).toBe(null)
   expect((checkWake({ ...base, questionOpen: false, message: PLAIN.last_assistant_message }) as any).case).toBe('nothing-will-wake')
   expect(checkWake({ ...base, message: 'Done.\nwaiting operatr blocks the order' })).toBe(null)
@@ -1744,16 +1652,6 @@ test('nothing will wake, decided over the facts with the host list', () => {
   expect(checkWake({ ...base, tasks: null })).toEqual({ warn: 'nothing-will-wake', detail: '' })
 })
 
-test('the tool line, decided over the facts', () => {
-  const base = { agents: [], resident: false, delivered: [] }
-  expect(checkWake({ ...base, message: 'x\n`waiting: tool — the deploy monitor`.', background: ['tail -f deploy.log'] })).toEqual({ tool: 'the deploy monitor' })
-  expect(checkWake({ ...base, message: 'Waiting: Tool - ci-watch 12', watching: true })).toEqual({ tool: 'ci-watch 12' })
-  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor' })).toEqual({ tool: 'the deploy monitor', notRunning: true })
-  // A busy agent beside a tool line with nothing running: logged, not refused.
-  expect(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: tool — the monitor' })).toEqual({ tool: 'the monitor', notRunning: true })
-  // A delivered idle agent is told first, as for every line but a blocking question.
-  expect((checkWake({ ...base, agents: [AGENT_IDLE], delivered: ['Agent: idle-p3 (pull request #1, OPEN)'], message: 'waiting: tool — x', background: ['sleep 9'] }) as any).warn).toBe('idle-delivered')
-})
 
 test('a wait on the operator that blocks nothing is refused, the right line named', () => {
   const base = { agents: [], resident: false, delivered: [] }
@@ -1765,8 +1663,7 @@ test('a wait on the operator that blocks nothing is refused, the right line name
   const urgent = checkWake({ ...base, message: 'waiting: operator (urgent) — blocks: nothing.' }) as any
   expect(urgent.case).toBe('blocks-nothing')
   const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
-  expect(running.reason).toContain('declare a tool wait naming what is watched')
-  expect(running.reason).toContain('tail -f deploy.log')
+  expect(running.reason).toContain('tail -f deploy.log runs in the background: declare no wait')
   const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
   expect(busy.case).toBe('blocks-nothing')
   expect(busy.reason).toContain('An agent of yours is busy: declare no wait')
@@ -1777,14 +1674,8 @@ test('a wait on the operator that blocks nothing is refused, the right line name
   expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing before geonative-api#12' })).toEqual({ blocks: 'nothing before geonative-api#12' })
 })
 
-test('a true tool line is accepted when the host pid could not be read', () => {
-  const base = { agents: [], resident: false, delivered: [] }
-  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor', hostUnread: true })).toEqual({ tool: 'the deploy monitor' })
-  // A read host pid with nothing running is flagged for the log, not refused.
-  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor' })).toEqual({ tool: 'the deploy monitor', notRunning: true })
-})
 
-test('nothing to wake is flagged for the log and carries no refusal text offering the tool line', () => {
+test('nothing to wake with no list from the host is flagged for the log and carries no refusal text', () => {
   const nothing = checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' }) as any
   expect(nothing).toEqual({ warn: 'nothing-will-wake', detail: '' })
   expect(nothing.reason).toBeUndefined()
@@ -1972,9 +1863,7 @@ test('the lines that fit name the deferred ending', () => {
   const base = { agents: [], resident: false, delivered: [] }
   const NAMED = 'if the operator deferred it, his ruling recorded, declare a deferred wait'
   expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing' }) as any).reason).toContain(NAMED)
-  // A tool line with nothing running is no longer a refusal: it has no text to name the ending in.
-  expect((checkWake({ ...base, message: 'waiting: tool — the monitor' }) as any).reason).toBeUndefined()
-  // While something runs, the line that fits is the tool line alone.
+  // While something runs, what fits is no wait at all.
   expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['sleep 9'] }) as any).reason).not.toContain(NAMED)
 })
 
@@ -2153,12 +2042,11 @@ const NOTHING_RUNS = { background_tasks: [], session_crons: [] }
 
 test('a declaration is validated: a known kind, and what it blocks where the kind needs it', () => {
   expect(parseDeclaration({ kind: 'operator', blocks: '  G3:\n the scope ' }, [{ id: 'q-1', blocks: 'x' }])).toEqual({ wait: { kind: 'operator', blocks: 'G3: the scope', asked: ['q-1'] } })
-  expect(parseDeclaration({ kind: 'tool', blocks: 'ci-watch.sh 12' })).toEqual({ wait: { kind: 'tool', blocks: 'ci-watch.sh 12' } })
   expect(parseDeclaration({ kind: 'deferred', blocks: '2 items' })).toEqual({ wait: { kind: 'deferred', blocks: '2 items' } })
   expect(parseDeclaration({ kind: 'done', blocks: 'whatever' })).toEqual({ wait: { kind: 'done', blocks: '' } })
   expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: true }, [{ id: 'q-1', blocks: 'x' }])).toEqual({ wait: { kind: 'operator', blocks: 'G1', urgent: true, asked: ['q-1'] } })
   expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: false }, [{ id: 'q-1', blocks: 'x' }])).toEqual({ wait: { kind: 'operator', blocks: 'G1', asked: ['q-1'] } })
-  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes' }]) {
+  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'deferred', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'deferred', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes' }]) {
     expect('error' in parseDeclaration(bad)).toBe(true)
   }
 })
@@ -2171,7 +2059,7 @@ test('an operator question may declare the subject it asks consent on, in flat f
   })
   expect(parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat(waiver) }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver, asked: ['q-1'] } })
   for (const bad of [
-    { kind: 'tool', blocks: 'x', ...flat(waiver) }, { kind: 'operator', blocks: 'G1', ...flat({ kind: 'e2e-waiver', repo: 'acme/thing' }) },
+    { kind: 'deferred', blocks: 'x', ...flat(waiver) }, { kind: 'operator', blocks: 'G1', ...flat({ kind: 'e2e-waiver', repo: 'acme/thing' }) },
     { kind: 'operator', blocks: 'G1', ...flat({ kind: 'merge', repo: 'acme/thing' }) },
     { kind: 'operator', blocks: 'G1', consent_repo: 'acme/thing' },
   ]) expect('error' in parseDeclaration(bad, asked)).toBe(true)
@@ -2222,16 +2110,6 @@ test('a declared operator wait releases the stop whatever the last line says', a
   expect(String((held.answer as any).block)).toContain('blocks nothing')
 })
 
-test('a declared tool wait is held to the host\'s own list of work in flight', async () => {
-  const wait = waitMounted()
-  const fx = fakeDollar({ ps: NOTHING_PS })
-  await declare(wait, fx.dollar, { kind: 'tool', blocks: 'the deploy run' })
-  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block).startsWith('Nothing of yours runs in the background')).toBe(true)
-  const running = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', background_tasks: [SHELL_TASK] }))
-  expect(running.answer).toBe(running.passed)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool the deploy run'))).toBe(true)
-})
 
 test('a declared done is held to the open rows, and passes once none is', async () => {
   const wait = waitMounted()
@@ -2272,11 +2150,11 @@ test('a wait declared in an earlier turn is stale and never read', async () => {
 test('the turn\'s end hands the declared wait to its readers, and shows the answer unchanged', async () => {
   const wait = waitMounted()
   const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  await declare(wait, dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })
+  await declare(wait, dollar, { kind: 'deferred', blocks: '2 items' })
   let seen = ''
   const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, (x: any) => { seen = x.answer; return { text: x.answer } })
-  expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'tool', blocks: 'ci-watch.sh 12' }))
-  expect(machineLine(seen)).toBe('waiting: tool — ci-watch.sh 12')
+  expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'deferred', blocks: '2 items' }))
+  expect(machineLine(seen)).toBe('waiting: deferred — 2 items')
   expect(shown).toEqual({ text: 'Watching.' })
   // An urgent operator wait reaches the turn's end as the urgent line the relay reads.
   await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true })
@@ -2534,4 +2412,85 @@ test('a coordinator\'s stop is never held by its list: only its end command is',
   const coord = fakeDollar({ launchName: 'Coord: machine', todos: todoLine(1) })
   const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'Nothing more.' }))
   expect(passed.answer).toBe(passed.passed)
+})
+
+// --- the waits the module reads itself: no declaration for them ------------------------------
+
+// His ruling of 2026-11-14 (« on n'est plus obligé de déclarer l'attente d'un outil »): a command,
+// a monitor, a subagent or an awaited agent of the session is read by the gate, so `declare_wait`
+// is for a question to the operator or the ending alone.
+test('declare_wait takes no tool wait: what the module reads in flight passes with nothing declared', async () => {
+  expect(parseDeclaration({ kind: 'tool', blocks: 'the deploy run' })).toEqual({ error: 'kind is one of operator, done, deferred' })
+  const wait = waitMounted()
+  const tools: any[] = []
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  fx.dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
+  await wait['session.start'](fx.dollar, {}, (x: unknown) => x)
+  expect(tools[0].inputSchema.properties.kind.enum).toEqual(['operator', 'done', 'deferred'])
+  expect(tools[0].description).not.toContain('`tool`')
+  const SUBAGENT = { id: 'a', type: 'subagent', status: 'running', description: 'search' }
+  const MONITOR = { id: 'm', type: 'monitor', status: 'running', description: 'the deploy log' }
+  for (const task of [SHELL_TASK, SUBAGENT, MONITOR]) {
+    const out = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', background_tasks: [task], session_crons: [] }))
+    expect(out.answer).toBe(out.passed)
+  }
+  expect(fx.written.some(l => l.includes('| stop gate: warn') || l.includes('| stop gate: check1'))).toBe(false)
+})
+
+test('no refusal teaches a tool wait: what runs, or a busy agent, wakes the session with no wait declared', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  const nothing = checkWake({ ...base, message: 'stopped.', tasks: [] }) as any
+  expect(nothing.case).toBe('nothing-will-wake')
+  expect(nothing.reason).not.toContain('tool wait')
+  expect(nothing.reason).toContain('its end wakes you, with no wait to declare')
+  const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
+  expect(running.case).toBe('blocks-nothing')
+  expect(running.reason).not.toContain('tool wait')
+  expect(running.reason).toContain('tail -f deploy.log runs in the background: declare no wait, its end wakes you.')
+  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
+  expect(busy.reason).toContain('An agent of yours is busy: declare no wait, its idle notice wakes you.')
+})
+
+// The fresh-eye plan A, item 4 (2026-11-14): the executor lives until its pull request merges and
+// receives the kept findings; the gate no longer flags it for its stand-down while that pull request is open.
+test('an idle agent whose pull request is open is not dismissed: with something armed the stop passes, logged apart; once merged it is delivered', async () => {
+  const { handlers } = mounted()
+  const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n' }
+  const open = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
+  const armed = { background_tasks: [{ command: 'bash ci-watch.sh 160', status: 'running' }], session_crons: [] }
+  const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...armed }))
+  expect(out.answer).toBe(out.passed)
+  expect(open.written.some(l => l.includes('idle-delivered') || l.includes('idle-agents') || l.includes('nothing-will-wake'))).toBe(false)
+  expect(open.written.some(l => l.endsWith('| stop gate: warn awaiting-merge Agent: idle-p3'))).toBe(true)
+  // Its done is still held through the handler: it is still there until the merge.
+  const done = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
+  const held = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Agent: idle-p3 is still there')
+  const merged = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"MERGED"}' })
+  await warnsNotRefuses(handlers, merged, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
+})
+
+test('an executor with its pull request open and nothing armed to wake the session is refused as nothing-will-wake', async () => {
+  const { handlers } = mounted()
+  const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}' }
+  const open = fakeDollar(pr)
+  const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...NOTHING_RUNS }))
+  expect(out.answer).not.toBe(out.passed)
+  expect(String((out.answer as any).block)).toContain('Nothing will wake you')
+  expect(open.written.some(l => l.includes('warn awaiting-merge'))).toBe(false)
+})
+
+test('an executor with its pull request open still holds a done, and another idle agent is still named', () => {
+  const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3'], tasks: ['bash ci-watch.sh 160'] }
+  expect(checkWake({ ...base, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  // An open pull request wakes nothing: with no task of the host, no subscription, no watch and no open question, it is refused.
+  expect((checkWake({ ...base, tasks: [], message: 'Reviewing.' }) as any).case).toBe('nothing-will-wake')
+  expect(checkWake({ ...base, tasks: [], awaiting: true, message: 'Reviewing.' })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], watching: true, message: 'Reviewing.' })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], questionOpen: true, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  expect(checkWake({ ...base, tasks: undefined, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  const other = { label: 'Agent: other-p4', state: 'idle' as const, tty: '/dev/ttys004' }
+  expect(checkWake({ ...base, agents: [AGENT_IDLE, other], message: 'Reviewing.' })).toEqual({ warn: 'idle-agents', detail: 'Agent: other-p4' })
+  expect(checkWake({ ...base, message: 'waiting: done' })).toBe('read-what-is-left')
+  expect((checkWakeDone({ agents: [AGENT_IDLE], checkouts: [], deferred: [] }) as any).reason).toContain('Agent: idle-p3 is still there')
 })

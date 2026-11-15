@@ -203,7 +203,6 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   expect(done.result).toContain('acme/app#9')
   expect(declarations.current()).toBe(null)
   expect((await declare(dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(true)
-  expect((await declare(dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })).isError).toBe(undefined)
   // An operator wait waits on a question the session asked with `ask` (question.ts).
   await dollar.fs.write(`${MODULE}/round/q-s-orch-1.json`, JSON.stringify({
     v: 2, id: 'q-s-orch-1', sender: { session: 's-orch', name: 'Orch: app', role: 'orchestrator', machine: 'box-1' },
