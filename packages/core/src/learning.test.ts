@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DATA_FILES } from './data.ts'
 import {
-  AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, eventId, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
+  AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, CANDIDATE_CONTRACT, eventId, parseCandidate, signatureFrom, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
-  foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, prRefsOf, prunable, signatureOf,
+  foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, pathClassesOf, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
 const AT = '2026-11-14T10:15:00Z'
@@ -182,13 +182,24 @@ describe('the weekly fold of the events a journal drops', () => {
     return event
   }
 
-  it('names a signature by kind and code, and by severity and languages when the event has them', () => {
+  it('names the class of each path once, in order: a test by its directory or its name, docs and configuration by directory or extension, source otherwise', () => {
+    assert.deepEqual(pathClassesOf([]), [])
+    assert.deepEqual(pathClassesOf(['src/a.ts', 'Makefile']), ['source'])
+    assert.deepEqual(pathClassesOf(['plugins/x/tests/run.sh', 'src/a.test.ts', 'src/b.spec.ts', 'pkg/c_test.go']), ['test'])
+    assert.deepEqual(pathClassesOf(['docs/build.ts', 'README.md']), ['docs'])
+    assert.deepEqual(pathClassesOf(['package.json', 'ci/build.YML']), ['configuration'])
+    assert.deepEqual(pathClassesOf(['tests/fixture.json', 'docs/tests.md']), ['docs', 'test'])
+    assert.deepEqual(pathClassesOf(['src/a.ts', 'a.md', 'a.toml', 'a.test.ts']), ['configuration', 'docs', 'source', 'test'])
+    assert.deepEqual(pathClassesOf(['src/latest/contest.ts']), ['source'])
+  })
+
+  it('names a signature by kind and code, and by severity, path classes and languages when the event has them', () => {
     assert.equal(signatureOf(refusal(AT)), 'refusal:github.ready.missing-review')
     const finding = parseLearningEvent({
       ...EVENT, kind: 'finding', evidence: [{ type: 'finding', severity: 'critical', file: 'plugins/github/hooks/ready.ts' }],
     })
     assert.ok(finding)
-    assert.equal(signatureOf(finding), 'finding:github.ready.missing-review:critical:typescript')
+    assert.equal(signatureOf(finding), 'finding:github.ready.missing-review:critical:docs:source:typescript')
   })
 
   it('counts one line per signature and week, by week then signature, the week named by its Monday in UTC', () => {
@@ -403,5 +414,58 @@ describe('the pull requests a text names', () => {
     assert.deepEqual(prRefsOf('claude-plugins#95 merged 87586ec; see LounisBou/claude-plugins#96 and claude-plugins#95'), ['claude-plugins#95', 'LounisBou/claude-plugins#96'])
     assert.deepEqual(prRefsOf('fix (#12), issue #4, a#0, x/y/z#3, mail@host#5'), [])
     assert.equal(prRefsOf(Array.from({ length: 12 }, (_, i) => `r#${i + 1}`).join(' ')).length, 8)
+  })
+})
+describe('the candidate', () => {
+  const CANDIDATE = {
+    v: 1, signature: 'finding:pr-review.finding:critical:source:test:python:typescript', kind: 'finding', code: 'pr-review.finding', severity: 'critical',
+    classes: ['source', 'test'], languages: ['python', 'typescript'], since: '2026-10-15T10:00:00Z', until: '2026-11-14T10:00:00Z',
+    events: ['20261101T101500Z-0a1b2c3d', '20261102T101500Z-0a1b2c3d', '20261103T101500Z-0a1b2c3d'], prs: ['owner/name#7', 'owner/other#7'], repos: ['owner/name', 'owner/other', 'owner/third'],
+  }
+  const read = (change: Record<string, unknown>) => parseCandidate({ ...CANDIDATE, ...change })
+
+  it('reads a candidate that keeps the contract, whole', () => {
+    assert.deepEqual(parseCandidate(CANDIDATE), CANDIDATE)
+    assert.deepEqual(read({ signature: 'refusal:github.writing.rule', kind: 'refusal', code: 'github.writing.rule', severity: null, classes: [], languages: [] })?.severity, null)
+  })
+
+  it('refuses a field the contract does not name, a missing one, and what is not an object', () => {
+    assert.equal(read({ scope: 'method' }), undefined)
+    const { repos: _repos, ...short } = CANDIDATE
+    for (const bad of [short, null, [], 'candidate']) assert.equal(parseCandidate(bad), undefined)
+  })
+
+  it('refuses a signature that is not the one its parts give', () => {
+    assert.equal(signatureFrom({ kind: 'finding', code: 'pr-review.finding', severity: 'critical', classes: ['source', 'test'], languages: ['python', 'typescript'] }), CANDIDATE.signature)
+    for (const change of [{ signature: 'finding:pr-review.finding' }, { kind: 'refusal' }, { code: 'norms.finding' }, { severity: 'important' }, { severity: null }, { classes: ['source'] }, { languages: ['python'] }]) {
+      assert.equal(read(change), undefined, JSON.stringify(change))
+    }
+  })
+
+  it('refuses a part outside its list, and a list out of order or with a value twice', () => {
+    const bad = [
+      { v: 2 }, { kind: 'link' }, { code: 'no-dot' }, { severity: 'minor' }, { classes: ['vendor'] }, { classes: ['test', 'source'] }, { languages: ['cobol'] },
+      { languages: ['typescript', 'python'] }, { languages: 'python' }, { events: [...CANDIDATE.events].reverse() }, { events: ['a', 'b', 'c'] },
+      { events: [CANDIDATE.events[0], CANDIDATE.events[0], CANDIDATE.events[1]] }, { prs: ['owner/other#7', 'owner/name#7'] }, { repos: ['owner/other', 'owner/name'] },
+    ]
+    for (const change of bad) assert.equal(read(change), undefined, JSON.stringify(change))
+  })
+
+  it('refuses a cluster under the thresholds', () => {
+    assert.deepEqual([CANDIDATE_CONTRACT.min_events, CANDIDATE_CONTRACT.min_prs], [3, 2])
+    assert.equal(read({ events: CANDIDATE.events.slice(0, 2) }), undefined)
+    assert.equal(read({ prs: ['owner/name#7'] }), undefined)
+  })
+
+  it('refuses a pull request not named with its repository, or in a repository the candidate does not name', () => {
+    for (const prs of [['#7', 'owner/name#7'], ['owner/name#7', 'owner/name#x'], ['name#7', 'owner/name#7'], ['owner/name#0', 'owner/name#7'], ['owner/name#7', 'owner/name#7#8'], [7, 8]]) {
+      assert.equal(read({ prs }), undefined, JSON.stringify(prs))
+    }
+    assert.equal(read({ repos: ['owner/name'] }), undefined)
+    assert.equal(read({ repos: ['owner/name', '../other'] }), undefined)
+  })
+
+  it('refuses a window that does not end after it starts, or a time that is none', () => {
+    for (const change of [{ since: CANDIDATE.until }, { since: '2026-11-15T10:00:00Z' }, { until: 'soon' }, { since: '2026-10-15' }]) assert.equal(read(change), undefined, JSON.stringify(change))
   })
 })

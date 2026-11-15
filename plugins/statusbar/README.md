@@ -172,7 +172,7 @@ accounts.
 ## Tests
 
 ```bash
-./tests/run-tests.sh      # the status line, install and uninstall
+./tests/run-tests.sh      # the status line, install and uninstall, then the hooks module's tests
 claude plugin test .      # the hooks module (the /config rows and the commands), inside the host
 ```
 

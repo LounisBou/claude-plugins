@@ -9,9 +9,17 @@
 // question or the header naming a mode.
 export function asksTheMode(e: { questions?: unknown }): boolean {
   if (!Array.isArray(e.questions)) return false
-  return e.questions.some((q: any) => {
-    const options = Array.isArray(q?.options) ? q.options.map((o: any) => String(o?.label ?? '')).join(' ') : ''
-    return /\bmode\b/i.test(`${q?.header ?? ''} ${q?.question ?? ''}`)
+  return e.questions.some((q: unknown) => {
+    const held = field(q, 'options')
+    const options = Array.isArray(held) ? held.map((o: unknown) => String(field(o, 'label') ?? '')).join(' ') : ''
+    return /\bmode\b/i.test(`${field(q, 'header') ?? ''} ${field(q, 'question') ?? ''}`)
       && /\bbuild\b/i.test(options) && /\binvestigate\b/i.test(options)
   })
+}
+
+// A field of a value the dialog handed, whatever it is: undefined where the value holds none.
+function field(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null || !(key in value)) return undefined
+  const read: unknown = Reflect.get(value, key)
+  return read
 }

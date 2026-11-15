@@ -511,7 +511,6 @@ def test_cli_doctor_runs_outside_any_project(machine_env, ps, tmp_path, monkeypa
     assert cli.main(["doctor"], env=machine_env) == 0
 
 
-
 def test_cli_doctor_reports_an_unreadable_process_table_as_a_failed_check(machine_env, monkeypatch, capsys):
     def fail():
         raise BugsError("cannot read the process table: boom")

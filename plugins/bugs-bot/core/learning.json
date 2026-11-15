@@ -92,6 +92,55 @@
       ".cts"
     ]
   },
+  "path_classes": {
+    "test": {
+      "segments": [
+        "test",
+        "tests",
+        "__tests__",
+        "spec",
+        "specs",
+        "e2e"
+      ],
+      "marks": [
+        ".test.",
+        ".spec.",
+        "_test."
+      ],
+      "extensions": []
+    },
+    "docs": {
+      "segments": [
+        "doc",
+        "docs"
+      ],
+      "marks": [],
+      "extensions": [
+        ".md",
+        ".mdx",
+        ".rst",
+        ".txt",
+        ".adoc"
+      ]
+    },
+    "configuration": {
+      "segments": [],
+      "marks": [],
+      "extensions": [
+        ".json",
+        ".jsonc",
+        ".yml",
+        ".yaml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".lock",
+        ".xml"
+      ]
+    }
+  },
+  "path_class_default": "source",
   "patterns": {
     "id": "^\\d{8}T\\d{6}Z-[0-9a-f]{8}$",
     "at": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",

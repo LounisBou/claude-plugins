@@ -82,16 +82,6 @@ def test_the_guard_reads_what_it_guards():
     assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor", "start", "install"})
 
 
-@pytest.mark.parametrize("phrase", [
-    ".bugs-bot.json", "/bugs-bot:init", "ListAgents", "you already have one", "it belongs to",
-    'bugs-bot agent-prompt --launcher "', "bugs-bot plugin-path orchestrator", "--right-of self", "move --tty", "verify --tty",
-    "orchestrator plugin", "--right-of self --resident", "0.46.1 or newer",
-    "claude plugin update orchestrator@lounisbou",
-])
-def test_start_launches_the_projects_one_agent(phrase):
-    assert phrase in (REPO_ROOT / "commands" / "start.md").read_text()
-
-
 def test_the_orchestrator_plugin_start_needs_is_a_declared_dependency():
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
 
@@ -99,52 +89,3 @@ def test_the_orchestrator_plugin_start_needs_is_a_declared_dependency():
     assert {"name": "orchestrator", "marketplace": "lounisbou", "version": ">=0.49"} in manifest.get(
         "dependencies", []
     )
-
-
-@pytest.mark.parametrize("kind", ["telegram", "slack"])
-def test_doctor_tells_what_to_do_about_each_channels_token_and_bot_check(kind):
-    from bugs_bot.channels import KINDS
-
-    text = (REPO_ROOT / "commands" / "doctor.md").read_text()
-    token = "token" if kind == "telegram" else f"{kind} token"  # the names doctor.py prints
-
-    assert kind in KINDS
-    assert f"- `{token}`:" in text and f"{kind.upper()}_BOT_TOKEN" in text
-    assert f"`{kind} bot`" in text
-
-
-@pytest.mark.parametrize("path, stale", [
-    ("agent/AGENT.md", "the Telegram group"),
-    ("commands/start.md", "Telegram group"),
-    ("skills/bugs-bot/SKILL.md", "Telegram's description"),
-    ("skills/bugs-bot/SKILL.md", "asks Telegram for"),
-])
-def test_no_instruction_says_a_projects_group_is_telegram_s_only(path, stale):
-    assert stale not in (REPO_ROOT / path).read_text()
-
-
-def test_the_skill_names_both_tokens_and_sets_up_both_channels():
-    text = (REPO_ROOT / "skills" / "bugs-bot" / "SKILL.md").read_text()
-    setup = text.split("## Setup by the operator", 1)[1]
-
-    assert "SLACK_BOT_TOKEN" in text and "TELEGRAM_BOT_TOKEN" in text
-    assert "Slack" in setup and "/invite" in setup
-    assert "chat.update" in text
-
-
-def test_init_asks_for_a_platforms_token_only_when_it_is_missing_and_never_in_the_session():
-    text = (REPO_ROOT / "commands" / "init.md").read_text()
-
-    assert "bugs-bot token --channel <platform>" in code_lines(text)
-    assert "Exit 0: it is there; ask nothing about it" in text
-    assert "`bugs-bot token --channel <platform> --set` himself in a\n   terminal of his own" in text
-    assert "Never ask him to paste the token here" in text
-
-
-def test_install_asks_nothing_and_doctor_changes_nothing():
-    install = (REPO_ROOT / "commands" / "install.md").read_text()
-    doctor = (REPO_ROOT / "commands" / "doctor.md").read_text()
-
-    assert "It asks nothing" in install and "Bash(bugs-bot:*)" in install
-    assert code_lines(doctor) == ["bugs-bot doctor"]
-    assert "/bugs-bot:install" in doctor

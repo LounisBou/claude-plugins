@@ -1637,7 +1637,7 @@ check "no attribution trailers in history" "0" \
 #
 # The review's plugin is pr-review in this repository; claude-review, the name it
 # carried in its own repository, is the old one. The hooks test files are
-# developer-only like this suite.
+# never installed either: this suite runs them at its end, in the host's kit.
 old_name_hits=""
 for f in $(cd "$ROOT" && git ls-files); do
   case "$f" in
@@ -2718,6 +2718,16 @@ check "--json after the subcommand is read as before it" "7" \
   "$(gh9 --json pr-list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"
 check "a format named beside --json wins" "7" "$(gh9 pr-get --branch feat --json --format pr-number)"
 
+
+echo "== the hooks module's tests =="
+
+# The guards' own tests (hooks/*.test.ts) run only in the host's kit. Without `claude` the check
+# fails: it does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to run the module's tests" "found" "absent"
+fi
 
 echo
 echo "$pass passed, $fail failed"
