@@ -28,13 +28,14 @@ import { DECLARATIONS, type Declarations } from './wait.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
-  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, projectCheckouts,
+  listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
+import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
@@ -590,7 +591,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.
       const rows = listing(await mustRun($, ['bash', launcherOf(root), 'list'], "the launcher's listing", until))
-      const chain = await quietly($, () => $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`), until, '')
+      const chain = await quietly($, () => $.fs.read(chainPath(state, tty)), until, '')
       const owner = await chainOwner($)
       if (!owner) {
         // Said once per stop, as the shell gate said it (stop_gate.py:232): without the
@@ -598,7 +599,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         // saw no agent of its own — a recycled tty's occupant would have been counted.
         await logLine($, 'guards', 'stop gate: ITERM_SESSION_ID is not set: no chain entry is counted')
       }
-      const entries = chainEntries(String(chain))
+      const entries = parseChain(String(chain))
       let readyOnce: string | null | undefined
       readiness = async () => {
         if (readyOnce !== undefined) return readyOnce

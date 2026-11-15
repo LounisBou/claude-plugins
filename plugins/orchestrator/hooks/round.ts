@@ -1,6 +1,6 @@
 // hooks/round.ts
 // The coordinator's round, as the module keeps it on this machine: one file per wait an
-// orchestrator ended its turn on, under the state directory's round/ (roundPath), written
+// orchestrator ended its turn on, under the state directory's round/ (core's roundEntryPath), written
 // whole and renamed into place by the relay (supervision.ts) in place of a message, so a
 // closing proposal waits in the round without costing the coordinator's model a turn. The
 // questions for the operator are asked with `ask` (question.ts), whose objects share the
@@ -11,7 +11,7 @@
 import { fingerprint, type Wait } from './relay.ts'
 import { type ConsentSubject } from '../core/consent-record.ts'
 import { parseChoices, type Choice } from '../core/method.ts'
-import { ROUND_DIR, type WaitKind } from '../core/orchestration.ts'
+import { type WaitKind } from '../core/orchestration.ts'
 
 // The declared waits a round entry is written for (core's WAIT_KINDS): a question for the operator, or a closing proposal.
 export type RoundKind = Extract<WaitKind, 'operator' | 'done'>
@@ -195,9 +195,8 @@ export function roundEntry(sessionId: string, from: string, wait: Wait, since: s
   }
 }
 
-export function roundPath(stateDir: string, id: string): string {
-  return `${stateDir}/${ROUND_DIR}/${id}.json`
-}
+// An entry's file is core's (orchestration.ts); supervision.ts still imports it under this name.
+export { roundEntryPath as roundPath } from '../core/orchestration.ts'
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
 // pane of the coordinator is open to show it, the operator's ruling of 2026-10-24: whether he
