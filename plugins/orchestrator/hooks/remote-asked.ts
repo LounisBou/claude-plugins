@@ -20,8 +20,10 @@ type Replica = NonNullable<Asked['replica']>
 
 // The nouns the pushes and the replies hold: the supervision's.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui'>
+// What a push alone holds: its caller in question.ts has no more.
+type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock'>
 
-async function pathOf($: Held, id: string): Promise<string> {
+async function pathOf($: Pushing, id: string): Promise<string> {
   return `${await stateDir($)}/round/${id}.json`
 }
 
@@ -33,7 +35,7 @@ const REPLICA_ANSWERS: readonly string[] = ['pane', 'coordinator']
  * push state written back on it (`replica`) while its `seq` is still the one sent. A replica, or a
  * coordinator on this machine or none known, sends nothing. Never throws: a failure is a log line.
  */
-export async function replicate($: Held, entry: Asked): Promise<void> {
+export async function replicate($: Pushing, entry: Asked): Promise<void> {
   if (entry.origin !== undefined) return
   try {
     const coordinator = await coordinatorAddress($)
@@ -66,7 +68,7 @@ export async function replicate($: Held, entry: Asked): Promise<void> {
 // One reading of the pushes not acknowledged, ANSWER_RESEND_MS after a push, armed once at a time:
 // an asker waiting on its question ends no turn that would send it again.
 let resendArmed = false
-function armResend($: Held): void {
+function armResend($: Pushing): void {
   if (resendArmed) return
   try {
     $.clock.after(ANSWER_RESEND_MS + 1000, () => resendTick($))
@@ -83,7 +85,7 @@ export function forgetResendTimer(): void {
 
 // A push sent after the timer was armed is younger than ANSWER_RESEND_MS at its tick: armed again
 // while any push still waits for its acknowledgment from a coordinator still on another machine.
-async function resendTick($: Held): Promise<void> {
+async function resendTick($: Pushing): Promise<void> {
   resendArmed = false
   try {
     await resendReplicas($)
@@ -101,7 +103,7 @@ async function resendTick($: Held): Promise<void> {
  * ANSWER_RESEND_MS old is sent again, or, sent ANSWER_SENDS times already, failed; an open question
  * never pushed, or changed since its last push, is pushed now.
  */
-export async function resendReplicas($: Held, now: number = Date.now()): Promise<void> {
+export async function resendReplicas($: Pushing, now: number = Date.now()): Promise<void> {
   const coordinator = await coordinatorAddress($)
   if (!coordinator || coordinator.local) return
   for (const entry of await readAsked($)) {
