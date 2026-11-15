@@ -82,7 +82,7 @@ test('his sentence of the coordinator\'s tab grants the exemption with its limit
   expect(done.isError).toBeUndefined()
   const [record] = records(m)
   expect(records(m)).toHaveLength(1)
-  expect(record).toMatchObject({ v: 1, subject: { kind: 'e2e-exemption', repo: 'acme/guide' }, answer: SENTENCE, by: 'coordinator', at: '2026-11-15T07:11:30Z' })
+  expect(record).toMatchObject({ v: 1, subject: { kind: 'e2e-exemption', repo: 'acme/guide' }, answer: SENTENCE, by: 'tab', at: '2026-11-15T07:11:30Z' })
   expect(record.question).toContain(UNTIL)
   expect(record.question).toContain(SENTENCE)
   // What mcp__github__record {exempt: true, until} reads: the record parses, quotes his sentence, and its question states the limit.
@@ -178,6 +178,8 @@ test('a sentence with no grant writes nothing: a refusal, a question, a conditio
     'Accorder la dispense de acme/guide, sauf pour les PRs de docs',
     'Accorder la dispense de acme/guide mais pas de merge',
     'La dispense de acme/guide est un sujet ouvert',
+    'La dispense de acme/guide',
+    'Accorder la dispense de acme/guide ?',
   ]) {
     const m = machine('coordinator', [typed(said)])
     const done = await settleWords(m.dollar, words({ until: null, said }), NOW)
@@ -195,6 +197,67 @@ test('a kind is granted by words that are about it: a yes to a merge is no exemp
   expect(merge.result).toMatch(/states a limit, and a auto-merge takes none|does not say what it grants/)
   expect(records(m)).toEqual([])
   expect(records(dispense)).toEqual([])
+})
+
+test('an exemption quotes his sentence whole, so one github cannot take (past 500 characters) is refused, while another kind takes the longer sentence', () => {
+  const long = `Accorder la dispense de acme/guide. ${'Merci. '.repeat(80)}`
+  const refused = judgeWords(words({ until: null, said: long }), NOW.getTime())
+  expect('refuse' in refused && refused.refuse).toMatch(/at most 500 characters/)
+  const merge = judgeWords(words({ subject: { kind: 'auto-merge', repo: 'acme/guide' }, until: null, said: `Accorder l'auto-merge de acme/guide. ${'Merci. '.repeat(80)}` }), NOW.getTime())
+  expect('ok' in merge).toBe(true)
+})
+
+test('a limit he words in any other way than a date and an hour is no unlimited consent: a duration, a period, a zone, an impossible date', () => {
+  const judged = (said: string, over: Partial<Words> = {}, now = NOW.getTime()) => judgeWords(words({ until: null, said, ...over }), now)
+  const before = Date.parse('2026-10-01T00:00:00Z')
+  for (const said of [
+    'Accorder la dispense de acme/guide pendant une semaine', 'Accorder la dispense de acme/guide pour aujourd\'hui', 'Accorder la dispense de acme/guide cette semaine',
+    'Accorder la dispense de acme/guide pour 2 jours', 'Accorder la dispense de acme/guide pendant 48 heures', 'Accorder la dispense de acme/guide, temporairement',
+    'Accorder la dispense de acme/guide for today', 'Accorder la dispense de acme/guide for one week', 'Accorder la dispense de acme/guide pour la journée',
+    'Accorder la dispense de acme/guide et revoquer demain', 'Accorder la dispense de acme/guide sinon rien',
+  ]) {
+    expect('refuse' in judged(said), said).toBe(true)
+  }
+  // A zone or an offset the call would read as another is refused, not misread.
+  for (const zone of ['UTC+2', 'EST', 'PM', 'heure de New York']) {
+    const said = `Accorder la dispense de acme/guide jusqu'au 16/11/2026 12h00 ${zone}`
+    expect('refuse' in judged(said, { until: '2026-11-16T12:00:00Z' }), zone).toBe(true)
+  }
+  // 31 February does not exist, and the autumn's repeated hour is the earlier instant.
+  expect('refuse' in judged("Accorder la dispense de acme/guide jusqu'au 31/02/2027 12h00", { until: '2027-03-03T11:00:00Z' }, before)).toBe(true)
+  expect('ok' in judged("Accorder la dispense de acme/guide jusqu'au 25/10/2026 02h30", { until: '2026-10-25T00:30:00Z' }, before)).toBe(true)
+  expect('refuse' in judged("Accorder la dispense de acme/guide jusqu'au 25/10/2026 02h30", { until: '2026-10-25T01:30:00Z' }, before)).toBe(true)
+})
+
+test('a plain grant holds only the grant, the subject and the limit: an instruction, a revocation, a condition, a scope or a second subject is more, and nothing is recorded', () => {
+  const judged = (said: string, subject: Words['subject'] = { kind: 'auto-merge', repo: 'acme/guide' }) => judgeWords(words({ subject, until: null, said }), NOW.getTime())
+  for (const said of [
+    'Go disable auto-merge on acme/guide', "Ok, retire acme/guide de l'auto-merge", "Oui, désactive l'auto-merge de acme/guide", 'Ok, explique auto-merge de acme/guide',
+    'Ok, tu peux regarder auto-merge de acme/guide', 'Ok auto-merge acme/guide quand la CI est verte', "Ok auto-merge acme/guide à condition de relire",
+    'Accorder auto-merge de acme/guide, except for the api folder', 'Accorder auto-merge de acme/guide sans les PR api', "Accorder l'auto-merge sur acme/guide, on parlera de l'auto-deploy prod plus tard",
+  ]) {
+    expect('refuse' in judged(said), said).toBe(true)
+  }
+  expect('refuse' in judged('Accorder la dispense des normes de acme/guide', { kind: 'e2e-exemption', repo: 'acme/guide' }), 'a norms dispense is no E2E exemption').toBe(true)
+  expect('refuse' in judged('Ok, dispense E2E et normes acme/guide#7', { kind: 'e2e-waiver', repo: 'acme/guide', pr: 7 }), 'two waivers in one sentence').toBe(true)
+  expect('ok' in judged("Accorder l'auto-merge de acme/guide, merci"), 'a plain grant with thanks').toBe(true)
+})
+
+test('an environment is named whole: pre-prod is no prod; the words of github\'s exemption list and a pull request\'s url are read', () => {
+  const deploy = judgeWords(words({ subject: { kind: 'auto-deploy', repo: 'acme/guide', env: 'prod' }, until: null, said: "Accorder l'auto-deploy de acme/guide en pre-prod" }), NOW.getTime())
+  expect('refuse' in deploy).toBe(true)
+  expect('ok' in judgeWords(words({ until: null, said: "Accorder l'exonération de acme/guide" }), NOW.getTime())).toBe(true)
+  expect('refuse' in judgeWords(words({ until: null, said: 'Accorder de passer outre pour acme/guide' }), NOW.getTime())).toBe(true)
+  const url = judgeWords(words({ subject: { kind: 'e2e-waiver', repo: 'acme/guide', pr: 12 }, until: null, said: 'Accorder la dispense E2E de #12 et acme/guide/pull/4' }), NOW.getTime())
+  expect('refuse' in url && url.refuse).toMatch(/another pull request \(#4\)/)
+})
+
+test('a message he typed more than two hours ago is not replayed as a consent', async () => {
+  const m = machine('coordinator', [typed(SENTENCE, '2026-11-13T07:00:00.000Z')])
+  const done = await settleWords(m.dollar, words(), NOW)
+  expect(done.isError).toBe(true)
+  expect(done.result).toMatch(/more than two hours ago/)
+  expect(records(m)).toEqual([])
 })
 
 test('a limit that has passed, an hour that does not exist and an environment that is not named write nothing', async () => {
@@ -220,9 +283,9 @@ test('a transcript that is not found, or in which he said other words, records n
 })
 
 test('said_at picks the turn he typed at that instant, and none other', async () => {
-  const m = machine('coordinator', [typed(SENTENCE, '2026-11-15T06:00:00.000Z'), assistant('ok'), typed(SENTENCE, '2026-11-15T07:11:30.250Z')])
-  expect((await settleWords(m.dollar, words({ saidAt: '2026-11-15T06:00:00Z' }), NOW)).isError).toBeUndefined()
-  expect(records(m)[0].at).toBe('2026-11-15T06:00:00Z')
+  const m = machine('coordinator', [typed(SENTENCE, '2026-11-15T07:00:00.000Z'), assistant('ok'), typed(SENTENCE, '2026-11-15T07:11:30.250Z')])
+  expect((await settleWords(m.dollar, words({ saidAt: '2026-11-15T07:00:00Z' }), NOW)).isError).toBeUndefined()
+  expect(records(m)[0].at).toBe('2026-11-15T07:00:00Z')
   const absent = await settleWords(m.dollar, words({ saidAt: '2026-11-15T05:00:00Z' }), NOW)
   expect(absent.isError).toBe(true)
 })

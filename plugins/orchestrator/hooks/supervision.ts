@@ -3345,7 +3345,9 @@ async function showGate($: any, reading: { context_percent: number; context_toke
 // window comes from dd (blockArgv), as bytes — this file's own reader, the
 // per-file convention: the engine fences $ to the file that received it, so
 // guards.ts's identical reader cannot be imported, and each domain spells its
-// own over its own $.
+// own over its own $. A caller in another file hands its $ in as an argument,
+// as it does to every other function of this file it calls (question.ts's
+// settleWords reads the transcript so).
 export async function readBlock($: any, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)

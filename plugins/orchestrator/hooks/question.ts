@@ -15,8 +15,7 @@
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
-import { consentPath } from '../core/consent-record.ts'
-import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, consentPath, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
 import { machineLabel } from './remote-row.ts'
@@ -25,7 +24,7 @@ import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
 import { closesItself, forgetRelayed, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent } from './supervision.ts'
 import { scanTail } from './session-name.ts'
-import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, type Words } from './consent-words.ts'
+import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, WORDS_WINDOW_MS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -597,7 +596,8 @@ export async function settleWords($: Held, words: Words, now: Date = new Date())
       ? 'nothing recorded: no message he typed in this tab says exactly these words (a message another session sent, a tool result and text an agent wrote are not his): answer is his message, whole, as he typed it.'
       : 'nothing recorded: this session\'s transcript could not be read to its start, and the words are not in what was read; try again.')
   }
-  const record = wordsRecord(words, judged.ok, who.role === 'coordinator' ? 'coordinator' : 'tab', turn.at)
+  if (now.getTime() - Date.parse(turn.at) > WORDS_WINDOW_MS) return refuse(`nothing recorded: the message he typed with these words is from ${turn.at}, more than two hours ago: a consent is read in the turn he gives it. Ask him again.`)
+  const record = wordsRecord(words, judged.ok, 'tab', turn.at)
   if (record === undefined) return refuse('nothing recorded: the record this makes breaks the consent contract.')
   try {
     const file = consentPath(await configDir($), record)

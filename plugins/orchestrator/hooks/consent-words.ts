@@ -21,6 +21,12 @@ export const WORDS_FIELDS = ['consent_kind', 'consent_repo', 'consent_pr', 'cons
 /** A message of his longer than this is no sentence of consent. */
 export const WORDS_MAX = 2000
 
+/** A consent is read in the turn he gave it, not in an older one an agent could replay (a retraction he typed since would not show): older than this, the call is refused. */
+export const WORDS_WINDOW_MS = 2 * 3_600_000
+
+/** An exemption's record holds his sentence as its answer, and github's `detail` that quotes it is at most this long (core's DETAIL_MAX). */
+export const EXEMPTION_WORDS_MAX = 500
+
 /** One call, validated: the subject, the limit the kind takes, his message whole, and when he typed it if the caller says. */
 export type Words = { subject: ConsentSubject; until: string | null; said: string; saidAt: string | null }
 
@@ -65,10 +71,10 @@ const GRANTING = new RegExp(`^["«“]?\\s*(?:j'accorde|accord(?:er|ez|e|é|ée)
 
 // What makes words no plain grant: a question, a condition, an exception, a restriction, a refusal.
 // Fail-closed: the asker asks again, with the limit or the condition in the question.
-const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before")
+const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
 
 /** What each kind's words must also say, so that a plain « oui » naming a repository grants the kind the caller names and not another. */
-const WAIVING = "dispens\\p{L}*|exempt\\p{L}*|exon[eè]r\\p{L}*|waiv\\p{L}*|d[eé]rogation|passer outre"
+const WAIVING = "dispens\\p{L}*|exempt\\p{L}*|exon[eèé]r\\p{L}*|waiv\\p{L}*|d[eé]rogation"
 const TOPIC: Record<ConsentSubject['kind'], readonly RegExp[]> = {
   'e2e-exemption': [apart(WAIVING)],
   'e2e-waiver': [apart('e2e|end[- ]to[- ]end|bout[- ]en[- ]bout'), apart(WAIVING)],
@@ -78,16 +84,17 @@ const TOPIC: Record<ConsentSubject['kind'], readonly RegExp[]> = {
 }
 
 const ENV_WORDS: Record<string, DeployEnv> = { dev: 'dev', staging: 'staging', stage: 'staging', prod: 'prod', production: 'prod' }
-const ENV_NAME = new RegExp(apart(Object.keys(ENV_WORDS).join('|')).source, 'gu')
+// An environment is no part of a compound (« pre-prod », « prod-like »): hyphens and underscores join it too.
+const ENV_NAME = new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${Object.keys(ENV_WORDS).join('|')})(?![\\p{L}\\p{N}_-])`, 'gu')
 
-// The instant a Paris wall time is, or NaN when that time does not exist (the hour skipped in spring).
+// The instant a Paris wall time is, or NaN when that time does not exist (the hour skipped in spring); the earlier of the two when it is the hour the autumn repeats.
 function parisInstant(year: number, month: number, day: number, hour: number, minute: number): number {
   const wall = Date.UTC(year, month - 1, day, hour, minute)
   const offsetAt = (instant: number): number => {
     const part = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(instant).map(p => [p.type, Number(p.value)]))
     return (Date.UTC(part['year']!, part['month']! - 1, part['day']!, part['hour']!, part['minute']!) - Math.floor(instant / 60000) * 60000) / 60000
   }
-  return [60, 120].map(offset => wall - offset * 60000).find(instant => offsetAt(instant) === (wall - instant) / 60000) ?? NaN
+  return [120, 60].map(offset => wall - offset * 60000).find(instant => offsetAt(instant) === (wall - instant) / 60000) ?? NaN
 }
 
 const LEAD = "(?:valable\\s+)?(?:(?:jusqu'?\\s*(?:au|à|a)|until|le)\\s+)?"
@@ -96,7 +103,13 @@ const FRENCH_INSTANT = new RegExp(`${LEAD}(\\d{1,2})/(\\d{1,2})/(\\d{4})\\s*(?:�
 // « until 2026-11-16T11:00:00Z »: the instant itself, in UTC.
 const ISO_INSTANT = new RegExp(`${LEAD}(\\d{4})-(\\d{2})-(\\d{2})t(\\d{2}):(\\d{2})(?::(\\d{2}))?\\s*(?:z|utc)(?![\\p{L}\\p{N}])`, 'gu')
 // A limit left in his words once the instants read are removed: one the call cannot hold, so it refuses.
-const LIMIT_LEFT = new RegExp("jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui jusque|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])", 'u')
+const LIMIT_LEFT = new RegExp(
+  "jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui|today|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])"
+  // A duration, a period, a moment, a zone: any other way of limiting is a limit this call cannot read.
+  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
+  + "|(?<![\\p{L}\\p{N}])[+-]\\s?\\d",
+  'u',
+)
 
 /** The limits his words state, as instants, and what is left of them once those are read; null instants when one cannot be read. */
 function limitsOf(said: string): { instants: number[]; left: string } | null {
@@ -105,7 +118,8 @@ function limitsOf(said: string): { instants: number[]; left: string } | null {
     .replace(ISO_INSTANT, (_match, y, mo, d, h, mi, s) => { instants.push(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s ?? 0))); return ' ' })
     .replace(FRENCH_INSTANT, (_match, d, mo, y, h, mi, zone) => {
       const [day, month, year, hour, minute] = [d, mo, y, h, mi ?? '0'].map(Number) as [number, number, number, number, number]
-      if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) { instants.push(NaN); return ' ' }
+      const calendar = new Date(Date.UTC(year, month - 1, day))
+      if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) { instants.push(NaN); return ' ' }
       instants.push(zone === 'utc' || zone === 'gmt' || zone === 'z' ? Date.UTC(year, month - 1, day, hour, minute) : parisInstant(year, month, day, hour, minute))
       return ' '
     })
@@ -125,9 +139,43 @@ function namesRepository(said: string, repo: string): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}._/-])(?:${full}|${name})(?![\\p{L}\\p{N}_-])`, 'u').test(said)
 }
 
+// The only words a plain grant holds besides the subject's names and the limit it states: the grant,
+// the small words around it, what the kind is about. Any other word — an instruction, a condition, a
+// scope (« sauf les PRs docs »), a deferral, a second subject — makes the message more than a grant,
+// and nothing is recorded: the allowed vocabulary is what fails closed, no list of what to refuse.
+const PLAIN_WORDS = new Set([
+  "accorder", "accorde", "accordé", "accordée", "accordez", "d'accord", "oui", "ok", "okay", "go", "yes", "vas-y", "allez-y", "valide", "valider", "validez",
+  "je", "tu", "vous", "le", "la", "les", "l", "un", "une", "des", "du", "de", "d", "au", "aux", "en", "à", "sur", "pour", "et", "and", "the", "of", "ce", "cette", "ces", "cet",
+  "tout", "tous", "toute", "toutes", "merci", "thanks", "thank", "you", "please", "svp", "s'il", "plait", "plaît", "te", "bon", "bien", "parfait", "super",
+  "fusionner", "fusionne", "fusionnez", "merge", "pr", "prs", "pull", "request", "requests", "pull-request", "pull-requests", "repo", "repository", "dépôt", "depot",
+])
+const KIND_WORDS: Record<ConsentSubject['kind'], RegExp> = {
+  'e2e-exemption': /^(?:dispens\p{L}*|exempt\p{L}*|exon[eèé]r\p{L}*|waiv\p{L}*|d[eé]rogation|e2e|end-to-end|end|bout|bout-en-bout)$/u,
+  'e2e-waiver': /^(?:dispens\p{L}*|exempt\p{L}*|exon[eèé]r\p{L}*|waiv\p{L}*|d[eé]rogation|e2e|end-to-end|end|bout|bout-en-bout)$/u,
+  'norms-waiver': /^(?:dispens\p{L}*|exempt\p{L}*|exon[eèé]r\p{L}*|waiv\p{L}*|d[eé]rogation|norms?|normes?)$/u,
+  'auto-merge': /^(?:auto-?merge|automerge|automatique(?:ment)?|fusion|merger|automatically)$/u,
+  'auto-deploy': /^(?:auto-?d[eé]ploi\p{L}*|auto-?deploy\p{L}*|d[eé]ploiement|d[eé]ployer|d[eé]ploy\p{L}*|deploy\p{L}*|automatique(?:ment)?|continu|continuous|automatically|dev|staging|stage|prod|production)$/u,
+}
+
+/** The words of his message that are no part of a plain grant of the subject, once the subject's names and the limit it states are taken out. */
+function wordsBeyondGrant(left: string, subject: ConsentSubject): string[] {
+  const repo = subject.repo.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const name = (subject.repo.split('/')[1] ?? subject.repo).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const bare = left
+    .replace(new RegExp(`(?<![\\p{L}\\p{N}._/-])(?:${repo}|${name})(?![\\p{L}\\p{N}_-])`, 'gu'), ' ')
+    .replace(PULL_REQUEST, ' ')
+  return (bare.match(/[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*/gu) ?? []).filter(word => {
+    const plain = word.replace(/^(?:[ldjscntm]|qu)'/, '')
+    return !(PLAIN_WORDS.has(plain) || PLAIN_WORDS.has(word) || KIND_WORDS[subject.kind].test(plain))
+  })
+}
+
+// A pull request as his words name it: `#7`, `PR 7`, `pull request n° 7`, `/pull/7`.
+const PULL_REQUEST = /#(\d+)(?!\d)|(?<![\p{L}\p{N}])(?:prs?|pull requests?|pull)\s*(?:n°|no\.?|#)?\s*(\d+)(?!\d)|\/pulls?\/(\d+)(?!\d)/gu
+
 /** The pull request numbers his words name, as `#7`, `owner/name#7` or `PR 7`. */
 function pullRequestsNamed(said: string): number[] {
-  return [...said.matchAll(/#(\d+)(?!\d)|(?<![\p{L}\p{N}])(?:pr|pull request|pull)\s*(?:n°|no\.?|#)?\s*(\d+)(?!\d)/gu)].map(match => Number(match[1] ?? match[2]))
+  return [...said.matchAll(PULL_REQUEST)].map(match => Number(match[1] ?? match[2] ?? match[3]))
 }
 
 /** What the call records, or why it records nothing. */
@@ -141,7 +189,7 @@ const labelOf = (subject: ConsentSubject, until: string | null): string =>
  * « Accorder » or a plain yes), name the repository, the pull request or environment the kind needs
  * and what the kind is about, name no other repository or pull request, hold no question or
  * condition, and state a limit only as the `until` passed, which an exemption alone takes and which
- * then must be stated. The record's answer is what the readers of that kind take: an exemption's is
+ * then must be stated; an exemption's sentence is at most EXEMPTION_WORDS_MAX characters. The record's answer is what the readers of that kind take: an exemption's is
  * his sentence whole (github reads the repository and the exemption in it), any other kind's is
  * « Accorder »; his sentence is held whole in the question either way.
  */
@@ -149,6 +197,7 @@ export function judgeWords(words: Words, now: number): Judged {
   const { subject, until, said } = words
   const said_ = lowered(said)
   const no = (refuse: string): Judged => ({ refuse: `nothing recorded: ${refuse}` })
+  if (subject.kind === 'e2e-exemption' && folded(said).length > EXEMPTION_WORDS_MAX) return no(`an exemption quotes his sentence whole, and github takes at most ${EXEMPTION_WORDS_MAX} characters of it: his message is longer.`)
   if (!GRANTING.test(said_)) return no('his message does not grant: it opens neither with « Accorder » nor with a plain yes (oui, ok, go). A question, a refusal or an instruction is no consent.')
   if (/[?;]/.test(said_) || HEDGED.test(said_)) return no('his message holds a question, a condition, an exception or a refusal (pas, non, sauf, si, seulement, ?…): it is no plain grant, ask him again.')
   if (!namesRepository(said_, subject.repo)) return no(`his message does not name ${subject.repo}.`)
@@ -178,6 +227,8 @@ export function judgeWords(words: Words, now: number): Judged {
     if (LIMIT_LEFT.test(limits.left)) return no('his message states a limit besides the one read: ask him again with one.')
     if (!(Date.parse(until) > now)) return no(`until ${until} is already past: an exemption that ends before it begins exempts nothing.`)
   }
+  const beyond = wordsBeyondGrant(limits.left, subject)
+  if (beyond.length > 0) return no(`his message holds more than a plain grant: « ${[...new Set(beyond)].slice(0, 6).join(' ')} » is an instruction, a condition, a scope or another subject. Ask him again; the grant alone is « Accorder … » naming the subject.`)
   return {
     ok: {
       answer: subject.kind === 'e2e-exemption' ? folded(said) : CONSENT_GRANT,
@@ -196,7 +247,8 @@ export function humanTurn(line: string): { text: string; at: string } | null {
   } catch {
     return null
   }
-  if (entry['type'] !== 'user' || entry['isMeta'] === true || entry['isSidechain'] === true) return null
+  if (entry['type'] !== 'user' || entry['isMeta'] === true || entry['isSidechain'] === true || entry['isCompactSummary'] === true) return null
+  if (entry['toolUseResult'] !== undefined || entry['sourceToolAssistantUUID'] !== undefined || entry['sourceToolUseID'] !== undefined) return null
   const origin = entry['origin']
   if (typeof origin !== 'object' || origin === null || (origin as Fields)['kind'] !== 'human') return null
   if (entry['turnOrigin'] !== undefined && entry['turnOrigin'] !== 'human') return null
