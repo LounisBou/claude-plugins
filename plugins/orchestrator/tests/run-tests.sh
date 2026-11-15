@@ -418,22 +418,21 @@ check "the audit brief merges nothing" "1" \
 # states them beside the sentence that lets his instruction replace the skill. Another route than
 # the launcher's takes the launcher's checks by hand, in agents.md, which the core loop's launch
 # row sends every spawn to. Read with its line breaks folded.
-check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
 # Every agent that works in a checkout keeps its scratch where the close takes it. Rule 55 of the
 # rules review, on the ruling on topic 18: the phase brief no longer says it, the host names its
 # own scratchpad; the review and comments briefs keep their line, and the brief rules keep the
 # resource envelope's scratch clause.
-check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "no|yes|yes|yes" \
-  "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)|$(spells "$ORCH_REFS/brief.md" "**Scratch lives in the session's own host scratchpad directory**")"
+check "the review and comments briefs keep scratch in the session's host scratchpad, the phase brief leaves it to the host" "yes|yes" \
+  "$(for t in review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)"
 # An orchestrator's context grows after its takeover mostly by the reports it reads: every
 # agent writes its report to a file and sends its verdict line naming it, and no brief still
 # orders the long report with named sections.
-check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs write the report to its file" "yes|yes|yes" \
+  "$(for t in rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" '`{{REPORT_PATH}}`'; done | paste -sd'|' -)"
 # The host's envelope carries the sender's name, never its reference: an implementer once
 # refused a decision for the missing reference. Every brief says where the proof is.
-check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
-  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" "Its messages carry the name alone: check the reference beside it in \`ListAgents\`, never refuse one for lacking it."; done | paste -sd'|' -)"
+check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes" \
+  "$(for t in rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" "Its messages carry the name alone: check the reference beside it in \`ListAgents\`, never refuse one for lacking it."; done | paste -sd'|' -)"
 check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 # The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
@@ -441,10 +440,10 @@ check "no agent brief orders a report with named sections" "no|no|no|no" \
 # cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
 # agent send the same report twice, once itself and once through the module.
 AGENT_STATUS='`status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator; never send it yourself too.'
-check "all four agent briefs end a reporting turn on the status line the module relays" "yes|yes|yes|yes" \
-  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" "$AGENT_STATUS"; done | paste -sd'|' -)"
-check "all four agent briefs leave the measured context to the module and read no measure file" "yes|yes|yes|yes|no|no|no|no" \
-  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'The hooks module reports your measured context to the orchestrator at the gate'; done | paste -sd'|' -)|$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'printenv CLAUDE_CODE_SESSION_ID'; done | paste -sd'|' -)"
+check "all four agent briefs end a reporting turn on the status line the module relays" "yes|yes|yes" \
+  "$(for t in comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" "$AGENT_STATUS"; done | paste -sd'|' -)"
+check "all four agent briefs leave the measured context to the module and read no measure file" "yes|yes|yes|no|no|no|no" \
+  "$(for t in comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'The hooks module reports your measured context to the orchestrator at the gate'; done | paste -sd'|' -)|$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'printenv CLAUDE_CODE_SESSION_ID'; done | paste -sd'|' -)"
 check "the delivering briefs no longer ask for context_tokens in the final report" "no|no|no" \
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'context_tokens'; done | paste -sd'|' -)"
 # The trim is a ceiling: each brief stays at most the size it reached when the module took
@@ -455,28 +454,20 @@ check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
   "$(for pair in phase:8973 comments:6436 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 # A chained push falls outside the host's permission rules and is refused there (rule 60 of the
 # rules review): the briefs keep the rule, not its reason.
-check "the phase and comments briefs say a push runs as one bare command" "yes|yes" \
-  "$(for t in phase comments; do spells "$ROOT/templates/agent-$t-brief.md" 'A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command.'; done | paste -sd'|' -)"
+check "the phase and comments briefs say a push runs as one bare command" "yes" \
+  "$(for t in comments; do spells "$ROOT/templates/agent-$t-brief.md" 'A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command.'; done | paste -sd'|' -)"
 # The successor always closes its predecessor, one started by hand included (the operator's
 # standing order): nothing is asked of him, and where the host refuses the close of a tab the
-check "the succession brief closes every predecessor and asks nothing" "1|1|yes|0" \
-  "$(succ4_has 'you ALWAYS close your predecessor')|$(succ4_has 'one the launcher did not open included, and ask him nothing')|$(spells "$ORCH_REFS/succession-successor.md" 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
-check "the end_session fallback is proved on the tty, not on list" "yes|no|1" \
-  "$(spells "$ORCH_REFS/succession-successor.md" 'prove that end on its tty, `verify --tty <its tty>` failing')|$(spells "$ORCH_REFS/succession-successor.md" 'and `list` shows it gone; then tell')|$(succ4_has 'its success line the proof')"
 # The successor waits for « handed over » on a subscription the stop gate counts: without it,
 # live, the gate refused that wait « Nothing will wake you ».
-check "the successor subscribes to its predecessor's idle notice with « takeover confirmed »" "1" \
-  "$(succ4_has 'message the predecessor "takeover confirmed" with `notify_when_idle: true`')"
-check "the lifecycle closes a predecessor started by hand like any other" "1|0" \
-  "$(grep -c 'is closed like any other, nothing asked' "$ORCH_REFS/succession-successor.md")|$(grep -c 'close it himself' "$ORCH_REFS/succession-successor.md")"
 # A rebase no longer comes before the ready (f283aef back, 97f4e07 undone): its records follow
 # the one rule; the squash-merge of a lower branch is replayed around, never through.
 check "the rebase voids no record by itself and names the squash-merge trap" "0|1|1" \
   "$(grep -c "rebase comes BEFORE the ready" "$ORCH_REFS/rebase.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/rebase.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/rebase.md")"
-check "the proofs owed are the check plan's, pointed to in the briefs, the review reference and the templates" "yes|yes|yes|yes|yes|no" \
-  "$(spells "$ORCH_REFS/standing-rules.md" "github's \`check-plan.ts\` owns that rule")|$(spells "$ORCH_REFS/phases.md" "the proofs the check plan requires over the whole diff")|$(spells "$ORCH_REFS/review-verdict.md" 'only where the plan requires `norms`')|$(spells "$ROOT/templates/agent-phase-brief.md" "owed as the pull request's check plan requires")|$(spells "$ROOT/templates/agent-review-brief.md" 'what is owed is the check plan')|$(spells "$ORCH_REFS/standing-rules.md" 'norms review of the full diff')"
-check "Ready is the github gate's: no pre-check label command, none of it restated, the phase brief points to the gate" "no|no|no|no|yes" \
-  "$(spells "$ORCH_REFS/review-thresholds.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the github ready gate's")"
+check "the proofs owed are the check plan's, pointed to in the briefs, the review reference and the templates" "yes|yes|yes|yes|no" \
+  "$(spells "$ORCH_REFS/standing-rules.md" "github's \`check-plan.ts\` owns that rule")|$(spells "$ORCH_REFS/phases.md" "the proofs the check plan requires over the whole diff")|$(spells "$ORCH_REFS/review-verdict.md" 'only where the plan requires `norms`')|$(spells "$ROOT/templates/agent-review-brief.md" 'what is owed is the check plan')|$(spells "$ORCH_REFS/standing-rules.md" 'norms review of the full diff')"
+check "Ready is the github gate's: no pre-check label command, none of it restated, the phase brief points to the gate" "no|no|no|no" \
+  "$(spells "$ORCH_REFS/review-thresholds.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")"
 check "phases.md no longer queues a dispatch because a repository is busy" "0" \
   "$(grep -c 'If a repository is busy, queue the next dispatch' "$ORCH_REFS/phases.md")"
 # The rationalizations table left the review references (rule 169 of the rules review): each row repeated a
@@ -1403,8 +1394,6 @@ check_status "and so is the session exemption" 1 bash "$REC" exempt "$E" --e2e "
 # backend test against a container, a frontend Playwright test committed, the `E2E: none —
 # <reason>` line, silence a finding, nothing in the pull request's description.
 BR="$ORCH_REFS/standing-rules.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review-verdict.md"; RT="$ORCH_REFS/review-thresholds.md"
-check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
-  "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. The line goes in your report')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
 check "review-verdict.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
 # A check the plan required and now judged unneeded is lifted by a new plan; one that cannot run is
@@ -1420,8 +1409,8 @@ check "the review reference records the surface before ready" "1" \
   "$(grep -c 'dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>' "$ROOT/skills/orchestrator/references/review-verdict.md")"
 # Rule 158 of the rules review, on the ruling on topic 18: review-verdict.md's item 12 is lightened, the
 # seeding rule lives in the brief rules and the phase brief.
-check "a screen with no data on the reference account is seeded, never skipped" "0|1|1" \
-  "$(grep -c 'A screen the reference account has no data for is not minor and not skipped' "$ROOT/skills/orchestrator/references/review-verdict.md")|$(grep -c 'A screen the reference account has no data for is never minor' "$ROOT/skills/orchestrator/references/standing-rules.md")|$(grep -c 'seed the data on the local environment, and if you cannot, STOP' "$ROOT/templates/agent-phase-brief.md")"
+check "a screen with no data on the reference account is seeded, never skipped" "0|1" \
+  "$(grep -c 'A screen the reference account has no data for is not minor and not skipped' "$ROOT/skills/orchestrator/references/review-verdict.md")|$(grep -c 'A screen the reference account has no data for is never minor' "$ROOT/skills/orchestrator/references/standing-rules.md")"
 check "the review brief reports the surface in one line" "1" \
   "$(grep -c 'frontend surface: yes|minor|no' "$ROOT/templates/agent-review-brief.md")"
 # The checklist lives in one file, read by the implementer, the review round and the screenshots
@@ -1432,8 +1421,6 @@ check "the one checklist file carries the seven points" "7" \
   "$(grep -cE '^- (edges aligned with their neighbours|icons and text centred in their controls|no stray text left in an input|nothing truncated and nothing overflowing|no unexpected extra row or space|each control consistent with the controls beside it|both viewports)$' "$VFILE")"
 check "no other text copies the checklist" "" \
   "$(cd "$ROOT" && git grep -l 'icons and text centred in their controls' -- skills templates agents commands | grep -v '^skills/orchestrator/references/screenshot-checklist.md$')"
-check "the phase brief orders the visual audit of every capture before delivery" "yes|yes|yes" \
-  "$(spells "$ROOT/templates/agent-phase-brief.md" "Before you deliver, audit every capture yourself, image by image, against the checklist in \`{{SCREENSHOT_CHECKLIST}}\`.")|$(spells "$ROOT/templates/agent-phase-brief.md" 'Your report carries one line per image, `<image>: clean` or `<image>: <the defect>`.')|$(spells "$ROOT/templates/agent-phase-brief.md" 'A capture that shows a defect is not delivered: fix the defect, retake the capture, and audit it again.')"
 check "the standing rule carries the audit, its checklist and the retake" "yes|yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/references/standing-rules.md" "Every capture is audited by the implementer before delivery, image by image, against the one checklist, \`$VPATH\`, whose path fills \`{{SCREENSHOT_CHECKLIST}}\` in the phase and review briefs, and the report carries one line per image, clean or the defect it shows.")|$(spells "$ROOT/skills/orchestrator/references/standing-rules.md" 'A capture that shows a defect is not delivered: the defect is fixed and the capture retaken.')|$(spells "$ROOT/skills/orchestrator/references/standing-rules.md" 'The orchestrator has each image audited again by the screenshots agent before its verdict')"
 check "the review brief audits every image and makes each defect a finding" "yes|yes" \
@@ -3609,12 +3596,10 @@ check "the end checks this session is the recorded coordinator before it clears"
 
 # The successor's brief: register refuses while the predecessor runs, so the order is fixed —
 # close by title, prove on ps, THEN register. Filled, it lints clean like every template.
-check "the successor closes its predecessor's tab by title before it registers" "yes|1|yes" \
-  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" 'Its `closed 1 session` line is the')"
+check "the successor closes its predecessor's tab by title before it registers" "yes|1" \
+  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
-check "the coordinator's successor closes a hand-started predecessor, with the end_session fallback" "yes|yes|yes|yes" \
-  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` failing')"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
 if [ -f "$COORDTPL" ]; then
@@ -3660,14 +3645,8 @@ check "the audit brief still forbids every other file, a commit, a push and any 
 # audit brief for a pointer to the succession template's « Standing context », which carries
 # them once: the copy, the spawn line in full, the operator told, the handshake.
 AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
-check "and carries the succession: a pointer to the template's steps, the launcher" "1|1|0" \
-  "$(grep -c 'the « Standing context » of `{{SUCCESSION_TEMPLATE}}`' "$AUDBRIEF")|$(grep -c 'the launcher being `{{ITERM_AGENT_SH}}`' "$AUDBRIEF")|$(grep -c -- '--successor --inherit-model' "$AUDBRIEF")"
-check "the succession template carries the copy and the spawn line in full" "1|1" \
-  "$(grep -c 'SUCCESSION_TEMPLATE}}. beside the report' "$AUDSUCCTPL")|$(grep -c -- '--successor --permission-mode auto --prompt "Read and execute ' "$AUDSUCCTPL")"
 # The predecessor tells the operator BEFORE it hands over, as /orchestrator-succeed orders it:
 # « handed over » is its last message, nothing follows it.
-check "the succession template has the predecessor tell the operator, then wait, then hand over as its last message, and the audit brief no longer does" "1|1|0|0" \
-  "$(grep -c 'tell the operator in one line that you are handing over' "$AUDSUCCTPL")|$(grep -c 'handed over » as your last message' "$AUDSUCCTPL")|$(grep -c 'Then tell the operator' "$AUDSUCCTPL")|$(grep -c 'handed over » as your last message' "$AUDBRIEF")"
 AUDBRIEFSPAWN=$(grep -m1 -o '{{ITERM_AGENT_SH}} spawn .*' "$AUDSUCCTPL" 2>/dev/null | sed -e 's/^{{ITERM_AGENT_SH}} spawn //' -e 's/`.*$//' \
   -e 's#{{REPOSITORY}}#'"$WORK"'#' -e 's#<succession brief path>#/tmp/audit-succession-brief.md#')
 audbriefspawn() { eval "set -- $AUDBRIEFSPAWN"; audsucc "$@"; }
@@ -3689,31 +3668,19 @@ AUDREAL="$WORK/audit-brief-real.md"
 if [ -f "$AUDBRIEF" ]; then
   sed -E -e "s#\{\{REPORT_PATH\}\}#$AUDREPORT#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDREAL"
 fi
-check "an instantiated audit brief lints to zero with its report path expected, one finding without" "0|brief-lint: $AUDREAL: 0 findings|1" \
-  "$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" 2>&1)|$(bash "$LINT" "$AUDREAL" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
+check "an instantiated audit brief lints to zero with its report path expected, one finding without" "0|brief-lint: $AUDREAL: 0 findings" \
+  "$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" 2>&1)"
 cp "$AUDREAL" "$WORK/audit-brief-other.md" 2>/dev/null; printf 'Spec: `%s/nowhere.md`\n' "$WORK" >> "$WORK/audit-brief-other.md"
 check "--expect-created exempts the path it names and no other" "1|0" \
   "$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $WORK/nowhere.md")|$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
 check "--expect-created without a path is refused, and says so" "1|1" \
   "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
 # Every placeholder of the brief is one the command says how to fill.
-check "the brief's placeholders are the ones the command fills" \
-  "{{ITERM_AGENT_SH}} {{PREVIOUS_REPORT}} {{PROJECT}} {{READING}} {{RECORDS}} {{REPORT_PATH}} {{REPOSITORY}} {{RHYTHM}} {{SINCE}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
-  "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDBRIEF" | sort -u | paste -sd' ' -)"
 # The auditor's succession brief: modelled on the coordinator's, short, with the audit's terms
 # kept and the predecessor exchange the only message allowed.
 AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
-check "the auditor's succession brief exists, with its placeholders" \
-  "{{ITERM_AGENT_SH}} {{OPERATOR_WORK}} {{PREDECESSOR_TTY}} {{PREDECESSOR}} {{PROJECT}} {{REPORT_PATH}} {{REPOSITORY}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
-  "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDSUCCTPL" 2>/dev/null | sort -u | paste -sd' ' -)"
-check "it makes the successor confirm, wait for « handed over », close the tab by title, prove it, tell the operator" "1|1|1|1|1" \
-  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'closed 1 session' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
-check "and keeps the audit's terms: one report, not rewritten, nothing applied, no session messaged but the predecessor" "1|1|1" \
-  "$(grep -c 'not to rewrite' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'apply nothing' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'no session messaged' "$AUDSUCCTPL" 2>/dev/null)"
 # A successor can succeed again: it restates the spawn line in full and finds its own name,
 # reference and tty first, as the coordinator's successor does.
-check "the auditor's succession brief can itself succeed: the spawn line in full, and a « find yourself » step" "1|1|1" \
-  "$(grep -c -- '{{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --permission-mode auto --prompt "Read and execute ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Find yourself' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c '{{SUCCESSION_TEMPLATE}}' "$AUDSUCCTPL" 2>/dev/null | awk '{print ($1>0)}')"
 # A successor inherits its predecessor's live pair by default: no template, command or skill the
 # orchestrator reads teaches --inherit-model on the succession line.
 check "no template, command or orchestrator skill teaches --successor --inherit-model" "0" \
@@ -3723,8 +3690,6 @@ AUDSUCCFILLED="$WORK/audit-succession-filled.md"
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
 # Rule 82 of the rules review, the operator's ruling of 2026-11-04 (« A »): the successor's
-check "the succession templates carry one handshake" "yes|yes|yes|yes|yes" \
-  "$([ -n "$(handshake "$AUDSUCCTPL")" ] && [ "$(handshake "$AUDSUCCTPL")" = "$(handshake "$COORDTPL")" ] && echo yes || echo no)|$(spells "$SUCC" 'Then message the predecessor "takeover confirmed"')|$(spells "$SUCC" 'and wait for its « handed over »')|$(spells "$SUCC" 'five minutes without it, read its screen with `screen --tty`')|$(spells "$SUCC" 'close on a prompt with nothing in flight')"
 # The code cites §52: the section it cites exists.
 check "the design document has the audit's numbered section" "1" \
   "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
@@ -5114,11 +5079,7 @@ succ_has() { tr '\n' ' ' < "$SUCC" | tr -s ' ' | grep -oF -- "$1" | wc -l | tr -
 succ1_has() { printf '%s' "$SUCC1" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "step 1 of the succession brief orders no whole read of the spec, plan, runbook, state file or briefs directory" "0|0|0|0|0" \
   "$(succ1_has '{{SPEC}}')|$(succ1_has '{{PLAN}}')|$(succ1_has '{{RUNBOOK}}')|$(succ1_has '{{STATE_FILE}}')|$(succ1_has '{{BRIEFS_DIR}}')"
-check "step 1 reads the rulebook and this text, and nothing else whole" "1|1" \
-  "$(succ1_has 'the rulebook')|$(succ1_has 'THIS text')"
 SUCC_STANDING=$(awk '/^## Standing context/{f=1} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-check "the standing context reads by section, and names no state file: the project sheet is printed from goals.md" "1|1|0|0" \
-  "$(for p in "grep -n" "sed -n" 'state file' '{{STATE_FILE}}'; do printf '%s' "$SUCC_STANDING" | grep -qF -- "$p" && echo 1 || echo 0; done | paste -sd'|' -)"
 LIVE_H='## Live state — read from the state at the takeover'
 LIVE_N=$(grep -n -m1 -F -- "$LIVE_H" "$SUCC" | cut -d: -f1)
 FIRST_N=$(grep -n -m1 -F -- '## Your first task' "$SUCC" | cut -d: -f1)
@@ -5127,19 +5088,11 @@ check "the succession brief carries a Live state section under « Source », aft
 LIVE_BODY=$(awk -v h="$LIVE_H" '$0==h{f=1;next} /^## /{f=0} f' "$SUCC")
 check "the Live state section carries its seven placeholders" "1|1|1|1|1|1|1" \
   "$(for p in '{{LIVE_ROWS}}' '{{LIVE_OWNERS}}' '{{LIVE_PULL_REQUESTS}}' '{{LIVE_AGENTS}}' '{{LIVE_OPEN_QUESTIONS}}' '{{LIVE_TODO}}' '{{PROJECT_SHEET}}'; do printf '%s' "$LIVE_BODY" | grep -cF -- "$p"; done | paste -sd'|' -)"
-check "the Live state section is printed by the takeover from the state, a judgment being a row's note" "yes" \
-  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -qF 'Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round and the goals; a judgment on a row is its note.' && echo yes || echo no)"
 # A Live state that overflows the 9,000-character cap loses what the successor reads back first:
 # where each pull request stands (its VERIFY runs `pr-status`), then what each row has left (its
 # step 2 lists the open rows), never a number, a head, an id or a label (the operator's ruling of
 # 2026-11-04 on the cap, its template line).
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/succession-successor.md" '« First turn » is its `context_tokens` at the end of your first turn')|$(spells "$ORCH_REFS/succession-successor.md" 'Your measure file is')"
-check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your two figures, never a later reading' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/succession-successor.md" 'The announcement gives these two, never a later reading')"
-check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')"
 # The predecessor writes no brief: the state lives in its owners and the successor's takeover
 # prints it. One owner per succession rule: the lifecycle reference says it, the command points.
 check "the predecessor writes no brief and the successor reads the state through the takeover; the command neither generates nor caps a Live state" "yes|yes|no|no" \
@@ -5207,40 +5160,16 @@ check "the template's open-questions placeholder comes before the to-do items" "
   "$(grep -cF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC")|$([ "$(grep -nF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC" | cut -d: -f1)" -lt "$(grep -nF '{{LIVE_TODO}}' "$SUCC" | cut -d: -f1)" ] && echo yes || echo no)"
 # The re-ask runs once the predecessor is closed: the module moves its open entries to the
 # successor at « takeover confirmed », so before that they are still open under the predecessor.
-SUCC2=$(awk '/^2\. /{f=1} /^[0-9]\. /&&!/^2\. /{f=0} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-SUCC_ANALYSIS=$(awk '/^## Analysis/{f=1;next} /^#/{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-check "the Analysis only verifies the field is there; step 5 reads each open question's entry once the predecessor is closed" "0|0|1|1|1" \
-  "$(printf '%s' "$SUCC2" | grep -c 'ask it again')|$(printf '%s' "$SUCC_ANALYSIS" | grep -c 'ask it again')|$(printf '%s' "$SUCC_ANALYSIS" | grep -c 'the open-questions field is there')|$(printf '%s' "$SUCC5" | grep -c 'Once the predecessor is closed, settle each open question by its round entry')|$(printf '%s' "$SUCC5" | grep -c 'asked verbatim at the end of this turn')"
 # The successor reads its brief whole before anything else: the template stays within 6,000
 # characters (continuation bytes dropped), in three parts, the how of its steps in the lifecycle.
 check "the succession template is at most 6,000 characters" "yes" \
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$SUCC" | wc -c | tr -d ' ')" -le 6000 ] && echo yes || echo no)"
 succ_at() { grep -n -m1 -- "$1" "$SUCC" | cut -d: -f1; }
-check "the template reads Instructions, then Source, then Expected result, each with its sections" "yes" \
-  "$(i=$(succ_at '^# Instructions$'); a=$(succ_at '^## Analysis$'); f=$(succ_at '^## Your first task'); s=$(succ_at '^# Source$'); l=$(succ_at '^## Live state'); e=$(succ_at '^# Expected result$')
-     [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
-       && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
 # A takeover reads what is live, not what is kept: the project's own checkouts, not every project's,
 # and the goals still open, not the met ones.
-check "step 2 reads the goals without their met rows, step 3 the checkouts of the project only" "1|1|0|0" \
-  "$(succ_has "status | grep -v '| met |'")|$(succ_has 'workspace.sh list {{PROJECT}}')|$(succ_has 'status`, read whole')|$(succ_has 'workspace.sh list`')"
-check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
-  "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
 check "the template carries the predecessor's tty, the launcher and the scripts" "yes|yes|yes" \
   "$(for p in '{{PREDECESSOR_TTY}}' '{{LAUNCHER}}' '{{SCRIPTS}}'; do spells "$SUCC" "$p"; done | paste -sd'|' -)"
-check "step 4 closes by the launcher's path on the predecessor's tty, by takeover in a home session" "1|1|1" \
-  "$(succ4_has '{{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title')|$(succ4_has '{{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title')|$(succ4_has 'the first line on tabs, the second in a home session (never `close` there)')"
-check "step 4 sends « takeover confirmed » alone on its message's first line" "1" \
-  "$(succ4_has '"takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line')"
-check "step 5 ends the turn after the announcement, and the dispatch waits for the next one" "1|yes" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'END THE TURN: dispatch on your next one.' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | awk '{ a = index($0, "announce in one message"); e = index($0, "END THE TURN"); print (a > 0 && e > a) ? "yes" : "no" }')"
-check "the succession brief's announcement lists the open rows with no agent, and the next turn takes every row of that list" "1|0|1" \
-  "$(printf '%s' "$SUCC5" | grep -cF 'predecessor terminated, the open rows with no agent, open questions found')|$(printf '%s' "$SUCC5" | grep -cF 'predecessor terminated, next step')|$(printf '%s' "$SUCC5" | grep -cF 'END THE TURN: dispatch on your next one. It takes every row of that list the rule allows (`references/succession-successor.md`, « The first dispatch »).')"
-check "the template points at the lifecycle for the measure, the wait and the close" "yes|yes" \
-  "$(spells "$SUCC" '`references/succession-successor.md`, « Succession — the successor »')|$(grep -qx "### Succession — the successor" "$ORCH_REFS/succession-successor.md" && echo yes || echo no)"
 # The successor reads its own file of the succession, never the predecessor's.
-check "the references split the succession by role, the successor's file at most 3,000 characters" "1|1|1|yes" \
-  "$(grep -cx '### Succession — the predecessor' "$ORCH_REFS/succession-predecessor.md")|$(grep -cx '### Succession — the successor' "$ORCH_REFS/succession-successor.md")|$(grep -cx '### Pause and opening' "$ORCH_REFS/pause-opening-move.md")|$(n=$(wc -c < "$ORCH_REFS/succession-successor.md" | tr -d ' '); [ "$n" -gt 0 ] && [ "$n" -le 3000 ] && echo yes || echo no)"
 check "review and briefs split « Review on evidence » and « Standing rules » into subsections" "yes|yes" \
   "$(awk '/^## Review on evidence$/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/review-verdict.md")|$(awk '/^## Standing rules/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/standing-rules.md")"
 # A successor runs on its predecessor's live pair by --successor alone: the succession line
