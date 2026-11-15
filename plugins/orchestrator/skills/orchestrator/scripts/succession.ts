@@ -14,8 +14,11 @@
 // else its blocker checked on its artifact (the pull request merged, the row closed, the release
 // installed, the `until` time passed; a `measure` never falls): fallen and with no agent, READY NOT
 // STARTED; a row whose note names an agent no longer live, DISPATCHED, NO LIVE AGENT; an open row
-// with no blocker recorded reads NO OWNER; the record's pull request ledger; the deck's
-// agents of this orchestration; the round's open questions, verbatim; the to-do items pointing to a
+// with no blocker recorded reads NO OWNER; the record's pull request ledger; the agents of this
+// orchestration, each with its tty and the brief its launch named: the deck's orchestrator on the
+// predecessor's tty (by name when no tty is given or the deck has none there), joined with the
+// launcher's chains of both ttys and its `list`, so an agent spawned since the deck's last write is
+// there too; the round's open questions, verbatim; the to-do items pointing to a
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
 // and the merged pull requests not installed.
 //
@@ -24,11 +27,14 @@
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
 // recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
 // the command moves the round's entries settled over a day ago to its archive (round-archive's
-// rule): what a takeover reads is only what is live. Its measure goes to stderr.
+// rule): what a takeover reads is only what is live. Its measure goes to stderr. When the
+// launcher's `list` names an agent the deck does not, or the deck one `list` does not show, one
+// journal line says how many (`succession-lost-state`), so the succession is tuned on its misses.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText } from '../../../core/store.ts'
@@ -38,6 +44,7 @@ import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { parseSessionName } from '../../../core/names.ts'
 import { ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { auditRun, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { GoalsFault, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
@@ -117,12 +124,24 @@ export interface ForgePr {
 /** A repository's open pull requests on the forge; undefined when it cannot be read. */
 export type OpenPrReader = (repo: string) => readonly ForgePr[] | undefined
 
+/** An agent of this orchestration: its name, the tty `close`, `rotate` and `screen` take, and the brief its launch named. */
+export interface LiveAgent {
+  readonly name: string
+  readonly tty: string | null
+  readonly brief?: string
+}
+
 /** What the state holds open for this orchestrator. */
 export interface OpenState {
   readonly rows: readonly OpenRow[]
   readonly prs: readonly string[]
+  /** The agents' names, which a row's note is matched on. */
   readonly agents: readonly string[]
+  /** The same agents with their tty and brief, as the Live state prints them. */
+  readonly seats?: readonly LiveAgent[]
   readonly questions: readonly Question[]
+  /** How many agents the launcher's `list` and the deck disagree on; undefined when `list` was not read. */
+  readonly disagree?: number
 }
 
 type Fields = Record<string, unknown>
@@ -137,11 +156,98 @@ function object(text: string | undefined): Fields | undefined {
   }
 }
 
-/** The deck's orchestrator of that name, local: its pull requests and its agents' names. */
-export function deckOpen(deckText: string | undefined, name: string): { prs: string[]; agents: string[]; repo?: string } {
-  const orch = (deckText === undefined ? null : parseDeck(deckText))?.orchestrators.find(o => o.name === name && o.machine === null)
-  if (orch === undefined) return { prs: [], agents: [] }
-  return { prs: orch.prs, agents: orch.agents.map(agent => agent.name), ...(orch.repo ? { repo: orch.repo } : {}) }
+/** A tty by its device name, `ttys005` for `/dev/ttys005`. */
+const ttyName = (tty: string): string => tty.slice(tty.lastIndexOf('/') + 1)
+
+/**
+ * The deck's local orchestrator on the predecessor's tty: its pull requests and its agents. A
+ * successor carries the same name, so the name decides only when no tty is given or no deck row
+ * runs on it; then every local orchestrator of that name counts.
+ */
+export function deckOpen(deckText: string | undefined, name: string, tty = 'none'): { prs: string[]; agents: LiveAgent[]; repo?: string } {
+  const local = ((deckText === undefined ? null : parseDeck(deckText))?.orchestrators ?? []).filter(o => o.machine === null)
+  const onTty = tty === 'none' ? [] : local.filter(o => o.tty !== null && ttyName(o.tty) === ttyName(tty))
+  const found = onTty.length > 0 ? onTty : local.filter(o => o.name === name)
+  const agents = new Map<string, LiveAgent>()
+  for (const agent of found.flatMap(o => o.agents)) if (!agents.has(agent.name)) agents.set(agent.name, { name: agent.name, tty: agent.tty })
+  const repo = found.find(o => o.repo)?.repo
+  return { prs: [...new Set(found.flatMap(o => o.prs))], agents: [...agents.values()], ...(repo ? { repo } : {}) }
+}
+
+/** One row of the launcher's `list`: the session's tty, its name (its title when it has none), and whether it is the caller. */
+export interface ListedRow {
+  readonly tty: string
+  readonly name: string
+  readonly self: boolean
+}
+
+/** The rows of the launcher's `list` output (`w<i>/t<j> | <tty> | <title> | <name>[ | self][ | hidden]`); other lines are skipped. */
+export function parseList(text: string): ListedRow[] {
+  return text.split('\n').flatMap(line => {
+    const parts = line.split(' | ')
+    if (parts.length < 4 || !/^w[0-9]+\/t[0-9]+$/.test(parts[0] ?? '')) return []
+    const title = (parts[2] ?? '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
+    const named = (parts[3] ?? '').trim()
+    return [{ tty: parts[1] ?? '', name: named === '' || named.startsWith('(') ? title : named, self: parts.slice(4).includes('self') }]
+  })
+}
+
+/**
+ * The agents of this orchestration as they run now: the deck's, each given the tty `list` shows
+ * under its name, then each agent the launcher's chains hold that `list` shows running and the deck
+ * does not name (spawned since the deck's last write). With no `list`, the deck's as they are.
+ * `disagree` counts the agents only one side names: a chained agent the deck lacks, a deck agent
+ * `list` does not show.
+ */
+export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined): { agents: LiveAgent[]; disagree?: number } {
+  if (listed === undefined) return { agents: [...deck] }
+  const byTty = new Map(listed.map(row => [ttyName(row.tty), row]))
+  const shown = (agent: LiveAgent): ListedRow | undefined => (agent.tty !== null ? byTty.get(ttyName(agent.tty)) : undefined) ?? listed.find(row => row.name === agent.name)
+  const agents = deck.map(agent => ({ ...agent, tty: agent.tty ?? shown(agent)?.tty ?? null }))
+  let disagree = deck.filter(agent => shown(agent) === undefined).length
+  for (const tty of chained) {
+    const row = byTty.get(ttyName(tty))
+    if (row === undefined || agents.some(agent => agent.name === row.name || (agent.tty !== null && ttyName(agent.tty) === ttyName(row.tty)))) continue
+    agents.push({ name: row.name, tty: row.tty })
+    disagree++
+  }
+  return { agents, disagree }
+}
+
+/**
+ * The brief an agent's launch named: `ORCHESTRATOR_BRIEF` in the newest launch script the launcher
+ * wrote for its title (`<state>/prompts/launch-<title>-<ms>.sh`); undefined when none names one.
+ */
+export function briefOf(state: string, name: string): string | undefined {
+  const dir = join(state, 'prompts')
+  const safe = `launch-${name.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 40)}-`
+  let newest: { ms: number; file: string } | undefined
+  try {
+    for (const file of readdirSync(dir)) {
+      const ms = file.startsWith(safe) && file.endsWith('.sh') ? Number(file.slice(safe.length, -3)) : NaN
+      if (Number.isInteger(ms) && (newest === undefined || ms > newest.ms)) newest = { ms, file }
+    }
+  } catch {
+    return undefined
+  }
+  if (newest === undefined) return undefined
+  const found = /export ORCHESTRATOR_BRIEF=(?:'([^']*)'|([^\s;&]+))/.exec(readText(join(dir, newest.file)) ?? '')
+  return found === null ? undefined : (found[1] ?? found[2])
+}
+
+/** An agent as the Live state prints it: its name, then its tty and brief where known. */
+export function agentLine(agent: LiveAgent): string {
+  const facts = [agent.tty === null ? '' : ttyName(agent.tty), agent.brief === undefined ? '' : `brief ${agent.brief}`].filter(part => part !== '')
+  return facts.length === 0 ? agent.name : `${agent.name} (${facts.join(', ')})`
+}
+
+/** The launcher's `list`, its rows; undefined when it cannot be run. */
+export function launcherList(launcher: string, env: Env): ListedRow[] | undefined {
+  try {
+    return parseList(execFileSync('bash', [launcher, 'list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, env: { ...process.env, ...env } }))
+  } catch {
+    return undefined
+  }
 }
 
 /** A question asked with `ask` (hooks/question.ts, `v` 2) as its block reads, from its fields. */
@@ -276,17 +382,26 @@ export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[]
 }
 
 /** Reads the state this orchestrator holds open from the files that keep it. */
-export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined): OpenState {
+export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[]): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
   // The ledger names each pull request it attends with its own repository: the deck lists numbers
   // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
   // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
   const ledger = ledgerLines(recordText)
-  const { agents, repo } = deckOpen(readText(join(state, DECK_FILE)), request.name)
+  const deck = deckOpen(readText(join(state, DECK_FILE)), request.name, request.tty)
+  // The predecessor's chain and the successor's own, which the succession's spawn handed it.
+  const own = listed?.find(row => row.self)?.tty
+  const chained = [request.tty, own].filter((tty): tty is string => tty !== undefined && tty !== 'none')
+    .flatMap(tty => parseChain(readText(chainPath(state, tty))).map(entry => entry.tty))
+  const live = liveAgents(deck.agents, chained, listed)
+  const seats = live.agents.map(agent => {
+    const brief = briefOf(state, agent.name)
+    return brief === undefined ? agent : { ...agent, brief }
+  })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
-  const found = linkRows(openRows(parseRecord(recordText)), ledger, [repo, projectOf(request.worktree, request.record)], openPrs)
+  const found = linkRows(openRows(parseRecord(recordText)), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs)
   const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const round = join(state, ROUND_DIR)
@@ -294,8 +409,10 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   return {
     rows: found.rows,
     prs,
-    agents,
+    agents: seats.map(agent => agent.name),
+    seats,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
+    ...(live.disagree === undefined ? {} : { disagree: live.disagree }),
   }
 }
 
@@ -501,6 +618,9 @@ export interface Deps {
   readonly openPrs?: OpenPrReader
   /** The window index of the home session's pane on a tty; undefined when no tmux pane runs there. */
   readonly paneWindow?: (tty: string) => number | undefined
+  /** The launcher's `list` rows; undefined when it cannot be read. */
+  readonly list?: () => readonly ListedRow[] | undefined
+  readonly journal?: Journal
 }
 
 /**
@@ -520,8 +640,10 @@ export function tmuxWindow(tty: string): number | undefined {
 
 /** The launcher's verb that closes the predecessor's place: `takeover` for window 0 of a home session, `close` for a tab. */
 export function closeVerb(tty: string, paneWindow: (tty: string) => number | undefined): { verb: string; where: string } {
-  if (tty !== 'none' && paneWindow(tty) === 0) return { verb: 'takeover', where: 'window 0 of a home session: `takeover` kills it and moves yours to index 0, where `close` is refused' }
-  return { verb: 'close', where: 'a tab, no window 0 of a home session runs on it' }
+  if (tty !== 'none' && paneWindow(tty) === 0) {
+    return { verb: 'takeover', where: 'window 0 of a home session: run it at once with `timeout: 600000`; it waits for the predecessor\'s « handed over » on its transcript, or five minutes of an idle transcript, says which, then kills it and moves yours to index 0' }
+  }
+  return { verb: 'close', where: 'a tab: first wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing' }
 }
 
 export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
@@ -554,7 +676,12 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const all = parseRecord(recordText)
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
-  const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env))
+  const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
+  const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env), (deps.list ?? (() => launcherList(launcher, env)))())
+  if ((open.disagree ?? 0) > 0) {
+    const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
+    writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
+  }
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
   const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine, now: now.getTime() }
@@ -570,20 +697,20 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     STATE_DIR: stateRoot(env),
     SCRIPTS: here,
     DISPATCH_RECORD: parsed.record,
-    LAUNCHER: join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh'),
+    LAUNCHER: launcher,
     PREDECESSOR_TTY: parsed.tty,
     CLOSE_VERB: close.verb,
     CLOSE_WHERE: close.where,
     LIVE_ROWS: list(open.rows.map(row => row.line)),
     LIVE_OWNERS: list(owners),
     LIVE_PULL_REQUESTS: list(open.prs),
-    LIVE_AGENTS: list(open.agents),
+    LIVE_AGENTS: list((open.seats ?? []).map(agentLine)),
     LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
   io.out(text.endsWith('\n') ? text : `${text}\n`)
-  io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
+  io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length}${open.disagree === undefined ? '' : ` agents_disagree=${open.disagree}`} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
   return 0
 }
 

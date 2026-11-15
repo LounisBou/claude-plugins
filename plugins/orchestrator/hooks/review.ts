@@ -191,6 +191,18 @@ function itemsOf(raw: unknown, name: string): Finding[] | string {
   return items
 }
 
+// An acceptance over a findings index: one set-aside of severity important per `[important]` line
+// of the index, each with a reason of its own, or the line that says what is missing.
+export function importantUncovered(index: string, input: Record<string, unknown>): string | null {
+  const important = index.split('\n').filter((l) => /^\s*\d+\.\s*\[important\]/i.test(l)).length
+  if (important === 0) return null
+  const items = itemsOf(input['set_asides'], 'set_asides')
+  const given = typeof items === 'string' ? [] : items.filter((s) => s.severity === 'important')
+  const reasons = new Set(given.map((s) => s.reason.toLowerCase()))
+  if (given.length >= important && reasons.size === given.length) return null
+  return `the findings index holds ${important} important finding(s): accepted sets each aside in its own set_asides entry, severity "important", with its own reason against the design (${given.length} given, ${reasons.size} distinct reason(s))`
+}
+
 // The orchestrator's decision on each finding a valid verdict names: kept, then set aside.
 export function findingsOf(input: Record<string, unknown>): { decision: Decision; file: string | null; line: number | null; severity: FindingSeverity | null }[] {
   const decided = (raw: unknown, decision: Decision) => {
@@ -264,6 +276,12 @@ export function register(on: On<Held>): void {
     if (typeof call === 'string') return { result: call, isError: true }
     const target = rowTarget(e)
     if (typeof target === 'string') return { result: target, isError: true }
+    if (target !== null && target.findings !== '' && text(e['verdict']) === ACCEPTANCE.result) {
+      const index = await $.fs.read(target.findings).catch(() => null)
+      if (index === null) await logLine($, 'review', `findings index not read: ${target.findings}`)
+      const missing = index === null ? null : importantUncovered(index, e)
+      if (missing !== null) return { result: missing, isError: true }
+    }
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
     const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.

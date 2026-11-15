@@ -16,8 +16,7 @@ the context alone.
 1. Run `ListAgents`. Keep every live implementer (the names the project's
    rows or briefs designate; when in doubt, every session that is not
    yours and not a reader).
-2. Message each one with `SendMessage` and `notify_when_idle: true`, one
-   message, this exact ask: « Status in five lines: phase and step in progress;
+2. Message each one with `SendMessage`, one message (its reply wakes you), this exact ask: « Status in five lines: phase and step in progress;
    branch and head sha; last push and PR; what blocks you, if anything; your
    measured context — read
    `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json`

@@ -1,6 +1,7 @@
 ---
 description: Set this machine up for bugs-bot, once — Python, the fixed launcher and the single Pull process under PM2
 allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/bin/setup install:*)
+disable-model-invocation: true
 ---
 
 Set this machine up, once. It asks nothing: the platform (Telegram or Slack),

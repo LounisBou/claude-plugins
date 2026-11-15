@@ -1,14 +1,6 @@
 ---
 name: norms-test-coverage
-description: |
-  Use this agent to check code coverage and identify missing tests. Respects the project's existing
-  test infrastructure and coverage baseline — does not demand 100% if the project is at a lower level.
-
-  <example>
-  Context: Developer added new functionality.
-  user: "Check if I have enough test coverage"
-  assistant: "I'll use the norms-test-coverage agent to analyze coverage gaps."
-  </example>
+description: "Checks test coverage and missing tests against the project's own coverage baseline."
 model: sonnet
 tools: Read, Grep, Glob, Bash
 color: magenta

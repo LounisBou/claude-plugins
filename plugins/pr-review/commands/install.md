@@ -1,6 +1,7 @@
 ---
 description: Sign in to GitHub through gh, then check that this plugin's dependencies are installed, enabled and authenticated
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Before running it, tell the user in one line: if no GitHub login is found, a browser

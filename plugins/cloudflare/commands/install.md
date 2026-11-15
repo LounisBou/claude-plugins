@@ -1,6 +1,7 @@
 ---
 description: Check the Cloudflare setup and say how to add an account when none is found
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/install.sh` and report its output to the user verbatim.
@@ -13,7 +14,6 @@ says where the token goes and exits 12. The config file is
 `$CLAUDE_CLOUDFLARE_CONFIG`, else `~/.config/claude-cloudflare/config.json`; every
 key is optional. The script never prints, writes or logs a token.
 
-It then runs the same checks as `/cloudflare:doctor`, whose table names each exit
-code.
+It then runs `/cloudflare:doctor`'s checks.
 
 $ARGUMENTS

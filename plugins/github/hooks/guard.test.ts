@@ -68,6 +68,8 @@ type World = {
   listFails?: string
   // A stat that fails with this text, whatever the path.
   statFails?: string
+  // Every write of the journal fails with this text.
+  journalFails?: string
   // The branch whose pull request (#12) pr-get answers with its labels as they stand.
   branch?: string
   // Every git run fails in the host itself, with this error.
@@ -218,6 +220,7 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   })
   on('fs.write', (_$, e) => {
     if (e.path.startsWith(JOURNAL)) {
+      if (w.journalFails) return { deny: w.journalFails }
       seen.journal.push(String(fieldsOf(fieldsOf(JSON.parse(e.text))?.['source'])?.['code']))
       seen.events.push(e.text)
       return { value: undefined }
@@ -1182,6 +1185,20 @@ test('a command that only mentions the records in its text passes unobserved, a 
   expect(rm.deny).toBe(RECORDS_REFUSAL)
   expect(seen.journal).toEqual(['github.records.write', 'github.records.delete'])
   expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"', 'touch ~/.claude/pr-records/x'])
+})
+
+test('a journal that cannot be written leaves each decision standing: the deletion refused, the write observed and let through, one log line each', async ($, on) => {
+  const seen = await world($, on, { journalFails: 'ENOSPC: no space left on device' })
+  const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
+  expect(rm.deny).toBe(RECORDS_REFUSAL)
+  const touch = await $.tool.call(bash('touch ~/.claude/pr-records/x'))
+  expect(touch.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['touch ~/.claude/pr-records/x'])
+  expect(seen.journal).toEqual([])
+  const lines = seen.logs.filter((line) => line.includes('ENOSPC'))
+  expect(lines.length).toBe(2)
+  expect(lines[0]).toContain('github.records.delete')
+  expect(lines[1]).toContain('github.records.write')
 })
 
 const RECORDS_READS = [

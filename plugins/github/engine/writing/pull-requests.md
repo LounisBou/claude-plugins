@@ -122,6 +122,8 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`).
 A required E2E or norms check goes laxer only by the operator's waiver, his words quoted with their
 date in `mcp__github__record`'s `detail` (`waived`). Words waiving it for an orchestration or a
-repository hold for each of its pull requests. With none, ask once:
+repository hold for each of its pull requests. An E2E waiver that names a repository or « all PRs »
+with an end is recorded once, `mcp__github__record {repo, exempt: true, until, detail}`, never per pull
+request. With none, ask once:
 « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> », « Accorder » / « Refuser ».
 The gate alone puts `Ready` and `Not Ready` (REFERENCE.md « Guards »).

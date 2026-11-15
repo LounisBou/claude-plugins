@@ -76,8 +76,10 @@
 #     ends that home server, every window of it, and proves no host is left on any of them;
 #     a home that is not running is closed already
 #   iterm-agent.sh takeover --tty /dev/ttysNNN --expect-title <substring>
-#     a successor's close of its predecessor in their home session: the predecessor's window
-#     0 killed and proved gone, then the successor's window moved to index 0
+#     a successor's close of its predecessor in their home session: it waits for the
+#     predecessor's « handed over » on its transcript, or ORCHESTRATOR_TAKEOVER_IDLE seconds
+#     (300) of an idle transcript, and prints which; then the window 0 is killed and proved
+#     gone, and the successor's window moved to index 0
 #   iterm-agent.sh tools [--transcript <path>]
 #     what a session is given and what each item costs per call, from a transcript
 #   iterm-agent.sh verify --tty /dev/ttysNNN [--pid <pid>]

@@ -5,16 +5,23 @@
 //     [--report <path>] [--scope "<text>"] [--repo <owner/name>]
 //   brief.sh audit --subject <s> --repository <dir> --briefs <dir> --kind <kind> --words "<his words>"
 //     --question "<text>" [--established "<text>"] [--since <date>] [--reading "<text>"] [--records "<text>"]
+//   brief.sh rotation --record <dispatch record> --row <id> --phase-brief <path> --worktree <dir> --orchestrator "<name [ref]>"
+//     --tty <old agent's tty> --title "<Agent: x>" --out <path> [--base <ref>] [--plan <path> [--phase "<heading>"]]
+//     [--report <the old agent's report>] [--new-report <path>] [--in-flight "<line>"] [--decisions "<line>"] [--repo <owner/name>]
 //   brief.sh auditor-takeover --name "<Audit: x>" --tty <tty> --report <path> --repository <dir>
 //   brief.sh coordinator-takeover --name "<Coord: x>" --tty <tty>
 //
 // Each fills a template of the plugin (`templates/`) from what the state already holds: `phase` from
-// the dispatch record's row, the plan's phase file, the spec `goals.md` names and the base's head;
+// the dispatch record's row, the plan's phase (its file, or its section with --phase), the spec
+// `goals.md` names and the sections of it that phase cites, and the base's head; `rotation` from the
+// row, git (branch, head, the commits landed since the base, what is uncommitted), the plan's open
+// items and the replaced agent's last report, the agent's two lines (in flight, decisions) when it
+// gave them, and says the launcher's `rotate` line that starts the replacement on it;
 // `audit` from the briefs directory (the previous report, its date) and the repository; the two
 // takeovers from the to-do list of the session handing over and, for the coordinator, its notes. The
 // session that dispatches passes paths and, at most, a few words of its own judgment; a brief typed by
-// hand cost its orchestrator thousands of tokens of context each. `phase` and `audit` write the brief
-// to a file and say its path; a takeover prints its text, as `succession.sh takeover` does. A field the
+// hand cost its orchestrator thousands of tokens of context each. `phase`, `rotation` and `audit`
+// write the brief to a file and say its path; a takeover prints its text, as `succession.sh takeover` does. A field the
 // template holds that this command does not fill is refused, so no brief leaves with a `{{FIELD}}`.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
@@ -29,13 +36,14 @@ import { goalsFileOf } from './lib/record-paths.ts'
 import { placeholdersOf } from './review-brief.ts'
 import { fill, projectOf } from './succession.ts'
 
-export const USAGE = 'usage: brief.sh {phase|audit|auditor-takeover|coordinator-takeover} --<field> <value>... (see header)'
+export const USAGE = 'usage: brief.sh {phase|rotation|audit|auditor-takeover|coordinator-takeover} --<field> <value>... (see header)'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..', '..', '..')
 const template = (name: string): string => join(root, 'templates', name)
 export const TEMPLATES = {
   phase: template('agent-phase-brief.md'),
+  rotation: template('agent-rotation-brief.md'),
   audit: template('agent-audit-brief.md'),
   'auditor-takeover': template('auditor-succession-brief.md'),
   'coordinator-takeover': template('coordinator-succession-brief.md'),
@@ -54,8 +62,13 @@ export const NOTES_CAP = 4000
 const FLAGS: Record<Command, { readonly required: readonly string[]; readonly optional: readonly string[]; readonly paths: readonly string[] }> = {
   phase: {
     required: ['record', 'row', 'plan', 'worktree', 'branch', 'orchestrator', 'out'],
-    optional: ['base', 'spec', 'mode', 'report', 'scope', 'repo'],
+    optional: ['base', 'spec', 'mode', 'report', 'scope', 'repo', 'phase'],
     paths: ['record', 'plan', 'worktree', 'out', 'report'],
+  },
+  rotation: {
+    required: ['record', 'row', 'phase-brief', 'worktree', 'orchestrator', 'tty', 'title', 'out'],
+    optional: ['base', 'plan', 'phase', 'report', 'new-report', 'in-flight', 'decisions', 'repo'],
+    paths: ['record', 'phase-brief', 'worktree', 'out', 'plan', 'report', 'new-report'],
   },
   audit: {
     required: ['subject', 'repository', 'briefs', 'kind', 'words', 'question'],
@@ -99,6 +112,8 @@ export interface Deps {
 /** The command's values, or the reason it cannot fill them. */
 type Values = Record<string, string> | { readonly error: string }
 
+const field = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined)
+
 const goalsValue = (goals: string | undefined, key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals ?? '')?.[1]?.trim() ?? ''
 
 /** The row's tier as the agent reads it: the tier, else the model and effort the dispatch chose. */
@@ -108,14 +123,58 @@ export function tierOf(row: Row): string {
   return [words('tier'), model].filter(part => part !== '').join(', ') || 'the host default'
 }
 
-function phaseValues(f: Fields, deps: Deps): Values {
+/** A section of a markdown file: its heading line and its lines, 1-based and inclusive. */
+export interface Section {
+  readonly heading: string
+  readonly from: number
+  readonly to: number
+  readonly text: string
+}
+
+const HEADING = /^(#{1,6})\s+(.*)$/
+
+/** The first section whose heading holds `words`, up to the next heading of its level or above; undefined when none does. */
+export function sectionOf(text: string, words: string): Section | undefined {
+  const lines = text.split('\n')
+  const at = lines.findIndex(line => HEADING.test(line) && line.includes(words))
+  if (at < 0) return undefined
+  const level = (HEADING.exec(lines[at] ?? '')?.[1] ?? '#').length
+  let end = at + 1
+  while (end < lines.length && !((HEADING.exec(lines[end] ?? '')?.[1]?.length ?? 99) <= level)) end++
+  while (end > at + 1 && (lines[end - 1] ?? '').trim() === '') end--
+  return { heading: (lines[at] ?? '').trim(), from: at + 1, to: end, text: lines.slice(at, end).join('\n') }
+}
+
+const where = (section: Section): string => `section « ${section.heading} », lines ${section.from}–${section.to}`
+
+/** The spec's sections a text cites as `§<n>`, found by their heading's number; each once, in the order cited. */
+export function citedSections(cites: string, spec: string): Section[] {
+  const numbers = [...new Set([...cites.matchAll(/§\s?([0-9]+(?:\.[0-9]+)*)/g)].map(m => m[1] ?? ''))]
+  return numbers.flatMap(n => {
+    const line = spec.split('\n').find(l => new RegExp(`^#{1,6}\\s+(?:§\\s?)?${n.replace(/\./g, '\\.')}(?:[.)]?\\s|$)`).test(l))
+    const found = line === undefined ? undefined : sectionOf(spec, line.replace(HEADING, '$2'))
+    return found === undefined ? [] : [found]
+  })
+}
+
+/** The row of the record, open, or the reason it cannot be read. */
+function openRow(f: Fields): { readonly row: Row } | { readonly error: string } {
   const recordText = readText(f['record'] ?? '')
   if (recordText === undefined) return { error: `no dispatch record at ${f['record']}` }
   const row = parseRecord(recordText).find(r => String(r['id']) === f['row'])
   if (row === undefined) return { error: `row ${f['row']} is not in ${f['record']}` }
   if (row['state'] !== 'open') return { error: `row ${f['row']} is not open` }
+  return { row }
+}
+
+function phaseValues(f: Fields, deps: Deps): Values {
+  const found = openRow(f)
+  if ('error' in found) return found
+  const row = found.row
   const plan = readText(f['plan'] ?? '')
   if (plan === undefined) return { error: `no plan file at ${f['plan']}` }
+  const section = f['phase'] === undefined ? undefined : sectionOf(plan, f['phase'])
+  if (f['phase'] !== undefined && section === undefined) return { error: `no heading of ${f['plan']} holds « ${f['phase']} »` }
   const spec = f['spec'] ?? goalsValue(readText(goalsFileOf(f['record'] ?? '')), 'spec')
   if (spec === '') return { error: `--spec is required: no goals.md beside ${f['record']} names one` }
   const worktree = f['worktree'] ?? ''
@@ -125,15 +184,18 @@ function phaseValues(f: Fields, deps: Deps): Values {
   const note = typeof row['note'] === 'string' && row['note'] !== '' ? ` — note: ${row['note']}` : ''
   const out = f['out'] ?? ''
   const report = f['report'] ?? join(dirname(out), `report-${basename(out)}`)
-  const title = /^# +(.+)$/m.exec(plan)?.[1]?.trim() ?? (label || basename(f['plan'] ?? ''))
+  const title = section?.heading.replace(HEADING, '$2') ?? /^# +(.+)$/m.exec(plan)?.[1]?.trim() ?? (label || basename(f['plan'] ?? ''))
+  // The phase's section and the spec's sections it cites are named, so the agent reads those and not both files whole.
+  const cited = section === undefined ? [] : citedSections(section.text, readText(spec) ?? '')
   return {
     PROJECT: (f['repo'] ?? projectOf(worktree, f['record'] ?? '')).split('/').at(-1) ?? '',
     TITLE: title,
     ROW_ID: f['row'] ?? '',
     MODE: f['mode'] ?? 'build',
     ROW: `${f['row']} ${label}${note}`,
-    SPEC: spec,
-    PLAN: f['plan'] ?? '',
+    SPEC: `\`${spec}\`${cited.length === 0 ? '' : `, ${cited.map(where).join('; ')}`}`,
+    PLAN: `\`${f['plan'] ?? ''}\`${section === undefined ? '' : `, ${where(section)}`}`,
+    READ: section === undefined ? 'the spec, the plan' : cited.length === 0 ? 'the plan\'s section above, the spec by the sections it names' : 'the plan\'s section and the spec\'s sections above',
     SCOPE: f['scope'] === undefined ? '' : `Scope from the orchestrator: ${f['scope']}\n`,
     WORKTREE: worktree,
     BRANCH: f['branch'] ?? '',
@@ -144,6 +206,69 @@ function phaseValues(f: Fields, deps: Deps): Values {
     REPORT_PATH: report,
     SCREENSHOT_CHECKLIST: CHECKLIST,
   }
+}
+
+/** At most `cap` lines, the rest counted. */
+const capped = (lines: readonly string[], cap: number): string =>
+  lines.length === 0 ? 'none' : [...lines.slice(0, cap), ...(lines.length > cap ? [`… and ${lines.length - cap} more`] : [])].map(line => `\n  - ${line}`).join('')
+
+/** The last review verdict a row recorded, as one line. */
+function lastGate(row: Row): string {
+  const verdict = field(field(row['review'], 'verdict'), 'result')
+  if (typeof verdict !== 'string') return 'none recorded'
+  const head = field(field(row['review'], 'verdict'), 'head')
+  const words = field(field(row['review'], 'verdict'), 'words')
+  return `${verdict}${typeof head === 'string' ? ` at ${head.slice(0, 12)}` : ''}${typeof words === 'string' && words !== '' ? ` — ${words}` : ''}`
+}
+
+/** The rotation's values; the `rotate` line is the caller's to print. */
+function rotationValues(f: Fields, deps: Deps): Values {
+  const found = openRow(f)
+  if ('error' in found) return found
+  const row = found.row
+  const worktree = f['worktree'] ?? ''
+  if (!existsSync(worktree)) return { error: `no checkout at ${worktree}` }
+  if (readText(f['phase-brief'] ?? '') === undefined) return { error: `no phase brief at ${f['phase-brief']}` }
+  const base = f['base'] ?? 'origin/main'
+  const branch = deps.git(worktree, ['rev-parse', '--abbrev-ref', 'HEAD']) ?? 'a branch this command could not read'
+  const plan = f['plan'] === undefined ? undefined : readText(f['plan'])
+  if (f['plan'] !== undefined && plan === undefined) return { error: `no plan file at ${f['plan']}` }
+  const section = plan === undefined || f['phase'] === undefined ? undefined : sectionOf(plan, f['phase'])
+  if (f['phase'] !== undefined && plan !== undefined && section === undefined) return { error: `no heading of ${f['plan']} holds « ${f['phase']} »` }
+  const scope = section?.text ?? plan ?? ''
+  const open = scope.split('\n').filter(line => /^\s*[-*] \[ \]/.test(line)).map(line => line.replace(/^\s*[-*] \[ \]\s*/, ''))
+  const scopeAt = f['plan'] === undefined ? 'the phase brief\'s plan' : `\`${f['plan']}\`${section === undefined ? '' : `, ${where(section)}`}`
+  const report = f['report'] ?? ''
+  const out = f['out'] ?? ''
+  const label = typeof row['label'] === 'string' ? row['label'] : ''
+  return {
+    PROJECT: (f['repo'] ?? projectOf(worktree, f['record'] ?? '')).split('/').at(-1) ?? '',
+    TITLE: label || (f['title'] ?? ''),
+    ROW_ID: f['row'] ?? '',
+    PHASE_BRIEF: f['phase-brief'] ?? '',
+    WORKTREE: worktree,
+    BRANCH: branch,
+    BASE: base,
+    BASE_HEAD: deps.git(worktree, ['rev-parse', '--short=12', base]) ?? 'a head this command could not read',
+    HEAD: deps.git(worktree, ['rev-parse', '--short=12', 'HEAD']) ?? 'unread',
+    LANDED: capped((deps.git(worktree, ['log', '--oneline', '--no-decorate', `${base}..HEAD`]) ?? '').split('\n').filter(line => line !== ''), 30),
+    UNCOMMITTED: capped((deps.git(worktree, ['status', '--porcelain']) ?? '').split('\n').filter(line => line.trim() !== ''), 20),
+    IN_FLIGHT: f['in-flight'] ?? 'nothing said: the agent gave no line (gone, or nothing in flight); read the uncommitted files above',
+    LAST_GATE: lastGate(row),
+    LAST_REPORT: report !== '' && existsSync(report) ? `\`${report}\`` : 'none',
+    REMAINING: open.length > 0 ? `The open items of ${scopeAt}:${capped(open, 30)}` : `${scopeAt}, less what Landed lists.`,
+    DECISIONS: f['decisions'] ?? 'none beyond the phase brief',
+    TIER: tierOf(row),
+    ORCHESTRATOR: f['orchestrator'] ?? '',
+    REPORT_PATH: f['new-report'] ?? join(dirname(out), `report-${basename(out)}`),
+  }
+}
+
+/** The launcher's line that starts the replacement on the rotation brief and closes the old agent. */
+export function rotateLine(f: Fields): string {
+  const q = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+  return [LAUNCHER, 'rotate', '--old-tty', f['tty'] ?? '', '--dir', q(f['worktree'] ?? ''), '--title', q(f['title'] ?? ''),
+    '--brief', q(f['out'] ?? ''), '--orchestrator', q(f['orchestrator'] ?? ''), '--right-of', 'self'].join(' ')
 }
 
 /** A subject as a file name takes it. */
@@ -240,6 +365,7 @@ function coordinatorValues(f: Fields, deps: Deps): Values {
 
 const VALUES: Record<Command, (f: Fields, deps: Deps) => Values> = {
   phase: phaseValues,
+  rotation: rotationValues,
   audit: auditValues,
   'auditor-takeover': auditorValues,
   'coordinator-takeover': coordinatorValues,
@@ -273,15 +399,15 @@ export function main(argv: readonly string[], io: Io, deps: Deps, templates: Rea
   const unknown = placeholdersOf(text).filter(name => !(name in values))
   if (unknown.length > 0) return fail(`the template has fields this command does not fill: ${unknown.map(name => `{{${name}}}`).join(', ')}`)
   const filled = fill(text, values)
-  if (parsed.command === 'phase' || parsed.command === 'audit') {
-    const out = parsed.command === 'phase' ? parsed.fields['out'] ?? '' : join(parsed.fields['briefs'] ?? '', `audit-${slug(parsed.fields['subject'] ?? '')}-brief.md`)
+  if (parsed.command === 'phase' || parsed.command === 'rotation' || parsed.command === 'audit') {
+    const out = parsed.command === 'audit' ? join(parsed.fields['briefs'] ?? '', `audit-${slug(parsed.fields['subject'] ?? '')}-brief.md`) : parsed.fields['out'] ?? ''
     try {
       mkdirSync(dirname(out), { recursive: true })
       writeFileSync(out, filled)
     } catch (error) {
       return fail(`${out} cannot be written: ${(error as Error).message}`)
     }
-    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n`)
+    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n${parsed.command === 'rotation' ? `rotate: ${rotateLine(parsed.fields)}\n` : ''}`)
     return 0
   }
   io.out(filled.endsWith('\n') ? filled : `${filled}\n`)

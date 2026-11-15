@@ -3757,6 +3757,21 @@ check "without --gate-tokens the startup prompt says no gate" "0" \
   "$(gspawn --brief "$B/good.md" --orchestrator "$ORCHREF" | grep -c 'Your context gate')"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_PS_TABLE=/dev/null bash "$AGENT" rotate --tier light --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: gate" --prompt p --gate-tokens 200000 2>&1)
 check "rotate passes --gate-tokens to the replacement" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
+# A rotation's replacement is given the tools its old agent was launched with: what the old
+# launch kept or dropped beyond its role's default set is read on its host's launch line.
+res=$("$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+default = list(ia.default_removed('Agent'))
+kept = default[0]
+words = ['claude', '--name', 'Agent: x', '--disallowedTools'] + default[1:] + ['mcp__extra', '--permission-mode', 'auto']
+print(ia.carried_tools(words, 'Agent: x') == ([kept], ['mcp__extra']))
+print(ia.carried_tools(['claude', '--name', 'Agent: x'], 'Agent: x') == ([], []))
+print(ia.carried_tools(None, 'Agent: x') == ([], []))
+a = ia.args_from_line('rotate', ['--old-tty', '/dev/ttys901', '--tier', 'light', '--dir', '/tmp', '--title', 'Agent: r', '--prompt', 'p', '--keep-tool', 'mcp__pr-review'])
+print(a.spawn.keep_tool, a.spawn.drop_tool)" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+check "rotate carries the old launch's kept and dropped tools, and reads the rotation's own flags" "True|True|True|['mcp__pr-review'] []" \
+  "$(printf '%s\n' "$res" | paste -sd'|' -)"
 
 check_status "--brief with --prompt is mutually exclusive" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x
@@ -5762,6 +5777,33 @@ ia.tmux_out = lambda args, what: '0'
 ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
+# A takeover kills its predecessor only on its « handed over », read on its transcript after the
+# « takeover confirmed » it answers, or on a transcript left idle; it never claims a hand-over it
+# did not read, and it waits while the predecessor still writes.
+HOT="$WORK/takeover-transcript.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"handed over"}]}}' \
+  '{"type":"user","message":{"content":"takeover confirmed"}}' > "$HOT"
+res=$(ipy "
+print(ia.handed_over('$HOT'))
+open('$HOT', 'a').write('{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"input\":{\"message\":\"handed over\"}}]}}\\n')
+print(ia.handed_over('$HOT'))
+ia.rotated_session = lambda tty: 's-pred'
+ia.transcript_of_session = lambda sid: '$HOT'
+print(ia.await_handover('/dev/ttys966', idle=300, sleep=lambda s: None))
+open('$HOT', 'a').write('{\"type\":\"user\",\"message\":{\"content\":\"takeover confirmed\"}}\\n')
+import os
+t = [os.path.getmtime('$HOT')]
+naps = []
+def nap(s):
+    naps.append(s)
+    t[0] += s
+print(ia.await_handover('/dev/ttys966', idle=300, sleep=nap, clock=lambda: t[0]))
+print(len(naps) > 0)
+ia.transcript_of_session = lambda sid: None
+print(ia.await_handover('/dev/ttys966'))" 2>&1)
+check "a takeover waits for the predecessor's handed over, or an idle transcript, and says which" \
+  "False|True|1|1|True|1" \
+  "$(printf '%s\n' "$res" | sed -n 1p)|$(printf '%s\n' "$res" | sed -n 2p)|$(printf '%s\n' "$res" | grep -c '^takeover: « handed over » read on ')|$(printf '%s\n' "$res" | grep -c '^takeover: no « handed over » on .*; its transcript was idle 30[0-9]s$')|$(printf '%s\n' "$res" | sed -n 5p)|$(printf '%s\n' "$res" | grep -c '^takeover: no transcript of the session on /dev/ttys966 was found: no « handed over » read$')"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
 export ORCHESTRATOR_HOST_CLI="$host_cli_kept"
 
@@ -7988,8 +8030,10 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/d
   '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
+# No transcript of the predecessor is found here: the line says no « handed over » was read.
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
-  "took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
+  "takeover: no transcript of the session on /dev/ttys900 was found: no « handed over » read
+took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
   "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
 check "a takeover writes its dated line: the socket, the cause takeover and the predecessor's tty" "1" \
   "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: window 0 of home ended: cause=takeover tty=/dev/ttys900$' "$TSTATE/close.log")"

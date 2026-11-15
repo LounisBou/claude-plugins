@@ -1,6 +1,7 @@
 ---
 description: Remove the state directory and the short commands
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/uninstall.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/uninstall.sh` and report its output to the user.

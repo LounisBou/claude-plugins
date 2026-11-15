@@ -1,6 +1,7 @@
 ---
 description: Install gh if missing, sign in to GitHub in the browser, then check python3, curl and the token
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/install.sh` and report its output to the user verbatim.

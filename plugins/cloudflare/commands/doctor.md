@@ -1,6 +1,7 @@
 ---
 description: Check python3, the accounts found, each account's token and its permissions, and the local Caddy
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/install.sh --check` and report its output to the user
@@ -16,7 +17,7 @@ is found and starts caddy with the envfile, that the envfile is private
 token is valid, with its DNS edit right when the token may read its own
 policies. It changes nothing and never prints a token or an envfile value.
 
-Read the exit code and tell the user which class of problem it names:
+Tell the user what its exit code names:
 
 | Code | Meaning | Remedy |
 |---|---|---|
