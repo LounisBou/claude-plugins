@@ -17,8 +17,11 @@
 //                    of documentation (docs/, a README) one cell without a suite, which passes (a
 //                    skipped job proves nothing to the gate)
 //   the release      a pull request that changes a plugin manifest runs every plugin on both platforms
-//   a push to main   every plugin on Linux, but the release-only ones
-//   the night        every plugin on macOS
+//   a push to main   Linux, for the plugins the merge changes (its diff against its first parent), as a
+//                    pull request reads them, except that a change of core or of ci/ runs every plugin
+//                    but the release-only ones; a merge that changes no plugin runs the cell without a
+//                    suite; a merge whose diff cannot be read runs every plugin, and says so
+//   the night        every plugin on macOS, whatever the last merge changed
 //
 // A push to main leaves out the cells a pull request run of the same tree already passed: the
 // workflow's `tested` step (scripts/tested-tree.ts) names them, as a JSON list of cell keys, in
@@ -29,7 +32,7 @@
 //
 //   npm run plugin-matrix                        prints the whole matrix; appends it to $GITHUB_OUTPUT when set
 //   npm run plugin-matrix -- --pull-request <base>   the matrix of a pull request against <base>
-//   npm run plugin-matrix -- --main              the matrix of a push to main
+//   npm run plugin-matrix -- --main              the matrix of a push to main (HEAD against its first parent)
 //   npm run plugin-matrix -- --nightly           the matrix of the night
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
@@ -143,9 +146,36 @@ export function pullRequestCells(matrix: readonly Cell[], touched: readonly stri
   return cells.length > 0 ? cells : [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }]
 }
 
-/** The cells of a push to main: every plugin on Linux, but the release-only ones. */
-export function mainCells(matrix: readonly Cell[], releaseOnly: readonly string[] = []): Cell[] {
-  return matrix.filter(cell => cell.os === 'ubuntu-latest' && !releaseOnly.includes(cell.plugin))
+const CI_CONFIG = /^ci\//
+
+/**
+ * The plugins a merge into main asks to test: those it changes, every plugin when it changes core
+ * or `ci/` (what every suite reads), as a pull request otherwise.
+ */
+export function mainTouched(changed: readonly string[], plugins: readonly string[], releaseOnly: readonly string[] = []): string[] {
+  if (changed.some(path => CORE_SOURCE.test(path) || CI_CONFIG.test(path))) return [...plugins]
+  return touchedPlugins(changed, plugins, plugins, releaseOnly)
+}
+
+/**
+ * The cells of a push to main: Linux, for every plugin but the release-only ones; for the `touched`
+ * ones alone when they are given, the cell without a suite when none is left.
+ */
+export function mainCells(matrix: readonly Cell[], releaseOnly: readonly string[] = [], touched?: readonly string[]): Cell[] {
+  const cells = matrix.filter(cell => cell.os === 'ubuntu-latest' && !releaseOnly.includes(cell.plugin) && (touched === undefined || touched.includes(cell.plugin)))
+  return touched !== undefined && cells.length === 0 ? [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }] : cells
+}
+
+/** The paths the merge commit at HEAD changes against its first parent; undefined, and told, when git cannot say. */
+function mergeChanges(root: string, io: Io): string[] | undefined {
+  try {
+    return execFileSync('git', ['diff', '--name-only', '--no-renames', 'HEAD^1', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      .split('\n').filter(line => line !== '')
+  } catch (error) {
+    const reason = isRecord(error) && typeof error['stderr'] === 'string' && error['stderr'].trim() !== '' ? error['stderr'].trim() : String(error)
+    io.err(`plugin-matrix: the change of HEAD against its first parent cannot be read, every plugin runs: ${reason.split('\n')[0]}`)
+    return undefined
+  }
 }
 
 /** What names a cell apart from the others, and what a job's name gives back: plugin, platform, part. */
@@ -188,7 +218,9 @@ export function run(root: string, args: readonly string[], io: Io): number {
       .split('\n').filter(line => line !== '')
     matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins, consumers(root), RELEASE_ONLY), isRelease(changed))
   } else if (mode === '--main') {
-    matrix = withoutCovered(mainCells(matrix, RELEASE_ONLY), coveredCells(io.env['TESTED_CELLS']))
+    const changed = mergeChanges(root, io)
+    const touched = changed === undefined ? undefined : mainTouched(changed, plugins, RELEASE_ONLY)
+    matrix = withoutCovered(mainCells(matrix, RELEASE_ONLY, touched), coveredCells(io.env['TESTED_CELLS']))
   } else if (mode === '--nightly') {
     matrix = nightlyCells(matrix)
   } else if (mode !== undefined) {
