@@ -12,6 +12,7 @@ import {
 } from './core.ts'
 import { spawnArgv } from '../core/orchestration.ts'
 import { observed } from './observe.ts'
+import { startRetrospective } from './retrospective.ts'
 import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
 export const TOOL = 'mcp__implement__state'
@@ -166,6 +167,9 @@ async function launchReviewer($: any): Promise<string> {
 const METHOD_SKILL = 'method:lifecycle'
 const method = { isLoaded: false }
 
+// Whether implement:close ran in the turn in progress: its end is where the learning retrospective may start.
+const close = { ran: false }
+
 export function register(on: any) {
   // The state tool, listed from the first turn.
   on('session.start', async ($: any, e: any, next: any) => {
@@ -219,6 +223,7 @@ export function register(on: any) {
     const skill = skillOf(String(e.skill ?? ''))
     if (skill === null) return next(e)
     await writeGuard($, armedBy(await readGuard($), skill))
+    if (skill === 'close') close.ran = true
     const lines = await preflight($)
     const reads = skill === 'phase' || skill === 'check' || skill === 'close'
     const line = lines.length === 0 && reads ? stateLine(await snapshot($)) : null
@@ -232,7 +237,12 @@ export function register(on: any) {
   }).catch(async ($: any, e: any, next: any) => next(e))
 
   on('turn.complete', async ($: any, e: any, next: any) => {
-    if (!e.agentId) await writeGuard($, onTurnEnd(await readGuard($), e.isAborted === true || e.reason === 'aborted'))
+    const aborted = e.isAborted === true || e.reason === 'aborted'
+    if (!e.agentId) await writeGuard($, onTurnEnd(await readGuard($), aborted))
+    if (!e.agentId && close.ran) {
+      close.ran = false
+      if (!aborted) await startRetrospective($)
+    }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => next(e))
 

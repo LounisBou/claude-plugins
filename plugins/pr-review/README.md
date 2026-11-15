@@ -104,7 +104,8 @@ and every skill keeps its own route.
   word goes through, and the journal (`<config>/pr-review/journal/`) keeps one `escape`
   line under the rule's code. Only the irreversible stays refused: a forced or
   deleting push (a push whose line sets a variable or runs `env` counts as forced), until
-  the user allows it when asked, a deleted comment, and a review submitted with an event
+  the user allows it when asked (their Allow or Deny is kept in the journal as one `answer`
+  line, `pr-review.answer.push.granted` or `pr-review.answer.push.refused`), a deleted comment, and a review submitted with an event
   other than `COMMENT`, in either skill, and also through the Bash route while the github
   tool is listed. The walkthrough's own files under
   `/tmp/claude-pr-review-*` are never noted.
@@ -119,6 +120,11 @@ and every skill keeps its own route.
   findings and fix log, held outside the model's memory. While a loop runs and
   neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop goes through
   and the journal keeps one line. Any prompt the user types, or an interrupted turn, ends that watch.
+- **Findings kept past the session.** Each pass the loop accepts leaves its Critical and
+  Important findings in the journal, one `finding` line each (`pr-review.finding`): the
+  severity, the file, the pull request and its head, and nothing of the finding's text. The
+  pull request is asked of `mcp__github__gh` once per loop; the lines of a walkthrough name
+  the one `open_comments` read.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
   plugin's ready guard. The verdict is computed, not reported: during a pass, each

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { journalDir, learningEvent, parseCandidate, type Evidence, type LearningEvent, type LearningKind, type Trust } from '../../../core/learning.ts'
+import { answerEvent, findingEvent, journalDir, learningEvent, parseCandidate, subjectOf, type Evidence, type LearningEvent, type LearningKind, type Trust } from '../../../core/learning.ts'
 import { distil, DISTIL_USAGE, run } from './distil.ts'
 
 const NOW = Date.parse('2026-11-14T10:00:00Z')
@@ -170,4 +170,25 @@ test('run refuses a call without a configuration directory', () => {
   const { errs, deps } = capture()
   assert.deepEqual([run([], deps), run(['--config'], deps), run(['--config', 'a', 'b'], deps)], [2, 2, 2])
   assert.deepEqual(errs, [DISTIL_USAGE, DISTIL_USAGE, DISTIL_USAGE])
+})
+
+test('the findings and the answers the writers build cluster by what found them and by what was answered, across pull requests', () => {
+  const known = (pr: number) => ({
+    at: new Date(NOW - DAY).toISOString().replace('.000Z', 'Z'), random: (serial++).toString(16).padStart(8, '0'),
+    subject: subjectOf({ repo: 'Acme/App', pr }),
+  })
+  const built = [
+    ...[1, 1, 2].map(pr => findingEvent({ ...known(pr), plugin: 'norms', code: 'norms.magic-values.error', severity: 'error', file: 'src/a.ts' })),
+    ...[1, 2, 3].map(pr => findingEvent({ ...known(pr), plugin: 'pr-review', code: 'pr-review.finding', severity: 'critical', file: 'src/b.ts:4' })),
+    ...[1, 2, 2].map(pr => answerEvent({ ...known(pr), plugin: 'orchestrator', given: { asked: 'e2e-waiver', granted: false } })),
+    // A subject no writer read names no pull request: three such events are no candidate.
+    ...[0, 0, 0].map(() => findingEvent({ at: known(1).at, random: (serial++).toString(16).padStart(8, '0'), plugin: 'norms', code: 'norms.naming.warning', severity: 'warning', file: 'src/a.ts' })),
+  ]
+  const events = built.flatMap(event => event ?? [])
+  assert.equal(events.length, built.length)
+  assert.deepEqual(distil(events, NOW).map(candidate => [candidate.signature, candidate.prs]), [
+    ['answer:orchestrator.answer.e2e-waiver.refused', ['acme/app#1', 'acme/app#2']],
+    ['finding:norms.magic-values.error:source:typescript', ['acme/app#1', 'acme/app#2']],
+    ['finding:pr-review.finding:critical:source:typescript', ['acme/app#1', 'acme/app#2', 'acme/app#3']],
+  ])
 })

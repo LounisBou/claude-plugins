@@ -1,11 +1,9 @@
 // hooks/tests/journal.ts
-// The journal beneath the module in a test: the session's id, the rename a journal write ends on,
-// and every file the module writes into its journal, read back as events.
+// The journal beneath the module in a test: every file the module writes into its journal, read
+// back as events. The fake host (fakes.ts) answers the session's id and the journal's commands.
+import { JOURNAL_DIR } from './fakes.ts'
 
-// Where fakeDollar's host keeps the module's journal: its home, then the plugin's directory.
-export const JOURNAL_DIR = '/home/u/.claude/norms/journal/'
-
-// Makes `$` hold a journal and returns the events the module wrote into it so far, parsed.
+// Returns the events the module wrote into the journal of `$` since, parsed.
 export function watchJournal($: any): () => any[] {
   const events: any[] = []
   const write = $.fs.write
@@ -13,10 +11,6 @@ export function watchJournal($: any): () => any[] {
     if (String(path).startsWith(JOURNAL_DIR)) events.push(JSON.parse(String(text)))
     return write(path, text)
   }
-  const run = $.process.run
-  $.process.run = async (argv: readonly string[], init?: unknown) => (argv[0] === 'mv' ? { exitCode: 0, stdout: '', stderr: '' } : run(argv, init))
-  $.session = { ...$.session, id: async () => 'sess-1' }
-  $.clock = { sleep: async () => undefined }
   return () => events
 }
 

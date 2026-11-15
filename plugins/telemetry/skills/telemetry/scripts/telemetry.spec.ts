@@ -24,7 +24,7 @@ function harness(work: (config: string, deps: Deps & { outs: string[]; errs: str
   const detached: string[] = []
   const deps = {
     env: { TELEMETRY_ENV_FILE: envFile, TELEMETRY_MACHINE: 'box' }, stdin: () => stdin, out: (l: string) => outs.push(l), err: (l: string) => errs.push(l),
-    git: realGit, now: () => Date.parse('2026-11-13T21:00:00Z'), detach: (dir: string) => { detached.push(dir) }, exportWaitMs: 0, outs, errs, detached,
+    git: realGit, now: () => Date.parse('2026-11-13T21:00:00Z'), detach: (dir: string, work?: 'sweep') => { detached.push(work === undefined ? dir : `${work}:${dir}`) }, exportWaitMs: 0, outs, errs, detached,
     gh: realGh, check: () => ({ status: 1, stdout: '', stderr: 'no checkout' }), repositoryAt: () => undefined, cwd: root,
   }
   try {
@@ -135,7 +135,8 @@ test('export --auto --foreground pushes the day files, the index and the redacte
     assert.deepEqual(manifest.sessions.map(({ session, role, transcript }) => ({ session, role, transcript })), [{ session: S, role: 'orchestrator', transcript: `machines/box/transcripts/${S}.jsonl` }])
     assert.ok(logs.show(`machines/box/transcripts/${S}.jsonl`).length > 0)
     assert.ok(logs.show('index/README.md').length > 0)
-    assert.deepEqual(deps.detached, [])
+    // The end's own sweep, and no export handed on: the foreground run did it.
+    assert.deepEqual(deps.detached, [`sweep:${config}`])
   })
 })
 
@@ -146,7 +147,7 @@ test('export --auto without --foreground hands the work to a detached process an
     run(['append', '--config', config], { ...deps, env: { ...deps.env } })
     const before = deps.outs.length
     assert.equal(run(['export', '--auto', '--config', config], { ...deps, env: logs.env }), 0)
-    assert.deepEqual(deps.detached, [config])
+    assert.deepEqual(deps.detached, [`sweep:${config}`, config])
     assert.equal(logs.show('machines/box/2026-11-13.jsonl'), '')
     assert.equal(deps.outs.length, before)
   })
@@ -171,8 +172,52 @@ test('a session_end written starts the automatic export, detached; other events 
     assert.deepEqual(deps.detached, [])
     setStdin(`${end}\n`)
     assert.equal(run(['append', '--config', config], withRepo), 0)
-    assert.deepEqual(deps.detached, [config])
+    assert.deepEqual(deps.detached, [`sweep:${config}`, config])
     assert.equal(logs.show('machines/box/2026-11-13.jsonl'), '')
+  })
+})
+
+test('a session_end starts the day\'s sweep, detached, until one took the day; sweep --auto runs once a day, sweep alone always', () => {
+  harness((config, early, setStdin) => {
+    // Two days after the transcript's last entry.
+    const deps = { ...early, now: () => Date.parse('2026-11-15T06:00:00Z') }
+    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
+    cpSync(FIXTURE, join(config, 'projects', '-w', `${S}.jsonl`))
+    const other = '11111111-2222-4333-8444-555555555555'
+    // An earlier session left events and no end; another one ends now.
+    setStdin(`${JSON.stringify({ v: 1, ts: '2026-11-12T20:00:00.000Z', event: 'turn_end', session: S })}\n${end.replace(S, other)}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.deepEqual(deps.detached, [`sweep:${config}`])
+    assert.equal(run(['sweep', '--auto', '--config', config], deps), 0)
+    assert.equal(deps.outs.at(-1), 'sweep: 1 session(s) without an end summarized, 0 round question(s) recorded')
+    const said = deps.outs.length
+    assert.equal(run(['sweep', '--auto', '--config', config], deps), 0)
+    assert.equal(deps.outs.length, said)
+    setStdin(`${end.replace(S, other)}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.deepEqual(deps.detached, [`sweep:${config}`])
+    assert.equal(run(['sweep', '--config', config], deps), 0)
+    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 0 round question(s) recorded')
+    const summaries = readFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'session_summary')
+    assert.deepEqual(summaries.map(e => [e['session'], e['source']]), [[S, 'sweep']])
+  })
+})
+
+test('sweep reads the round of the orchestrator\'s module directory, where its environment moved it', () => {
+  harness((config, deps) => {
+    const module = join(config, 'elsewhere')
+    mkdirSync(join(module, 'round'), { recursive: true })
+    writeFileSync(join(module, 'round', 'q.json'), JSON.stringify({
+      v: 2, id: 'q-1', sender: { session: S, name: 'Orch: billing' }, choices: [], recommended: null, status: 'answered', at: '2026-11-13T10:00:00.000Z',
+      answer: { text: 'do it', by: 'tab', at: '2026-11-13T10:01:00.000Z' },
+    }))
+    writeFileSync(join(module, 'round', 'far.json'), JSON.stringify({
+      v: 2, id: 'q-2', sender: { session: 'elsewhere', name: 'Orch: far' }, choices: [], recommended: null, status: 'answered', at: '2026-11-13T10:00:00.000Z',
+      answer: { text: 'do it', by: 'tab', at: '2026-11-13T10:01:00.000Z' },
+    }))
+    assert.equal(run(['sweep', '--config', config], { ...deps, env: { ...deps.env, ORCHESTRATOR_MODULE_DIR: module } }), 0)
+    assert.deepEqual(deps.errs, ['telemetry: a line was refused (bad session)'])
+    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 1 round question(s) recorded')
   })
 })
 

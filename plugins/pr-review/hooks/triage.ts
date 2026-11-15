@@ -4,7 +4,12 @@
 // its permission check applies), then triaged by the same script the Bash
 // route runs. One call answers the open items, the counts, the tier and the
 // line to announce, where the skill used to spend a dozen shell blocks.
+// The pull request it read is the one the walkthrough's journal lines then name (hooks/observe.ts).
+import { answerOf, fieldsOf, reasonOf, type Host, type On } from '../core/host.ts'
+import { noteSubject, resetSubject } from './observe.ts'
 import { GH_TOOL } from './policy.ts'
+
+type TriageHost = Host<'tool' | 'process' | 'plugin'>
 
 export const OPEN_COMMENTS = 'open_comments'
 
@@ -17,12 +22,12 @@ export const OPEN_COMMENTS_DESCRIPTION =
 
 // One github tool call, its text parsed as JSON. A deny or an error is thrown
 // with the tool's own words.
-async function gh($: any, command: string, args: Record<string, unknown>): Promise<unknown> {
-  const answer = await $.tool.call({ tool: GH_TOOL, command, args })
-  if (answer?.deny) throw new Error(`${GH_TOOL} ${command} was refused: ${answer.deny}`)
-  const text = String(answer?.result ?? answer?.text ?? '')
-  if (answer?.isError) throw new Error(`${GH_TOOL} ${command} failed: ${text.trim()}`)
-  if (!text.trim() || text.trim() === '(no output)') return null
+async function gh($: Host<'tool'>, command: string, args: Record<string, unknown>): Promise<unknown> {
+  const answer = answerOf(await $.tool.call({ tool: GH_TOOL, command, args }))
+  if (answer.deny !== undefined) throw new Error(`${GH_TOOL} ${command} was refused: ${answer.deny}`)
+  const text = answer.text
+  if (answer.isError) throw new Error(`${GH_TOOL} ${command} failed: ${text}`)
+  if (!text || text === '(no output)') return null
   try {
     return JSON.parse(text)
   } catch {
@@ -31,17 +36,25 @@ async function gh($: any, command: string, args: Record<string, unknown>): Promi
 }
 
 const nodeIds = (rows: unknown): string[] =>
-  Array.isArray(rows) ? rows.map((r: any) => r?.node_id).filter((id: unknown): id is string => typeof id === 'string' && id !== '') : []
+  Array.isArray(rows) ? rows.map((r: unknown) => fieldsOf(r)?.['node_id']).filter((id: unknown): id is string => typeof id === 'string' && id !== '') : []
 
 export const OPEN_COMMENTS_SCHEMA = {
   type: 'object',
   properties: { pr: { type: 'integer', description: 'the pull request number; omitted, the current branch\'s' } },
 }
 
-async function fetchAll($: any, pr?: number): Promise<Record<string, unknown>> {
+// The pull request a raw answer of the github tool names, for the journal: its repository, its
+// number and its head, each as far as the answer holds it.
+function noteRead(record: Readonly<Record<string, unknown>> | undefined): void {
+  resetSubject()
+  noteSubject({ repo: fieldsOf(fieldsOf(record?.['base'])?.['repo'])?.['full_name'], pr: record?.['number'], head: fieldsOf(record?.['head'])?.['sha'] })
+}
+
+async function fetchAll($: Host<'tool'>, pr?: number): Promise<Record<string, unknown>> {
   const raw = pr ? await gh($, 'pr-status', { pr, json: true }) : await gh($, 'pr-get', { format: 'raw' })
-  const record: any = Array.isArray(raw) ? raw[0] : raw
-  const number = record?.number
+  const record = fieldsOf(Array.isArray(raw) ? raw[0] : raw)
+  noteRead(record)
+  const number = record?.['number']
   if (!number) return { pr: raw }
   const [issueComments, reviews, threads] = await Promise.all([
     gh($, 'pr-issue-comments', { pr: number, format: 'raw' }),
@@ -60,22 +73,23 @@ async function fetchAll($: any, pr?: number): Promise<Record<string, unknown>> {
   }
 }
 
-export function register(on: any): void {
-  on('tool.call', { tool: 'mcp__pr-review__open_comments' }, async ($: any, e: any) => {
-    const listed = (await $.tool.list()).some((t: any) => t.name === GH_TOOL)
+export function register(on: On<TriageHost>): void {
+  on('tool.call', { tool: 'mcp__pr-review__open_comments' }, async ($, e) => {
+    const listed = (await $.tool.list()).some((t) => t.name === GH_TOOL)
     if (!listed) {
       return { result: `${GH_TOOL} is not listed in this session: run the Bash route of process-comments Step 0 instead.`, isError: true }
     }
     try {
-      const data = await fetchAll($, typeof e.pr === 'number' ? e.pr : undefined)
+      const pr = e['pr']
+      const data = await fetchAll($, typeof pr === 'number' ? pr : undefined)
       const run = await $.process.run(
         ['python3', $.plugin.root + '/skills/process-comments/scripts/triage.py', '--stdin'],
         { stdin: JSON.stringify(data), timeoutMs: 60_000 },
       )
       if (run.exitCode !== 0) return { result: (run.stderr || 'triage.py exited ' + run.exitCode).trim(), isError: true }
       return { result: run.stdout }
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+    } catch (err) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({
     result: 'pr-review open_comments failed in the module itself: run the Bash route of process-comments Step 0 instead.',
