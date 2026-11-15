@@ -12,7 +12,12 @@ import { answerEvent, journalDir, learningEvent, subjectOf, type Known, type Lea
 export const PLUGIN = 'norms'
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 
-export type JournalHost = Host<'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui'>
+// The nouns the journal reads, narrowed to the calls it makes.
+export type JournalHost = Host<'env' | 'fs' | 'process'> & {
+  session: Pick<Host<'session'>['session'], 'id'>
+  clock: Pick<Host<'clock'>['clock'], 'sleep'>
+  ui: Pick<Host<'ui'>['ui'], 'log' | 'ask'>
+}
 
 // The journal is pruned once per process, at its first line.
 let pruned = false

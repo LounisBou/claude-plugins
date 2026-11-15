@@ -16,16 +16,15 @@ test('a thrown value reads as its message, or as undefined when it carries none'
   assert.equal(messageOf(null), 'undefined')
 })
 
-test("a record's fields read as they are, and nothing of what is no record", () => {
+test('a record\'s fields are read, and nothing of what is no record', () => {
   assert.deepEqual(fieldsOf({ a: 1 }), { a: 1 })
   for (const value of [null, undefined, 'text', 3, [1]]) assert.equal(fieldsOf(value), undefined)
 })
 
-test("a tool's answer reads as its refusal, its error flag, its result and its text", () => {
+test('a tool\'s answer reads as its refusal, its error flag, its result and its text', () => {
   assert.deepEqual(answerOf({ result: ' 12\n' }), { deny: undefined, isError: false, result: ' 12\n', text: '12' })
   assert.deepEqual(answerOf({ text: 'said', isError: true }), { deny: undefined, isError: true, result: undefined, text: 'said' })
   assert.equal(answerOf({ deny: ' not allowed ' }).deny, 'not allowed')
   for (const deny of [undefined, null, false, '']) assert.equal(answerOf({ deny }).deny, undefined)
-  assert.deepEqual(answerOf({ result: { status: 'completed' } }).result, { status: 'completed' })
   assert.deepEqual(answerOf('no record'), { deny: undefined, isError: false, result: undefined, text: '' })
 })

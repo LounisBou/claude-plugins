@@ -11,17 +11,17 @@
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
-import { answerOf, fieldsOf, reasonOf, type Host, type Input, type On } from '../core/host.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { journal, noteSubject, notedSubject, observed, resetSubject } from './observe.ts'
 import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
-// A call of a tool: its name and its arguments.
-type ToolCall = { tool: string } & Record<string, unknown>
-
 export const LOOP_TOOL = 'loop'
+
+// A call of a tool, as the host takes it.
+type ToolCall = { tool: string } & Record<string, unknown>
 
 export type LoopHost = Host<'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui' | 'tool'>
 
@@ -51,7 +51,7 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.map((v) => String(v)).filter((v) => v.trim() !== '') : []
 
 // One action of the loop tool, applied to module memory; the answer the model reads.
-export function act(e: Input, dir?: { dir: string } | { why: string }, maxPasses = MAX_PASSES): Record<string, unknown> {
+export function act(e: Events['tool.call'], dir?: { dir: string } | { why: string }, maxPasses = MAX_PASSES): Record<string, unknown> {
   const action = String(e['action'] ?? '')
   if (action === 'start') {
     resetLoop(String(e['test_command'] ?? '').trim(), e['review_only'] === true, dir && 'dir' in dir ? dir.dir : undefined, dir && 'why' in dir ? dir.why : undefined, maxPasses)

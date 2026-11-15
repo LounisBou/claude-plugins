@@ -59,7 +59,7 @@ unset CLAUDE_CODE_SESSION_ID TMUX TMUX_PANE
 # it. A suite run from inside an auditor, an agent or a spawned orchestrator must read none of
 # it; a case that needs a role sets it on its own command. `--role-probe` prints the names of
 # the role variables the suite still sees at its start, none when it cleared them all.
-ROLE_VARS='ORCHESTRATOR_SPAWNED ORCHESTRATOR_AUDITOR ORCHESTRATOR_REPORTS_TO ORCHESTRATOR_BRIEF ORCHESTRATOR_CONTEXT_GATE ORCHESTRATOR_CONTEXT_GATE_TOKENS ORCHESTRATOR_SELF_ID ORCHESTRATOR_NEW_SESSION_ID'
+ROLE_VARS='ORCHESTRATOR_SPAWNED ORCHESTRATOR_AUDITOR ORCHESTRATOR_REPORTS_TO ORCHESTRATOR_BRIEF ORCHESTRATOR_TIER ORCHESTRATOR_CONTEXT_GATE ORCHESTRATOR_CONTEXT_GATE_TOKENS ORCHESTRATOR_SELF_ID ORCHESTRATOR_NEW_SESSION_ID'
 # shellcheck disable=SC2086
 unset $ROLE_VARS
 if [ "${1:-}" = --role-probe ]; then
@@ -4022,6 +4022,10 @@ gspawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRAT
 out=$(gspawn --prompt p --gate-tokens 200000)
 check "--gate-tokens exports the gate in the launch" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
 check "without --gate-tokens an agent's launch exports the 240000 gate" "1" "$(gspawn --prompt p | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && ')"
+# The tier a session is launched on is exported by its name, for what records its events; a
+# launch by a model's name exports none.
+check "--tier exports the tier's name in the launch, --model none" "1|0" \
+  "$(gspawn --prompt p --tier light | grep -c '^launch=.*export ORCHESTRATOR_TIER=light && ')|$(gspawn --prompt p --model a-model --effort medium | grep -c 'ORCHESTRATOR_TIER=')"
 check "--gate-tokens on an agent wins over the 240000 default" "1|0" \
   "$(gspawn --prompt p --gate-tokens 150000 | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 && ')|$(gspawn --prompt p --gate-tokens 150000 | grep -c 'GATE_TOKENS=240000')"
 check "an orchestrator's, an auditor's and a coordinator's launch export no gate" "0|0|0" \

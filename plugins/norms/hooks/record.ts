@@ -10,7 +10,7 @@
 // per finding an agent reported, once the pull request they belong to is read.
 import type { NormsScopeMark } from '../types/index.d.ts'
 import { endSkillCheck, spawned } from './guards.ts'
-import { answerOf, fieldsOf, reasonOf, type Host, type Input, type On } from '../core/host.ts'
+import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { agentText, noteReport, reportOf, reported, resetReports, type Found } from './findings.ts'
@@ -258,7 +258,7 @@ async function journalFindings($: RecordHost, findings: readonly Found[], dir: s
   })))
 }
 
-export async function checkDone($: RecordHost, input: Input): Promise<{ result: string; isError?: boolean }> {
+export async function checkDone($: RecordHost, input: Events['tool.call']): Promise<{ result: string; isError?: boolean }> {
   const checked = await readMark($)
   if (!checked) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
   const given = { open: count(input['open']), fixed: count(input['fixed']), passed: count(input['passed']), setAside: input['setAside'] === undefined ? 0 : count(input['setAside']) }

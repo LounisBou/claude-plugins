@@ -29,6 +29,9 @@ export type UiElements = { Box: UiElement; Text: UiElement; Button: UiElement; L
 
 export type CommandSpec = { name: string; description: string; argumentHint?: string }
 
+// A key of the host's session state: the plugin that owns it and its name.
+export type StateRef = { plugin: string; key: string }
+
 type Nouns = {
   plugin: { root: string }
   env: { get(name: string): Promise<string | undefined> }
@@ -43,12 +46,12 @@ type Nouns = {
   session: {
     id(): Promise<string>
     cwd(): Promise<string>
+    // The session's project root, which a shell `cd` does not move.
+    root(): Promise<string>
     model(): Promise<string>
     usage(): Promise<{ context: SessionContextUsage }>
     send(args: { to: string | { sessionId: string }; text: string }): Promise<SessionSendResult>
-    root(): Promise<string>
   }
-  state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   ui: {
     toast(text: string): void
     invalidate(event: 'ui.render'): void
@@ -63,13 +66,11 @@ type Nouns = {
     check(input: { tool: string; input: unknown }): Promise<ToolCheckResult>
     list(): Promise<ReadonlyArray<{ readonly name: string }>>
   }
+  state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
 }
-
-// A key of the host's `$.state`: the plugin that owns it and its name.
-export type StateRef = { plugin: string; key: string }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 
@@ -130,7 +131,7 @@ export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
 // A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several, a pattern).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | RegExp | readonly string[]>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
+  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[] | RegExp>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
@@ -144,9 +145,6 @@ export function reasonOf(err: unknown): string {
 export function messageOf(err: unknown): string {
   return String(typeof err === 'object' && err !== null && 'message' in err ? err.message : undefined)
 }
-
-// An event's input as a module that validates each field reads it: a record of unknown fields.
-export type Input = Readonly<Record<string, unknown>>
 
 // A record's fields, or undefined for anything that is not one.
 export function fieldsOf(value: unknown): Readonly<Record<string, unknown>> | undefined {

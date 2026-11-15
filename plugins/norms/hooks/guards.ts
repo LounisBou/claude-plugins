@@ -27,7 +27,7 @@
 
 import { gitSubcommand, innerLine, readCommands, simpleCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 import { isSpawned } from '../core/env.ts'
-import { fieldsOf, type Host, type On } from '../core/host.ts'
+import { fieldsOf, type Host, type Next, type On } from '../core/host.ts'
 import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
 import { askAllow, observed, type JournalHost } from './observe.ts'
 import { clearMark } from './record.ts'
@@ -281,7 +281,7 @@ export function endSkillCheck(): void {
   if (viaSkill && mode === 'check') resetGuards()
 }
 
-const pass = <E>(_$: GuardHost, e: E, next: (e: E) => Promise<unknown>): Promise<unknown> => next(e)
+const pass = <E>(_$: GuardHost, e: E, next: Next<E>): Promise<unknown> => next(e)
 
 // The commands that arm a mode. Only these are hooked: a command.run hook with no
 // matcher sits in every command's chain, and the host then names norms beside

@@ -39,23 +39,9 @@ function hostOn(home: string, logged: string[]): JournalHost {
         return { exitCode: ran.status ?? 1, stdout: ran.stdout, stderr: ran.stderr }
       },
     },
-    session: {
-      id: async () => 'sess-1',
-      root: async () => home,
-      cwd: async () => home,
-      model: async () => '',
-      usage: async () => ({ context: { window: 0 } }),
-      send: async () => ({ isDelivered: false, reason: 'no peer' }),
-    },
-    clock: { sleep: async () => undefined, after: () => undefined, now: async () => NOW.getTime(), every: () => ({ cancel: () => undefined }) },
-    ui: {
-      log: line => { logged.push(line) },
-      toast: () => undefined,
-      invalidate: () => undefined,
-      ask: async () => '',
-      open: async () => undefined,
-      resolve: () => ({ Box: () => null, Text: () => null, Button: () => null, Link: () => null }),
-    },
+    session: { id: async () => 'sess-1' },
+    clock: { sleep: async () => undefined },
+    ui: { log: line => { logged.push(line) }, ask: async () => '' },
   }
 }
 
