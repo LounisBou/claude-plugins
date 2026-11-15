@@ -595,7 +595,7 @@ test('each write is published as a dispatch event: the row, its class and pair, 
   await withGoals()
   const d = journaled()
   const head = 'e'.repeat(40)
-  await cli(['open', rec(), '--class', 'feature', '--model', 'claude-opus-4-5[1m]', '--effort', 'high', '--label', 'A: secret'], d)
+  await cli(['open', rec(), '--class', 'feature', '--model', 'model-x-1[1m]', '--effort', 'high', '--label', 'A: secret'], d)
   await cli(['open', rec(), '--class', 'Odd Class', '--tier', 'light'], d)
   await cli(['review', rec(), '1', '--head', head], d)
   await cli(['verdict', rec(), '1', '--head', 'abc1234', '--result', 'fail', '--words', 'secret words'], d)
@@ -607,7 +607,7 @@ test('each write is published as a dispatch event: the row, its class and pair, 
   await cli(['goals', rec(), 'status'], d)
   assert.match(await cli(['round', rec(), '9'], d), /^1\|/)
   const record = 'p/r.jsonl'
-  const pair = { class: 'feature', tier: null, model: 'claude-opus-4-5[1m]', effort: 'high' }
+  const pair = { class: 'feature', tier: null, model: 'model-x-1[1m]', effort: 'high' }
   const bare = { class: null, tier: null, model: null, effort: null, verdict: null }
   assert.deepEqual(d.dispatches.map(e => [(e['source'] as { code: string }).code, e['fact'], (e['subject'] as { head: string | null }).head]), [
     ['orchestrator.dispatch.open', { sub: 'open', record, row: 1, ...pair, verdict: null }, null],
