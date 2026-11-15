@@ -734,7 +734,8 @@ test('the four sections bind a GeoNative repository only, every other rule binds
 test('a repository is GeoNative\'s by its owner, whatever the case', () => {
   expect(isGeonative('geonativefr/geonative-api')).toBe(true)
   expect(isGeonative(' GeoNativeFr/front-office ')).toBe(true)
-  for (const other of ['LounisBou/claude-plugins', 'acme/thing', 'acme/geonativefr', 'geonative/api', 'geonativefr', '']) expect(isGeonative(other), other).toBe(false)
+  expect(isGeonative('github.com/geonativefr/front-office')).toBe(true)
+  for (const other of ['LounisBou/claude-plugins', 'acme/thing', 'acme/geonativefr', 'geonative/api', 'geonativefr', 'geonativefr/', 'github.com/acme/geonativefr', 'a/b/geonativefr/c', '']) expect(isGeonative(other), other).toBe(false)
 })
 
 test('a TODO item that points to another or joins two actions is refused, two full items are not', () => {
@@ -2177,12 +2178,16 @@ test('a gh pr edit body without the sections is observed in a GeoNative reposito
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Deny')
 
-  for (const [repo, observed] of [['geonativefr/front', true], ['GeoNativeFr/Front', true], ['acme/front', false], ['LounisBou/claude-plugins', false]] as const) {
+  for (const [repo, observed] of [['geonativefr/front', true], ['GeoNativeFr/Front', true], ['github.com/geonativefr/front', true], ['acme/front', false], ['github.com/acme/geonativefr', false], ['LounisBou/claude-plugins', false]] as const) {
     journaled.length = 0
     const out = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R ' + repo + ' -b \'Adds the reset.\'' })
     expect(out.deny, repo).toBeUndefined()
     expect(journaled, repo).toEqual(observed ? ['github.writing.rule'] : [])
   }
+  // A repository nothing names, no -R and no origin the checkout gives, keeps the template: a problem is shown, not hidden.
+  journaled.length = 0
+  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -b \'Adds the reset.\'' })
+  expect(journaled).toEqual(['github.writing.rule'])
   // A rule that binds every repository is still observed outside GeoNative's.
   journaled.length = 0
   await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --repo acme/front -b \'Adds the reset; at last.\'' })
@@ -2192,6 +2197,25 @@ test('a gh pr edit body without the sections is observed in a GeoNative reposito
   await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R acme/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\'' })
   await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R geonativefr/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\n\n' + NONE + '\'' })
   expect(journaled).toEqual([])
+})
+
+test('a gh.py run names its repository with --repo or -R, which decides whether the four sections bind its description', async ($, on) => {
+  const bash: string[] = []
+  const asked: string[] = []
+  await stubBashLint($, on, bash, asked, 'Deny', { '/work/body.md': 'Adds the reset.' })
+
+  for (const [flags, observed] of [
+    ['--repo geonativefr/front', true], ['-R GeoNativeFr/front', true], ['--repo=geonativefr/front', true],
+    ['--repo acme/front', false], ['-R LounisBou/claude-plugins', false],
+  ] as const) {
+    journaled.length = 0
+    await $.tool.call({ tool: 'Bash', command: 'python3 engine/gh.py pr-update 3 ' + flags + ' --body-file /work/body.md' })
+    expect(journaled, flags).toEqual(observed ? ['github.writing.rule'] : [])
+  }
+  // A value that is no repository is read as none: the template is kept.
+  journaled.length = 0
+  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R -b \'Adds the reset.\'' })
+  expect(journaled).toEqual(['github.writing.rule'])
 })
 
 test('a Bash title and body that keep the rules run with no question', async ($, on) => {

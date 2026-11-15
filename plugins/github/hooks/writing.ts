@@ -38,10 +38,11 @@ const KIND: Record<string, 'pr' | 'comment'> = {
 // owner is this one, whatever the case.
 export const GEONATIVE_OWNER = 'geonativefr'
 
-// Whether `repo`, as `owner/name`, is a GeoNative repository: its owner is GEONATIVE_OWNER.
+// Whether `repo`, as `owner/name` (or `host/owner/name`, as gh's -R reads it), is a GeoNative repository:
+// its owner is GEONATIVE_OWNER.
 export function isGeonative(repo: string): boolean {
-  const [owner, name] = repo.trim().toLowerCase().split('/')
-  return owner === GEONATIVE_OWNER && !!name
+  const parts = repo.trim().toLowerCase().split('/')
+  return parts.length >= 2 && parts.length <= 3 && !!parts[parts.length - 1] && parts[parts.length - 2] === GEONATIVE_OWNER
 }
 
 export function carriesText(command: string): boolean {

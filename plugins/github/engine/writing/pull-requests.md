@@ -14,7 +14,9 @@ after the conventional prefix, no clause on how or why — that belongs in the d
 In a repository of the `geonativefr` GitHub organisation (its owner, whatever the case) follow this exact
 template. In any other repository the description is the summary text alone, then what a pull request
 may carry (screenshots, the « Self-review » section): the four sections below, and every rule that
-names them, are GeoNative's own.
+names them (the order, the items, the references above them, the text after them, the bold labels), are
+GeoNative's own. A repository the checkout cannot name is read as GeoNative's, so that a problem is
+shown rather than hidden.
 
 ```
 <summary: what it is about, what it does, in 3-5 lines>
