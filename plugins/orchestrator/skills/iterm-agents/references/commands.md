@@ -66,17 +66,22 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # launched session is started with `--disallowedTools` naming the tools no session has
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings; an `Agent:` title also loses the four
     # only an orchestrator calls (mcp__orchestrator__review, supervision, settle,
-    # declare_wait); an `Orch:` title also loses the
-    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement); a `Coord:` or `Audit:`
-    # title those and mcp__pr-review, mcp__orchestrator__review, mcp__github__light_ci and record. --keep-tool removes a name from
-    # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
+    # declare_wait) and what an implementer never calls (AskUserQuestion, mcp__cloudflare,
+    # mcp__bugs-bot, mcp__pr-review); an `Orch:` title also loses the
+    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement, mcp__pr-review)
+    # and ReadNotifications; a `Coord:` or `Audit:` title those servers and
+    # mcp__orchestrator__review, mcp__github__light_ci and record. --keep-tool removes a name from
+    # that set (a brief that asks for a page keeps Artifact; a review or comments agent keeps
+    # mcp__pr-review, the bugs-bot agent mcp__bugs-bot); --drop-tool adds any tool name or
     # permission pattern to it. Both repeat, take one name each, and are honoured by every path
     # that builds a launch: a plain spawn, --successor, --wake, --open, --auditor and the
     # other special spawns, and `rotate`, which forwards them. Refused before a tab exists:
     # an empty name, and one name given to both options. A kept name the default never removed
     # is harmless. `tools` lists what exists. The dry run prints `tools_removed=` with the set.
     # The same launch carries the host's cuts in its one --settings: an `Agent:` session
-    # loses the away recap and the silent-turn reminder. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
+    # loses the away recap and the silent-turn reminder, and its `enabledPlugins` turn off
+    # pr-review and pr-review-toolkit for an `Agent:` (kept with --keep-tool mcp__pr-review),
+    # those and superpowers and norms for an `Orch:`. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
     # Every launched session loses the
     # token countdown, and the account's synced skills (`anthropic-skills:*`) are hidden
     # for it through `syncClaudeAiSkills: false` in that same --settings, which moves nothing

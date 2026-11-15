@@ -66,9 +66,10 @@ describe('the launcher argument set', () => {
   })
 
   it('holds every flag core\'s spawn line types', () => {
-    const argv = spawnArgv('/l', { dir: '/w', title: 'Agent: a', prompt: 'p', rightOf: 'self', resident: true })
+    const argv = spawnArgv('/l', { dir: '/w', title: 'Agent: a', prompt: 'p', rightOf: 'self', resident: true, keepTools: ['mcp__bugs-bot'] })
     const request = parseLauncherArgs('spawn', argv.slice(2))
     assert.equal(request.options['right_of'], 'self')
     assert.equal(request.options['resident'], true)
+    assert.deepEqual(request.options['keep_tool'], ['mcp__bugs-bot'])
   })
 })
