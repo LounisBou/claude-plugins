@@ -177,6 +177,7 @@ hooks/tests/models-guard.test.ts     the tier map's guard: the writes it reads i
 hooks/tests/mode-dialog.test.ts       the mode dialog: the reading of a dialog, the denial in an orchestrator's session, the pass in any other
 hooks/tests/kill-guard.test.ts       the kill guard: the kills by name or pattern pattern-kills.ts reads and the kills by pid it passes, the decision unmarked, marked and with the mark unread, and the wiring over a faked $
 hooks/tests/stop-gate.test.ts        the stop gate's decision shapes and refusal texts, the once-per-tell CI record, and the wiring over a faked $: the classic.Stop fields pinned, the quiet scope, the degraded read passing
+hooks/tests/retrospective.test.ts    the learning retrospective started at a done declaration: the argv, the plugin disabled, the failure logged and passed
 hooks/tests/ledger.test.ts           the ledger line at creation: the two forms, an agent's pull request in its orchestrator's record, a session of no orchestration, a repeat, a record owned by another, a write that fails
 hooks/tests/review.test.ts           the verdict written through github's record tool from an orchestrator session, refused from any other or with an input that lacks the pull request, the verdict or an acceptance's set-asides
 hooks/tests/review-rounds.test.ts    the row raised for each verdict, the row preferred, the repository from the origin, and a missing row or a failed write said while the verdict stands

@@ -48,7 +48,7 @@ function world(w: World = {}) {
 test('an enabled, installed learning plugin is asked to start its retrospective, and its line is logged', async () => {
   const { dollar, logs, runs } = world()
   await startRetrospective(dollar)
-  expect(runs).toEqual([{ argv: ['node', '--experimental-strip-types', '--no-warnings', SCRIPT, 'start', '--config', `${HOME}/.claude`], timeoutMs: RETROSPECTIVE_TIMEOUT_MS }])
+  expect(runs).toEqual([{ argv: ['node', '--experimental-strip-types', '--no-warnings', SCRIPT, 'start', '--config', [HOME, '.claude'].join('/')], timeoutMs: RETROSPECTIVE_TIMEOUT_MS }])
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('learning retrospective: not started, 0 candidates wait and it starts at 3')
 })
