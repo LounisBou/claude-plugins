@@ -147,7 +147,7 @@ export function lint(text: string, context: Context): Finding[] {
    * close, as the launcher's command: a brief written by hand dropped the step, and the
    * predecessor stayed open after the takeover.
    */
-  if (some(/takeover confirmed/i) && some(/your predecessor/i) && !some(/close --tty .*--expect-title/)) {
+  if (some(/takeover confirmed/i) && some(/your predecessor/i) && !some(/(close|takeover) --tty .*--expect-title/)) {
     say(1, 'succession brief without the predecessor\'s close: the successor closes its predecessor\'s tab with the launcher\'s close --tty and --expect-title, on its "handed over" or after five minutes on a reading of its screen; instantiate the template, never write the brief by hand')
   }
   return found

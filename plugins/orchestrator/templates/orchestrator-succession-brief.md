@@ -4,46 +4,29 @@ Mode: {{MODE}}
 
 # Instructions
 
-You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. Your launch loaded the rulebook with the mode above. `succession.sh takeover` printed this text from the state; nothing of it is written to a file.
+You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. Your launch loaded the rulebook with the mode above. `succession.sh takeover` printed this text from the state, read live at this run: the pull requests, rows, agents and questions below are verified; do not read them again. Nothing of it is a file, and no other file is read for the takeover.
 
 Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must be the `scripts/` of the base directory your skill load printed: a path your predecessor gave is its older version, so run the takeover again from yours before anything else.
 
-## The operator's word comes first, and it is answered
-
-His explicit instruction on the very point outranks this text and the rulebook: say the contradiction in one line and carry it out. A deadline, a wish or a question lifts no rule: keep it and say what it costs.
-
-- Read his message **before your next tool call**; answer every question, in order, before you measure. A question gets an answer and at most a proposal: only an order, or his « yes », authorises a change.
-- His terms are the specification: a term you cannot honour is named, with what you do instead, before you act.
-- When he says you erred, **verify your own doing** first, with a command.
-- A method he names is a format: **open its file before presenting**, and render each item in its template, one at a time.
-- Every question to him follows `orchestrator:decide`, one per turn.
-- A **fact you did not read is a fact you do not state**; an unverified figure relayed from an agent carries « per the agent's report » in the text that leaves the session.
-- Nothing is asked, proposed or reported as pending **before its state, and the question's premise, is re-read on the artifact in the same turn**; an item found done is reported done in one line, never asked.
-## Analysis
-
-VERIFY each « Live state » item on the artifacts, ONE named command each, output quoted: per pull request the github tool's `pr-status <n>`, never `pr-get`, never a body or comments; per checkout `git -C <dir> rev-parse --short HEAD origin/<branch>` and `git status -sb | head -1`; the open-questions field is there. A failing item is reported, not repaired, this turn.
-
 ## Your first task, in this exact order
 
-**Woken from a pause**: step 3 finds no agent, step 4 is void — no « takeover confirmed », nothing to close.
+**Woken from a pause**: step 2 is void — no « takeover confirmed », nothing to close.
 
-Measure, wait and close: `references/succession-successor.md`, « Succession — the successor ».
-
-1. Read the rulebook and THIS text, and nothing else whole.
-2. The Analysis above; then the Project line's goals, nothing more unless it lists open or deferred goals: then, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1: its state, blocker, owner, note and verdict line.
-3. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, asking nothing back (its state is below, its fill on `/orchestrator-status`), and subscribe to its idle notice (`notify_when_idle: true`). Then `workspace.sh list {{PROJECT}}`: delete no checkout before you know its phase.
-4. His standing order: you ALWAYS close your predecessor, one the launcher did not open included, and ask him nothing. Then message the predecessor "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over » (five minutes without it, read its screen with `screen --tty`; close on a prompt with nothing in flight). Then CLOSE ITS TAB, the first line on tabs, the second in a home session (never `close` there), its success line the proof:
+1. The Project line's goals; only when it lists open or deferred goals, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1.
+2. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing. Before the close, `list` still shows its row on that tty, not `self`. Close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof:
    ```
-   {{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
-   {{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
+   {{LAUNCHER}} {{CLOSE_VERB}} --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
-5. Once the predecessor is closed, settle each open question by its round entry; one to ask again is asked verbatim at the end of this turn. Then announce in one message: state inherited, agents re-identified, predecessor terminated, the open rows with no agent, open questions found, kept, asked again, the `goals met=m/n … open=…` line, and your two figures, never a later reading, on one line: « first turn » and « at takeover confirmed ». END THE TURN: dispatch on your next one. It takes every row of that list the rule allows (`references/succession-successor.md`, « The first dispatch »).
+   Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell.
+3. Each open question below by its entry, `<id>.json` under the state directory's `round/`: open under this session, leave it; answered or closed, apply its answer; absent, withdrawn or open under another session, ask it again verbatim at the end of this turn.
+4. Announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the `goals met=m/n … open=…` line, and two figures on one line, « first turn » and « at takeover confirmed »: the `context_tokens` of `<config dir>/claude-orchestrator/measure/<session id>.json` (`printenv CLAUDE_CODE_SESSION_ID`; `CLAUDE_CONFIG_DIR`, `~/.claude` when empty) read at the first tool call after each of those turns; missing, say so. END THE TURN.
+5. Your next turn dispatches every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue.
 
 # Source
 
 ## Live state — read from the state at the takeover
 
-Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round and the goals; a judgment on a row is its note.
+Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round, the forge and the goals; a judgment on a row is its note.
 
 - Rows open (id, label, what remains): {{LIVE_ROWS}}
 - Row owners: {{LIVE_OWNERS}}
@@ -55,8 +38,8 @@ Printed by `succession.sh takeover` from the dispatch record, the to-do list, th
 
 ## Standing context
 
-- State directory: `{{STATE_DIR}}`. His answers are its `round/`, his requests the to-do list: read as `references/succession-successor.md`, « His words », says.
-- Read by section (`grep -n` the heading, `sed -n <from>,<to>p`), never whole at takeover, never several in one `cat`. Absent: `none`, never an invented path.
+- State directory: `{{STATE_DIR}}`. His answers are its `round/`, his requests the to-do list (`todo list`), read by the item at hand: `grep -rl '<keyword>' {{STATE_DIR}}/round`.
+- A reference of the rulebook is read at the moment its table names, by section, never at takeover.
 - Dispatch record: `{{DISPATCH_RECORD}}`, read before routing (`orchestrator:model-routing`).
 
 # Expected result

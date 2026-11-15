@@ -63,37 +63,23 @@ bound=$(bash "$AGENT" resolve-tier "$tier")
 check "the probe tier is bound in the operator's map" "bound" "$([ -n "$bound" ] && echo bound || echo "unbound: fill models.json or set ORCHESTRATOR_E2E_TIER")"
 [ -n "$bound" ] || exit 1
 
-echo "== a brief, from the template, linted =="
+echo "== the dispatch, recorded, and its brief printed and linted =="
 mkdir -p "$SANDBOX/repo"
 ( cd "$SANDBOX/repo" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
   && echo "scratch" > README.md && git add -A && git commit -q -m "Set up the scratch repository" )
-# The documented placeholder reference: the brief must name exactly one address, and the
-# probe session is never messaged, so a real one would be a lie the lint could not see.
-me="e2e-orchestrator [a1b2c3]"
-sed -e "s|{{PROJECT}}|scratch|g" -e "s|{{PHASE_NUMBER}}|1|g" -e "s|{{PHASE_TITLE}}|probe|g" \
-    -e "s|{{SPEC}}|$SANDBOX/repo/README.md|g" -e "s|{{PLAN}}|$SANDBOX/repo/README.md|g" \
-    -e "s|{{NORMS}}|$SANDBOX/repo/README.md|g" -e "s|{{REFERENCE_FILES}}|none|g" \
-    -e "s|{{WORKTREE}}|$SANDBOX/repo|g" -e "s|{{ENV_CHECKS}}|none|g" \
-    -e "s|{{BRANCH}}|probe|g" -e "s|{{BASE_BRANCH}}|main|g" -e "s|{{STATE_COMMANDS}}|git status --short|g" \
-    -e "s|{{DELIVERABLES}}|- nothing: this brief exists to be read, not executed|g" \
-    -e "s|{{CONTRACTS}}|none|g" -e "s|{{NON_GOALS}}|- everything|g" \
-    -e "s|{{QUALITY_GATE}}|true|g" -e "s|{{ARTIFACTS_POLICY_SOURCE}}|$SANDBOX/repo/README.md|g" \
-    -e "s|{{ARTIFACTS_POLICY}}|local only|g" -e "s|{{TESTS_POLICY}}|committed|g" \
-    -e "s|{{EXTRA_FORBIDDEN}}|- none|g" -e "s|{{ORCHESTRATOR_NAME}}|$me|g" \
-    -e "s|{{PR_TITLE}}|none|g" -e "s|{{PR_DESCRIPTION_SHAPE}}|none|g" -e "s|{{RESOURCE_ENVELOPE}}|none|g" \
-    -e "s|{{MCP_SERVERS}}|none|g" \
-    -e "s|{{TIER}}|$tier|g" -e "s|{{TIER_REASON}}|it is a probe, not a phase|g" \
-    -e "s|{{TIER_MODEL}}|the host's default|g" -e "s|{{TIER_MODEL_REASON}}|the tier is the probe's|g" \
-    "$ROOT/templates/agent-phase-brief.md" > "$SANDBOX/brief.md"
-check "every placeholder is filled" "0" "$(grep -c '{{' "$SANDBOX/brief.md")"
-lint=$(bash "$LINT" "$SANDBOX/brief.md" 2>&1); code=$?
-check "the brief passes its own lint" "0" "$code"
-
-echo "== the dispatch, recorded =="
 REC="$SANDBOX/dispatch.jsonl"
 bash "$RECORD" goals "$REC" init --spec none >/dev/null
 id=$(bash "$RECORD" open "$REC" --class probe --tier "$tier" --label "e2e")
 check "the dispatch is recorded before it happens" "1" "$id"
+# The documented placeholder reference: the brief must name exactly one address, and the
+# probe session is never messaged, so a real one would be a lie the lint could not see.
+me="e2e-orchestrator [a1b2c3]"
+printf '# Phase 1: probe\n\nNothing: this brief exists to be read, not executed.\n' > "$SANDBOX/plan.md"
+bash "$ROOT/skills/orchestrator/scripts/brief.sh" phase --record "$REC" --row "$id" --plan "$SANDBOX/plan.md" \
+  --worktree "$SANDBOX/repo" --branch probe --base main --spec "$SANDBOX/repo/README.md" --orchestrator "$me" --out "$SANDBOX/brief.md" >/dev/null
+check "every placeholder is filled" "0" "$(grep -c '{{' "$SANDBOX/brief.md")"
+lint=$(bash "$LINT" "$SANDBOX/brief.md" 2>&1); code=$?
+check "the brief passes its own lint" "0" "$code"
 
 echo "== spawn =="
 self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
