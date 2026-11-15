@@ -195,7 +195,7 @@ and present the next one in full in the same message; a superseded one makes <id
    `settle` (`withdrawn`, reason: the evidence), which tells its sender it was
    withdrawn, never « the operator answered »; it leaves the count, and the next question is
    presented in full instead. Then wait: you pick nothing for him.
-6. **On his answer, in the same turn:** « Recorded: <his ruling> »; for an entry of the round,
+6. **On his answer, in the same turn:** « Recorded: <his words> »; for an entry of the round,
    call `settle` (`answered-here`, answer: his words) alone, never a SendMessage
    beside it: it sends the answer to the sender, dated, in the same call
    (a failure the pane shows); mark it sent; then present the next question IN FULL in the
