@@ -258,16 +258,16 @@ function checkLines(input: ReportInput): string[] {
     const figure = (b: (typeof budgets)[number]): string => `${b.plugin} ${b.tokens}/${b.budget ?? 'no budget'}`
     const over = budgets.filter(b => b.budget === undefined || (b.tokens ?? 0) > b.budget)
     const within = budgets.filter(b => !over.includes(b))
-    lines.push(`prompt budgets: ${over.length === 0 ? `all ${budgets.length} plugins within their budget` : `${over.length} of ${budgets.length} plugins over their budget (${over.map(figure).join(', ')})`}${within.length === 0 ? '' : `${over.length === 0 ? ' ' : '; within: '}(${within.map(figure).join(', ')})`}`)
+    lines.push(`prompt budgets: ${over.length === 0 ? `all ${budgets.length} ${budgets.length === 1 ? 'plugin' : 'plugins'} within their budget` : `${over.length} of ${budgets.length} ${budgets.length === 1 ? 'plugin' : 'plugins'} over their budget (${over.map(figure).join(', ')})`}${within.length === 0 ? '' : `${over.length === 0 ? ' ' : '; within: '}(${within.map(figure).join(', ')})`}`)
   }
   const dupes = typeof prompts === 'string' ? undefined : record(prompts['duplicates'])
   const [count, ceiling] = [num(dupes?.['count']), num(dupes?.['ceiling'])]
   if (typeof prompts === 'string') lines.push(`duplicates: ${NA(prompts)}`)
   else if (count === undefined || ceiling === undefined) lines.push(`duplicates: ${NA('npm run prompts gave no count or no ceiling')}`)
-  else lines.push(`duplicates: ${count} sentences said more than once, ceiling ${ceiling}: ${count > ceiling ? 'over' : 'within'}`)
+  else lines.push(`duplicates: ${count} ${count === 1 ? 'sentence' : 'sentences'} said more than once, ceiling ${ceiling}: ${count > ceiling ? 'over' : 'within'}`)
   const plugins = typeof rules === 'string' ? undefined : (Array.isArray(rules['plugins']) ? rules['plugins'].map(record) : undefined)
   if (typeof rules === 'string') lines.push(`rules held by prose alone: ${NA(rules)}`)
-  else if (plugins === undefined || plugins.some(p => num(p['rules']) === undefined || num(p['left']) === undefined)) lines.push(`rules held by prose alone: ${NA('npm run rules gave no counts per plugin')}`)
+  else if (plugins === undefined || plugins.length === 0 || plugins.some(p => num(p['rules']) === undefined || num(p['left']) === undefined)) lines.push(`rules held by prose alone: ${NA('npm run rules gave no counts per plugin')}`)
   else {
     const total = (key: string): number => plugins.reduce((n, p) => n + (num(p[key]) ?? 0), 0)
     const left = plugins.filter(p => (num(p['left']) ?? 0) > 0).map(p => `${text(p['plugin']) ?? '?'} ${num(p['left'])}`)

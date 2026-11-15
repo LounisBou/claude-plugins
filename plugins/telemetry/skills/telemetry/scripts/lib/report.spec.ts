@@ -521,6 +521,15 @@ test('duplicates: the count against its ceiling, within at the ceiling and over 
   })
 })
 
+test('one plugin or one sentence is not plural', () => {
+  scratch({}, config => {
+    const one = { budgets: { alpha: { tokens: 1, budget: 2 } }, duplicates: { count: 1, ceiling: 1 } }
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'prompt budgets'), 'prompt budgets: all 1 plugin within their budget (alpha 1/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: { ...one, budgets: { alpha: { tokens: 3, budget: 2 } } } }) }), 'prompt budgets'), 'prompt budgets: 1 of 1 plugin over their budget (alpha 3/2)')
+    assert.equal(lineOf(lines(config, { check: checkFor({ prompts: one }) }), 'duplicates'), 'duplicates: 1 sentence said more than once, ceiling 1: within')
+  })
+})
+
 test('duplicates: n/a with the reason when the script gave none or no figure', () => {
   scratch({}, config => {
     assert.match(lineOf(lines(config), 'duplicates'), /^duplicates: n\/a — npm run prompts in \/nowhere printed no JSON/)
@@ -541,6 +550,7 @@ test('rules held by prose alone: n/a with the reason when the script gave none o
     assert.match(lineOf(lines(config), 'rules held by prose alone'), /^rules held by prose alone: n\/a — npm run rules in \/nowhere printed no JSON: no rules in \/nowhere$/)
     assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [{ plugin: 'a' }] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
     assert.equal(lineOf(lines(config, { check: checkFor({ rules: {} }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
+    assert.equal(lineOf(lines(config, { check: checkFor({ rules: { plugins: [] } }) }), 'rules held by prose alone'), 'rules held by prose alone: n/a — npm run rules gave no counts per plugin')
   })
 })
 

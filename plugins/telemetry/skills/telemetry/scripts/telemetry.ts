@@ -13,7 +13,7 @@
 // <dir> is the host's configuration directory; the store is <dir>/telemetry. The operator's
 // ~/.env (TELEMETRY_ENV_FILE in tests) is read for its secrets, which never leave this process.
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -191,10 +191,15 @@ export const realGh: Gh = args => {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
 }
 
-/** One of the checkout's report scripts, as JSON, under a deadline. Its status is not read: a script that fails still printed its figures. */
+/**
+ * One of the tooling checkout's report scripts, as JSON, under a deadline. It runs only where
+ * `scripts/<script>.ts` exists, so another project's own `prompts` or `rules` script is never run.
+ * Its status is not read: a script that fails still printed its figures.
+ */
 export const realCheck: Check = (checkout, script) => {
+  if (!existsSync(join(checkout, 'scripts', `${script}.ts`))) return { status: 1, stdout: '', stderr: `no scripts/${script}.ts in it, so it is not the tooling's checkout` }
   const result = spawnSync('npm', ['run', '-s', script, '--', '--json'], { cwd: checkout, encoding: 'utf8', timeout: GIT_TIMEOUT_MS })
-  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
+  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr || (result.error?.message ?? '') }
 }
 
 /** The `owner/name` the git remotes of a directory name, if it is a clone of one. */
