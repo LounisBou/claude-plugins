@@ -59,6 +59,42 @@ test('lenses are listed one a line at the tier given, with the scope text after 
   assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /criticality: one lens, tests only, because/)
 })
 
+test('the other lens shapes: a scope with no lens, lenses with no scope, a size with no lens, a tier with no lens, and the state commands', () => {
+  assert.equal(run([...FIELDS(), '--scope', 'Read the diff for the refusal.']).code, 0)
+  let text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /\n\nnone\n\nRead the diff for the refusal\.\n\nThe norms check is no default lens/)
+  assert.match(text, /at the \*\*none\*\* tier/)
+  assert.equal(run([...FIELDS(), '--lens', 'tests']).code, 0)
+  text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /at the \*\*standard\*\* tier/)
+  assert.match(text, /\n\n- tests\n\nThe norms check is no default lens/)
+  assert.equal(run([...FIELDS(), '--size', 'a reading by you and a second look']).code, 0)
+  text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /criticality: a reading by you and a second look, because/)
+  assert.match(text, /at the \*\*none\*\* tier/)
+  assert.match(text, /\nnone\n?$/)
+  assert.match(run([...FIELDS(), '--tier', 'deep']).err, /--tier goes with --lens/)
+  assert.match(text, /git fetch origin && git status -sb \| head -1 && git log --oneline -1/)
+})
+
+test('a flag whose value is missing never swallows the next flag; a blank lens, title or optional value is not taken for a value', () => {
+  assert.match(run([...FIELDS(), '--scope', '--lens', 'tests']).err, /--scope needs a value/)
+  assert.match(run([...FIELDS(), '--lens', '  ']).err, /--lens needs a name/)
+  const blank = FIELDS(); blank[blank.indexOf('--title') + 1] = '  '
+  assert.match(run(blank).err, /--title is required/)
+  assert.equal(run([...FIELDS(), '--plan', '', '--norms', '', '--base', '']).code, 0)
+  const text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /2\. Plan: `\/b\/thing-brief\.md`/)
+  assert.match(text, /3\. Project norms: `CONTRIBUTING\.md`/)
+  assert.match(text, /base `origin\/main`/)
+})
+
+test('a brief that cannot be written is said in one line, never a stack', () => {
+  const done = run(FIELDS().map((v, k, a) => (a[k - 1] === '--out' ? join(dir, 'absent', 'brief.md') : v)))
+  assert.equal(done.code, 2)
+  assert.match(done.err, /^review-brief: .*absent\/brief\.md cannot be written: /)
+})
+
 test('the optional fields and their defaults: plan is the spec, norms CONTRIBUTING.md, base origin/main, an envelope text fills its place', () => {
   assert.equal(run([...FIELDS(), '--plan', '/b/plan.md', '--norms', 'docs/conventions.md', '--base', 'origin/dev', '--envelope', '- No port is opened.']).code, 0)
   const text = readFileSync(join(dir, 'review-12.md'), 'utf8')

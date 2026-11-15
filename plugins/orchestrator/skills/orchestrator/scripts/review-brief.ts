@@ -67,22 +67,26 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
     const name = flag.slice(2)
     if (!flag.startsWith('--') || !([...REQUIRED, ...OPTIONAL, 'lens'] as string[]).includes(name)) return { error: `unknown argument: ${flag} (${USAGE})` }
     const value = argv[k + 1]
-    if (value === undefined) return { error: `${flag} needs a value` }
-    if (name === 'lens') lenses.push(value)
+    if (value === undefined || value.startsWith('--')) return { error: `${flag} needs a value` }
+    if (name === 'lens') {
+      if (value.trim() === '') return { error: '--lens needs a name' }
+      lenses.push(value)
+    }
     else values.set(name, value)
   }
-  for (const name of REQUIRED) if ((values.get(name) ?? '') === '') return { error: `--${name} is required (${USAGE})` }
-  const get = (name: string, otherwise = ''): string => values.get(name) ?? otherwise
+  for (const name of REQUIRED) if ((values.get(name) ?? '').trim() === '') return { error: `--${name} is required (${USAGE})` }
+  const get = (name: string, otherwise = ''): string => (values.get(name) ?? '') || otherwise
   for (const name of ['out', 'spec', 'report', 'worktree']) if (!isAbsolute(get(name))) return { error: `--${name} is an absolute path, got: ${get(name)}` }
   if (!/^[1-9][0-9]*$/.test(get('pr'))) return { error: `--pr is the pull request number, got: ${get('pr')}` }
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(get('repo'))) return { error: `--repo is owner/name, got: ${get('repo')}` }
   if (!/^[0-9a-f]{7,40}$/i.test(get('head'))) return { error: `--head is a commit sha, 7 to 40 hexadecimal characters, got: ${get('head')}` }
   const tier = get('tier', 'standard')
   if (!TIERS.includes(tier)) return { error: `--tier is deep, standard or light, got: ${tier}` }
+  if (lenses.length === 0 && get('tier') !== '') return { error: '--tier goes with --lens: with no lens the tier reads none' }
   return {
     out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), report: get('report'), branch: get('branch'),
     head: get('head'), worktree: get('worktree'), orchestrator: get('orchestrator'), reason: get('reason'), size: get('size'), lenses, tier,
-    scope: get('scope'), plan: get('plan', get('spec')), norms: get('norms', 'CONTRIBUTING.md'), base: get('base', 'origin/main'), envelope: get('envelope'),
+    scope: get('scope'), plan: get('plan', get('spec')), norms: get('norms', 'CONTRIBUTING.md'), base: get('base', 'origin/main'), envelope: get('envelope', 'none'),
   }
 }
 
@@ -141,7 +145,12 @@ export function main(argv: readonly string[], io: Io, template?: string, templat
     io.err(`review-brief: the template has fields this command does not fill: ${unknown.map(name => `{{${name}}}`).join(', ')}\n`)
     return 2
   }
-  writeFileSync(parsed.out, fill(text, known))
+  try {
+    writeFileSync(parsed.out, fill(text, known))
+  } catch (error) {
+    io.err(`review-brief: ${parsed.out} cannot be written: ${(error as Error).message}\n`)
+    return 2
+  }
   io.out(`review brief: ${parsed.out}\n`)
   return 0
 }

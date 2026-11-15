@@ -614,6 +614,7 @@ function verdict(ctx: Context, id: string, args: readonly string[]): void {
     object['verdict'] = { head, result, words, findings: findings === '' ? null : findings, rounds: asNumber(r['rounds']), at }
     r['review'] = object
   })
+  if (unreviewed && reviewed) noteStep(ctx, 'review', id, 'review', 'end', head)
   say(ctx, `row ${id}: ${result} — ${words} — findings: ${findings || 'none'}`)
 }
 

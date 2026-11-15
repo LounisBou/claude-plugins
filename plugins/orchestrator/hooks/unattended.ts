@@ -204,10 +204,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const read = [reading.line, reading.readyLine].flatMap(text => text ?? [])
         const before = lastRead.get(sessionId) ?? []
         lastRead.set(sessionId, read)
-        // A change leaves the new lines only; a turn with nothing new leaves what an earlier turn end left, not yet said.
-        const said = read.filter(text => !before.includes(text))
-        if (read.length === 0) pending.delete(sessionId)
-        else if (said.length > 0) pending.set(sessionId, said)
+        // A change leaves the new lines only, beside the lines an earlier turn end left that no prompt has said yet and that still hold.
+        const owed = [...(pending.get(sessionId) ?? []).filter(text => read.includes(text)), ...read.filter(text => !before.includes(text))]
+        if (owed.length === 0) pending.delete(sessionId)
+        else pending.set(sessionId, owed)
         await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread })
       }
     } catch (err) {

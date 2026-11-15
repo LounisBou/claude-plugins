@@ -50,20 +50,26 @@ const ECHOED_DETAIL = 'the detail sent'
 // of another shape is left whole.
 export function gateWords(line: string): string {
   const ready = /^github: \S+ ((?:back to draft, then )?Ready at \w+)(?::|$)/.exec(line)
-  if (ready?.[1] !== undefined) return ready[1]
-  const missing = /^github: \S+ (?:not Ready yet|back to Not Ready) at (\w+)\. (?:.*?\. )?(Missing: .*)$/.exec(line)
-  if (missing?.[1] === undefined || missing[2] === undefined) return line
-  return `Not Ready at ${missing[1]}. ${missing[2].split(` by orchestrator, ${ECHOED_DETAIL}`).join('')}`
+  if (ready?.[1] !== undefined) {
+    // What the gate carried from an earlier head, or the operator waived, is not the orchestrator's own review: said.
+    const carried = /\((?:[^()]|\([^()]*\))*(?:carried from|waived by the operator)(?:[^()]|\([^()]*\))*\)\.$/.exec(line)?.[0]
+    return carried === undefined ? ready[1] : `${ready[1]} ${carried.slice(0, -1)}`
+  }
+  const missing = /^github: \S+ (not Ready yet|back to Not Ready) at (\w+)\. (?:.*?\. )?(Missing: .*)$/.exec(line)
+  if (missing?.[1] === undefined || missing[2] === undefined || missing[3] === undefined) return line
+  const state = missing[1] === 'not Ready yet' ? 'Not Ready' : 'back to Not Ready'
+  return `${state} at ${missing[2]}. ${missing[3].split(` by orchestrator, ${ECHOED_DETAIL}`).join('')}`
 }
 
 // The row, as one short piece: the round the count raised and the verdict the row took, when each
 // is said in the form of its writer. What is not that form (a count that raised none, a warning, a
-// row that was not written) is returned in `extra`, whole.
-export function rowWords(counted: string, row: { line: string; ok: boolean } | null): { piece: string; extra: string[] } {
+// row line of another shape) is returned in `extra`, whole. `rowLine` is the record script's output
+// of a row written, null when none was.
+export function rowWords(counted: string, rowLine: string | null): { piece: string; extra: string[] } {
   const raised = /^rounds: row (\d+) of .+ raised to (\d+)$/.exec(counted)
-  const [first = '', ...rest] = row !== null && row.ok ? row.line.split('\n') : []
+  const [first = '', ...rest] = rowLine === null ? [] : rowLine.split('\n')
   const written = /^row (\d+): (\w+) — /.exec(first)
-  const extra = [...(raised === null ? [counted] : []), ...(row === null ? [] : written === null ? [row.line] : rest)].filter(Boolean)
+  const extra = [...(raised === null ? [counted] : []), ...(rowLine === null ? [] : written === null ? [rowLine] : rest)].filter(Boolean)
   if (raised !== null && written !== null && raised[1] === written[1]) return { piece: `row ${written[1]}: ${written[2]}, round ${raised[2]}`, extra }
   const pieces = [raised === null ? '' : `row ${raised[1]} round ${raised[2]}`, written === null ? '' : `row ${written[1]}: ${written[2]}`]
   return { piece: pieces.filter(Boolean).join(' · '), extra }
@@ -71,10 +77,10 @@ export function rowWords(counted: string, row: { line: string; ok: boolean } | n
 
 // The verdict's answer: the record's path line, which the audit reads, then one line, the gate's
 // verdict and the row. A github line of an unknown shape and every warning stay as they are.
-export function answerLines(gate: string, counted: string, row: { line: string; ok: boolean } | null): string {
+export function answerLines(gate: string, counted: string, rowLine: string | null): string {
   const lines = gate.split('\n')
   const at = lines.map((l) => l.startsWith('github: ')).lastIndexOf(true)
-  const { piece, extra } = rowWords(counted, row)
+  const { piece, extra } = rowWords(counted, rowLine)
   const said = lines.map((l) => (l.startsWith('github: ') ? gateWords(l) : l))
   if (at >= 0 && piece !== '') said[at] = `${said[at]} · ${piece}`
   else if (piece !== '') said.push(piece)
@@ -273,7 +279,7 @@ export function register(on: On<Held>): void {
     // fails is a warning on a success, never an error, so the audit trail keeps the verdict
     // (audit-events.ts answerText) and nobody writes the record twice.
     const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
-    if (row.ok) return { result: answerLines(answer.result, counted, row) }
+    if (row.ok) return { result: answerLines(answer.result, counted, row.line) }
     return { result: `${answerLines(answer.result, counted, null)}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)

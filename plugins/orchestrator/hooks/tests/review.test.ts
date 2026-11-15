@@ -5,7 +5,7 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR, findingsOf, register as registerReview, wordsOf } from '../review.ts'
+import { NOT_ORCHESTRATOR, answerLines, findingsOf, register as registerReview, rowWords, wordsOf } from '../review.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 import { answerText } from '../audit-events.ts'
@@ -89,6 +89,43 @@ test('a github line of another shape is left whole, its echo of the detail named
   const refused = fake('Orch: belt', { deny: 'github: refused, two to fix by orchestrator, two to fix' })
   expect(await handler()(refused.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' }))
     .toEqual({ result: 'github: refused, two to fix by orchestrator, two to fix', isError: true })
+})
+
+test('the gate lines in every shape: back to Not Ready, a Ready with no colon, and with several github lines the last one carries the row', async () => {
+  const back = fake('Orch: belt', { result: 'github: acme/thing#128 back to Not Ready at 0123456. Missing: CI failing: build' })
+  expect((await handler()(back.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0]).toBe('back to Not Ready at 0123456. Missing: CI failing: build')
+  // What the gate carried from an earlier head, or the operator waived, rides the Ready it rests on.
+  const carried = fake('Orch: belt', { result: 'github: acme/thing#128 Ready at 0123456: a clean review, passed E2E and green CI hold at its head (E2E carried from 89abcde, norms waived by the operator (2026-11-15: small)).' })
+  expect((await handler()(carried.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0])
+    .toBe('Ready at 0123456 (E2E carried from 89abcde, norms waived by the operator (2026-11-15: small))')
+  const bare = fake('Orch: belt', { result: 'github: acme/thing#128 Ready at 0123456' })
+  expect((await handler()(bare.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0]).toBe('Ready at 0123456')
+  const two = fake('Orch: belt', { result: '/cfg/records/x/review.json\ngithub: acme/thing#128 out of draft to run CI, still Not Ready\ngithub: acme/thing#128 Ready at 0123456: a clean review.' })
+  expect((await handler()(two.dollar, { pr: 128, verdict: 'pass' })).result.split('\n').slice(0, 3))
+    .toEqual(['/cfg/records/x/review.json', 'github: acme/thing#128 out of draft to run CI, still Not Ready', 'Ready at 0123456'])
+})
+
+test('the answer with no github line, a row line of another shape, and a count that raised none: each said whole', async () => {
+  const none = fake('Orch: belt', { result: '/cfg/records/x/review.json' })
+  const named = { pr: 128, repo: 'acme/thing', verdict: 'pass' }
+  const rows = rowWords('rounds: row 4 of /b/record.jsonl raised to 2', 'row 4: fail — x — findings: none')
+  expect(rows).toEqual({ piece: 'row 4: fail, round 2', extra: [] })
+  expect(rowWords('rounds: row 3 of /b/r.jsonl raised to 1', 'row 4: fail — x')).toEqual({ piece: 'row 3 round 1 · row 4: fail', extra: [] })
+  expect(rowWords('rounds: row 4 of /b/r.jsonl raised to 1', 'something else\nWARNING: x')).toEqual({ piece: 'row 4 round 1', extra: ['something else\nWARNING: x'] })
+  expect(rowWords('rounds: none raised, the repository is not known', 'row 4: pass — clean')).toEqual({ piece: 'row 4: pass', extra: ['rounds: none raised, the repository is not known'] })
+  expect(answerLines('/cfg/records/x/review.json', 'rounds: row 4 of /b/r.jsonl raised to 1', null)).toBe('/cfg/records/x/review.json\nrow 4 round 1')
+  expect((await handler()(none.dollar, named)).result).toBe('/cfg/records/x/review.json\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128')
+})
+
+test('a github line of another shape names the detail where it echoes it, in each of the two places, and a detail never sent changes nothing', async () => {
+  const parens = fake('Orch: belt', { result: 'github: acme/thing#128 custom: orchestrator (two to fix) and by orchestrator, two to fix' })
+  expect((await handler()(parens.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' })).result.split('\n')[0])
+    .toBe('github: acme/thing#128 custom: orchestrator (the detail sent) and by orchestrator, the detail sent')
+  // Only the echo is named: the same words elsewhere stay, and with no detail sent nothing is touched.
+  const elsewhere = fake('Orch: belt', { result: 'github: acme/thing#128 custom: Ready is not Ready, orchestrator (other)' })
+  expect((await handler()(elsewhere.dollar, { pr: 128, verdict: 'pass', detail: 'Ready' })).result.split('\n')[0]).toBe('github: acme/thing#128 custom: Ready is not Ready, orchestrator (other)')
+  const bare = fake('Orch: belt', { result: 'github: acme/thing#128 custom: orchestrator (two to fix)' })
+  expect((await handler()(bare.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0]).toBe('github: acme/thing#128 custom: orchestrator (two to fix)')
 })
 
 for (const verdict of ['pass', 'fail']) {

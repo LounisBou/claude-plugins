@@ -273,6 +273,24 @@ test('a changed line is said without the lines that did not change: the ready ro
   expect(await turn()).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
 })
 
+test('a line no prompt has said yet is kept across turn ends, while it still holds, beside what changed since', async () => {
+  const { dollar, files } = world()
+  const handlers = mounted()
+  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
+  // Nothing was said between: a ready row appears, and the unattended line still waits for its prompt.
+  files.set(RECORD, `${files.get(RECORD)}${JSON.stringify(READY_ROWS[0])}\n`)
+  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
+  const said = (await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context
+  expect(said.length).toBe(2)
+  expect(said[0]).toContain('PR délaissées : acme/app#8')
+  expect(said[1]).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
+  // A line that stopped holding before its prompt is not said.
+  const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
+  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
+  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+})
+
 test('a turn end with nothing unattended leaves no line', async () => {
   const { dollar } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   const handlers = mounted()
