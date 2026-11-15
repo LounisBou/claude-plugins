@@ -415,7 +415,7 @@ const PROJECTS = `${HOME}/.claude/projects`
 const TRANSCRIPT = `${HOME}/elsewhere/s-stop.jsonl`
 const LAUNCHER = '/plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh'
 const WORKSPACE = '/plugins/orch-root/skills/orchestrator/scripts/workspace.sh'
-const GOALS_PY = '/plugins/orch-root/skills/orchestrator/scripts/goals.py'
+const GOALS_SH = '/plugins/orch-root/skills/orchestrator/scripts/goals.sh'
 const GOALS_FILE = '/tmp/h/rec/goals.md'
 
 const BUSY_ROW = 'w1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3'
@@ -610,7 +610,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
           return { exitCode: setup.sweep?.exitCode ?? 0, stdout: setup.sweep?.stdout ?? '', stderr: setup.sweep?.stderr ?? '' }
         }
         if (argv[0] === 'bash' && argv[1] === WORKSPACE) return { exitCode: 0, stdout: setup.workspace ?? '', stderr: '' }
-        if (argv[0] === 'python3' && argv[1] === GOALS_PY) {
+        if (argv[0] === 'bash' && argv[1] === GOALS_SH) {
           const sharedGoals = (setup.shared ?? []).find(record => `${record.path.replace(/\/[^/]*$/, '')}/goals.md` === argv[3])
           if (sharedGoals?.goals) return { exitCode: sharedGoals.goals.exitCode, stdout: sharedGoals.goals.stdout, stderr: '' }
           if (setup.goals === 'hang') return new Promise(() => undefined)
@@ -1429,7 +1429,7 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
 // --- the spec's goals (goals.md beside a registered record) --------------------------------
 
 // A build was declared done against its plan while the plan had moved three of the spec's
-// five goals « after the build ». The done branch now reads goals.py check over each goals.md
+// five goals « after the build ». The done branch now reads goals.sh check over each goals.md
 // beside a registered record, and refuses while a goal is open or the file does not hold.
 const goalsAnswer = (over: Record<string, unknown> = {}) => JSON.stringify({
   ok: false, open: ['G3'], unplanned: ['G3'], faults: [], notes: [], rows: 5, met: 3, ruled_out: 1,
@@ -1458,7 +1458,7 @@ test('the done branch names open goals and faults in their own texts, after what
   expect(checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: [], goalsFaults: [] })).toBeNull()
 })
 
-test('goals.py check --json is parsed, and anything else is no reading', () => {
+test('goals.sh check --json is parsed, and anything else is no reading', () => {
   expect(parseGoalsCheck('/r/goals.md', goalsAnswer())?.open).toEqual(['G3'])
   expect(parseGoalsCheck('/r/goals.md', 'Traceback')).toBeNull()
   expect(parseGoalsCheck('/r/goals.md', '{"ok":false,"error":"cannot read"}')).toBeNull()
@@ -1470,7 +1470,7 @@ test('a registered record whose goals.md holds an open goal refuses waiting: don
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(held.observed).toContain('Not done against the spec: G3 open')
-  expect(fx.ran).toContain(`python3 ${GOALS_PY} check ${GOALS_FILE} --json`)
+  expect(fx.ran).toContain(`bash ${GOALS_SH} check ${GOALS_FILE} --json`)
 })
 
 test('the same goals, all met, pass at once: the operator is not shown their table first', async () => {

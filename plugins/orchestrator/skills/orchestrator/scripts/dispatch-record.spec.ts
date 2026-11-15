@@ -19,7 +19,7 @@ interface World {
   readonly calls: string[]
 }
 
-/** What the fake commands answer: goals.py, routing.py and gh. */
+/** What the fake commands answer: goals.ts, routing.py and gh. */
 interface Answers {
   unplanned?: string
   body?: string | null
@@ -38,7 +38,7 @@ function deps(env: Record<string, string> = {}, answers: Answers = {}): Deps & W
     io: { out: t => out.push(t), err: t => err.push(t) },
     env: { ORCHESTRATOR_STATE_DIR: join(dir, 'state'), CLAUDE_CONFIG_DIR: join(dir, 'cfg'), ...env },
     now: () => new Date('2026-11-08T10:11:12.345Z'),
-    goalsPy: '/p/goals.py',
+    goals: ['node', '/p/goals.ts'],
     routingPy: '/p/routing.py',
     passThrough: async argv => { calls.push(argv.join(' ')); return answers.goals ?? 0 },
     run: async argv => {
@@ -437,7 +437,7 @@ test('summary: the statistics and the open rows, or one reading of them', async 
     ['class=corrective tier=light dispatches=2 closed=2 rounds_avg=1'])
 })
 
-test('goals: handed to goals.py, the record registered from its first write', async () => {
+test('goals: handed to goals.ts, the record registered from its first write', async () => {
   const sessions = join(dir, 'cfg', 'sessions')
   mkdirSync(sessions, { recursive: true })
   writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch: build","updatedAt":1}')
@@ -446,7 +446,7 @@ test('goals: handed to goals.py, the record registered from its first write', as
   assert.match(await cli(['goals', r], d), /a subcommand is required/)
   assert.match(await cli(['goals', r, 'bogus'], d), /unknown subcommand: bogus/)
   assert.equal(await cli(['goals', r, 'init', '--spec', 'none'], d), '0||')
-  assert.ok(d.calls.includes(`python3 /p/goals.py init ${join(dir, 'p')}/goals.md --spec none`))
+  assert.ok(d.calls.includes(`node /p/goals.ts init ${join(dir, 'p')}/goals.md --spec none`))
   assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch: build\n')
   assert.equal(readFileSync(join(dir, 'state', 'records', 's1'), 'utf8'), `${join(dir, 'p', 'r.jsonl')}\n`)
   assert.equal(await cli(['goals', r, 'status'], deps({ CLAUDE_CODE_SESSION_ID: 's1' }, { goals: 3 })), '3||')

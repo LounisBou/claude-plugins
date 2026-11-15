@@ -1008,7 +1008,7 @@ async function readGoals($: Held, records: readonly string[], root: string, unti
       await logLine($, 'guards', `stop gate: ${path.replace(/\/goals\.md$/, '')} has no goals.md`)
       continue
     }
-    const done = await inTime($, () => runUntil($, ['python3', `${root}/skills/orchestrator/scripts/goals.py`, 'check', path, '--json'], until), until)
+    const done = await inTime($, () => runUntil($, ['bash', `${root}/skills/orchestrator/scripts/goals.sh`, 'check', path, '--json'], until), until)
     const reading = done && (done.exitCode === 0 || done.exitCode === 1) ? parseGoalsCheck(path, String(done.stdout ?? '')) : null
     if (!reading) {
       await logLine($, 'guards', `stop gate: goals unread: ${path}: ${!done ? 'it did not answer in time' : `it exited ${done.exitCode}`}`)
