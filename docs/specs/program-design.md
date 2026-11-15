@@ -126,7 +126,9 @@ The program is finished on the day all of this holds:
 After that the repository changes only on a fact from one of the operator's projects (his ruling of
 2026-11-14).
 
-### Universal goals, closed where they are (proposed, awaiting the operator's word)
+### Universal goals, closed where they are (decided B, 2026-11-15)
+
+Decided B on 2026-11-15T06:32:38Z by the coordinator, on the operator's delegation (« c'est à toi de décider ce qu'il y a de mieux pour avancer »): the 1.0 above is the finish line, and the goals below stay open beyond it.
 
 Four goals have no end of their own: each is closed where it stands, at `d540c0c6`, and moves
 again only on a fact from one of his projects.

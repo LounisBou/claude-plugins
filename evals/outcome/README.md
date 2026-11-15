@@ -70,8 +70,9 @@ npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judg
 - The measure runs monthly, and before a learned method change merges, about 120 USD a month;
   not at each minor version. A weekly free measure (refusals and errors per session, per guard
   source and per role, from telemetry) is to say between two runs whether a regression has begun:
-  no script computes it yet; it is to be built in the learning plugin, as a code-computed report
-  over the telemetry events (`docs/specs/learning-design.md`, question 4). The release pull request asks the operator whether
+  the refusals per guard source and per role are in telemetry's weekly report (`telemetry.ts report`,
+  code-computed from the events and the learning journals; `docs/specs/learning-design.md`,
+  question 4), the errors per session are not yet. The release pull request asks the operator whether
   to run it when it falls due (`docs/architecture.md`, « Release »).
 - The pilot replays the first case with both arms; the measure the first six. `--case <id>`
   replays one case under the run's caps, the way a reserve replaces a case.

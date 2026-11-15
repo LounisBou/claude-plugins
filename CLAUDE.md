@@ -23,4 +23,6 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
 - This repository is in auto-merge: the session that opens a pull request merges it, with a
   merge commit, once the repository rules and the blocking suites (`ci/plugins.json`) pass. What
   CI runs, and when, is in `docs/architecture.md`, « What CI holds ».
-- The program in progress is `docs/specs/program-design.md`; its goals are the definition of done.
+- The program in progress is `docs/specs/program-design.md`; its 1.0 section
+  (« The finish line — 1.0 ») is the program's end point, and the goals beyond it open on a fact
+  from one of the operator's projects.
