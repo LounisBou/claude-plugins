@@ -111,7 +111,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | Subcommand | Arguments | Description |
 |---|---|---|
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
-| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
+| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; observed outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
 | `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the gate reads it ready, CI included; else answers the label carried and `Missing: …` (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
@@ -316,14 +316,14 @@ Never « external terminal ».
 
 **Ready.** These acts need the pull request ready at its head (core's readiness contract, « Records »
 above), CI included; the gate puts `Ready` just before the act, which runs on that label only: `pr-ready`,
-`pr-merge`, `pr-create` out of draft; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
-`gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `gh api` `PUT`/`POST` on
+`pr-merge`; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
+`gh pr merge` (not `--disable-auto`), `gh api` `PUT`/`POST` on
 `repos/<o>/<r>/pulls/<n>/merge` (path or URL), `gh api graphql` naming `mergePullRequest`,
 `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the engine's same subcommands from Bash.
 A `--match-head-commit` or `pr-merge --sha` off that head is not ready; a `Ready` put by `label-add` or the
 shell is no act. Refused before any question with `github: <act> refused on <owner/name>#<n> at <head7>:
 not ready. Missing: <item>, …`, `Ready` going back to `Not Ready`, or `github: readiness of
-<owner/name>#<n> unverified: <error>`. Refused too: opening out of draft; a shell merge or undraft naming
+<owner/name>#<n> unverified: <error>`. Refused too: a shell merge or undraft naming
 no repository (`-R`, `--repo`, a URL); a GraphQL merge or undraft (no pull request named; the tool call is
 given); a GraphQL query the line does not show (`-F query=@file`, `--input`, a shell expansion), unverified
 in auto-merge; `gh.py --stdin-json` from Bash.
@@ -342,9 +342,9 @@ and unasked: `pr-ready --for-ci` (keeps `Not Ready`) or the shell's `gh pr ready
 the pushed branch carrying `Ready` goes back to `Not Ready`, in one line; a push naming no branch or
 repository with certainty leaves it.
 
-**Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository of
-`auto-merge.json`, the ready guard on top. Elsewhere leaving draft is refused on every route, unasked
-(`github: <act> refused on <owner/name>: outside auto-merge, leaving draft is the operator's, …`); a merge
+**Auto-merge split.** A merge runs only in a repository of `auto-merge.json`, the ready guard on top.
+Elsewhere leaving draft (CI undraft aside) meets the ready guard, is observed, then asked; opening a pull request out of
+draft is observed alone; a merge
 is asked through the tool, refused in the shell. The engine's undraft is a CI one only with `--for-ci`, and
 names `--repo`.
 
@@ -363,15 +363,12 @@ What the guards do not read on that route:
 - A body file the same command line writes (`printf … > body.md && python3 gh.py pr-create
   --body-file body.md`): read before it exists, not linted.
 
-**Records.** A Write, Edit, MultiEdit or NotebookEdit under the records root, and a shell
-command naming that root, a `pr-records/` path or `engine/record.py` (in its text or in any word
-unquoted), are refused whatever it does (a Read passes):
-
-```
-github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
-```
-
-The E2E exemption and check plan files are refused alike (`github: an E2E exemption changes only through …`).
+**Records.** A Write, Edit, MultiEdit or NotebookEdit under the records root, and a shell command naming it, a
+`pr-records/` path or `engine/record.py`, are observed, not refused (`github.records.write`; a Read is not), like
+the E2E exemption and check plan files (`github.exemption.write`); a shell command that deletes in the records,
+the exemptions or the plans (`rm`, `unlink`, `find -delete`, a `mv` out of them) is refused as before. Also observed: a label an exemption names
+(`github.exempt-label.move`), opening out of draft (`github.draft.open-out`), leaving draft outside auto-merge
+(`github.draft.leave`) and a text that breaks a writing rule (`github.writing.rule`): README « Observed guards ».
 
 `mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through `record.py` when
 the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate` reads and its tracked files are

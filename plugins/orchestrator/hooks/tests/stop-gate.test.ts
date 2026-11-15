@@ -753,6 +753,43 @@ test('a stop with nothing to wake the orchestrator passes, the log naming nothin
   expect(declared.observed).toBeUndefined()
 })
 
+// A dispatch row, open and ready unless changed, as the record holds it.
+const readyRow = (id: number, label: string, more: Record<string, unknown> = {}) =>
+  `${JSON.stringify({ id, state: 'open', label, blocker: 'none', ...more })}\n`
+const OPEN_PR_LINE = (agent: string) => `${JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 9, status: 'working', agent, since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })}\n`
+const READY = 'Lignes prêtes sans agent : 12 TOKENDRIFT'
+
+test('a stop that passes with a ready row nobody is on warns, the log naming it, and journals no escape', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ records: [readyRow(12, 'TOKENDRIFT: the context fills')] })
+  await warnsNotRefuses(handlers, fx, stopEvent({}), `ready-rows ${READY}`)
+})
+
+test('a stop let through for another reason carries the ready rows in the same line', async () => {
+  const { handlers } = mounted()
+  const logs = { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } }
+  const fx = fakeDollar({ records: [readyRow(12, 'TOKENDRIFT: the context fills')], ciLogs: logs })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(out.observed).toContain('#160')
+  expect(out.observed).toContain(READY)
+})
+
+test('a ready row is not named while a live agent, an open pull request, a blocker or a deferral holds it', async () => {
+  const { handlers } = mounted()
+  const named = async (rows: string, setup: Record<string, unknown> = {}) => {
+    const fx = fakeDollar({ records: [rows], ...setup })
+    const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+    expect(out.answer).toBe(out.passed)
+    return fx.written.some(l => l.includes(`| stop gate: warn ready-rows ${READY}`))
+  }
+  const row = readyRow(12, 'TOKENDRIFT: the context fills')
+  expect(await named(row)).toBe(true)
+  expect(await named(row, { listing: 'w1/t2 | /dev/ttys002 | ⠋ Agent: tokendrift | Agent: tokendrift' })).toBe(false)
+  expect(await named(row + OPEN_PR_LINE('Agent: tokendrift'))).toBe(false)
+  expect(await named(readyRow(12, 'TOKENDRIFT: the context fills', { blocker: 'row 4 closed' }))).toBe(false)
+  expect(await named(readyRow(12, 'TOKENDRIFT: the context fills', { deferred: 'later, 2026-11-15' }))).toBe(false)
+})
+
 test('an idle agent delivered of its merged pull request is not refused: the log names it', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({

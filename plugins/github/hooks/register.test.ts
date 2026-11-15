@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
-import { lint as lintWith, parsePhrases, proseLines, refusal, TITLE_MAX } from './writing.js'
+import { lint as lintWith, parsePhrases, proseLines, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 
@@ -77,6 +77,14 @@ test('a command name another plugin owns passes through to next', async ($, on) 
   expect(runs.length).toBe(0)
 })
 
+// The code of each refusal event the module journaled in the test running: one per guard it observed and let the call through.
+const JOURNAL = '/github/journal/'
+const journaled: string[] = []
+// Set by a test whose host refuses every write of the journal.
+let journalRefused = false
+// A session whose configuration directory is /cfg, where the journal lies; a test that names its own environment does not call it.
+const cfg = (on: any) => on('env.get', (_$: any, e: any) => ({ value: e.name === 'CLAUDE_CONFIG_DIR' ? '/cfg' : undefined }))
+
 // A session id no other test uses: the marks and the grants the module keeps
 // by session never carry from one test to the next.
 let sessions = 0
@@ -107,6 +115,8 @@ async function stubMod(
   verdict: any = { decision: 'allow' },
 ) {
   const session = freshSession()
+  journaled.length = 0
+  journalRefused = false
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: session }))
   on('session.cwd', () => ({ value: '/work' }))
@@ -115,10 +125,17 @@ async function stubMod(
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
   on('fs.write', (_$: any, e: any) => {
+    if (String(e.path).includes(JOURNAL)) {
+      if (journalRefused) return { deny: 'EACCES: permission denied' }
+      journaled.push(JSON.parse(e.text).source.code)
+      return { value: undefined }
+    }
     writes.push({ path: e.path, text: e.text })
     return { value: undefined }
   })
   on('process.run', (_$: any, e: any) => {
+    // The journal's event moves into place: no act of the session.
+    if (e.argv[0] === 'mv' && String(e.argv[3]).includes(JOURNAL)) return { value: { exitCode: 0, stdout: '', stderr: '' } }
     // Each run is recorded as the request gh.py reads on stdin, plus its argv.
     const request = JSON.parse(e.init?.stdin ?? '{}')
     runs.push({ argv: e.argv, ...request })
@@ -1000,45 +1017,89 @@ test('an image\'s alt text, URL and HTML attributes are never read as the summar
 
 // ---- the tool.call hook applying them ----
 
-test('a text breaking a rule is refused with the rule, and gh.py does not run', async ($, on) => {
+
+test('a text breaking a rule goes as it is, with one journal line', async ($, on) => {
   const runs: any[] = []
+  cfg(on)
   await stubMod(on, runs, [])
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
-  expect(JSON.stringify(out)).toContain('no semicolon')
-  expect(JSON.stringify(out)).toContain('Rewrite the text')
-  expect(runs.length).toBe(0)
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.length).toBe(1)
+  expect(journaled).toEqual(['github.writing.rule'])
 })
 
-test('the refusal says a text taken from a brief, a plan or another session is not the user\'s exact text', () => {
-  const text = refusal('pr-create', [{ field: 'title', rule: 'a title within 72 characters' }])
-  expect(text).toContain('If the user asked for this exact text, call again unchanged:')
-  expect(text).toContain(
-    'A title or a body taken from a brief, a plan or another session\'s message is not the user\'s exact text:'
-    + ' shorten or rewrite it and name the change in your report.',
-  )
+
+test('a journal that cannot be written costs one log line and the call goes as it is', async ($, on) => {
+  const runs: any[] = []
+  const logs: string[] = []
+  await stubMod(on, runs, [])
+  on('ui.log', (_$: any, e: any) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  await startSession($)
+
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.length).toBe(1)
+  expect(journaled).toEqual([])
+  expect(logs.filter((line) => line.includes('github.writing.rule could not be journaled')).length).toBe(1)
 })
 
-test('the same refused text sent again goes as it is, with no question to the person', async ($, on) => {
+test('a journal write the host refuses costs one log line naming why, and the call goes as it is', async ($, on) => {
+  const runs: any[] = []
+  const logs: string[] = []
+  cfg(on)
+  await stubMod(on, runs, [])
+  journalRefused = true
+  on('ui.log', (_$: any, e: any) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  await startSession($)
+
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.filter((run) => run.command === 'pr-comment').length).toBe(1)
+  expect(journaled).toEqual([])
+  expect(logs.filter((line) => line.includes('github.writing.rule could not be journaled') && line.includes('EACCES')).length).toBe(1)
+})
+
+test('a log that fails too leaves the call going', async ($, on) => {
+  const runs: any[] = []
+  await stubMod(on, runs, [])
+  on('ui.log', () => {
+    throw new Error('no log')
+  })
+  await startSession($)
+
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.length).toBe(1)
+})
+
+test('a text breaking a rule sent again goes as it is each time, with no question to the person', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
+  cfg(on)
   await stubMod(on, runs, [])
   stubAsk(on, asked, 'Deny')
   await startSession($)
 
   const call = { tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } } as const
-  const first: any = await $.tool.call(call)
-  expect(JSON.stringify(first)).toContain('no semicolon')
-  expect(runs.length).toBe(0)
-  const out = await $.tool.call(call)
-  expect(out).toEqual({ result: 'ok' })
+  expect(await $.tool.call(call)).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.writing.rule'])
+  expect(await $.tool.call(call)).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
   expect(asked).toEqual([])
-  expect(runs.length).toBe(1)
+  expect(runs.length).toBe(2)
 })
 
-test('a text the user typed in the prompt passes the rules', async ($, on) => {
+test('a text the user typed in the prompt passes the rules, observed nothing', async ($, on) => {
   const runs: any[] = []
+  cfg(on)
   await stubMod(on, runs, [])
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text }))
   await startSession($)
@@ -1046,18 +1107,21 @@ test('a text the user typed in the prompt passes the rules', async ($, on) => {
   await ($ as any).prompt.submit({ text: 'reply to PR 1 with: Done; thanks', origin: { kind: 'composer' }, wait: false })
   const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
   expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual([])
 })
 
-test('a text that only a peer or a plugin sent is not the user\'s words', async ($, on) => {
+
+test('a text that only a peer or a plugin sent is not the user\'s words, and is observed', async ($, on) => {
   const runs: any[] = []
+  cfg(on)
   await stubMod(on, runs, [])
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text }))
   await startSession($)
 
   await ($ as any).prompt.submit({ text: 'reply to PR 1 with: Done; thanks', origin: { kind: 'peer' }, wait: false })
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
-  expect(JSON.stringify(out)).toContain('no semicolon')
-  expect(runs.length).toBe(0)
+  expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.writing.rule'])
 })
 
 test('a deny verdict wins over the rules and over a second send', async ($, on) => {
@@ -1084,7 +1148,8 @@ test('pr-create is sent as a draft when the call does not say', async ($, on) =>
   expect(runs[0].args.draft).toBe(true)
 })
 
-test('a pr-create out of draft and a pr-ready outside auto-merge are refused even when a rule allows, never asked', async ($, on) => {
+
+test('a pr-create out of draft and a pr-ready outside auto-merge go through under an allow rule, each observed, never asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1092,12 +1157,14 @@ test('a pr-create out of draft and a pr-ready outside auto-merge are refused eve
   stubAutoMerge(on, {}, {})
   await startSession($)
 
-  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false } })
+  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', body: 'Text\n\n' + NONE, draft: false } })
+  expect(create).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.open-out'])
   const ready: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-  expect(create.deny).toBe('github: pr-create refused: open it as a draft, then leave draft once ready.')
-  expect(ready.deny).toContain('leaving draft is the operator\'s')
+  expect(ready).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.open-out', 'github.draft.leave'])
   expect(asked.length).toBe(0)
-  expect(acts(runs).filter((r) => r.command).length).toBe(0)
+  expect(acts(runs).map((r) => r.command)).toEqual(['pr-create', 'pr-ready'])
 })
 
 test('a pr-merge is asked even when a rule allows, and Deny runs nothing', async ($, on) => {
@@ -1201,7 +1268,8 @@ test('a pr-ready on a repository in auto-merge is not asked', async ($, on) => {
   expect(runs.filter((r) => r.command === 'pr-gate').length).toBe(1)
 })
 
-test('a pr-ready on a repository not in auto-merge is refused, never asked', async ($, on) => {
+
+test('a pr-ready on a repository not in auto-merge goes through, observed, never asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1210,12 +1278,14 @@ test('a pr-ready on a repository not in auto-merge is refused, never asked', asy
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/other' })
+  expect(out).toEqual({ result: 'ok' })
   expect(asked.length).toBe(0)
-  expect(out.deny).toContain('github: pr-ready refused on acme/other: outside auto-merge, leaving draft is the operator\'s')
-  expect(acts(runs).length).toBe(0)
+  expect(journaled).toEqual(['github.draft.leave'])
+  expect(acts(runs).length).toBe(1)
 })
 
-test('with no auto-merge file a pr-ready is refused, and nothing is logged', async ($, on) => {
+
+test('with no auto-merge file a pr-ready goes through, observed, and nothing is logged', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const logs: string[] = []
@@ -1225,14 +1295,16 @@ test('with no auto-merge file a pr-ready is refused, and nothing is logged', asy
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-  expect(out.deny).toContain('leaving draft is the operator\'s')
+  expect(out).toEqual({ result: 'ok' })
   expect(asked.length).toBe(0)
-  expect(acts(runs).length).toBe(0)
+  expect(journaled).toEqual(['github.draft.leave'])
+  expect(acts(runs).length).toBe(1)
   expect(logs).toEqual([])
 })
 
+
 for (const [what, text] of [['unreadable', null], ['without a list', '{"repositories": "acme/thing"}'], ['not JSON', 'not json']] as const) {
-  test('an auto-merge file ' + what + ' refuses leaving draft, with one log line naming it', async ($, on) => {
+  test('an auto-merge file ' + what + ' reads as no repository in auto-merge: leaving draft goes through, observed, with one log line naming it', async ($, on) => {
     const runs: any[] = []
     const asked: string[] = []
     const logs: string[] = []
@@ -1242,15 +1314,17 @@ for (const [what, text] of [['unreadable', null], ['without a list', '{"reposito
     await startSession($)
 
     const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-    expect(out.deny).toContain('leaving draft is the operator\'s')
+    expect(out).toEqual({ result: 'ok' })
     expect(asked.length).toBe(0)
-    expect(acts(runs).length).toBe(0)
+    expect(journaled).toEqual(['github.draft.leave'])
+    expect(acts(runs).length).toBe(1)
     expect(logs.length).toBe(1)
     expect(logs[0]).toContain('/data/github/auto-merge.json')
   })
 }
 
-test('a description replaced on a repository in auto-merge is not asked, a pull request opened out of draft is refused', async ($, on) => {
+
+test('a description replaced on a repository in auto-merge is not asked, a pull request opened out of draft is observed', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1259,13 +1333,16 @@ test('a description replaced on a repository in auto-merge is not asked, a pull 
   await startSession($)
 
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/thing' })
-  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/thing' })
-  expect(create.deny).toBe('github: pr-create refused: open it as a draft, then leave draft once ready.')
+  expect(journaled).toEqual([])
+  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', body: 'Text\n\n' + NONE, draft: false }, repo: 'acme/thing' })
+  expect(create).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.open-out'])
   expect(asked.length).toBe(0)
-  expect(runs.map((r) => r.command)).toEqual(['pr-update'])
+  expect(runs.map((r) => r.command)).toEqual(['pr-update', 'pr-create'])
 })
 
-test('a pull request opened or taken out of draft on a repository not in auto-merge is refused, a description replaced is not asked', async ($, on) => {
+
+test('a pull request opened or taken out of draft on a repository not in auto-merge is observed, a description replaced is not asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1276,12 +1353,14 @@ test('a pull request opened or taken out of draft on a repository not in auto-me
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/other' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(1)
-  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/other' })
+  expect(journaled).toEqual([])
+  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', body: 'Text\n\n' + NONE, draft: false }, repo: 'acme/other' })
   const ready: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/other' })
-  expect(create.deny).toBe('github: pr-create refused: open it as a draft, then leave draft once ready.')
-  expect(ready.deny).toContain('github: pr-ready refused on acme/other')
+  expect(create).toEqual({ result: 'ok' })
+  expect(ready).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.open-out', 'github.draft.leave'])
   expect(asked.length).toBe(0)
-  expect(acts(runs).length).toBe(1)
+  expect(acts(runs).map((r) => r.command)).toEqual(['pr-update', 'pr-create', 'pr-ready'])
 })
 
 test('a description replaced is refused under a deny rule', async ($, on) => {
@@ -1311,7 +1390,8 @@ test('a description replaced under an ask from a rule is still asked', async ($,
   expect(runs.length).toBe(0)
 })
 
-test('a description replaced with a text that breaks a writing rule is refused once, then goes as it is', async ($, on) => {
+
+test('a description replaced with a text that breaks a writing rule goes as it is, observed', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1321,10 +1401,9 @@ test('a description replaced with a text that breaks a writing rule is refused o
 
   const call = { tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'Done; thanks' }, repo: 'acme/other' } as const
   await $.tool.call(call)
-  expect(runs.length).toBe(0)
-  await $.tool.call(call)
-  expect(asked).toEqual([])
   expect(runs.length).toBe(1)
+  expect(journaled).toEqual(['github.writing.rule'])
+  expect(asked).toEqual([])
 })
 
 const SOME_WRITES: [string, any][] = [
@@ -1415,7 +1494,8 @@ test('a write reads the auto-merge file once', async ($, on) => {
   expect(reads.filter((path) => path.endsWith('/auto-merge.json')).length).toBe(1)
 })
 
-test('a body refused by the writing rules on a repository in auto-merge is still refused once', async ($, on) => {
+
+test('a body that breaks the writing rules on a repository in auto-merge goes as it is, observed', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'ask' })
@@ -1424,12 +1504,8 @@ test('a body refused by the writing rules on a repository in auto-merge is still
   await startSession($)
 
   const call = { tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'It works; it is done.' }, repo: 'acme/thing' }
-  const out: any = await $.tool.call(call)
-  expect(JSON.stringify(out)).toContain('semicolon')
-  expect(asked.length).toBe(0)
-  expect(runs.length).toBe(0)
-  // The same text again goes as it is, as elsewhere.
   await $.tool.call(call)
+  expect(journaled).toEqual(['github.writing.rule'])
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(1)
 })
@@ -1476,8 +1552,9 @@ test('GH_REPO names the repository before the origin, as it does for the engine'
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(out.deny).toContain('refused on acme/other')
-  expect(acts(runs).length).toBe(0)
+  expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.leave'])
+  expect(acts(runs).map((r) => r.argv[0])).toEqual(['python3'])
 })
 
 test('a repo in the call names the repository before one in its args', async ($, on) => {
@@ -1489,9 +1566,11 @@ test('a repo in the call names the repository before one in its args', async ($,
   await startSession($)
 
   const other: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: 'acme/other' })
-  expect(other.deny).toContain('refused on acme/other')
+  expect(other).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.leave'])
   const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' } })
   expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.leave'])
   expect(asked.length).toBe(0)
 })
 
@@ -1507,9 +1586,10 @@ test('an empty repo in the call hides the one in its args, as the engine\'s last
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: '' })
-  expect(out.deny).toContain('refused on acme/other')
+  expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.leave'])
   expect(asked.length).toBe(0)
-  expect(acts(runs).map((r) => r.argv[0])).toEqual(['git'])
+  expect(acts(runs).map((r) => r.argv[0])).toEqual(['git', 'python3'])
 })
 
 test('a repo in the args alone names the repository', async ($, on) => {
@@ -1577,7 +1657,8 @@ test('a git run that throws is no repository in auto-merge', async ($, on) => {
   expect(runs.map((r) => r.argv[0])).toEqual(['git'])
 })
 
-test('an auto-merge list that is not made of strings refuses leaving draft, with one log line', async ($, on) => {
+
+test('an auto-merge list that is not made of strings reads as none: leaving draft goes through, observed, with one log line', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const logs: string[] = []
@@ -1587,9 +1668,9 @@ test('an auto-merge list that is not made of strings refuses leaving draft, with
   await startSession($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-  expect(out.deny).toContain('leaving draft is the operator\'s')
+  expect(out).toEqual({ result: 'ok' })
+  expect(journaled).toEqual(['github.draft.leave'])
   expect(asked.length).toBe(0)
-  expect(acts(runs).length).toBe(0)
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('/data/github/auto-merge.json')
 })
@@ -1681,7 +1762,7 @@ test('an explicit ask rule is never answered by a grant', async ($, on) => {
   expect(options).toEqual([['Allow', 'Deny']])
 })
 
-test('a grant never passes a text that breaks a rule, nor a deny verdict', async ($, on) => {
+test('a grant passes a text that breaks a rule, observed, and never a deny verdict', async ($, on) => {
   const runs: any[] = []
   let verdict: any = { decision: 'ask' }
   const session = freshSession()
@@ -1691,7 +1772,11 @@ test('a grant never passes a text that breaks a rule, nor a deny verdict', async
   on('tool.check', (_$: any, e: any) => (e.tool === 'AskUserQuestion' || e.tool === 'Read' ? { decision: 'allow' } : verdict))
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
+  cfg(on)
+  on('fs.write', () => ({ value: undefined }))
   on('process.run', (_$: any, e: any) => {
+    // The journal's event moves into place: no act of the session.
+    if (e.argv[0] === 'mv') return { value: { exitCode: 0, stdout: '', stderr: '' } }
     runs.push(JSON.parse(e.init?.stdin ?? '{}'))
     return { value: { exitCode: 0, stdout: 'ok', stderr: '' } }
   })
@@ -1701,11 +1786,12 @@ test('a grant never passes a text that breaks a rule, nor a deny verdict', async
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Fixed' } })
   expect(runs.length).toBe(1)
   const bad: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Fixed; thanks' } })
-  expect(JSON.stringify(bad)).toContain('no semicolon')
+  expect(bad).toEqual({ result: 'ok' })
+  expect(runs.length).toBe(2)
   verdict = { decision: 'deny', reason: 'now denied', rule: 'mcp__github__gh' }
   const denied: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Fixed' } })
   expect(JSON.stringify(denied)).toContain('now denied')
-  expect(runs.length).toBe(1)
+  expect(runs.length).toBe(2)
 })
 
 test('a grant is not given when the person picks plain Allow, nor by text typed under Other', async ($, on) => {
@@ -1958,61 +2044,65 @@ async function stubGuard(
 }
 
 async function stubBashLint($: any, on: any, bash: string[], asked: string[], answer: string, files: Record<string, string> = {}) {
+  on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : e.name === 'CLAUDE_CONFIG_DIR' ? '/cfg' : undefined }))
   stubAsk(on, asked, answer)
   on('fs.read', (_$: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT ' + e.path }))
   await stubGuard($, on, [], bash)
 }
 
-test('a gh pr create whose body file breaks a rule is refused once, then goes as it is', async ($, on) => {
+
+test('a gh pr create whose body file breaks a rule goes as it is, observed each time', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Deny', { '/work/body.md': 'Adds the reset; at last.\n\n' + NONE })
 
   const command = 'gh pr create --draft --title "feat: add the reset" --body-file body.md'
   const out: any = await $.tool.call({ tool: 'Bash', command })
-  expect(out.deny).toContain('gh pr create refused, its text breaks the writing rules:\n- body: no semicolon in prose')
-  expect(asked).toEqual([])
-  expect(bash).toEqual([])
+  expect(out.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
+  expect(bash).toEqual([command])
   const again: any = await $.tool.call({ tool: 'Bash', command })
   expect(again.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
   expect(asked).toEqual([])
-  expect(bash).toEqual([command])
+  expect(bash).toEqual([command, command])
 })
 
-test('a gh.py text run through Bash keeps the writing rules, its --body-file read', async ($, on) => {
+
+test('a gh.py text run through Bash that breaks the writing rules is observed, its --body-file read', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Deny', { '/work/body.md': 'Adds the reset; at last.\n\n' + NONE, '/work/ok.md': 'Adds the reset.\n\n' + NONE })
 
-  const create: any = await $.tool.call({ tool: 'Bash', command: 'python3 engine/gh.py pr-create --title "feat: add the reset" --body-file body.md --draft' })
-  expect(create.deny).toContain('gh pr-create refused, its text breaks the writing rules:\n- body: no semicolon in prose')
-  const update: any = await $.tool.call({ tool: 'Bash', command: 'python3 "$GH" pr-update 12 --body-file body.md' })
-  expect(update.deny).toContain('gh pr-update refused, its text breaks the writing rules:\n- body: no semicolon in prose')
-  const other: any = await $.tool.call({ tool: 'Bash', command: 'python3 "$SCRIPT" build --body-file body.md' })
-  expect(other.deny).toBeUndefined()
-  const comment: any = await $.tool.call({ tool: 'Bash', command: '/x/engine/gh.py pr-comment 12 --body-file=body.md --repo acme/thing' })
-  expect(comment.deny).toContain('gh pr-comment refused, its text breaks the writing rules:\n- body: no semicolon in prose')
-  const title: any = await $.tool.call({ tool: 'Bash', command: 'python3 engine/gh.py pr-update 12 --title "fix: a; b"' })
-  expect(title.deny).toContain('- title: no semicolon in prose')
-  const clean: any = await $.tool.call({ tool: 'Bash', command: 'python3 engine/gh.py pr-update 12 --body-file ok.md' })
-  expect(clean.deny).toBeUndefined()
+  const run = async (command: string) => {
+    const before = journaled.length
+    const out: any = await $.tool.call({ tool: 'Bash', command })
+    expect(out.deny, command).toBeUndefined()
+    return journaled.length - before
+  }
+  expect(await run('python3 engine/gh.py pr-create --title "feat: add the reset" --body-file body.md --draft')).toBe(1)
+  expect(await run('python3 "$GH" pr-update 12 --body-file body.md')).toBe(1)
+  expect(await run('python3 "$SCRIPT" build --body-file body.md')).toBe(0)
+  expect(await run('/x/engine/gh.py pr-comment 12 --body-file=body.md --repo acme/thing')).toBe(1)
+  expect(await run('python3 engine/gh.py pr-update 12 --title "fix: a; b"')).toBe(1)
+  expect(await run('python3 engine/gh.py pr-update 12 --body-file ok.md')).toBe(0)
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule', 'github.writing.rule', 'github.writing.rule'])
+  expect(bash.length).toBe(6)
   expect(asked).toEqual([])
 })
 
-test('a gh pr edit whose -b body lacks the sections is refused once, then goes as it is', async ($, on) => {
+
+test('a gh pr edit whose -b body lacks the sections goes as it is, observed', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Deny')
 
   const command = 'gh pr edit 3 -R acme/front -b \'Adds the reset.\''
   const out: any = await $.tool.call({ tool: 'Bash', command })
-  expect(out.deny).toContain('gh pr edit refused')
-  expect(out.deny).toContain('- body: a pull request description ends with the four sections, missing here: TODO Staging')
-  expect(bash).toEqual([])
-  const again: any = await $.tool.call({ tool: 'Bash', command })
-  expect(again.deny).toBeUndefined()
-  expect(asked).toEqual([])
+  expect(out.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
   expect(bash).toEqual([command])
+  expect(asked).toEqual([])
 })
 
 test('a Bash title and body that keep the rules run with no question', async ($, on) => {
@@ -2033,17 +2123,20 @@ test('a Bash title and body that keep the rules run with no question', async ($,
   }
   expect(asked).toEqual([])
   expect(bash).toEqual(lines)
+  expect(journaled).toEqual([])
 })
 
-test('a Bash title past the margin and a semicolon in a review body are refused', async ($, on) => {
+
+test('a Bash title past the margin and a semicolon in a review body go as they are, observed', async ($, on) => {
   const bash: string[] = []
   await stubBashLint($, on, bash, [], 'Deny')
 
-  const title: any = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --title "feat: ' + 'x'.repeat(80) + '"' })
-  expect(title.deny).toContain('- title: a title is about sixty characters at most')
-  const review: any = await $.tool.call({ tool: 'Bash', command: 'gh pr review 3 --comment -b "Looks right; merge it"' })
-  expect(review.deny).toContain('gh pr review refused')
-  expect(bash).toEqual([])
+  const title = 'gh pr edit 3 --title "feat: ' + 'x'.repeat(80) + '"'
+  const review = 'gh pr review 3 --comment -b "Looks right; merge it"'
+  expect((await $.tool.call({ tool: 'Bash', command: title }) as any).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Bash', command: review }) as any).deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
+  expect(bash).toEqual([title, review])
 })
 
 test('a body Bash cannot show, from stdin or a command substitution, is left to the person', async ($, on) => {
@@ -2079,32 +2172,35 @@ test('a title or body a shell variable or substitution gives is left to the pers
     expect(out.deny, command).toBeUndefined()
   }
   expect(bash).toEqual(lines)
+  expect(journaled).toEqual([])
   for (const command of ['gh pr comment 3 --body "Costs \\$5; thanks"', 'gh pr comment 3 --body \'Costs $6; thanks\'']) {
     const out: any = await $.tool.call({ tool: 'Bash', command })
-    expect(out.deny, command).toContain('- body: no semicolon in prose')
+    expect(out.deny, command).toBeUndefined()
   }
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
 })
 
 test('a body file under ~ is read from HOME, a relative one after a cd is left to the person', async ($, on) => {
   const bash: string[] = []
   const bad = 'Adds the reset; at last.\n\n' + NONE
-  on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
   await stubBashLint($, on, bash, [], 'Deny', { '/home/me/b.md': bad, '/work/b.md': bad, '/tmp/b.md': bad })
 
   const home: any = await $.tool.call({ tool: 'Bash', command: 'gh pr create --draft --title "feat: x" --body-file ~/b.md' })
-  expect(home.deny).toContain('- body: no semicolon in prose')
+  expect(home.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
   const absolute: any = await $.tool.call({ tool: 'Bash', command: 'cd sub && gh pr create --draft --title "feat: x" -F /tmp/b.md' })
-  expect(absolute.deny).toContain('- body: no semicolon in prose')
+  expect(absolute.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
   const moved = 'cd sub && gh pr create --draft --title "feat: x" --body-file b.md'
   const out: any = await $.tool.call({ tool: 'Bash', command: moved })
   expect(out.deny).toBeUndefined()
-  expect(bash).toEqual([moved])
+  expect(journaled.length).toBe(2)
+  expect(bash.length).toBe(3)
 })
 
 test('the engine route leaves a body from stdin, an expanded variable and a relative file after a cd to the person', async ($, on) => {
   const bash: string[] = []
   const bad = 'Adds the reset; at last.\n\n' + NONE
-  on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
   await stubBashLint($, on, bash, [], 'Deny', { '/home/me/b.md': bad, '/work/b.md': bad, '/tmp/b.md': bad })
 
   const lines = [
@@ -2118,15 +2214,17 @@ test('the engine route leaves a body from stdin, an expanded variable and a rela
     expect(out.deny, command).toBeUndefined()
   }
   expect(bash).toEqual(lines)
-  // The same file named where the hook can read it is linted.
+  expect(journaled).toEqual([])
+  // The same file named where the hook can read it is linted, and observed.
   for (const command of [
     'python3 engine/gh.py pr-create --draft --title "feat: x" --body-file ~/b.md',
     'cd sub && python3 engine/gh.py pr-create --draft --title "feat: x" --body-file /tmp/b.md',
     'python3 engine/gh.py pr-create --draft --title "feat: x" --body-file b.md',
   ]) {
     const out: any = await $.tool.call({ tool: 'Bash', command })
-    expect(out.deny, command).toContain('- body: no semicolon in prose')
+    expect(out.deny, command).toBeUndefined()
   }
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule', 'github.writing.rule'])
 })
 
 test('a body file the hook cannot read lets the command through, with one log line', async ($, on) => {
@@ -2151,6 +2249,7 @@ test('the negative phrases come from engine/negative-phrases.json, read by the m
   const bash: string[] = []
   const logs: string[] = []
   const read: string[] = []
+  cfg(on)
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
   on('fs.read', (_$: any, e: any) => {
     read.push(e.path)
@@ -2169,21 +2268,25 @@ test('the negative phrases come from engine/negative-phrases.json, read by the m
   // The file's phrases are the ones refused, the list the mod once held is not.
   const body = (text: string) => ({ pr: 1, title: 'feat: add the reset', body: text + '\n\n' + NONE })
   const held: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset. It will zzz-move on.') })
-  expect(held.deny).toContain('- body: state what the PR does, never what it does not do (the phrasings refused: « zzz-move », « zzz-stay »)')
+  expect(held.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
   const old: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset. The data is unchanged.') })
   expect(old.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
   expect(read.some((path) => path.endsWith('/engine/negative-phrases.json'))).toBe(true)
 
   const line = 'gh pr create --draft --title "feat: add the reset" --body "Adds the reset. It will zzz-stay.\n\n' + NONE + '"'
   const viaBash: any = await $.tool.call({ tool: 'Bash', command: line })
-  expect(viaBash.deny).toContain('(the phrasings refused: « zzz-move », « zzz-stay »)')
-  expect(bash).toEqual([])
+  expect(viaBash.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule', 'github.writing.rule'])
+  expect(bash).toEqual([line])
   expect(logs.filter((l) => l.includes('negative-phrases.json'))).toEqual([])
 })
 
 test('a negative-phrases file the mod cannot read leaves that one rule unchecked, logged, the other rules kept', async ($, on) => {
   const runs: any[] = []
   const logs: string[] = []
+  cfg(on)
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
   on('fs.read', (_$: any, e: any) => ({ deny: 'EACCES ' + e.path }))
   on('ui.log', (_$: any, e: any) => {
@@ -2199,8 +2302,10 @@ test('a negative-phrases file the mod cannot read leaves that one rule unchecked
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('negative-phrases.json')
   expect(logs[0]).toContain('left that rule unchecked')
+  expect(journaled).toEqual([])
   const semicolon: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: body('Adds the reset; at last.') })
-  expect(semicolon.deny).toContain('- body: no semicolon in prose')
+  expect(semicolon.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
 })
 
 test('a negative-phrases file that holds no list of strings is read as unreadable', () => {
@@ -2216,22 +2321,25 @@ test('a body in a heredoc substitution is read and linted', async ($, on) => {
 
   const bad = 'gh pr create --draft --title "feat: x" --body "$(cat <<\'EOF\'\nAdds the reset; at last.\n\n' + NONE + '\nEOF\n)"'
   const out: any = await $.tool.call({ tool: 'Bash', command: bad })
-  expect(out.deny).toContain('- body: no semicolon in prose')
+  expect(out.deny).toBeUndefined()
+  expect(journaled).toEqual(['github.writing.rule'])
   const good = bad.replace('; at last', '')
   const ok: any = await $.tool.call({ tool: 'Bash', command: good })
   expect(ok.deny).toBeUndefined()
-  expect(bash).toEqual([good])
+  expect(journaled).toEqual(['github.writing.rule'])
+  expect(bash).toEqual([bad, good])
 })
 
-test('a failed guard refuses, from the call alone, what it protects and lets the rest through', () => {
-  for (const command of ['gh pr merge 5', 'gh pr ready 5', 'gh pr create --title t', 'cat ~/.claude/plugins/data/github/pr-records/1.json', 'echo [] > ~/.claude/plugins/data/github/auto-merge.json']) {
+
+test('a failed guard refuses, from the call alone, what it still refuses and lets the rest through', () => {
+  for (const command of ['gh pr merge 5', 'gh pr ready 5', 'echo [] > ~/.claude/plugins/data/github/auto-merge.json', 'cat ~/.claude/plugins/data/github/auto-deploy.json']) {
     expect(bashNetRefusal(command)).toBe(NET_REFUSAL)
   }
-  for (const command of ['git status', 'gh pr create --draft --title t', 'gh pr ready 5 --undo', 'npm test']) {
+  for (const command of ['git status', 'gh pr create --title t', 'gh pr create --draft --title t', 'gh pr ready 5 --undo', 'npm test', 'cat ~/.claude/plugins/data/github/pr-records/1.json']) {
     expect(bashNetRefusal(command)).toBe(null)
   }
-  expect(writeNetRefusal('/h/.claude/plugins/data/github/pr-records/1.json')).toBe(NET_REFUSAL)
   expect(writeNetRefusal('/h/.claude/plugins/data/github/auto-merge.json')).toBe(NET_REFUSAL)
+  expect(writeNetRefusal('/h/.claude/plugins/data/github/pr-records/1.json')).toBe(null)
   expect(writeNetRefusal('/work/src/app.ts')).toBe(null)
 })
 
@@ -2273,13 +2381,29 @@ test('the records guard reads the words as the shell does', () => {
   expect(touchesRecords('python3 scripts/report.py')).toBe(false)
 })
 
-test('a failed guard refuses a write or a command naming the E2E exemption files', () => {
-  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(NET_REFUSAL)
+
+test('a failed guard lets a write naming the E2E exemption files through (observed), and refuses a deletion in them', () => {
+  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(null)
+  expect(bashNetRefusal('echo {} > "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
   expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
-  expect(writeNetRefusal('/work/docs/e2e-exempt.md')).toBe(null)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('find "$CLAUDE_PLUGIN_DATA/e2e-exempt" -delete')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('mv "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json" /tmp')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('cat "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
 })
 
-test('a failed guard refuses a write or a command naming the check plan files', () => {
-  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(NET_REFUSAL)
+
+test('a failed guard lets a write naming the check plan files through (observed), and refuses a deletion in them', () => {
+  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(null)
   expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(NET_REFUSAL)
+})
+
+test('a failed guard refuses a deletion in the records, and lets a read or another write through', () => {
+  expect(bashNetRefusal('rm ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('find ~/.claude/pr-records -delete')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('mv -t /tmp ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; rm ~/.claude/pr-records/x')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; mv ~/.claude/pr-records/x /tmp')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(null)
+  expect(bashNetRefusal('cat ~/.claude/pr-records/o/r/x.json')).toBe(null)
 })
