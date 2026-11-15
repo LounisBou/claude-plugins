@@ -607,7 +607,7 @@ export function checkWakeDone(left: {
   rowRecords?: readonly string[]
   goalsRecords?: readonly string[]
   ending?: 'done' | 'deferred'
-  ids?: string
+  ids?: string | undefined
 }): Held | null {
   // The working copies are not read by session, so they only warn (the caller logs them); the agents refuse.
   const stillThere = left.agents.map(a => a.label)

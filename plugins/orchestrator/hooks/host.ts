@@ -59,13 +59,25 @@ export type Events = {
   // A peer's delivery; `origin` is the host's own description of where it came from.
   'session.receive': { readonly agentId?: string; readonly origin: unknown; readonly text: string }
   'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean }
-  'classic.Stop': { readonly last_assistant_message?: string }
+  // The settings payload's own fields, as far as the stop gate reads them; the host's lists of the
+  // work in flight are read through a validator.
+  'classic.Stop': {
+    readonly last_assistant_message?: string
+    readonly stop_hook_active?: boolean
+    readonly session_id?: string
+    readonly transcript_path?: string
+    readonly cwd?: string
+    readonly background_tasks?: unknown
+    readonly session_crons?: unknown
+  }
+  // A message this session sends a peer: who wrote it (`origin.kind`) and its text.
+  'session.send': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string }
   // A call of a tool the plugin registered: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
 }
 
-// What `next` carries into a `.catch` handler: why the hook failed.
-export type Caught = { readonly error?: { readonly kind?: string; readonly message?: string } }
+// What `next` carries into a `.catch` handler: why the hook failed, and whether the call beneath already ran.
+export type Caught = { readonly error?: { readonly kind?: string; readonly message?: string }; readonly called?: boolean }
 
 // What `next` reads of the hook's bound.
 export type Budget = { readonly budget?: { readonly remainingMs: number } }
@@ -74,10 +86,10 @@ export type Next<E> = ((e: E) => Promise<unknown>) & Budget
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
-// A registration, with or without a matcher (`{}`, `{ tool }`).
+// A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
+  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[]>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
