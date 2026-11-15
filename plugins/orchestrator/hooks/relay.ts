@@ -17,7 +17,7 @@
 import { MACHINE_LINE, URGENT_LINE, blocksNothing, chainEntries } from './stop-gate.ts'
 import { machineLine, reportStatus } from '../core/method.ts'
 import type { SessionRow } from './supervision.ts'
-import { cutAt, shorten, VERDICT_LIMIT } from '../core/verdict.ts'
+import { cutAt, shorten, VERDICT_LIMIT, verdictOf } from '../core/verdict.ts'
 
 // The question a report carries is cut past this many characters, and the cut is said:
 // a coordinator's round needs the question, not a whole turn's narrative.
@@ -93,6 +93,108 @@ export function heldReport(answer: string): string {
   return status ? `${cut}\n${status}` : cut
 }
 
+// ── The facts of a delivery, read on the repository ──────────────────────────
+// An agent that ends on `status: done` claims a delivery: its tree clean, its commits pushed, its
+// pull request's head its own, CI on its way. The module reads those facts itself, from git in the
+// agent's checkout (the directory the module runs in, the clone its orchestrator made) and one gh
+// read, and adds them to the report as one line, so the orchestrator neither takes them on the
+// agent's word nor checks them by hand. A read that fails is said unread, never guessed.
+
+// A process run as the handler hands it in: its answer, or null when it could not run in time.
+export type FactsRun = (argv: readonly string[]) => Promise<{ exitCode: number; stdout?: unknown } | null>
+
+export type CiState = 'green' | 'failing' | 'pending' | 'none'
+
+export type DeliveryFacts = {
+  /** Paths `git status --porcelain` lists; null unread. */
+  dirty: number | null
+  /** Commits of HEAD on no remote branch; null unread. */
+  unpushed: number | null
+  head: string | null
+  /** The pull request gh reads, the one the verdict line names or else the branch's; null unread. */
+  pr: { number: number; head: string; ci: CiState } | null
+  /** The pull request and head the agent's verdict line names, if it names one. */
+  claimed: { pr: number; head: string } | null
+}
+
+type Check = { status?: unknown; conclusion?: unknown; state?: unknown }
+
+const FAILED = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+const PASSED = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED'])
+
+// The checks of a head as gh's statusCheckRollup lists them, in one word: a check that failed
+// makes it failing, all passed green, none at all none, anything else pending.
+export function ciState(rollup: readonly Check[]): CiState {
+  if (rollup.length === 0) return 'none'
+  const outcomes = rollup.map(c => String(c.conclusion || c.state || '').toUpperCase())
+  if (outcomes.some(o => FAILED.has(o))) return 'failing'
+  return outcomes.every(o => PASSED.has(o)) ? 'green' : 'pending'
+}
+
+const lineOf = (done: Awaited<ReturnType<FactsRun>>): string | null => (done && done.exitCode === 0 ? String(done.stdout ?? '').trim() : null)
+
+const countOf = (text: string | null): number | null => (text !== null && /^\d+$/.test(text) ? Number(text) : null)
+
+// The facts of the delivery `report` claims, every read at once: git's three in the checkout,
+// gh's one on the pull request the verdict line names (verdictOf), else on the branch's.
+export async function readDeliveryFacts(run: FactsRun, report: string): Promise<DeliveryFacts> {
+  const named = verdictOf(report)
+  const quiet = (argv: readonly string[]) => run(argv).catch(() => null)
+  const [status, head, unpushed, view] = await Promise.all([
+    quiet(['git', 'status', '--porcelain']),
+    quiet(['git', 'rev-parse', 'HEAD']),
+    quiet(['git', 'rev-list', '--count', 'HEAD', '--not', '--remotes']),
+    // One --json argument, the fields comma-joined: gh reads a second word as a positional.
+    quiet(['gh', 'pr', 'view', ...(named ? [String(named.pr)] : []), '--json', 'number,headRefOid,statusCheckRollup']),
+  ])
+  const porcelain = status && status.exitCode === 0 ? String(status.stdout ?? '') : null
+  return {
+    dirty: porcelain === null ? null : porcelain.split('\n').filter(line => line.trim() !== '').length,
+    unpushed: countOf(lineOf(unpushed)),
+    head: lineOf(head) || null,
+    pr: pullRequestOf(lineOf(view)),
+    claimed: named ? { pr: named.pr, head: named.head } : null,
+  }
+}
+
+function pullRequestOf(json: string | null): DeliveryFacts['pr'] {
+  if (!json) return null
+  try {
+    const read = JSON.parse(json) as { number?: unknown; headRefOid?: unknown; statusCheckRollup?: unknown }
+    if (typeof read.number !== 'number' || typeof read.headRefOid !== 'string') return null
+    return { number: read.number, head: read.headRefOid, ci: ciState(Array.isArray(read.statusCheckRollup) ? read.statusCheckRollup as Check[] : []) }
+  } catch {
+    return null
+  }
+}
+
+// What the facts contradict in a claimed delivery: a dirty tree, unpushed commits, a local head
+// that is not the pull request's, a head or a pull request other than the verdict line names.
+export function falseClaims(f: DeliveryFacts): string[] {
+  const wrong: string[] = []
+  if (f.dirty !== null && f.dirty > 0) wrong.push('tree dirty')
+  if (f.unpushed !== null && f.unpushed > 0) wrong.push('commits unpushed')
+  if (f.head && f.pr && f.head !== f.pr.head) wrong.push('local head is not the pull request\'s')
+  if (f.claimed && f.head && !f.head.startsWith(f.claimed.head)) wrong.push(`named head ${f.claimed.head} is not the local head`)
+  if (f.claimed && f.pr && f.pr.number !== f.claimed.pr) wrong.push(`#${f.claimed.pr} named, #${f.pr.number} read`)
+  return wrong
+}
+
+// The facts as the orchestrator receives them, one line: each fact or « unread », and, when they
+// contradict the claimed delivery, what is false said first.
+export function factsLine(f: DeliveryFacts): string {
+  const h7 = (sha: string) => sha.slice(0, 7)
+  const tree = f.dirty === null ? 'tree unread' : f.dirty === 0 ? 'tree clean' : `tree dirty (${f.dirty} paths)`
+  const pushed = f.unpushed === null ? 'unpushed unread' : `${f.unpushed} unpushed`
+  const head = !f.head ? 'head unread'
+    : !f.pr ? `head ${h7(f.head)}, pull request unread`
+    : f.head === f.pr.head ? `head ${h7(f.head)} = #${f.pr.number}'s head` : `head ${h7(f.head)} ≠ #${f.pr.number}'s head ${h7(f.pr.head)}`
+  const ci = f.pr ? `, CI ${f.pr.ci} at ${h7(f.pr.head)}` : ''
+  const wrong = falseClaims(f)
+  const said = wrong.length > 0 ? `FALSE CLAIM of delivery (${wrong.join('; ')}) — ` : ''
+  return `facts (read by the module): ${said}${tree}, ${pushed}, ${head}${ci}`
+}
+
 // What an agent's message over the limit that names no report file should have done: the line
 // the guards log when they let it through.
 export function unnamedReport(length: number): string {
@@ -140,15 +242,16 @@ export function fingerprint(wait: Wait): string {
 // agent. A header naming the session and its state, the address the answer goes back to,
 // then the text the turn carried, cut past the cap and said; a wait on background work that
 // names what it watches carries its status line alone. A report, never an order: it carries no approval, no merge, no undraft
-// and no stand-down.
-export function relayText(name: string, wait: Wait, since: string, context: string | null = null): string {
+// and no stand-down. A delivery carries its facts line (factsLine) under its header when read.
+export function relayText(name: string, wait: Wait, since: string, context: string | null = null, facts: string | null = null): string {
   const reply = `reply with SendMessage to: ${name}`
   if (wait.kind === 'done') return `[module] ${name} reports its work done and proposes to be closed\n${reply}`
   const header = wait.kind === 'operator' ? `[module] ${name} waits for the operator since ${since} — blocks: ${wait.blocks}`
     : wait.kind === 'delivered' ? `[module] ${name} reports its delivery; verify on the artifact${context ? ` — context ${context}` : ''}`
     : wait.kind === 'waiting' ? `[module] ${name} waits on its background work`
     : `[module] ${name} ${wait.kind === 'blocked' ? 'is blocked' : 'asks'}`
-  const said = 'blocks' in wait && wait.kind !== 'operator' && wait.blocks ? ` — ${wait.blocks}` : ''
+  const said = ('blocks' in wait && wait.kind !== 'operator' && wait.blocks ? ` — ${wait.blocks}` : '')
+    + (wait.kind === 'delivered' && facts ? `\n${facts}` : '')
   if (!wait.question || (wait.kind === 'waiting' && wait.blocks)) return `${header}${said}\n${reply}`
   return `${header}${said}\n${reply}\n\n${cutQuestion(wait.question)}`
 }
