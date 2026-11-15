@@ -1,6 +1,7 @@
 // The weekly report: what a week of the machine cost and delivered, computed from what is recorded
 // and nothing else. Read-only. It reads the day files of the store, the orchestrator's dispatch
-// records, round files and measure files, and GitHub through `gh`; a figure none of them holds
+// records, round files and measure files, GitHub through `gh`, and the tooling checkout's own
+// `npm run prompts` and `npm run rules` (their `--json`); a figure none of them holds
 // prints `n/a` and says why, never an estimate. Days are Paris days (the operator's), the store's
 // are UTC. Time is injected.
 import { readdirSync, readFileSync } from 'node:fs'
@@ -22,6 +23,8 @@ export interface GhResult {
   readonly stderr: string
 }
 export type Gh = (args: readonly string[]) => GhResult
+/** `npm run -s <script> -- --json` run in a checkout: its status and what it printed. */
+export type Check = (checkout: string, script: string) => GhResult
 
 export interface ReportInput {
   readonly config: string
@@ -33,6 +36,8 @@ export interface ReportInput {
   readonly tools: readonly string[]
   readonly cwd: string
   readonly gh: Gh
+  /** Runs one of the tooling checkout's report scripts; the checkout is `cwd`. */
+  readonly check: Check
   /** The `owner/name` a directory's git remote names. */
   readonly repositoryAt: (dir: string) => string | undefined
 }
@@ -229,6 +234,48 @@ function ghJson(gh: Gh, args: readonly string[], limit: number): unknown[] | str
   }
 }
 
+/** The JSON a script of the checkout printed, or why there is none. A script that fails with figures still prints them: only a missing or unparsable answer is n/a. */
+function checkJson(input: ReportInput, script: string): Record<string, unknown> | string {
+  const r = input.check(input.cwd, script)
+  try {
+    const value: unknown = JSON.parse(r.stdout)
+    if (Array.isArray(value) || typeof value !== 'object' || value === null) return `npm run ${script} answered something else than an object`
+    return record(value)
+  } catch {
+    return `npm run ${script} in ${input.cwd} printed no JSON${r.stderr.trim() === '' ? '' : `: ${r.stderr.trim().split('\n')[0]}`}`
+  }
+}
+
+/** The three lines the checks that report, not block, add to the week: prompt budgets, duplicates, rules held by prose alone. */
+function checkLines(input: ReportInput): string[] {
+  const prompts = checkJson(input, 'prompts')
+  const rules = checkJson(input, 'rules')
+  const lines: string[] = []
+  const budgets = typeof prompts === 'string' ? undefined : Object.entries(record(prompts['budgets'])).map(([plugin, b]) => ({ plugin, tokens: num(record(b)['tokens']), budget: num(record(b)['budget']) }))
+  if (typeof prompts === 'string') lines.push(`prompt budgets: ${NA(prompts)}`)
+  else if (budgets === undefined || budgets.length === 0 || budgets.some(b => b.tokens === undefined)) lines.push(`prompt budgets: ${NA('npm run prompts listed no plugin or a plugin without its tokens')}`)
+  else {
+    const figure = (b: (typeof budgets)[number]): string => `${b.plugin} ${b.tokens}/${b.budget ?? 'no budget'}`
+    const over = budgets.filter(b => b.budget === undefined || (b.tokens ?? 0) > b.budget)
+    const within = budgets.filter(b => !over.includes(b))
+    lines.push(`prompt budgets: ${over.length === 0 ? `all ${budgets.length} ${budgets.length === 1 ? 'plugin' : 'plugins'} within their budget` : `${over.length} of ${budgets.length} ${budgets.length === 1 ? 'plugin' : 'plugins'} over their budget (${over.map(figure).join(', ')})`}${within.length === 0 ? '' : `${over.length === 0 ? ' ' : '; within: '}(${within.map(figure).join(', ')})`}`)
+  }
+  const dupes = typeof prompts === 'string' ? undefined : record(prompts['duplicates'])
+  const [count, ceiling] = [num(dupes?.['count']), num(dupes?.['ceiling'])]
+  if (typeof prompts === 'string') lines.push(`duplicates: ${NA(prompts)}`)
+  else if (count === undefined || ceiling === undefined) lines.push(`duplicates: ${NA('npm run prompts gave no count or no ceiling')}`)
+  else lines.push(`duplicates: ${count} ${count === 1 ? 'sentence' : 'sentences'} said more than once, ceiling ${ceiling}: ${count > ceiling ? 'over' : 'within'}`)
+  const plugins = typeof rules === 'string' ? undefined : (Array.isArray(rules['plugins']) ? rules['plugins'].map(record) : undefined)
+  if (typeof rules === 'string') lines.push(`rules held by prose alone: ${NA(rules)}`)
+  else if (plugins === undefined || plugins.length === 0 || plugins.some(p => num(p['rules']) === undefined || num(p['left']) === undefined)) lines.push(`rules held by prose alone: ${NA('npm run rules gave no counts per plugin')}`)
+  else {
+    const total = (key: string): number => plugins.reduce((n, p) => n + (num(p[key]) ?? 0), 0)
+    const left = plugins.filter(p => (num(p['left']) ?? 0) > 0).map(p => `${text(p['plugin']) ?? '?'} ${num(p['left'])}`)
+    lines.push(`rules held by prose alone: ${total('left')} of ${total('rules')} (held by code ${total('byCode')}, named by an eval ${total('byEval')})${left.length === 0 ? '' : `; by plugin: ${left.join(', ')}`}`)
+  }
+  return lines
+}
+
 export function report(input: ReportInput): string[] {
   const start = input.week ?? addDays(parisDay(input.now), -6)
   const end = addDays(start, 6)
@@ -414,6 +461,7 @@ export function report(input: ReportInput): string[] {
   ]
   const names = ['agents on every runnable line', 'merge → in service', 'context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'method code per release', 'main green']
   out.push('', ...figures.map((f, i) => `${i + 1} ${names[i] ?? ''}: ${f}`))
+  out.push('', ...checkLines(input))
   if (skipped.n > 0) out[0] += ` (${skipped.n} unreadable event lines or files left out)`
   return out
 }

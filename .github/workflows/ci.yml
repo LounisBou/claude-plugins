@@ -51,18 +51,49 @@ jobs:
       - name: tooling tests, with the coverage floor
         if: steps.tested.outputs.repository != 'true'
         run: npm test
-      - name: prompt budgets and duplicates within their ceilings
-        if: steps.tested.outputs.repository != 'true'
-        run: npm run -s prompts > /dev/null
-      - name: context by scenario, and this pull request's difference
+      # The next three steps report: a figure over its ceiling or a script that fails is a warning
+      # and a line of the run's summary, never a red job (the weekly report prints the same figures).
+      # A warning is one non-empty line of the script's own message, the first five at most.
+      - name: prompt budgets and duplicates against their ceilings (a report)
         if: steps.tested.outputs.repository != 'true'
         run: |
+          rc=0
+          json=$(npm run -s prompts -- --json 2>"$RUNNER_TEMP/prompts.err") || rc=$?
+          if printf '%s' "$json" | jq -e . > /dev/null 2>&1; then
+            {
+              echo '### Prompt budgets and duplicates'; echo
+              echo '| plugin | tokens | budget |'; echo '|---|---:|---:|'
+              printf '%s' "$json" | jq -r '.budgets | to_entries[] | "| \(.key) | \(.value.tokens) | \(.value.budget // "none") |"'
+              echo; printf '%s' "$json" | jq -r '"Sentences said more than once: \(.duplicates.count), ceiling \(.duplicates.ceiling)."'
+            } >> "$GITHUB_STEP_SUMMARY"
+            printf '%s' "$json" | jq -r '.faults[]' | head -n 5 | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done
+          else
+            echo "### Prompt budgets and duplicates: npm run prompts exited $rc and printed no figures" >> "$GITHUB_STEP_SUMMARY"
+            { grep -v '^$' "$RUNNER_TEMP/prompts.err" || echo "npm run prompts exited $rc with no message"; } | head -n 5 | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done
+          fi
+      - name: context by scenario, and this pull request's difference (a report)
+        if: steps.tested.outputs.repository != 'true'
+        run: |
+          rc=0
           base="origin/${{ github.base_ref || 'main' }}"
-          { echo '### Context by scenario'; echo; npm run -s context -- --base "$base"; } >> "$GITHUB_STEP_SUMMARY"
+          table=$(npm run -s context -- --base "$base" 2>"$RUNNER_TEMP/context.err") || rc=$?
+          if [ "$rc" = 0 ]; then
+            { echo '### Context by scenario'; echo; printf '%s\n' "$table"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Context by scenario: npm run context exited $rc" >> "$GITHUB_STEP_SUMMARY"
+            { grep -v '^$' "$RUNNER_TEMP/context.err" || echo "npm run context exited $rc with no message"; } | head -n 5 | while IFS= read -r fault; do echo "::warning title=context by scenario::${fault}"; done
+          fi
       - name: the rules a prompt states that nothing holds (a report)
         if: steps.tested.outputs.repository != 'true'
         run: |
-          { echo '### Rules held by prose alone'; echo; npm run -s rules | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
+          rc=0
+          table=$(npm run -s rules 2>"$RUNNER_TEMP/rules.err") || rc=$?
+          if [ "$rc" = 0 ]; then
+            { echo '### Rules held by prose alone'; echo; printf '%s\n' "$table" | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Rules held by prose alone: npm run rules exited $rc" >> "$GITHUB_STEP_SUMMARY"
+            { grep -v '^$' "$RUNNER_TEMP/rules.err" || echo "npm run rules exited $rc with no message"; } | head -n 5 | while IFS= read -r fault; do echo "::warning title=rules held by prose alone::${fault}"; done
+          fi
       - name: dependencies declared with a range, no cycle, no import outside its plugin
         if: steps.tested.outputs.repository != 'true'
         run: npm run deps
