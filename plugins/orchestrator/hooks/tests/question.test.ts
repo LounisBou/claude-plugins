@@ -330,6 +330,73 @@ test('a question its project already had answered is answered from the newest re
   expect(shown).toEqual([])
 })
 
+// An identical question still open in the round is not stored a second time: the call answers with
+// the entry already there and says it is not to be written again.
+test('a question identical to one still open stores nothing: the open entry\'s id and block come back, to be written no more', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const { dollar, files, shown } = world()
+  const first = await ask(dollar, fields)
+  const open = stored(files)[0]!
+  // Asked again later, by a successor's session: the same project, so the same question.
+  const later = world({ files: Object.fromEntries(files), session: 's-successor' })
+  const again = await ask(later.dollar, fields, new Date(NOW.getTime() + 60_000))
+  expect(again.isError).toBeUndefined()
+  expect(stored(later.files).length).toBe(1)
+  expect(stored(later.files)[0]).toEqual(open)
+  expect(first.result).toContain('Write this block in your message as it stands')
+  expect(again.result).toContain(`already open as ${open.id}`)
+  expect(again.result).toContain('do not write it again in the chat')
+  expect(again.result).toContain(questionBlock(open, { i: 1, n: 1 }))
+  expect(again.result).not.toContain('Write this block in your message as it stands')
+  expect(shown).toEqual([])
+  // The same session asking twice in one turn is no other.
+  const twice = await ask(dollar, fields, new Date(NOW.getTime() + 1))
+  expect(stored(files).length).toBe(1)
+  expect(twice.result).toContain(`already open as ${open.id}`)
+})
+
+test('a question that differs by one field, or whose twin is withdrawn or answered by a message, is stored as a new entry', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const first = stored(before.files)[0]!
+  const twin = (id: string, over: Record<string, unknown>) => JSON.stringify({ ...first, id, sender: { ...first.sender, session: 's-old' }, ...over })
+  const answer = { text: 'B', by: 'message', at: '2026-11-13T10:00:00.000Z', settler: 'x' }
+  const { dollar, files } = world({
+    files: {
+      [`${ROUND}/q-withdrawn.json`]: twin('q-withdrawn', { status: 'withdrawn', answer: { ...answer, by: 'sender' } }),
+      [`${ROUND}/q-message.json`]: twin('q-message', { status: 'answered', answer }),
+      [`${ROUND}/q-other-project.json`]: twin('q-other-project', { sender: { ...first.sender, session: 's-old', name: 'Coord: another' } }),
+      // Open, but a replica of another machine's question, or claimed by the words he typed: neither is a twin.
+      [`${ROUND}/q-replica.json`]: twin('q-replica', { origin: { machine: 'box-2', address: 'box-2.local' } }),
+      [`${ROUND}/q-claimed.json`]: twin('q-claimed', { claimed: { typed: 'let me think', at: '2026-11-13T10:00:00.000Z' } }),
+    },
+  })
+  const same = await ask(dollar, fields)
+  expect(same.result).toContain('Write this block in your message as it stands')
+  expect(stored(files).filter(entry => entry.sender.session === 's-me').map(entry => entry.status)).toEqual(['open'])
+  // A different key, now that an open entry exists: another entry, not the first's.
+  const other = await ask(dollar, { ...fields, question: 'Which one merges last?' }, new Date(NOW.getTime() + 1))
+  expect(other.result).toContain('Write this block in your message as it stands')
+  expect(stored(files).filter(entry => entry.sender.session === 's-me').length).toBe(2)
+})
+
+test('an open twin does not hold back an answered record: the record still answers the new question', async () => {
+  const fields = { ...FULL, urgent: undefined }
+  const before = world()
+  await ask(before.dollar, fields)
+  const first = stored(before.files)[0]!
+  const { dollar, files } = world({
+    files: {
+      [`${ROUND}/q-open.json`]: JSON.stringify({ ...first, id: 'q-open', sender: { ...first.sender, session: 's-old' } }),
+      [`${ROUND}/q-done.json`]: JSON.stringify({ ...first, id: 'q-done', sender: { ...first.sender, session: 's-old' }, status: 'answered', answer: { text: 'b', by: 'pane', at: '2026-11-12T10:00:00.000Z', settler: 'x' } }),
+    },
+  })
+  const answer = await ask(dollar, fields)
+  expect(answer.result).toContain('Answered from the record, not asked again')
+  expect(stored(files).find(entry => entry.sender.session === 's-me')?.status).toBe('answered')
+})
+
 test('words typed in a tab are a record only when they name one choice: free prose newer than a lettered answer is passed over', async () => {
   const fields = { ...FULL, urgent: undefined }
   const before = world()
