@@ -395,6 +395,32 @@ interface Scanned {
   readonly notes: readonly string[]
 }
 
+/** Every string, key or value, of the JSON a text holds whole or line by line: a value the text stores escaped is read as it is. */
+function jsonStrings(body: string): string[] {
+  const out: string[] = []
+  const walk = (value: unknown): void => {
+    if (typeof value === 'string') out.push(value)
+    else if (Array.isArray(value)) value.forEach(walk)
+    else if (typeof value === 'object' && value !== null) {
+      for (const [key, item] of Object.entries(value)) {
+        out.push(key)
+        walk(item)
+      }
+    }
+  }
+  try {
+    walk(JSON.parse(body))
+    return out
+  } catch { /* not one document: its lines may each be one */ }
+  for (const line of body.split('\n')) {
+    if (line === '') continue
+    try {
+      walk(JSON.parse(line))
+    } catch { /* a line that is no JSON is read as the text it is */ }
+  }
+  return out
+}
+
 /**
  * The plan's files held to the secret scan, as the index is: one with a hit stays where it is and
  * is named with the patterns it matched, never a value; the rest are exported.
@@ -404,7 +430,8 @@ function scanArchive(plan: { readonly items: readonly ArchiveItem[]; readonly ke
   const notes = [...plan.notes]
   let kept = plan.kept
   for (const item of plan.items) {
-    const hits = [...new Set(redactText(item.body.toString('utf8'), secrets).hits)]
+    const body = item.body.toString('utf8')
+    const hits = [...new Set([...redactText(body, secrets).hits, ...jsonStrings(body).flatMap(each => redactText(each, secrets).hits)])]
     if (hits.length === 0) {
       items.push(item)
       continue
@@ -444,6 +471,8 @@ function writeArchive(clone: string, scanned: Scanned): Scanned {
 /** What leaving the machine came to: how many files went, and why each of the others, pushed all the same, stays. */
 interface Removal {
   readonly removed: number
+  /** The files pushed that a live session still reads: copied, never removed. */
+  readonly copied: number
   readonly stays: readonly string[]
 }
 
@@ -455,17 +484,22 @@ interface Removal {
  * stays is named with its reason, and the next export tries it again.
  */
 function removeArchived(options: ExportOptions, git: Git, clone: string, items: readonly ArchiveItem[], machine: string): Removal {
-  if (items.length === 0) return { removed: 0, stays: [] }
+  if (items.length === 0) return { removed: 0, copied: 0, stays: [] }
   const roots = [...new Set(items.map(item => item.rel.split('/')[0] ?? ''))]
   // NUL-separated: git quotes a name with a non-ASCII or control character otherwise.
   const listed = git(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...roots], clone)
-  if (listed.status !== 0) return { removed: 0, stays: items.map(item => `export: ${item.rel} stays on this machine (the repository's tree could not be listed)`) }
+  if (listed.status !== 0) return { removed: 0, copied: items.filter(item => item.stays !== undefined).length, stays: items.filter(item => item.stays === undefined).map(item => `export: ${item.rel} stays on this machine (the repository's tree could not be listed)`) }
   const held = new Set(listed.stdout.split('\0'))
   const still = new Set(planOf(options, machine).items.map(item => item.rel))
   let removed = 0
+  let copied = 0
   const stays: string[] = []
   for (const item of items) {
     options.heartbeat?.()
+    if (item.stays !== undefined) {
+      copied++
+      continue
+    }
     const stay = (reason: string): void => void stays.push(`export: ${item.rel} stays on this machine (${reason})`)
     if (!held.has(item.rel)) {
       stay('not in the repository\'s tree')
@@ -497,13 +531,13 @@ function removeArchived(options: ExportOptions, git: Git, clone: string, items: 
       stay(`not removed: ${codeOf(error)}`)
     }
   }
-  return { removed, stays }
+  return { removed, copied, stays }
 }
 
 /** The archive's line of the result: files exported, removed from this machine, kept (those held back, and those pushed that stay); and what was said of each. */
 function archiveLines(scanned: Scanned, removal: Removal): string[] {
   if (scanned.items.length + scanned.kept === 0) return []
-  return [`export: archive: ${scanned.items.length} file(s) exported, ${removal.removed} removed from this machine, ${scanned.kept + removal.stays.length} kept`, ...scanned.notes, ...removal.stays]
+  return [`export: archive: ${scanned.items.length} file(s) exported, ${removal.removed} removed from this machine, ${scanned.kept + removal.copied + removal.stays.length} kept`, ...scanned.notes, ...removal.stays]
 }
 
 /** Exports the store; answers the lines to print and the exit code. */
@@ -524,7 +558,7 @@ export function exportStore(options: ExportOptions): ExportResult {
   }
   const days = dayFiles(events)
   let scanned = scanArchive(planOf(options, machine), secrets)
-  if (days.length === 0 && scanned.items.length === 0) return { lines: ['export: no event recorded yet, nothing pushed', ...archiveLines(scanned, { removed: 0, stays: [] })], code: 0 }
+  if (days.length === 0 && scanned.items.length === 0) return { lines: ['export: no event recorded yet, nothing pushed', ...archiveLines(scanned, { removed: 0, copied: 0, stays: [] })], code: 0 }
   // The index is generated from the same events, and held to the same scan before anything is cloned:
   // as planned, every transcript here in the repository; it is made again once the copy says which are.
   const planned = indexFiles(options, events, days, session => options.transcript?.(session) !== undefined)

@@ -31,9 +31,11 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   It also archives the files of closed work the orchestrator's module directory holds (`lib/archive.ts`), a day after the row closed,
   at `<project>/<YYYY-MM>/<machine>/<kind>/<name>` of the same repository: the brief of a closed
   dispatch row (the `Row:` line of its header), the report it asks for, the review index its verdict
-  records and the reports its verdict names; the pull request ledger's archived lines and the round's
-  archived questions of a month already over. A file goes through the same scan (one with a hit stays
-  where it is and is named, never its value), and leaves the machine only once the push that carries it is
+  records and the reports its verdict names; the pull request ledger's archived lines of a month already
+  over, and the round's archived questions of a month already over, copied only: the orchestrator's
+  live readers (`recordedAsked`, the takeover's settled list) read them where they are, so they stay.
+  A file goes through the same scan, JSON read as the text it stores and as its parsed strings (one with
+  a hit stays where it is and is named, never its value), and leaves the machine only once the push that carries it is
   done and the repository holds its bytes. A file no closed row names, or one an open row names, is
   never touched, and nothing is deleted from the repository. The result says how many files were
   exported, removed from this machine and kept.

@@ -39,6 +39,8 @@ export interface ArchiveItem {
   readonly lines?: readonly string[]
   /** The directory (a review's) that goes once its last file has. */
   readonly dir?: string
+  /** Copied to the repository, never removed: a live session still reads the file where it is. */
+  readonly stays?: true
 }
 
 export interface ArchivePlan {
@@ -246,7 +248,7 @@ function ledgerItems(moduleDir: string, project: string, machine: string, curren
   }
 }
 
-/** The round's archived questions settled in a month before `current`, sorted by the orchestration that asked. */
+/** The round's archived questions settled in a month before `current`, sorted by the orchestration that asked; copied, they stay where they are. */
 function roundItems(moduleDir: string, machine: string, current: string, items: ArchiveItem[]): number {
   let kept = 0
   const root = join(moduleDir, ROUND_DIR, ROUND_ARCHIVE_DIR)
@@ -272,7 +274,8 @@ function roundItems(moduleDir: string, machine: string, current: string, items: 
       const asker = orchForm(question.asker)
       const subject = parseSessionName(asker)?.subject ?? asker.replace(/^[A-Za-z]+ ?: ?/, '')
       const project = subject === '' ? UNSORTED : archiveProject(subject)
-      items.push({ rel: `${project}/${monthOf(settled)}/${machine}/round/${place === '' ? '' : `${place}/`}${entry.name}`, source, body })
+      // Copied, not moved: `recordedAsked` and the takeover's settled list read every question of the round's archive.
+      items.push({ rel: `${project}/${monthOf(settled)}/${machine}/round/${place === '' ? '' : `${place}/`}${entry.name}`, source, body, stays: true })
     }
   }
   return kept
@@ -282,7 +285,8 @@ function roundItems(moduleDir: string, machine: string, current: string, items: 
  * What the module's directory gives the logs repository, from what is on disk now. A row's files
  * are the briefs whose header names it, the report such a brief asks for, the review index its
  * verdict records and the reports its verdict names: kept unless every row that names one was
- * closed a day ago or more and no open row's text names it. Ledger lines and round questions of a month already over.
+ * closed a day ago or more and no open row's text names it. Ledger lines of a month already over; round
+ * questions of one too, copied and kept (`stays`): a live session reads them.
  */
 export function planArchive(options: { readonly moduleDir: string; readonly machine: string; readonly now: number }): ArchivePlan {
   const { moduleDir, machine } = options

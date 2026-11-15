@@ -78,11 +78,11 @@ function scratch(work: (root: string) => void): void {
   }
 }
 
-const exported = (root: string, remote: string, options: { git?: Git; now?: number } = {}) => {
+const exported = (root: string, remote: string, options: { git?: Git; now?: number; secrets?: ReadonlyMap<string, string> } = {}) => {
   const { module } = { module: join(root, 'config', 'claude-orchestrator') }
   return exportStore({
     stateDir: join(root, 'state'),
-    secrets: new Map(),
+    secrets: options.secrets ?? new Map(),
     repo: remote,
     machine: 'box',
     git: options.git ?? git,
@@ -125,18 +125,19 @@ test('a closed row\'s files land under project and month and leave the machine; 
     const remote = remoteOf(root)
     const result = exported(root, remote)
     assert.equal(result.code, 0)
-    assert.equal(result.lines.at(-1), 'export: archive: 10 file(s) exported, 10 removed from this machine, 6 kept')
+    assert.equal(result.lines.at(-1), 'export: archive: 10 file(s) exported, 8 removed from this machine, 8 kept')
     assert.deepEqual(tree(remote), [...SENT].sort())
     assert.equal(git(['show', 'main:demo/2026-10/box/brief/one-brief.md'], remote).stdout, brief(1, 'report-one-brief.md', dir))
     assert.deepEqual(readdirSync(dir).sort(), ['dispatch-record.archive.jsonl', 'dispatch-record.jsonl', ...KEPT].sort())
     assert.equal(existsSync(join(dir, 'review-1-r1-index')), false)
     assert.deepEqual(readFileSync(join(dir, 'dispatch-record.archive.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => (JSON.parse(line) as { pr: number }).pr), [2])
-    assert.deepEqual(readdirSync(join(module, 'round', 'archive')).sort(), ['q-new.json', 'withdrawn'])
-    assert.deepEqual(readdirSync(join(module, 'round', 'archive', 'withdrawn')), [])
+    // The round's questions are copied, not moved: a live session reads them where they are.
+    assert.deepEqual(readdirSync(join(module, 'round', 'archive')).sort(), ['q-new.json', 'q-old.json', 'withdrawn'])
+    assert.deepEqual(readdirSync(join(module, 'round', 'archive', 'withdrawn')), ['q-gone.json'])
     // The record's own rows are not touched.
     assert.equal(readFileSync(join(dir, 'dispatch-record.jsonl'), 'utf8').split('\n').filter(Boolean).length, 4)
-    // A second export finds nothing more to take.
-    assert.deepEqual(exported(root, remote).lines, ['export: no event recorded yet, nothing pushed', 'export: archive: 0 file(s) exported, 0 removed from this machine, 6 kept'])
+    // A second export finds nothing more to remove; the round's questions are copied again, unchanged.
+    assert.deepEqual(exported(root, remote).lines, ['export: the logs repository already holds every event, nothing pushed', 'export: archive: 2 file(s) exported, 0 removed from this machine, 8 kept'])
   })
 })
 
@@ -174,7 +175,7 @@ test('a file the repository already holds is removed on the next export, and one
     }
     const again = exported(root, remote, { git: racing })
     assert.equal(again.code, 0)
-    assert.deepEqual(again.lines.slice(-2), ['export: archive: 2 file(s) exported, 1 removed from this machine, 7 kept', 'export: demo/2026-10/box/report/report-one-brief.md stays on this machine (changed since it was copied)'])
+    assert.deepEqual(again.lines.slice(-2), ['export: archive: 4 file(s) exported, 1 removed from this machine, 9 kept', 'export: demo/2026-10/box/report/report-one-brief.md stays on this machine (changed since it was copied)'])
     assert.equal(existsSync(join(dir, 'one-brief.md')), false)
     assert.equal(readFileSync(join(dir, 'report-one-brief.md'), 'utf8'), 'the report of row one, edited since\n')
   })
@@ -216,7 +217,7 @@ test('a repository whose tree cannot be listed after the push keeps every file, 
     const blind: Git = (args, cwd) => (args[0] === 'ls-tree' && args.includes('demo') ? { status: 1, stdout: '', stderr: 'fatal' } : git(args, cwd))
     const result = exported(root, remote, { git: blind })
     assert.equal(result.code, 0)
-    assert.equal(result.lines.filter(line => line.endsWith('(the repository\'s tree could not be listed)')).length, 10)
+    assert.equal(result.lines.filter(line => line.endsWith('(the repository\'s tree could not be listed)')).length, 8)
     assert.match(result.lines.find(line => line.startsWith('export: archive:')) ?? '', /^export: archive: 10 file\(s\) exported, 0 removed from this machine, 16 kept$/)
     assert.deepEqual(readdirSync(dir).sort(), before)
   })
@@ -271,11 +272,33 @@ test('the secret scan runs on the files: one with a secret stays, is named by it
     const remote = remoteOf(root)
     const result = exported(root, remote)
     assert.equal(result.code, 0)
-    assert.deepEqual(result.lines.slice(-2), ['export: archive: 9 file(s) exported, 9 removed from this machine, 7 kept', 'export: demo/2026-11/box/report/report-two-brief.md left in place (secret pattern: anthropic-key)'])
+    assert.deepEqual(result.lines.slice(-2), ['export: archive: 9 file(s) exported, 7 removed from this machine, 9 kept', 'export: demo/2026-11/box/report/report-two-brief.md left in place (secret pattern: anthropic-key)'])
     assert.ok(!result.lines.join('\n').includes(SECRET))
     assert.deepEqual(tree(remote), SENT.filter(rel => !rel.endsWith('report-two-brief.md')).sort())
     assert.equal(existsSync(join(dir, 'report-two-brief.md')), true)
     assert.equal(git(['grep', '-c', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj', 'main'], remote).status, 1)
+  })
+})
+
+test('a secret a JSON file stores escaped is found: a round question and a ledger line holding it stay local and are not pushed', () => {
+  scratch(root => {
+    const { dir, module } = fixture(root)
+    const value = 'Zq7"mP\\x9wTk3'
+    const secrets = new Map([['DB_PASSWORD', value]])
+    // JSON.stringify writes the value escaped, as the files hold it: the raw text has no match.
+    assert.ok(!JSON.stringify({ note: value }).includes(value))
+    put(join(module, 'round', 'archive', 'q-leak.json'), readFileSync(join(module, 'round', 'archive', 'q-old.json'), 'utf8').replace('"text":"b"', `"text":${JSON.stringify(`pw is ${value}`)}`).replace('"recommended"', `"note":${JSON.stringify(value)},"recommended"`))
+    assert.ok(readFileSync(join(module, 'round', 'archive', 'q-leak.json'), 'utf8').includes('\\"'))
+    writeFileSync(join(dir, 'dispatch-record.archive.jsonl'), `${readFileSync(join(dir, 'dispatch-record.archive.jsonl'), 'utf8')}${JSON.stringify({ v: 1, ledger: 'pr', repo: 'o/r', pr: 8, status: 'working', agent: 'a', since: 's', updated: 'u', note: `pw is ${value}`, archived: '2026-09-28T10:00:00Z' })}\n`)
+    const remote = remoteOf(root)
+    const result = exported(root, remote, { secrets })
+    assert.equal(result.code, 0)
+    assert.ok(result.lines.some(line => line.startsWith('export: demo-work/2026-10/box/round/q-leak.json left in place (secret pattern: env')))
+    assert.ok(result.lines.some(line => line.startsWith('export: demo/2026-09/box/ledger/dispatch-record.archive.jsonl left in place (secret pattern: env')))
+    assert.ok(!result.lines.join('\n').includes(value))
+    assert.ok(!tree(remote).some(rel => rel.endsWith('q-leak.json') || rel.includes('2026-09/box/ledger')))
+    assert.equal(existsSync(join(module, 'round', 'archive', 'q-leak.json')), true)
+    assert.equal(readFileSync(join(dir, 'dispatch-record.archive.jsonl'), 'utf8').includes('"pr":8'), true)
   })
 })
 
