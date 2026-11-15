@@ -1,6 +1,8 @@
 #!/bin/bash
-# iterm-agent.sh - the entry point. Resolves an interpreter and hands over to the
-# implementation beside it, which drives iTerm2 through the app's own API.
+# iterm-agent.sh - the entry point. Resolves the adapter's interpreter, then runs launcher.ts,
+# which reads the command line by core's argument set (core/launcher.ts, version 1) and hands
+# the request to the adapter beside it (iterm_agent.py), which drives iTerm2 through the app's
+# own API.
 #
 #   iterm-agent.sh list
 #   iterm-agent.sh spawn --dir <path> (--tier deep|standard|light | --model <id> --effort <level> | --inherit-model)
@@ -98,7 +100,7 @@
 #   transcript only once it has one, so a promptless launch is refused before any tab is
 #   made — --no-verify does not lift it.
 #
-# Interpreter: the environment the installer builds, when it is there; otherwise any
+# Interpreter of the adapter: the environment the installer builds, when it is there; otherwise any
 # python3. The module iTerm2 needs is imported only by the subcommands that talk to the
 # app, so reading the tier map or a tty works on a machine with no environment and no
 # window server at all.
@@ -172,4 +174,6 @@ else
     exit 1
 fi
 
-exec "$python" "$here/iterm_agent.py" "$@"
+export ORCHESTRATOR_ADAPTER_PYTHON="$python" ORCHESTRATOR_ADAPTER_DIR="$here"
+. "$here/../../orchestrator/scripts/node-ts.sh"
+node_ts_exec iterm-agent "$here/launcher.ts" "$@"
