@@ -1,15 +1,6 @@
 ---
 name: norms-variable-naming
-description: |
-  Use this agent to enforce variable naming conventions based on evidence: explicit CONTRIBUTING.md rules
-  and patterns discovered in the existing codebase. Every finding must cite its source —
-  no evidence means no finding.
-
-  <example>
-  Context: Developer wrote code with variable names that deviate from project conventions.
-  user: "Check variable naming in my changes"
-  assistant: "I'll use the norms-variable-naming agent to check for naming violations."
-  </example>
+description: "Checks variable naming against project norms and patterns in the codebase, each finding citing its source."
 model: haiku
 tools: Read, Grep, Glob, Bash
 color: red

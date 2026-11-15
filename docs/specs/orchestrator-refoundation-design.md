@@ -43,7 +43,7 @@ operator works.
 7. The suite blocks on macOS and Linux.
 8. The method kernel is about 2,000 tokens: ten principles, no dated quotation, each tested by ablation.
 9. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured monthly and before any learned method change merges (`program-design.md`, goal 15).
-10. `routing.py` is reduced to the tier-to-alias map and the cost rule, with one price table.
+10. `routing.py` is reduced to the tier map, the cost rule and `pick`'s tables, with one price table.
 11. The orchestrator starts in a mode: `build` loads the method's lifecycle, `investigate` loads supervision, agents, the gauge and the succession only.
 12. The succession brief is generated from the state, its notes of judgment are capped and promoted or dropped at each generation, and a script refuses a brief that misses an open item.
 13. Each role's starting context and each succession brief's size are measured at every start.
@@ -73,26 +73,26 @@ Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrat
 
 ## State on main (2026-11-15)
 
-Read from the code at orchestrator 0.104.5 (`775d7fdc`), rows 3 and 9 at `4ca6f735`. Pull requests are this repository's.
+Read from the code at orchestrator 0.104.5 (`775d7fdc`), row 9 at `4ca6f735`, rows 2, 3 and 10 at `9543c81a` (#371). Pull requests are this repository's.
 
 | Goal | State | Evidence | Open, and why |
 |---|---|---|---|
 | 1 | met | the hooks' store on core (`core/store.ts`, `store-io.ts`); `deck.json` (version 3) a view held byte for byte by `hooks/tests/golden-deck.ts`, written only when it differs or is a minute old (#66, #70) | `round/` and `chains/` sit outside `store/`, at the paths the running releases read; every write of either goes through core's store (`store.ts`, `store-io.ts`), the chains' through `chains.ts`, keyed by the session that wrote each entry |
-| 2 | partly met | `declare_wait` (`hooks/wait.ts`; #57, #60); the stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, #179) | other readers of a turn's last line remain: `undeclaredOperatorWait` and `deferredIds` in `hooks/guards.ts`, and the relay's reading of an agent's `status:` line (`program-design.md`, goal 9) |
-| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69), `brief-lint` (#341) and `install` (#340); `ci-watch.sh` and `dispatch-record.sh` are two-line launchers under a comment header | 16 of the 38 hook files are under the strict check, `stop-gate.ts` among them; 22 are not, `supervision.ts`, `guards.ts` and `wait.ts` among them. Bash with logic remains in `coordinator.sh` (port in progress); Python with logic in `iterm_agent.py` (not a thin adapter) and `routing.py`; whether that Python is ported is open against the program's non-goal 4 (`program-design.md`, last row of « State on main ») |
+| 2 | partly met | `declare_wait` (`hooks/wait.ts`; #57, #60); the stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, #179); `hooks/guards.ts` reads the declared wait, no last line (#351) | the relay's readers of a turn's last line remain: an orchestrator's machine line (`parseWait`), an agent's `status:` line (`parseStatus`) and « handed over » (`handsOver`) in `hooks/supervision.ts` (`program-design.md`, goal 9) |
+| 3 | met, by the program's non-goal 4 | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69), `brief-lint` (#341), `install` (#340), `coordinator` (#344), `goals` (#354) and `draft_guard` (#355); every `.sh` of the skills is a launcher of two lines; every hook file is under the strict check (#350, #366) | Python with logic stays in `iterm_agent.py` and `routing.py`: settled by the program's non-goal 4, Python staying where it talks to iTerm2, and `routing.py` staying, by the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation: « suis tes recommandations » (`program-design.md`, last row of « State on main ») |
 | 4 | withdrawn | the machine-to-machine move (`hooks/move.ts`, `hooks/moving.ts`) was deleted by #270 | — |
 | 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
 | 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
 | 7 | met | the suite blocks on Linux, in four shards (#65, #169), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
 | 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 2,153 tokens at a `build` start, 1,552 at an `investigate` start | no principle has been tested by ablation |
 | 9 | met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49), the orchestration arm run as an orchestration (#97); one measure, `measure-1`, on 2026-11-10 (`program-design.md`, goal 15) | each case ran once per arm (proposal 6); the next measure is due by 2026-12-10 |
-| 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted by #273 | `routing.py` still holds `pick` and `profile` beside the cost rule, and both are in use, so the wording is not met by a deletion. No code calls them; `skills/model-routing/SKILL.md` has every dispatch run `pick`, which is also what reads the tier map (`CLASS_TIERS`, `models.json`). What `pick` holds beyond that map: the operator's hand-written tables and the shipped defaults, the size rule (`--files`, `--lines`), the exploration notch read on the dispatch record, the `corrective=` pair (`docs/agent-dispatches.md`), and the profile inference that names a profile's table, which `profile` prints. Reducing it to the map removes those behaviours, so #325 kept `pick` and `profile`; whether to remove them is open, not yet put to the operator |
+| 10 | met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted by #273; `routing.py` holds the tier map (`CLASS_TIERS`, `models.json`), the cost rule and `pick`'s tables (the operator's hand-written tables, the shipped defaults, the size rule, the exploration notch, the `corrective=` pair, the profile inference `profile` prints), which every dispatch reads through `pick` (`skills/model-routing/SKILL.md`). The goal reads « tier map, cost rule and `pick`'s tables » since the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation: « suis tes recommandations », `pick` and `profile` kept | — |
 | 11 | met | « Your mode » in `skills/orchestrator/SKILL.md`: `build` loads `method:lifecycle`, `investigate` does not; both starts are scenarios of `ci/scenarios.json` (#74, #75) | — |
 | 12 | met, by another road | `succession.sh takeover` prints the takeover from the state alone (the dispatch record, the to-do list, the round, the goals, agents and pull requests read live): no brief is written, so no note is carried and no brief is left to refuse (#71, #307) | — |
 | 13 | met | the measure file's `start` (the first figure, the brief and its size; `hooks/gauge-core.ts`) (#61, #71) | — |
 
-Phases 1, 2, 5, 6, 7, 10 and 11 are done and 4 is withdrawn; 3, 8 and 9 are partly done, for the
-reasons above.
+Phases 1, 2, 3, 5, 6, 7, 9, 10 and 11 are done and 4 is withdrawn; 8 is partly done, for the
+reason above.
 
 ## Constraints
 
@@ -155,6 +155,7 @@ takes it.
    not transfer; the method does. The dispatch record holds rounds and escapes per dispatch and
    the measure file the context size: join them, and set each role's gate where rounds or
    escapes start to rise on the operator's own work.
+   Not shown to him on its own; cost M (a join of the dispatch record and the measure file, then a gate per role); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 2. **A restart on behaviour, not only on tokens.** Instructions given in pieces cost 39 % of
    performance on average, models committing early to a guess and not recovering (Laban et al.
    2025, arXiv:2505.06120, over 200,000 simulated conversations; not coding agents). Signs a
@@ -162,6 +163,7 @@ takes it.
    proposing again what an answer of his in the round rejected, re-reading a file it already read
    in the same phase, a second correction round on the same finding. Each is countable by
    code; each could trip the gate as tokens do.
+   Not shown to him on its own; cost M (three counters in the gauge, each tripping the gate); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 3. **Every brief names the head it was written against.** Stale context misleads: with
    outdated code snippets, two models produced 15 and 13 outputs incompatible with the
    current signature out of the same 17 examples (Weng et al. 2026, arXiv:2605.14478). A phase brief, a resume
@@ -175,11 +177,13 @@ takes it.
    localization produced 15 to 17 times as much repair improvement as the later stages, successes
    clustering around six to ten relevant files for one model family (Sepidband et al. 2026,
    arXiv:2604.05481). A brief is judged first on the files it names.
+   Not shown to him on its own; cost S for the rotation brief, M for the succession; taken for the rotation brief only, on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris).
 5. **Tune the succession by its failures.** When a successor misses, misreads or drowns an
    item, classify it — omitted, distorted, buried — and change one rule of the generation at a
    time, re-measured on the same handovers. Failure-driven compression cut peak tokens by 26 to
    54 % while improving success on non-coding agent benchmarks (Kang et al. 2025, ACON,
    arXiv:2510.00615); the transfer to coding agents is an inference to test, not a result.
+   Not shown to him on its own; cost M (each miss classified, one rule changed and re-measured on the same handovers); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 6. **Goal 9's next step: the pilot, run twice.** The measure of 2026-11-10 (`measure-1`) ran the
    rebuilt arm once on each of six cases; no case has run twice. The next pilot runs twice on the
    same case with the same model pair:

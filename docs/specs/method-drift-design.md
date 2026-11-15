@@ -70,7 +70,7 @@ In two weeks:
 ## 5. Non-objectives
 
 - Removing verifications on critical work: the plan can require everything when the scope calls for it.
-- An E2E exemption for a whole repository.
+- An E2E exemption for a whole repository, unless the operator grants it himself with an end (his words of 2026-11-15, 07:15 Paris, « valable jusqu'au 16/11 12h »): it is then recorded once, with `until`.
 - Taking away from the operator the review and the merge in repositories that are not in auto-merge.
 
 ## 6. Anti-objectives (failure even if « it works »)
@@ -147,6 +147,8 @@ G20 (acceptance, no longer only on a failed review at the same commit), N6 (an o
 ### 11.6 Kept (55)
 
 Everything that protects the secrets, production, merge and leaving draft outside auto-merge, the shape of consent, review by another session, the core of the stop gate (O4, O5, O7, O8), the guards of interactive walkthroughs, Cloudflare and bugs-bot.
+
+Settled on 2026-11-15 by the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation that kept today's behaviour: « suis tes recommandations »: github keeps its consent waivers, its check plans, the Ready label with the CI undraft (measured for a week) and the E2E exemptions. The exemption is the record of his words that name a repository or « all PRs » with an end (`mcp__github__record {repo, exempt: true, until, detail}`, `writing/pull-requests.md` « Ready pull requests »): recorded once, never asked again per pull request; it is no exemption the method grants itself (§5).
 
 ### 11.7 Context cuts
 

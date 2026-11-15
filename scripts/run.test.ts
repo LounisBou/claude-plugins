@@ -213,6 +213,18 @@ describe('release run', () => {
     assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+3 prompt tokens \(7 -> 10\)$/)
   })
 
+  it('counts the balance, and a lowered budget, from a release whose subject reads `chore: release <n>`', () => {
+    const root = released()
+    git(root, 'commit', '-q', '--allow-empty', '-m', 'chore: release 3.1')
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed, and longer.\n')
+    git(root, 'commit', '-q', '-am', 'change alpha again')
+    const io = recorder()
+    assert.equal(prompts(root, ['--balance'], io), 0)
+    assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+3 prompt tokens \(7 -> 10\)$/)
+    writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 50, beta: 100 }, duplicates: 0 }))
+    assert.equal(prompts(root, ['--base', 'HEAD~2'], recorder()), 0)
+  })
+
   it('writes no budget on a dry run', () => {
     const root = released()
     assert.equal(release(root, ['--dry-run'], recorder()), 0)

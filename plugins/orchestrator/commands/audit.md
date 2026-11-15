@@ -2,6 +2,7 @@
 description: Launch an audit of the method, on the operator's word
 argument-hint: <subject> [--since <date>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief.sh:*)
+disable-model-invocation: true
 ---
 
 Run on the operator's word only: he types this command, in the session whose tab the

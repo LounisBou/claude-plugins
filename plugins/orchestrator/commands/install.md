@@ -1,6 +1,7 @@
 ---
 description: Create the state directory and the short commands
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/install.sh` and report its output to the user.

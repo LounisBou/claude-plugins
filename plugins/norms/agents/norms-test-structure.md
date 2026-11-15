@@ -1,15 +1,6 @@
 ---
 name: norms-test-structure
-description: |
-  Use this agent to verify that test files follow the project's established test structure conventions.
-  Evidence-based: discovers the actual pattern used in existing test files rather than imposing a fixed style.
-  Only flags deviations from patterns that are demonstrably established in the codebase or defined in CONTRIBUTING.md.
-
-  <example>
-  Context: Developer added new test files.
-  user: "Check if my tests follow the project's test structure"
-  assistant: "I'll use the norms-test-structure agent to check test structure against project conventions."
-  </example>
+description: "Checks that test files follow the project's established test structure."
 model: haiku
 tools: Read, Grep, Glob, Bash
 color: yellow

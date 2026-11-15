@@ -1,6 +1,7 @@
 ---
 description: Bind this repository to its bug group (a Telegram group or a Slack channel) and register the project
 allowed-tools: Bash(bugs-bot:*)
+disable-model-invocation: true
 ---
 
 Set this repository up as a bugs-bot project, or update its setup. Ask the
