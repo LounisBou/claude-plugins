@@ -1052,6 +1052,26 @@ async function paneIsOpen($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
   return alive !== null && runsLive(alive, pid, tty)
 }
 
+// Whether a coordinator is live on this machine, from coordinator.sh's record (<state>/coordinator.json):
+// one that names a coordinator whose process still runs a session on its recorded tty (runsLive).
+// What cannot be told is live, since a coordinator read as gone loses its questions to another
+// session: a record naming no pid, a listing that failed. No record, or an empty one, is none.
+export async function coordinatorRuns($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
+  const text = String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => ''))
+  if (!coordinatorOf(text)) return false
+  let pid = ''
+  let tty: string | null = null
+  try {
+    const record: unknown = JSON.parse(text)
+    pid = isRecord(record) ? String(record['pid'] ?? '') : ''
+    if (isRecord(record) && isText(record['tty'])) tty = record['tty']
+  } catch { /* coordinatorOf read it already */ }
+  const argv = livePidsArgv([pid])
+  if (!argv) return true
+  const alive = livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null))
+  return alive === null || runsLive(alive, pid, tty)
+}
+
 // A record that says open while this host shows no such pane is removed: the pane went with no
 // close of the module's (the host's own, a tab or a session gone, a clear that gave the session
 // another id), and a record left behind held every question back from the tab for as long as the

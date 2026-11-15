@@ -63,13 +63,16 @@ const RELAY_TAB = "answered in the sender's own tab"
 // The close of an object `ask` stored: its asker settles it any way, the coordinator answers it in
 // its tab or withdraws it; it is answered or withdrawn, never closed (no coordinator holds it). The
 // coordinator here that was shown it (`shown`) is told when its asker settles it, so the question
-// leaves its conversation too.
-export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: string, shown = false): Plan | { error: string } {
+// leaves its conversation too. With no coordinator live (`coordinatorLive`, true when it cannot be
+// told), the machine-wide decide stands in for it: an orchestrator settles another session's open
+// question answered-here, the operator's words typed in its tab, and nothing else of another's.
+export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: string, shown = false, coordinatorLive = true): Plan | { error: string } {
   const sender = fields(entry['sender'])
   const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
   if (entry['status'] !== 'open') return { error: `${request.id} is ${String(entry['status'])} already: nothing to settle.` }
   const own = asker.session === me.session
-  if (!own && me.role !== 'coordinator') return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
+  const standsIn = !own && !coordinatorLive && me.role === 'orchestrator' && request.outcome === 'answered-here'
+  if (!own && me.role !== 'coordinator' && !standsIn) return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
   if (!own && request.outcome === 'answered-by-message') return { error: 'an answer that reached you by message settles your own question only; his answer in your tab is answered-here.' }
   const by = request.outcome === 'answered-by-message' ? 'message' : !own ? 'coordinator' : request.outcome === 'withdrawn' ? 'sender' : 'tab'
   const answer = { text: request.text, by, at, settler: me.name, ...(request.author !== null ? { author: request.author } : {}) }
@@ -86,7 +89,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     asker,
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
-    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own && me.role !== 'coordinator' ? 'tab' : 'coordinator',
+    consentBy: !answered || request.outcome === 'answered-by-message' ? null : (own || standsIn) && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
     relayed: false,
     told: own && shown && me.role !== 'coordinator',

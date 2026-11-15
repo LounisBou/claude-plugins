@@ -26,7 +26,7 @@ import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
+import { closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
 import { scanTail } from './session-name.ts'
 import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, WORDS_WINDOW_MS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
@@ -608,12 +608,13 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
+  const coordinatorLive = await coordinatorRuns($)
   let closed: Awaited<ReturnType<typeof closeRound>>
   try {
     closed = await closeRound($, path, current => {
       const asked = current === undefined ? null : parseAsked(current)
       const relayed = asked !== null || current === undefined ? null : parseRoundEntry(current)
-      if (asked !== null) return planAsked(asked, request, me, at, shown)
+      if (asked !== null) return planAsked(asked, request, me, at, shown, coordinatorLive)
       if (relayed !== null) return planRelayed(relayed, request, me, at, shown)
       if (current !== undefined) return { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
       return { error: `no entry ${request.id} in the round.` }
