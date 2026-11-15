@@ -25,3 +25,11 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   CI runs, and when, is in `docs/architecture.md`, « What CI holds ».
 - The program in progress is `docs/specs/program-design.md`; its goals table is
   the program's end point; no goal of the design is set aside.
+- One change is one pull request, with one review, green CI and auto-merge: that frame stays.
+- A friction met only while working on claude-plugins becomes no new rule, guard, gate or check of
+  the method unless the same problem is seen on one of the operator's other projects; it is fixed by
+  removing or simplifying.
+- A small change (one plugin, a few files) goes through one session that writes, self-reviews and
+  merges, without an orchestrator.
+- A judgment of a plugin rests on data from its version in service (events after its last deploy), or
+  on a point re-verified on main.
