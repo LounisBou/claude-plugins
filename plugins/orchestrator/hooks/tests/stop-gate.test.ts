@@ -16,7 +16,7 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
-import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait } from '../wait.ts'
+import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
@@ -2234,7 +2234,7 @@ test('a wait declared in an earlier turn is stale and never read', async () => {
   expect(passed.observed).toBeUndefined()
 })
 
-test('the turn\'s end hands the declared wait to its readers, and shows the answer unchanged', async () => {
+test('the turn\'s end passes the answer on unchanged: its readers read the declaration itself', async () => {
   const wait = waitMounted()
   const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, records: [
     '{"id":"r-1","label":"one","state":"open","deferred":"later, 2026-11-08"}\n{"id":"r-2","label":"two","state":"open","deferred":"later, 2026-11-08"}\n',
@@ -2242,17 +2242,8 @@ test('the turn\'s end hands the declared wait to its readers, and shows the answ
   expect((await declare(wait, dollar, { kind: 'deferred', blocks: '2 items' })).isError).toBeUndefined()
   let seen = ''
   const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, async x => { seen = String(x.answer); return { text: x.answer } })
-  expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'deferred', blocks: '2 items' }))
-  expect(machineLine(seen)).toBe('waiting: deferred — 2 items')
+  expect(seen).toBe('Watching.')
   expect(shown).toEqual({ text: 'Watching.' })
-  // An urgent operator wait reaches the turn's end as the urgent line the relay reads.
-  await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true })
-  await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, async x => { seen = String(x.answer); return { text: x.answer } })
-  expect(URGENT_LINE.test(machineLine(seen))).toBe(true)
-  expect(MACHINE_LINE.exec(machineLine(seen))?.[1]).toBe('G4: the scope')
-  // An agent's end is not the session's.
-  await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, async x => { seen = String(x.answer); return { text: x.answer } })
-  expect(seen).toBe('Done.')
 })
 
 // --- an agent's report held to the verdict limit ---------------------------------------------

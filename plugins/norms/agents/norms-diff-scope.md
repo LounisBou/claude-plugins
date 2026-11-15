@@ -1,14 +1,6 @@
 ---
 name: norms-diff-scope
-description: |
-  Use this agent to verify that code changes are minimal and focused. Flags unrelated changes, unnecessary reformatting,
-  whitespace-only hunks, and changes that should be in a separate upstream PR.
-
-  <example>
-  Context: Developer's PR has changes in files unrelated to the feature.
-  user: "Check if my diff is clean and focused"
-  assistant: "I'll use the norms-diff-scope agent to check for scope violations."
-  </example>
+description: "Checks that a diff is minimal and focused: unrelated changes, reformatting, whitespace-only hunks."
 model: sonnet
 tools: Read, Grep, Glob, Bash
 color: orange

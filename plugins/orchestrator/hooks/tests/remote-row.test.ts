@@ -6,6 +6,7 @@
 // written, an unmarked one passed, a malformed or oversized one refused — and drawn in
 // the pane, stale rows dropped, a live local row beating a remote one.
 import { expect, test } from 'claude-code/testing'
+import { DECLARATIONS } from '../wait.ts'
 import {
   ROW_MARKER, ROW_REFRESH_MS, ROW_TEXT_CAP, REMOTE_STALE_AFTER_MS, PRS_CAP, parseRemoteRow, rowText, deliveryOf, remoteRowOf, withRemote,
   prsInFlight, rowIsNews, rowSent, type RemoteRow,
@@ -213,8 +214,10 @@ test('no coordinator known: nothing is sent; an address that refuses falls back 
 test('the wait relay uses the learnt coordinator when none is registered here', async () => {
   const chains = mounted()
   const fx = fake()
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'done', blocks: '' })
   for (const hook of hooksOn(chains, 'turn.complete')) {
-    await hook.handler(fx.dollar, { answer: 'Everything merged.\n\nwaiting: done\n', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
+    await hook.handler(fx.dollar, { answer: 'Everything merged.', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
   }
   const report = fx.sent.find(s => parseQ(s.text)?.event.kind === 'ask')
   expect(report?.to).toBe(COORD_FROM)

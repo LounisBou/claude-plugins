@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { lint } from './brief-lint.ts'
-import { main, NOTES_CAP, parseArgs, previousReport, slug, TEMPLATES, tierOf, todoLines, type Deps } from './brief.ts'
+import { citedSections, main, NOTES_CAP, parseArgs, previousReport, rotateLine, sectionOf, slug, TEMPLATES, tierOf, todoLines, type Deps } from './brief.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'brief-')) })
@@ -83,6 +83,77 @@ test('phase: a row missing, closed, a plan or checkout absent, or no spec anywhe
     'brief: phase: row 9 is not\n', 'brief: phase: row 1 is not open\n', 'brief: phase: no dispatch record\n', 'brief: phase: no plan file\n',
     'brief: phase: no checkout\n', 'brief: phase: --spec is required: no goals.md names one\n',
   ])
+})
+
+test('phase with --phase: the brief names the plan\'s section and the spec\'s sections it cites, by heading and lines, never the whole files', () => {
+  const w = world({ 'rev-parse --short=12 origin/main': 'abc123def456' })
+  writeFileSync(w.plan, '# Plan\n\n## P1 schema\n\nTables.\n\n## P2 routes\n\nBuild the routes of §3.2 and §4.\n\n### P2 tasks\n\n- [ ] GET\n\n## P3 pages\n\nPages, §5.\n')
+  writeFileSync(w.spec, '# Spec\n\n## 3 API\n\n### 3.2 Routes\n\nThe routes.\n\n## 4. Errors\n\nCodes.\n\n## 5 Pages\n')
+  assert.equal(w.phase('--phase', 'P2 routes'), 0)
+  const brief = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
+  assert.ok(brief.startsWith('# app — P2 routes\n'))
+  assert.ok(brief.includes(`Plan: \`${w.plan}\`, section « ## P2 routes », lines 7–13 — its scope`))
+  assert.ok(brief.includes(`Spec: \`${w.spec}\`, section « ### 3.2 Routes », lines 5–7; section « ## 4. Errors », lines 9–11\n`))
+  assert.ok(brief.includes('Read the plan\'s section and the spec\'s sections above, the repository'))
+  assert.deepEqual(lintOf(brief), [])
+  assert.equal(w.phase('--phase', 'P9'), 2)
+  assert.match(w.err.join(''), /no heading of \S+ holds « P9 »/)
+  // A section that cites nothing names the spec whole, to be read by the sections it names.
+  writeFileSync(w.plan, '# Plan\n\n## P2 routes\n\nRoutes.\n')
+  assert.equal(w.phase('--phase', 'P2'), 0)
+  assert.ok(readFileSync(join(w.briefs, 'routes.md'), 'utf8').includes('Read the plan\'s section above, the spec by the sections it names, the repository'))
+  assert.equal(sectionOf('no heading', 'x'), undefined)
+  assert.deepEqual(citedSections('§7', '# none'), [])
+})
+
+/** The rotation of row 2: its checkout's git as given, the plan, the old agent's report. */
+function rotation(w: ReturnType<typeof world>, ...extra: string[]): number {
+  const phaseBrief = join(w.briefs, 'routes.md')
+  writeFileSync(phaseBrief, '# brief\n')
+  return w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', phaseBrief, '--worktree', w.worktree, '--orchestrator', ORCH,
+    '--tty', '/dev/ttys012', '--title', 'Agent: api routes', '--out', join(w.briefs, 'routes-r1.md'), '--repo', 'acme/app', ...extra)
+}
+
+test('rotation: the resume brief is printed from the row and git, with the open items of the plan, and the rotate line is said', () => {
+  const w = world({
+    'rev-parse --abbrev-ref HEAD': 'feat/routes', 'rev-parse --short=12 origin/main': 'abc123def456', 'rev-parse --short=12 HEAD': 'fed321fed321',
+    'log --oneline --no-decorate origin/main..HEAD': 'fed321f feat: GET routes\n1111111 feat: router', 'status --porcelain': 'M src/routes.ts',
+  })
+  writeFileSync(w.plan, '# Plan\n\n## P2 routes\n\n- [x] router\n- [ ] GET\n- [ ] POST\n\n## P3\n\n- [ ] pages\n')
+  writeFileSync(w.record, readFileSync(w.record, 'utf8').replace('"note":"reuse the router"', '"note":"reuse the router","review":{"head":"fed321fed321","verdict":{"head":"fed321fed321aaaa","result":"fail","words":"two findings"}}'))
+  const report = join(w.briefs, 'report-routes.md')
+  writeFileSync(report, 'old report')
+  assert.equal(rotation(w, '--plan', w.plan, '--phase', 'P2 routes', '--report', report, '--in-flight', 'POST handler half written, uncommitted', '--decisions', 'keep the router\'s error type'), 0)
+  const path = join(w.briefs, 'routes-r1.md')
+  assert.equal(w.text(), `rotation brief: ${path}\nreport: ${join(w.briefs, 'report-routes-r1.md')}\nrotate: ${rotateLine({ tty: '/dev/ttys012', worktree: w.worktree, title: 'Agent: api routes', out: path, orchestrator: ORCH })}\n`)
+  assert.match(w.text(), /iterm-agent\.sh rotate --old-tty \/dev\/ttys012 --dir '[^']+' --title 'Agent: api routes' --brief '[^']+routes-r1\.md' --orchestrator 'Orch: belt \[a1b2c3\]' --right-of self\n$/)
+  const brief = readFileSync(path, 'utf8')
+  for (const part of ['# app — resume brief for row 2: API: routes\n', 'Branch: `feat/routes`, from `origin/main`, which stood at abc123def456 when this brief was printed; head fed321fed321.',
+    'Landed since the base: \n  - fed321f feat: GET routes\n  - 1111111 feat: router\n', 'Uncommitted when printed: \n  - M src/routes.ts\n',
+    'In flight, as the agent stood down said it: POST handler half written, uncommitted\n', 'Last gate: fail at fed321fed321 — two findings\n', `Last report of the agent replaced: \`${report}\`\n`,
+    `The open items of \`${w.plan}\`, section « ## P2 routes », lines 3–7:\n  - GET\n  - POST\n\n`, 'keep the router\'s error type', 'Tier: standard\n', `**\`${ORCH}\`**`])
+    assert.ok(brief.includes(part), `the brief holds ${part}`)
+  assert.ok(!brief.includes('pages'))
+  assert.ok(!/\{\{[A-Z_]+\}\}/.test(brief))
+  assert.deepEqual(lintOf(brief), [])
+})
+
+test('rotation for an agent gone: nothing of its own, the brief says what git and the record hold', () => {
+  const w = world()
+  assert.equal(rotation(w), 0)
+  const brief = readFileSync(join(w.briefs, 'routes-r1.md'), 'utf8')
+  for (const part of ['Landed since the base: none\n', 'Uncommitted when printed: none\n', 'In flight, as the agent stood down said it: nothing said', 'Last gate: none recorded\n',
+    'Last report of the agent replaced: none\n', 'the phase brief\'s plan, less what Landed lists.', 'none beyond the phase brief'])
+    assert.ok(brief.includes(part), `the brief holds ${part}`)
+  writeFileSync(w.plan, '# Phase 2\n\nRoutes.\n')
+  assert.equal(rotation(w, '--plan', w.plan), 0)
+  assert.ok(readFileSync(join(w.briefs, 'routes-r1.md'), 'utf8').includes(`\`${w.plan}\`, less what Landed lists.`))
+  assert.equal(rotation(w, '--plan', join(dir, 'none.md')), 2)
+  assert.equal(rotation(w, '--plan', w.plan, '--phase', 'P9'), 2)
+  assert.equal(w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', join(dir, 'none.md'), '--worktree', w.worktree, '--orchestrator', ORCH, '--tty', 't', '--title', 'x', '--out', join(dir, 'o.md')), 2)
+  assert.equal(w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', w.plan, '--worktree', join(dir, 'none'), '--orchestrator', ORCH, '--tty', 't', '--title', 'x', '--out', join(dir, 'o.md')), 2)
+  assert.equal(w.run('rotation', '--record', w.record, '--row', '1', '--phase-brief', w.plan, '--worktree', w.worktree, '--orchestrator', ORCH, '--tty', 't', '--title', 'x', '--out', join(dir, 'o.md')), 2)
+  assert.equal(rotateLine({ tty: 't', worktree: "/a b'c", title: 'T', out: '/o', orchestrator: 'O' }).split(' rotate ')[1], "--old-tty t --dir '/a b'\\''c' --title 'T' --brief '/o' --orchestrator 'O' --right-of self")
 })
 
 test('the command line: a flag unknown, a value missing, a relative path, a bad mode or row is refused', () => {

@@ -1,6 +1,7 @@
 ---
 description: Show and change the status bar display settings
 allowed-tools: Read(${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-config.txt), Edit(${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-config.txt), Bash(${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusbar/statusline.sh:*)
+disable-model-invocation: true
 ---
 
 Help the user tune their status line.

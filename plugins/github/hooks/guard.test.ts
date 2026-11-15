@@ -68,6 +68,8 @@ type World = {
   listFails?: string
   // A stat that fails with this text, whatever the path.
   statFails?: string
+  // Every write of the journal fails with this text.
+  journalFails?: string
   // The branch whose pull request (#12) pr-get answers with its labels as they stand.
   branch?: string
   // Every git run fails in the host itself, with this error.
@@ -218,6 +220,7 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   })
   on('fs.write', (_$, e) => {
     if (e.path.startsWith(JOURNAL)) {
+      if (w.journalFails) return { deny: w.journalFails }
       seen.journal.push(String(fieldsOf(fieldsOf(JSON.parse(e.text))?.['source'])?.['code']))
       seen.events.push(e.text)
       return { value: undefined }
@@ -495,7 +498,7 @@ test('in auto-merge a ready merge runs with no question, the gate putting Ready 
 // that misses only records absent at its head is merged without the label, observed.
 const MERGE_ACTS = [
   ['tool', gh('pr-merge', { pr: 12 })],
-  ['Bash', bash('gh pr merge 12 -R acme/thing --squash')],
+  ['Bash', bash('gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD)],
 ] as const
 
 for (const [route, call] of MERGE_ACTS) {
@@ -535,6 +538,34 @@ test('a merge pinned to a head that moved is refused', async ($, on) => {
   await world($, on, { autoMerge: ['acme/thing'] })
   const out = await $.tool.call(gh('pr-merge', { pr: 12, sha: MOVED }))
   expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
+})
+
+// A push between the gate's read and the merge must not merge a head nobody checked.
+test('a tool merge with no sha is pinned to the head the gate checked', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out.deny).toBeUndefined()
+  expect(seen.runs.find((r) => r.command === 'pr-merge')?.args?.['sha']).toBe(HEAD)
+})
+
+for (const [command, flag] of [
+  ['gh pr merge 12 -R acme/thing --squash', '--match-head-commit '],
+  ['python3 /plugins/github/engine/gh.py pr-merge 12 --repo acme/thing', '--sha '],
+  ['gh api -X PUT repos/acme/thing/pulls/12/merge', '-f sha='],
+] as const) {
+  test('a ready Bash merge pinning no head is refused with the flag that pins the gated one: ' + flag.trim(), async ($, on) => {
+    const seen = await world($, on, { autoMerge: ['acme/thing'] })
+    const out = await $.tool.call(bash(command))
+    expect(out.deny).toContain('refused on acme/thing#12: pin the head the gate checked, ' + flag + HEAD + '.')
+    expect(seen.bash).toEqual([])
+  })
+}
+
+test('a Bash merge through gh api pinned to a head that moved is refused', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(bash('gh api -X PUT repos/acme/thing/pulls/12/merge -f sha=' + MOVED))
+  expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
+  expect(seen.bash).toEqual([])
 })
 
 
@@ -1182,6 +1213,20 @@ test('a command that only mentions the records in its text passes unobserved, a 
   expect(rm.deny).toBe(RECORDS_REFUSAL)
   expect(seen.journal).toEqual(['github.records.write', 'github.records.delete'])
   expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"', 'touch ~/.claude/pr-records/x'])
+})
+
+test('a journal that cannot be written leaves each decision standing: the deletion refused, the write observed and let through, one log line each', async ($, on) => {
+  const seen = await world($, on, { journalFails: 'ENOSPC: no space left on device' })
+  const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
+  expect(rm.deny).toBe(RECORDS_REFUSAL)
+  const touch = await $.tool.call(bash('touch ~/.claude/pr-records/x'))
+  expect(touch.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['touch ~/.claude/pr-records/x'])
+  expect(seen.journal).toEqual([])
+  const lines = seen.logs.filter((line) => line.includes('ENOSPC'))
+  expect(lines.length).toBe(2)
+  expect(lines[0]).toContain('github.records.delete')
+  expect(lines[1]).toContain('github.records.write')
 })
 
 const RECORDS_READS = [

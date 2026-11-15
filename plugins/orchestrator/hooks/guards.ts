@@ -21,7 +21,7 @@ import {
   roleOf, walkName, hostOn, scanTail, hostBasenames, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { tripGate, parseMeasure, measureFilePath, newerInstalled, type Newer } from './gauge-core.ts'
+import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
@@ -39,7 +39,7 @@ import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
-import { messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
+import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
@@ -52,7 +52,7 @@ import {
 import { todoName } from './todo-format.ts'
 
 // The nouns the guards hold.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'clock' | 'ui'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'clock' | 'ui' | 'settings'>
 
 // What a call beneath answered, read for the marks of one that did not go through.
 function answered(out: unknown): { isError?: unknown; deny?: unknown; isDelivered?: unknown } {
@@ -148,15 +148,6 @@ function joinContext(existing: readonly string[] | undefined, line: string): rea
   return [...(existing ?? []), line]
 }
 
-// The unmeasured line (context-gate.sh:126-130, said for the one channel the
-// module world has): it names what was read, and the gate that cannot be.
-function unmeasuredAnnouncement(env: { gate?: number; gateTokens?: number }): string {
-  const words = (n: number) => n.toLocaleString('en-US')
-  const gate = env.gate ?? 80
-  const gateTokens = env.gateTokens ?? 300000
-  return `CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (the smaller of ${words(gateTokens)} tokens and ${gate}% of the reported window) cannot be read; measure by hand before dispatching or rotating.`
-}
-
 // $.fs.read carries no range — the API's own types offer only { as }, and a
 // whole read is refused past 4 MiB while transcripts grow past any cap — so a
 // block comes from dd through $.process.run (blockArgv): one bounded window per
@@ -242,31 +233,39 @@ async function transcriptPathOf($: Held, sessionId: string): Promise<string> {
   return ''
 }
 
-// The first-prompt rule (context-gate.sh:113-119): « unmeasured » is said only
-// once a turn has answered — a session with no assistant entry yet is not a
-// gauge that failed, it is one the gauge has not rendered for at all. The walk
-// is the session-name tail scan: from the end, one dd window at a time, the cut
-// first line carried, and it stops at the first assistant entry — they are
-// dense, so the walk is short and never a whole-file read.
-async function transcriptHasAnswer($: Held, path: string): Promise<boolean> {
-  // A transcript that cannot be read has answered nothing the gate can know.
-  const until = Date.now() + NAME_WALK_MS
-  const { line } = await scanTail(
-    async (p: string) => (await $.fs.stat(p)).size,
-    (p: string, index: number) => readBlock($, p, index, Math.max(1, until - Date.now())),
-    path,
-    (l: string) => /"type"\s*:\s*"assistant"/.test(l),
-  )
-  return line !== null
+// The bound of the comparison of two installed commits.
+const RUNTIME_DIFF_MS = 5000
+const MARKETPLACE_SUFFIX = '@lounisbou'
+
+// The plugins of the deploy's marketplace this session enabled, or null when the settings cannot be
+// read: every plugin of its own commit is then taken for loaded.
+async function loadedPlugins($: Held): Promise<ReadonlySet<string> | null> {
+  try {
+    const enabled = fieldsOf(fieldsOf(await $.settings.read())?.['enabledPlugins'])
+    if (enabled === undefined) return null
+    return new Set(Object.entries(enabled).flatMap(([id, on]) => (on === true && id.endsWith(MARKETPLACE_SUFFIX) ? [id.slice(0, -MARKETPLACE_SUFFIX.length)] : [])))
+  } catch {
+    return null
+  }
+}
+
+// Whether the installed commit changes a runtime file of a plugin the session loaded. A comparison
+// that cannot be made says yes: the notice is then given as before the comparison existed.
+async function changesRuntime($: Held, newer: Newer): Promise<boolean> {
+  const run = await $.process.run(runtimeDiffArgv(newer), { timeoutMs: RUNTIME_DIFF_MS }).catch(() => null)
+  if (run === null || (run.exitCode !== 0 && run.exitCode !== 1)) return true
+  return run.exitCode === 1 && runtimeChanges(String(run.stdout ?? ''), newer, await loadedPlugins($)).length > 0
 }
 
 // `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
-  // place and the unmeasured line are the session's own, keyed by its id: after a
+  // place and the version decided are the session's own, keyed by its id: after a
   // /clear the id changes and no session.start fires, so a memo held across it
-  // would name the old session's transcript and keep the line already said.
-  let memo: { sessionId: string; transcript: string | null; saidUnmeasured: boolean; toldCommit: string | null } | null = null
+  // would name the old session's transcript. `toldCommit` is the newer commit last
+  // decided (told, or found to change nothing the session runs), `announced` whether
+  // a version notice was given.
+  let memo: { sessionId: string; transcript: string | null; toldCommit: string | null; announced: boolean } | null = null
   // The session id that handed over (it spawned its successor), the stop gate's
   // release: keyed by id like the memo above, a /clear's new session has not.
   let handedOverIn: string | null = null
@@ -307,7 +306,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const answer = () => next(blocks.length === 0 ? e : { ...e, context: blocks.reduce<readonly string[]>(joinContext, e.context ?? []) })
     try {
       const sessionId = await $.session.id()
-      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, saidUnmeasured: false, toldCommit: null }
+      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, toldCommit: null, announced: false }
       if (memo.transcript === null) {
         // A miss is looked up again: a young session's transcript appears with
         // its first turn, and a memo of the miss would pin it forever.
@@ -322,25 +321,21 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // carries no CLAUDE_PLUGIN_ROOT (the host sets it for hook processes
       // only), so the root is the engine's own $.plugin.root.
       const root = role === 'auditor' || role === 'coordinator' ? $.plugin.root : ''
-      // A newer installed commit is said to the sessions that last, once per commit; an agent
-      // ends at its merge and is not told.
-      if (role === 'orchestrator' || role === 'coordinator') {
-        const newer = await newerInstalled($.plugin.root, (path: string) => $.fs.read(path), memo.toldCommit)
-        if (newer) {
-          memo.toldCommit = newer.installed
-          blocks.push(versionAnnouncement(newer, role, root))
-        }
-      }
       let raw: string | null = null
       try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))) } catch { /* no file yet: unmeasured */ }
       const reading = parseMeasure(String(raw ?? ''))
-      if (!reading) {
-        if (!memo.saidUnmeasured && await transcriptHasAnswer($, memo.transcript ?? '')) {
-          memo.saidUnmeasured = true
-          blocks.push(unmeasuredAnnouncement(await gateEnv($)))
+      // A newer installed commit is said to the sessions that last, once per commit, when it changes
+      // a file the session runs; an orchestrator only once its generation has lived. An agent ends at
+      // its merge and is not told.
+      if (role === 'coordinator' || (role === 'orchestrator' && generationLived(reading, Date.now()))) {
+        const newer = await newerInstalled($.plugin.root, (path: string) => $.fs.read(path), memo.toldCommit, Date.now(), memo.announced)
+        if (newer && await changesRuntime($, newer)) {
+          memo.announced = true
+          blocks.push(versionAnnouncement(newer, role, root))
         }
-        return answer()
+        if (newer) memo.toldCommit = newer.installed
       }
+      if (!reading) return answer()
       const env = await gateEnv($)
       const gate = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, env)
       const announcement = gateAnnouncement(gate, role, root, setNames(env))

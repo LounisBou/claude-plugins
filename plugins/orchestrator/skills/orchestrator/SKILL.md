@@ -68,7 +68,8 @@ words.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
    you launched wakes you undeclared. A wake that brings nothing new gets no text to him: a
-   question already asked is never restated.
+   question already asked is never restated. A gate question's recommended option is never
+   « the operator does it by hand » while a fix or a CI pull request is possible.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
     opens its dispatch-record row the moment it is decided, `--blocker` naming what it waits

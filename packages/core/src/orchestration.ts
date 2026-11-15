@@ -160,8 +160,8 @@ export function launcherOf(root: string): string {
   return `${root.replace(/\/+$/, '')}/${LAUNCHER}`
 }
 
-/** A spawn: the new session's directory, title and prompt, given as text or as a file. */
-export type Spawn = { dir: string; title: string; rightOf?: string; resident?: boolean } & ({ prompt: string } | { promptFile: string })
+/** A spawn: the new session's directory, title and prompt, given as text or as a file, and the tools it keeps from its role's default removal. */
+export type Spawn = { dir: string; title: string; rightOf?: string; resident?: boolean; keepTools?: readonly string[] } & ({ prompt: string } | { promptFile: string })
 
 /** The `spawn` command line of the launcher at `launcher` (`launcherOf`), its arguments in the order the launcher documents. */
 export function spawnArgv(launcher: string, spawn: Spawn): string[] {
@@ -170,6 +170,7 @@ export function spawnArgv(launcher: string, spawn: Spawn): string[] {
     ...('prompt' in spawn ? ['--prompt', spawn.prompt] : ['--prompt-file', spawn.promptFile]),
     ...(spawn.rightOf === undefined ? [] : ['--right-of', spawn.rightOf]),
     ...(spawn.resident === true ? ['--resident'] : []),
+    ...(spawn.keepTools ?? []).flatMap(name => ['--keep-tool', name]),
   ]
 }
 

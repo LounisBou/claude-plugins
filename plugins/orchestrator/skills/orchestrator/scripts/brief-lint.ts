@@ -7,11 +7,14 @@
 //
 // Prints one line per finding and exits 1 when there is any; exits 0 and says so otherwise.
 // Every check reads the file's structure: a hole, a path, an address, a field, a size. None
-// reads the wording of an instruction.
+// reads the wording of an instruction. A brief that names its checkout and the head its base stood
+// at when it was printed (`Checkout: <dir>`, `from <base>, which stood at <sha>`) also gets one line
+// listing the files the base changed since: information, never a finding.
 //
 // What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 // next phase consumes, whether the tier fits the work, whether the spec it names was validated.
 // Those stay the orchestrator's, and a green lint is not an approved brief.
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
@@ -153,10 +156,43 @@ export function lint(text: string, context: Context): Finding[] {
   return found
 }
 
+/** `git diff --name-only <since> <base>` in a checkout: the files changed, undefined when it cannot be read. */
+export type ChangedFiles = (dir: string, since: string, base: string) => readonly string[] | undefined
+
+/** The files listed by name before the rest are counted. */
+export const CHANGED_SHOWN = 20
+
+/**
+ * The line saying what the base changed since the brief was printed, from the checkout and the head
+ * its `from <base>, which stood at <sha>` line names; undefined when the brief names neither, or git
+ * cannot tell.
+ */
+export function changedLine(text: string, changed: ChangedFiles): string | undefined {
+  const dir = /^Checkout: `([^`]+)`/m.exec(text)?.[1]
+  const stood = /from `([^`]+)`, which stood at ([0-9a-f]{7,40})\b/.exec(text)
+  if (dir === undefined || stood === null) return undefined
+  const [, base = '', since = ''] = stood
+  const files = changed(dir, since, base)
+  if (files === undefined) return undefined
+  if (files.length === 0) return `nothing changed on ${base} since ${since}`
+  const shown = files.slice(0, CHANGED_SHOWN).join(', ')
+  return `${files.length} file(s) changed on ${base} since ${since}: ${shown}${files.length > CHANGED_SHOWN ? `, and ${files.length - CHANGED_SHOWN} more` : ''}`
+}
+
+/** The changed files as git tells them in the checkout. */
+export function gitChanged(dir: string, since: string, base: string): readonly string[] | undefined {
+  try {
+    return execFileSync('git', ['-C', dir, 'diff', '--name-only', since, base], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).split('\n').filter(line => line !== '')
+  } catch {
+    return undefined
+  }
+}
+
 export interface Deps {
   readonly io: Io
   /** The plugin's root, where short-names.tsv is. */
   readonly root: string
+  readonly changed?: ChangedFiles
 }
 
 function isFile(path: string): boolean {
@@ -193,8 +229,11 @@ export function main(argv: readonly string[], deps: Deps): number {
   }
   if (brief === '') return die(USAGE)
   if (!isFile(brief)) return die(`brief-lint: not a file: ${brief}`)
-  const found = lint(readFileSync(brief, 'utf8'), { expected, shortNames: shortNames(deps.root), exists: existsSync })
+  const text = readFileSync(brief, 'utf8')
+  const found = lint(text, { expected, shortNames: shortNames(deps.root), exists: existsSync })
   for (const f of found) deps.io.out(`${brief}:${f.line}: ${f.text}\n`)
+  const since = changedLine(text, deps.changed ?? gitChanged)
+  if (since !== undefined) deps.io.out(`brief-lint: ${brief}: ${since}\n`)
   if (found.length === 0) {
     deps.io.out(`brief-lint: ${brief}: 0 findings\n`)
     return 0

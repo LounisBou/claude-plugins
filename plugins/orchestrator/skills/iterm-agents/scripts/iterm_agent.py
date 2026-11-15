@@ -225,10 +225,24 @@ ORCH_TOOLS = ("mcp__orchestrator__review", "mcp__orchestrator__supervision",
 ORCH_TOOLS_KEPT = (ORCH, COORD, AUDIT)
 # The servers an orchestrator never calls, about 8.5 thousand tokens of schemas on every call:
 # its agents run them. A server's name removes each of its tools; `--keep-tool` brings one back.
-ORCH_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
-# What a coordinator or an auditor never calls beyond those: they review, fix and record nothing.
-WATCHER_UNUSED = ORCH_UNUSED + ("mcp__pr-review", "mcp__orchestrator__review",
-                                "mcp__github__light_ci", "mcp__github__record")
+PR_REVIEW_SERVER = "mcp__pr-review"
+ORCH_SERVERS_UNUSED = ("mcp__cloudflare", "mcp__bugs-bot", "mcp__norms", "mcp__implement")
+ORCH_UNUSED = ORCH_SERVERS_UNUSED + (PR_REVIEW_SERVER, "ReadNotifications")
+# What a coordinator or an auditor never calls beyond those servers: they review, fix and record
+# nothing.
+WATCHER_UNUSED = ORCH_SERVERS_UNUSED + (PR_REVIEW_SERVER, "mcp__orchestrator__review",
+                                        "mcp__github__light_ci", "mcp__github__record")
+# What an implementer never calls: it asks its orchestrator, never the operator by dialog, and
+# deploys, triages bugs and runs pr-review's loop nowhere. The spawns that do keep theirs: the
+# bugs-bot agent `mcp__bugs-bot`, a review or comments agent `mcp__pr-review`.
+AGENT_UNUSED = ("AskUserQuestion", "mcp__cloudflare", "mcp__bugs-bot", PR_REVIEW_SERVER)
+# The plugins a role never uses, by name, set false in the launch's own --settings
+# `enabledPlugins` under each key the host's install record holds for that name: their skills,
+# commands, agent types and hooks leave that session, and the operator's settings are not touched
+# (probed on host 2.1.325: pr-review and pr-review-toolkit off took 2,995 tokens off the first
+# call). A spawn that keeps `mcp__pr-review` keeps both pr-review plugins too.
+PR_REVIEW_PLUGINS = ("pr-review", "pr-review-toolkit")
+ROLE_PLUGINS_OFF = {AGENT: PR_REVIEW_PLUGINS, ORCH: PR_REVIEW_PLUGINS + ("superpowers", "norms")}
 # The host's own switches for what it adds to a session's context on its own. The first is
 # internal and undocumented, the second too: a probe proves each on the host version that
 # ships with a change to this list, and a launcher test keeps the keys passed.
@@ -631,6 +645,9 @@ PROBE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_PROBE_TIMEOUT", "8"))
 # failure. A host CLI takes a moment to unwind; ten seconds is room for that and nothing
 # like room for a session that is not going.
 CLOSE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_CLOSE_TIMEOUT", "10"))
+# How long a predecessor's transcript stays untouched before a takeover that read no « handed
+# over » on it closes it all the same: an idle prompt, nothing in flight.
+TAKEOVER_IDLE = int(os.environ.get("ORCHESTRATOR_TAKEOVER_IDLE", "300"))
 # Once that wait is over, how long a host is given to die of SIGTERM before it is sent
 # SIGKILL, and then to leave the table after SIGKILL.
 TERM_GRACE = int(os.environ.get("ORCHESTRATOR_TERM_GRACE", "5"))
@@ -3819,9 +3836,60 @@ def close_home_tab(tty, socket, expect, listed=None):
     sys.stdout.flush()
 
 
+def handed_over(path):
+    """Whether a transcript carries the predecessor's « handed over »: an assistant entry naming
+    it after the last entry that carries « takeover confirmed » (anywhere in the transcript when
+    none does). A line that is not JSON is skipped."""
+    seen = False
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                low = line.lower()
+                if "handed over" not in low and "takeover confirmed" not in low:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                said = json.dumps(entry.get("message", ""), ensure_ascii=False).lower()
+                if entry.get("type") == "assistant" and "handed over" in said:
+                    seen = True
+                elif "takeover confirmed" in low:
+                    seen = False
+    except OSError:
+        return False
+    return seen
+
+
+def await_handover(tty, idle=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a takeover's kill, for the predecessor's « handed over » on its transcript
+    (the session its host on `tty` registered), or for that transcript to stay untouched `idle`
+    seconds. Answers the line that says which: a hand-over is said only where it was read."""
+    idle = TAKEOVER_IDLE if idle is None else idle
+    sid = rotated_session(tty)
+    path = transcript_of_session(sid) if sid else None
+    if not path:
+        return ("takeover: no transcript of the session on %s was found: no « handed over » read"
+                % tty)
+    while True:
+        if handed_over(path):
+            return "takeover: « handed over » read on %s" % path
+        try:
+            quiet = clock() - os.path.getmtime(path)
+        except OSError:
+            return "takeover: the transcript %s is gone: no « handed over » read" % path
+        if quiet >= idle:
+            return ("takeover: no « handed over » on %s; its transcript was idle %ds"
+                    % (path, int(quiet)))
+        sleep(min(5, max(1, idle - quiet)))
+
+
 def cmd_takeover(args):
     """A successor's close of its predecessor inside their home session: the predecessor's
-    window 0 killed, guarded by its name and proved on the process table and the server, then
+    « handed over » waited for on its transcript (or an idle transcript), then its window 0
+    killed, guarded by its name and proved on the process table and the server, then
     the successor's own window moved to index 0 without taking the operator's view; window 0
     is selected only if the operator was on it."""
     if not args.tty:
@@ -3844,6 +3912,10 @@ def cmd_takeover(args):
     if stable_title(args.expect) not in stable_title(pred.name):
         die("takeover: refused: the window on %s is named '%s', which does not contain '%s'"
             % (args.tty, pred.name, args.expect))
+    # The predecessor may still be writing its last turn: its « handed over », or a transcript
+    # left idle, comes before the kill, and the line says which was seen.
+    print(await_handover(args.tty))
+    sys.stdout.flush()
     viewed = tmux_out(["display-message", "-p", "-t", pred.window, "#{window_active}"],
                       "takeover").strip() == "1"
     # Read once the name is checked and before the kill: the process the succession ends,
@@ -4140,11 +4212,50 @@ def title_role(title):
 
 
 def default_removed(role):
-    """The tools a session of this role is not given unless its spawn keeps them. Only an
-    agent loses the four an orchestrator alone calls, an orchestrator also loses the
-    servers it never calls, and a coordinator or an auditor those and the review tools."""
-    return (LEAN_REMOVED + (() if role in ORCH_TOOLS_KEPT else ORCH_TOOLS)
-            + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED if role in (COORD, AUDIT) else ()))
+    """The tools a session of this role is not given unless its spawn keeps them. An agent
+    (or a title of no role) loses the four an orchestrator alone calls and what an
+    implementer never calls, an orchestrator the servers it never calls, and a coordinator or
+    an auditor those and the review tools."""
+    if role not in ORCH_TOOLS_KEPT:
+        return LEAN_REMOVED + ORCH_TOOLS + AGENT_UNUSED
+    return LEAN_REMOVED + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED)
+
+
+def plugins_off(role, keep=()):
+    """The `enabledPlugins` entries that turn off what this role never uses, one per key of the
+    host's install record; a spawn that keeps `mcp__pr-review` keeps the pr-review plugins. A
+    record that cannot be read turns nothing off: a spawn is never refused for it."""
+    names = ROLE_PLUGINS_OFF.get(role, ())
+    if PR_REVIEW_SERVER in keep:
+        names = tuple(name for name in names if name not in PR_REVIEW_PLUGINS)
+    if not names:
+        return {}
+    try:
+        with open(os.path.join(host_config_dir(), "plugins", "installed_plugins.json")) as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    plugins = record.get("plugins") if isinstance(record, dict) else None
+    if not isinstance(plugins, dict):
+        return {}
+    return {key: False for key in plugins if key.partition("@")[0] in names}
+
+
+def carried_tools(words, title):
+    """`(keep, drop)`: what a running session's launch line (`words`, its host's argv) removed
+    beyond, or left out of, the default set of `title`'s role, so a rotation's replacement is
+    given the same tools. A launch that removed nothing by `--disallowedTools` carries nothing:
+    it was not made by this launcher."""
+    words = list(words or [])
+    if "--disallowedTools" not in words:
+        return [], []
+    at = words.index("--disallowedTools") + 1
+    removed = []
+    while at < len(words) and not words[at].startswith("-"):
+        removed.append(words[at])
+        at += 1
+    default = default_removed(title_role(title))
+    return ([n for n in default if n not in removed], [n for n in removed if n not in default])
 
 
 def removed_tools(title, keep=(), drop=()):
@@ -4334,11 +4445,13 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         settings["enableAllProjectMcpServers"] = True
     if not keep_synced_skills:
         settings[SYNCED_SKILLS_SETTING] = False
-    # The caller's enabledPlugins, so the tested plugin stays the one that loads (or, for an
-    # auditor's successor, the plugin set its predecessor ran on). Under the launcher's own
-    # entries for the same plugin, and no other key of the caller's settings.
-    if caller_plugins:
-        settings["enabledPlugins"] = dict(caller_plugins, **settings.get("enabledPlugins", {}))
+    # The plugins this role never uses, off; then the caller's enabledPlugins, so the tested
+    # plugin stays the one that loads (or, for an auditor's successor, the plugin set its
+    # predecessor ran on). Both under a settings file's entries for the same plugin, and no
+    # other key of the caller's settings.
+    plugins = dict(plugins_off(title_role(title), keep_tools), **(caller_plugins or {}))
+    if plugins:
+        settings["enabledPlugins"] = dict(plugins, **settings.get("enabledPlugins", {}))
     settings.update(host_cuts(title_role(title)))
     cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
@@ -5647,6 +5760,19 @@ def cmd_rotate(args):
     found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
     # And who the old session is, read before the spawn too: after it, the tty may hold another.
     old = old_session(args.old_tty, found_on, title, window, args.expect)
+    # The tools the old agent's launch kept or dropped beyond its role's default set follow it to
+    # the replacement, read on its host's launch line; a --keep-tool or --drop-tool given to the
+    # rotation wins over what is carried.
+    if old["host"]:
+        keep, drop = carried_tools(host_argv(old["host"][0]), asked.title or old["title"])
+        given = set(asked.keep_tool or []) | set(asked.drop_tool or [])
+        keep = [n for n in keep if n not in given]
+        drop = [n for n in drop if n not in given]
+        asked.keep_tool = list(asked.keep_tool or []) + keep
+        asked.drop_tool = list(asked.drop_tool or []) + drop
+        if keep or drop:
+            print("rotate: tools carried from the old launch: kept %s; dropped %s"
+                  % (", ".join(keep) or "none", ", ".join(drop) or "none"), file=sys.stderr)
     # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
     # live model and effort, read on that agent's transcript — not on its tier's, which its
     # orchestrator may have escalated since. A tier, or a model with its effort, is the

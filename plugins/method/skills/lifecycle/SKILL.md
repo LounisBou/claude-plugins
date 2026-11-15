@@ -21,7 +21,8 @@ Once the gate is green, before the pull request opens, the implementer reviews i
 review round's lenses (correctness, tests,
 silent failures, spec conformity, security if relevant) over `origin/<base>...HEAD`, each a
 read-only `orchestrator:lens`. A finding is fixed or answered in the pull request
-body's « Self-review » section, one line each. The outside review reads it first.
+body's « Self-review » section, one line each, or in the report where the repository's policy
+keeps workflow words out of durable text. The outside review reads it first.
 
 ## Done means ready
 

@@ -2,7 +2,7 @@
 // The to-do list of a session, owned by the orchestrator: what the operator asked of it that does
 // not end within the turn, or that is for another session. One file per holder, `<state>/todo/<name>.jsonl`,
 // one line per item, in the grammar of the dispatch record's rows (`id`, `opened`, `label`, `state`,
-// `deferred`, `verdict`) plus `words`, `said_at`, `from` and `rows`: the item keeps his words and the
+// `deferred`, `verdict`) plus `words`, `said_at`, `from`, `images` and `rows`: the item keeps his words and the
 // dispatch rows it turned into, never their state, which is the rows' own. Written by the orchestrator's hooks module
 // alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
@@ -32,6 +32,8 @@ export interface TodoItem {
   readonly said_at: string
   /** The session that recorded it for the holder. */
   readonly from: string
+  /** The absolute paths of the images he gave with his words. */
+  readonly images?: readonly string[]
   readonly closed?: string
   /** The dispatch rows the item turned into; their state is read in the record, never copied here. */
   readonly rows?: readonly number[]
@@ -43,6 +45,20 @@ export interface TodoAdd {
   readonly said_at: string
   readonly from: string
   readonly label?: string
+  readonly images?: readonly string[]
+}
+
+/** The images one item keeps at most. */
+export const TODO_IMAGES_MAX = 10
+
+/** Whether a value is a list of images an item keeps: absolute paths, at most TODO_IMAGES_MAX. */
+export function isImageList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= TODO_IMAGES_MAX && value.every(path => typeof path === 'string' && path.startsWith('/') && !path.includes('\n'))
+}
+
+/** The line that prints an item's images, `images: <path>, <path>`, or null when it has none. */
+export function todoImagesLine(item: Pick<TodoItem, 'images'>): string | null {
+  return item.images !== undefined && item.images.length > 0 ? `images: ${item.images.join(', ')}` : null
 }
 
 const REFERENCE = / \[[^\]\s]+\]$/
@@ -83,6 +99,7 @@ export function parseTodoItem(raw: unknown): TodoItem | undefined {
   if (o['deferred'] !== undefined && typeof o['deferred'] !== 'string') return undefined
   if (o['closed'] !== undefined && typeof o['closed'] !== 'string') return undefined
   if (o['rows'] !== undefined && !(Array.isArray(o['rows']) && o['rows'].every(isRowId))) return undefined
+  if (o['images'] !== undefined && !isImageList(o['images'])) return undefined
   return raw as TodoItem
 }
 
@@ -116,6 +133,7 @@ export function addTodo(text: string, set: TodoAdd, now: Date): { text: string; 
     words: set.words,
     said_at: set.said_at,
     from: set.from,
+    ...(set.images !== undefined && set.images.length > 0 ? { images: [...set.images] } : {}),
   }
   return { text: textOf([...items, item]), item }
 }

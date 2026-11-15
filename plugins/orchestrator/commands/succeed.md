@@ -30,9 +30,7 @@ Then:
    name>"`, the name `ListAgents` prints for it without its bracketed reference.
    `--successor` places it immediately right of this tab, between it and the first agent,
    and hands it the chain.
-3. **Name the successor to your agents** once the spawn is verified and its name and reference
-   are read in `ListAgents`: `references/succession-predecessor.md`, « Succession — the predecessor », step 4.
-4. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only,
+3. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only,
    and the operator's in one line naming the successor, who answers them.
    On the confirmation, send it « handed over » as your
    LAST message, with `SendMessage` to the name it confirmed from:

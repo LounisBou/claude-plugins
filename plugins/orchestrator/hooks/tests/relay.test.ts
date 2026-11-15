@@ -5,14 +5,15 @@
 // twice, none without a coordinator, none from a session that is no orchestrator, and a
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
+import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
-import { settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
+import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { answerAskedFromPane, callAsk, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { parseConsentRecord } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
+import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
@@ -40,32 +41,36 @@ function answerOf(question: string, line: string): string {
   return `${question}\n\n${line}\n`
 }
 
+// A test's turn as its model ends it: the wait its last line names is the one it declared
+// (declare_wait), and the line is no part of the answer the relay reads.
+function declaredOf(answer: string): { wait: DeclaredWait | null; text: string } {
+  const lines = answer.replace(/\s+$/, '').split('\n')
+  const last = (lines.at(-1) ?? '').replace(/\*/g, '').trim()
+  const text = lines.slice(0, -1).join('\n').trim()
+  const operator = /^waiting:\s*operator\s*(\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.*)$/i.exec(last)
+  if (operator) return { wait: { kind: 'operator', blocks: (operator[2] ?? '').trim(), ...(operator[1] ? { urgent: true as const } : {}) }, text }
+  if (/^waiting:\s*done$/i.test(last)) return { wait: { kind: 'done', blocks: '' }, text }
+  const deferred = /^waiting:\s*deferred\s*(?:—|–|--|-)\s*(.+)$/i.exec(last)
+  if (deferred) return { wait: { kind: 'deferred', blocks: (deferred[1] ?? '').trim() }, text }
+  return { wait: null, text: answer }
+}
+const parseWait = (answer: string) => {
+  const declared = declaredOf(answer)
+  return declaredWait(declared.wait, declared.text)
+}
+
 // A turn that ends on the closing proposal: the relay's one round entry.
 const PROPOSAL = answerOf('Everything merged.', 'waiting: done')
 
 // --- the pure half ------------------------------------------------------------------------
 
-test('the machine line parses into a wait: the operator with what it blocks, or done', () => {
-  expect(parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))).toEqual({ kind: 'operator', blocks: 'phase 3', question: QUESTION })
-  expect(parseWait(answerOf('All merged.', '**waiting: done**'))).toEqual({ kind: 'done', question: 'All merged.' })
-  expect(parseWait('waiting: operator - blocks: the merge')).toEqual({ kind: 'operator', blocks: 'the merge', question: '' })
-  expect(parseWait('I keep working on phase 2.')).toBeNull()
-  expect(parseWait('')).toBeNull()
-})
-
-// The ending of a turn whose open work the operator deferred asks him nothing: no wait at all,
-// so no round entry, no report and no alert (the stop gate takes it: stop-gate.test.ts).
-test('the deferred line is no wait', () => {
-  expect(parseWait(answerOf('Nothing left to move.', 'waiting: deferred — row 5, G5, G6'))).toBeNull()
-  expect(parseWait(answerOf('Nothing left to move.', '**waiting: deferred - G5**'))).toBeNull()
-})
-
-test('a wait its sender marked urgent parses as urgent; the plain form is not', () => {
-  expect(parseWait(answerOf(QUESTION, 'waiting: operator (urgent) — blocks: x')))
-    .toEqual({ kind: 'operator', blocks: 'x', question: QUESTION, urgent: true })
-  expect(parseWait('waiting: operator (Urgent) - blocks: the deadline')).toEqual({ kind: 'operator', blocks: 'the deadline', question: '', urgent: true })
-  const plain = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: x'))!
-  expect('urgent' in plain ? plain.urgent : undefined).toBeUndefined()
+test('the declared wait is the relay\'s: the operator with what it blocks, or done, the answer its question', () => {
+  expect(declaredWait({ kind: 'operator', blocks: 'phase 3' }, `${QUESTION}\n`)).toEqual({ kind: 'operator', blocks: 'phase 3', question: QUESTION })
+  expect(declaredWait({ kind: 'done', blocks: '' }, 'All merged.')).toEqual({ kind: 'done', question: 'All merged.' })
+  expect(declaredWait({ kind: 'operator', blocks: 'x', urgent: true }, QUESTION)).toEqual({ kind: 'operator', blocks: 'x', question: QUESTION, urgent: true })
+  // No declaration is no wait, whatever the answer's last line says; the deferred ending asks him nothing.
+  expect(declaredWait(null, answerOf('All merged.', 'waiting: done'))).toBeNull()
+  expect(declaredWait({ kind: 'deferred', blocks: 'row 5, G5, G6' }, 'Nothing left to move.')).toBeNull()
 })
 
 test('the row fields: the wait since now, kept while the same wait lasts', () => {
@@ -221,6 +226,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     },
     command: { run: async () => undefined },
     prompt: { submit: async () => undefined },
+    settings: { read: async () => ({}) },
     // The coordinator's round wake is armed on the clock, and a round write redraws the pane.
     clock: {
       after: (ms: number, fn: () => unknown) => {
@@ -259,6 +265,11 @@ function mounted(): Hooks {
 // `budget` is the bound the host leaves them.
 async function drive<K extends keyof Events>(chains: Hooks, event: K, dollar: World, e: Events[K], budget?: { readonly remainingMs: number }): Promise<unknown> {
   const chain = hooksOn(chains, event)
+  const declared = declaredIn.get(e)
+  if (declared !== undefined) {
+    DECLARATIONS.turnStarted()
+    if (declared !== null) DECLARATIONS.declare(declared)
+  }
   const run = async (i: number, ev: Events[K]): Promise<unknown> => {
     const hook = chain[i]
     return hook === undefined ? ev : hook.handler(dollar, ev, Object.assign((x: Events[K]) => run(i + 1, x), budget === undefined ? {} : { budget }))
@@ -279,7 +290,15 @@ async function receive(chains: Hooks, dollar: World, e: Events['session.receive'
   return { consumed: answer?.['consumed'], text: answer?.['text'] }
 }
 
-const turnEnd = (answer: string) => ({ answer, reason: 'answer', isAborted: false, turnId: 't' })
+// A turn's end: driven, it is a new turn of the session, the wait its answer's last line names declared in it.
+const declaredIn = new WeakMap<object, DeclaredWait | null>()
+const waitOfEnd = (e: { answer: string }) => declaredWait(declaredIn.get(e) ?? null, e.answer)
+const turnEnd = (answer: string) => {
+  const declared = declaredOf(answer)
+  const e = { answer: declared.text, reason: 'answer', isAborted: false, turnId: 't' }
+  declaredIn.set(e, declared.wait)
+  return e
+}
 
 // The operator's ruling of 2026-11-14 (a): a wait on questions asked with `ask` is no entry of the
 // relay's, the questions being their own objects in the round; its row still shows it waiting.
@@ -288,7 +307,7 @@ test('an operator wait on questions asked with ask enters no entry and sends not
   const fx = fake()
   DECLARATIONS.turnStarted()
   DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', asked: ['q-s-one-1'] })
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('J\'attends sa réponse.'))
+  await drive(chains, 'turn.complete', fx.dollar, { answer: 'J\'attends sa réponse.', reason: 'answer', isAborted: false, turnId: 't' })
   expect(entries(fx)).toEqual([])
   expect(fx.sent.length).toBe(0)
   const row = fx.row()!
@@ -450,7 +469,7 @@ test('a round entry that cannot be written is logged, never holds the turn\'s en
   delete over.roundWrite
   await drive(chains, 'turn.complete', fx.dollar, e)
   expect(entries(fx).length).toBe(1)
-  expect(fx.row().relayed).toBe(fingerprint(parseWait(e.answer)!))
+  expect(fx.row().relayed).toBe(fingerprint(waitOfEnd(e)!))
 })
 
 // --- an entry its sender no longer waits on ---------------------------------------------------
@@ -520,61 +539,14 @@ test('the sender\'s row is deleted before the withdrawal runs, and a withdrawal 
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
 })
 
-for (const text of ['handed over', '**Handed over.**']) {
-  test(`the sender's own message ${JSON.stringify(text)} to its successor withdraws its open entries, the message sent all the same`, async () => {
-    const { chains, fx, asked, other, settled } = await senderWithEntries()
-    const send = { text, origin: { kind: 'model' } }
-    expect(await drive(chains, 'session.send', fx.dollar, send)).toBe(send)
-    expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
-  })
-}
-
-test('a refused hand-over leaves the sender\'s open entries open', async () => {
-  const { chains, fx, asked } = await senderWithEntries()
-  const send = { text: 'handed over', origin: { kind: 'model' } }
-  const refused = { isDelivered: false, reason: 'nobody by that name' }
-  expect(await only(hooksOn(chains, 'session.send'))!.handler(fx.dollar, send, async () => refused)).toBe(refused)
-  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
-  expect(fx.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
-})
-
-test('another session\'s end, and another session\'s hand-over, leave this sender\'s open entries open', async () => {
+test('another session\'s end leaves this sender\'s open entries open', async () => {
   const { chains, fx, asked } = await senderWithEntries()
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-two' })
-  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
-  const id = fx.dollar.session.id
-  fx.dollar.session.id = async () => 's-two'
-  await drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } })
-  fx.dollar.session.id = id
-  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
-})
-
-test('a turn whose last line is « handed over » withdraws the sender\'s open entries', async () => {
-  const { chains, fx, asked, other, settled } = await senderWithEntries()
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed by the successor.\n\nhanded over'))
-  expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
-})
-
-test('a non-orchestrator\'s turn ending on « handed over » withdraws nothing', async () => {
-  const chains = mounted()
-  const ask = fake()
-  await drive(chains, 'turn.complete', ask.dollar, turnEnd(PROPOSAL))
-  const asked = only(entries(ask))
-  const agent = fake({ name: 'Agent: belt-p3', role: 'agent' })
-  agent.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
-  await drive(chains, 'turn.complete', agent.dollar, turnEnd('Takeover confirmed by the successor.\n\nhanded over'))
-  expect(entries(agent).find(e => e.id === asked.id)!.status).toBe('open')
-  expect(agent.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
-})
-
-test('a turn whose last line is a wait after « handed over » withdraws nothing on that account', async () => {
-  const { chains, fx, asked } = await senderWithEntries()
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd(`handed over\n\n${QUESTION}\n\n${QUESTION_LINE}`))
-  expect(entries(fx).some(e => e.answer?.text === 'handed over to its successor')).toBe(false)
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
 })
 
 for (const [label, send] of [
+  ['the model\'s own « handed over »', { text: 'handed over', origin: { kind: 'model' } }],
   ['another message of the model', { text: 'not handed over yet', origin: { kind: 'model' } }],
   ['a plugin\'s send', { text: 'handed over', origin: { kind: 'plugin' } }],
   ['a subagent\'s send', { text: 'handed over', origin: { kind: 'model' }, agentId: 'a-1' }],
@@ -616,7 +588,14 @@ function expectMoved(fx: ReturnType<typeof fake>, asked: RoundEntry, other: Roun
 }
 
 for (const [label, end] of [
-  ['the hand-over', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } })],
+  ['the turn end of the session that spawned it', async (chains: Hooks, fx: ReturnType<typeof fake>) => {
+    DECLARATIONS.handOver('s-one')
+    try {
+      await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed by the successor.'))
+    } finally {
+      DECLARATIONS.handOver('')
+    }
+  }],
   ['the session end', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' })],
 ] as const) {
   test(`« takeover confirmed » from an orchestrator, then ${label}, moves the open entries to it, still open`, async () => {
@@ -628,6 +607,36 @@ for (const [label, end] of [
     expect(entries(fx).find(e => e.id === asked.id)?.session).toBe('s-two')
   })
 }
+
+test('a session that spawned its successor hands it the open entries at its « takeover confirmed », and tells its agents who it is', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  successorRunning(fx)
+  // The successor's tty carries the chain the launcher handed it: one agent, live on its tty.
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/sessions/s-two`, JSON.stringify({
+    role: 'orchestrator', name: 'Orch: belt-2', pid: '9002', tty: '/dev/ttys009', repo: null, context_percent: 5, context_tokens: 1, window: 100,
+    model: 'a-model', busy: false, updated_at: '2026-10-30T16:20:00.000Z',
+  }) + '\n')
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys009.jsonl`, JSON.stringify({ tab_id: 'tab-p4', tty: '/dev/ttys011', owner: 'w9' }) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/9011.json`, JSON.stringify({ pid: 9011, sessionId: 's-agent', name: 'Agent: belt-p4', status: 'idle' }))
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: Parameters<typeof run>[1]) =>
+    argv[0] === 'ps' && argv[2] === 'ttys011' ? { exitCode: 0, stdout: '9011\n', stderr: '' } : run(argv, init)
+  DECLARATIONS.handOver('s-one')
+  try {
+    await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  } finally {
+    DECLARATIONS.handOver('')
+  }
+  expectMoved(fx, asked, other, settled)
+  expect(fx.sent.filter(s => s.text === successorText({ name: 'Orch: belt-2', session: 's-two' })).map(s => s.to)).toEqual([{ sessionId: 's-agent' }])
+})
+
+test('a « takeover confirmed » to a session that spawned no successor moves nothing before its end', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  expect(entries(fx).find(e => e.id === asked.id)!.session).toBe('s-one')
+})
 
 // A question asked with `ask` (question.ts, `v` 2) follows its asker as the relay's entries do:
 // withdrawn when its session ends or hands over with no successor, moved to a successor it learnt.
@@ -647,7 +656,6 @@ function withAsked(fx: ReturnType<typeof fake>) {
 
 for (const [label, end, why] of [
   ['its session end', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' }), "the sender's session ended"],
-  ['its hand-over with no successor', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
 ] as const) {
   test(`a question asked with ask is withdrawn by ${label}, and no other session's, and none settled`, async () => {
     const chains = mounted()
@@ -704,6 +712,16 @@ test('a successor the registry names only after its « takeover confirmed » is 
 
 // The successor's real word of 2026-11-04T17:15:27Z: the phrase, then its report on the same
 // line. Read as no takeover, the hand-over withdrew the open questions instead of moving them.
+// Runs `move` in a session that spawned its successor (the guards' mark), the mark taken off after.
+async function spawned(move: () => Promise<unknown>): Promise<void> {
+  DECLARATIONS.handOver('s-one')
+  try {
+    await move()
+  } finally {
+    DECLARATIONS.handOver('')
+  }
+}
+
 const TAKEOVER_REPORT = 'takeover confirmed — Orch: belt-2 [a1b2c3] holds the orchestration; the agents are re-addressed and the round is read.'
 
 test('takeover confirmed followed by the successor\'s report confirms the takeover', async () => {
@@ -713,8 +731,7 @@ test('takeover confirmed followed by the successor\'s report confirms the takeov
   expect(confirmsTakeover('the takeover confirmed')).toBe(false)
   const { chains, fx, asked, other, settled } = await senderWithEntries()
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2', TAKEOVER_REPORT))
-  await drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } })
+  await spawned(() => drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2', TAKEOVER_REPORT)))
   expectMoved(fx, asked, other, settled)
 })
 
@@ -724,8 +741,7 @@ test('the successor\'s own wait file is left as it is by the move', async () => 
   const theirs = `${HOME}/.claude/claude-orchestrator/store/waits/s-two`
   const wait = JSON.stringify({ waiting: 'operator', blocks: 'phase 9', waiting_since: 'T', relayed: 'its-own', name: 'Orch: belt-2', pid: '9002' }) + '\n'
   fx.files.set(theirs, wait)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
-  await drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } })
+  await spawned(() => drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2')))
   expect(fx.files.get(theirs)).toBe(wait)
 })
 
@@ -735,12 +751,13 @@ for (const [label, delivery] of [
   ['an orchestrator saying something else', confirmed('Orch: belt-2', 'takeover not confirmed yet')],
   ['the operator', { origin: { kind: 'user' }, text: 'takeover confirmed' }],
 ] as const) {
-  test(`« takeover confirmed » from ${label} learns no successor: the hand-over withdraws as before`, async () => {
+  test(`« takeover confirmed » from ${label} learns no successor: nothing moves, and the session end withdraws`, async () => {
     const { chains, fx, asked, other, settled } = await senderWithEntries()
     successorRunning(fx)
-    await drive(chains, 'session.receive', fx.dollar, delivery)
-    await drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } })
-    expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
+    await spawned(() => drive(chains, 'session.receive', fx.dollar, delivery))
+    expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+    await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' })
+    expectWithdrawn(fx, asked, other, settled, "the sender's session ended")
   })
 }
 
@@ -857,8 +874,6 @@ test('with no record of it in the registry, the refusal of an ambiguous name is 
 
 for (const [label, end, why] of [
   ['its session ending', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' }), 'session ended'],
-  ['its hand-over', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed.\n\nhanded over')), 'handed over to its successor'],
-  ['its hand-over message', async (chains: Hooks, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
 ] as const) {
   test(`${label} closes every entry the coordinator was shown before it tells it of the first`, async () => {
     const { chains, fx, asked } = await senderWithEntries()
@@ -899,8 +914,8 @@ test('a coordinator on another machine is told nothing of a withdrawal in this r
   const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed.\n\nhanded over'))
-  expect([only(entries(fx)).status, only(entries(fx)).answer?.text]).toEqual(['withdrawn', 'handed over to its successor'])
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' })
+  expect([only(entries(fx)).status, only(entries(fx)).answer?.text]).toEqual(['withdrawn', "the sender's session ended"])
   expect(fx.sent.filter(s => s.text.startsWith('[module] Settled'))).toEqual([])
 })
 
@@ -908,12 +923,11 @@ test('a coordinator on another machine is told nothing of a withdrawal in this r
 
 // A turn that waits on a command of its own, or that declares a wait on the operator blocking
 // nothing, asks him nothing: neither is entered in the round, nor sent, nor kept as a wait.
-test('neither a tool wait nor an operator wait blocking nothing is a wait', () => {
-  expect(parseWait(answerOf('Deploys started.', 'waiting: tool — the deploy monitor'))).toBeNull()
+test('an operator wait blocking nothing is no wait', () => {
   for (const blocks of ['nothing', 'Nothing.', 'none', 'nothing yet', 'n/a', '-', '']) {
-    expect([blocks, parseWait(answerOf('Watching.', `waiting: operator — blocks: ${blocks}`))]).toEqual([blocks, null])
+    expect([blocks, declaredWait({ kind: 'operator', blocks }, 'Watching.')]).toEqual([blocks, null])
   }
-  expect(parseWait(answerOf('Watching.', 'waiting: operator (urgent) — blocks: none'))).toBeNull()
+  expect(declaredWait({ kind: 'operator', blocks: 'none', urgent: true }, 'Watching.')).toBeNull()
 })
 
 for (const line of ['waiting: tool — the deploy monitor', 'waiting: operator — blocks: nothing', 'waiting: deferred — row 5, G5, G6']) {
@@ -1007,7 +1021,7 @@ test('a remote wait becomes an entry on the coordinator\'s machine, and is acked
   expect(line.to).toBe('Coord: ops [abc]')
   expect(sender.sent.filter(s => s.text.startsWith('[module] '))).toEqual([])
   const since = sender.row().waiting_since!
-  const asked = roundEntry('s-one', 'Orch: belt', parseWait(ask.answer)!, since, 'T')
+  const asked = roundEntry('s-one', 'Orch: belt', waitOfEnd(ask)!, since, 'T')
   expect([waitOf(sender).pending, waitOf(sender).relayed ?? null]).toEqual([asked.id, null])
   expect(entries(sender)).toEqual([])
   const consumed = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', line.text))
@@ -1032,7 +1046,7 @@ test('the ack sets relayed and clears pending on the sender', async () => {
   expect(sender.logged.filter(l => l.endsWith('| receive: an acknowledgment of s-one-9-abc matches no pending question')).length).toBe(1)
   const consumed = await receive(chains, sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, waitOf(sender).waiting_since)))
   expect(typeof consumed.consumed).toBe('string')
-  expect([waitOf(sender).pending, waitOf(sender).relayed]).toEqual([null, fingerprint(parseWait(ask.answer)!)])
+  expect([waitOf(sender).pending, waitOf(sender).relayed]).toEqual([null, fingerprint(waitOfEnd(ask)!)])
   expect([waitOf(sender).waiting, waitOf(sender).blocks]).toEqual(['done', null])
   sender.sent.length = 0
   await drive(chains, 'turn.complete', sender.dollar, ask)
@@ -1063,7 +1077,7 @@ test('no ack → resent at the next turn end, never twice entered', async () => 
   expect((JSON.parse(coordinator.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
   expect(acks(coordinator).map(a => [a.to, a.text])).toEqual([[SENDER_AT, ackLine(first.id, first.since)], [SENDER_AT, ackLine(first.id, first.since)]])
   await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(acks(coordinator), 1).text))
-  expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
+  expect(waitOf(sender).relayed).toBe(fingerprint(waitOfEnd(ask)!))
 })
 
 test('an ask reaching a session that is not the coordinator is consumed and entered nowhere', async () => {
@@ -1136,7 +1150,7 @@ test('a late ack of an older ask leaves a newer pending wait pending, resent at 
   expect(asks(sender).length).toBe(2)
   expect(askObject(only(asks(sender), 1).text).since).toBe(newer)
   await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, newer)))
-  expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
+  expect(waitOf(sender).relayed).toBe(fingerprint(waitOfEnd(ask)!))
 })
 
 // --- a remote entry settled meanwhile -------------------------------------------------------

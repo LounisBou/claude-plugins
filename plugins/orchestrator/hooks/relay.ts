@@ -1,7 +1,6 @@
 // hooks/relay.ts
-// The end of an orchestrator's turn, read by the module: the machine line the stop
-// gate already requires says whether the turn waits on the operator or reports its
-// work done. An agent's turn ends the same way on its status line, reported to its
+// The end of an orchestrator's turn, read by the module: the wait it declared (declare_wait)
+// says whether the turn waits on the operator or reports its work done. An agent's turn ends the same way on its status line, reported to its
 // orchestrator instead, and its gate crossing too (supervision.ts). The wait lands in the session's store row (supervision.ts), where the
 // pane, /orchestrator-status and the coordinator's facts read it, and once in the
 // coordinator's hands: an entry of its round when it runs on this machine (round.ts), one
@@ -14,7 +13,7 @@
 // relayed again. Pure on
 // purpose: the handler holds the $ (the engine fences it to the file that received it) and
 // passes its reads in here.
-import { MACHINE_LINE, URGENT_LINE, blocksNothing } from './stop-gate.ts'
+import { blocksNothing, waitLine, type DeclaredWait } from './stop-gate.ts'
 import { chainTtyOf, parseChain } from '../core/chain-entries.ts'
 import { machineLine, reportStatus } from '../core/method.ts'
 import type { SessionRow } from './supervision.ts'
@@ -36,31 +35,22 @@ export type Wait =
   | { kind: 'delivered' | 'blocked' | 'question' | 'waiting'; blocks: string; question: string }
 export type WaitKind = Wait['kind']
 
-// The turn's answer read for its machine line, the stop gate's own regex over the stop
-// gate's own normalisation: a wait on the operator with what it blocks, or done. The
-// question is the answer minus that line. No machine line: no wait. Neither is a wait on a
-// tool of the session's own (`waiting: tool — …`, its own tab's business), nor the ending on work
-// the operator deferred (`waiting: deferred — …`, his ruling recorded), nor a wait on the
-// operator that blocks nothing: he is asked nothing, so nothing is entered, sent or kept.
-export function parseWait(answer: string): Wait | null {
-  const line = machineLine(answer)
-  const matched = MACHINE_LINE.exec(line)
-  if (!matched || blocksNothing(line)) return null
-  const lines = answer.replace(/\s+$/, '').split('\n')
-  const question = lines.slice(0, -1).join('\n').trim()
-  if (!matched[1]) return { kind: 'done', question }
-  const wait: Wait = { kind: 'operator', blocks: matched[1].trim(), question }
-  return URGENT_LINE.test(line) ? { ...wait, urgent: true } : wait
-}
-
-// A predecessor's last word in a succession, « handed over » (succeed.md), read as the stop gate
-// reads it: the text's last line alone, its markup dropped. Its successor took the work over.
-export function handsOver(text: string): boolean {
-  return /^handed over$/i.test(machineLine(text))
+// The wait an orchestrator's turn declared (declare_wait, wait.ts), as the relay carries it: a wait
+// on the operator with what it blocks, or done, the question being the turn's answer. Neither is
+// the ending on work the operator deferred (his ruling recorded), nor a wait on the operator that
+// blocks nothing: he is asked nothing, so nothing is entered, sent or kept. No declaration: no
+// wait, whatever the answer's last line says.
+export function declaredWait(declared: DeclaredWait | null, answer: string): Wait | null {
+  if (declared === null || declared.kind === 'deferred') return null
+  const question = answer.trim()
+  if (declared.kind === 'done') return { kind: 'done', question }
+  if (blocksNothing(waitLine(declared))) return null
+  const wait: Wait = { kind: 'operator', blocks: declared.blocks, question }
+  return declared.urgent ? { ...wait, urgent: true } : wait
 }
 
 // A successor's word to its predecessor, « takeover confirmed » (the succession brief), read on
-// the text's first line, its markup dropped as handsOver drops it. The phrase opens the line and
+// the text's first line, its markup dropped. The phrase opens the line and
 // anything may follow it: a successor reports on the same line (« takeover confirmed — <its name>
 // holds the orchestration; … », 2026-11-04), and a whole-line match read that as no takeover, so
 // the hand-over withdrew the open questions it should have moved.
@@ -320,7 +310,7 @@ export function gateText(name: string, tokens: number, percent: number): string 
 // read its own figure, so the stand-down starts from this line, not from its brief alone.
 export function gateSelfText(tokens: number, percent: number): string {
   return `[module] Your context is ${tokens.toLocaleString('en-US')} (${percent}%): you are at your context gate. `
-    + 'Finish the unit in hand, write your hand-over, then stop.'
+    + 'Finish the unit in hand, then stop and give your orchestrator two lines: what is in flight, the decisions taken.'
 }
 
 // The deduplication key of an agent's turn that ended without its status line, kept in the

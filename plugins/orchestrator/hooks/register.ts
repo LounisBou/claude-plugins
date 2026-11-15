@@ -12,6 +12,7 @@ import { register as registerGuards } from './guards.ts'
 import { register as registerWait } from './wait.ts'
 import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
+import { register as registerGateRecheck } from './gate-recheck.ts'
 import { register as registerSupervision, registerWake, registerPaneTool } from './supervision.ts'
 import { register as registerTodo } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
@@ -53,4 +54,5 @@ export function register(on: On<Mod>): void {
   registerShortCommands(on)
   registerUnattended(on)
   registerLedger(on)
+  registerGateRecheck(on)
 }

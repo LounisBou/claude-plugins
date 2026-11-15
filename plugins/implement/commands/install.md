@@ -1,6 +1,7 @@
 ---
 name: install
 description: Check that the superpowers dependency is enabled
+disable-model-invocation: true
 ---
 
 ```bash

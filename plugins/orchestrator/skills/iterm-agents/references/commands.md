@@ -1,6 +1,6 @@
 # Commands
 
-Read before typing any `iterm-agent.sh` command, and again when one fails, hangs or says on stderr that a fallback served it. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
+Read by section, from its heading to the next: the one SKILL.md names for the moment, never the whole file. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
 
 - Quick reference — `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `pair`, `trust prune`, `tools`, the dry run
 - Agents as windows of a home session — where the launcher puts an agent, what each command does there, `home`, `takeover`
@@ -66,17 +66,22 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # launched session is started with `--disallowedTools` naming the tools no session has
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings; an `Agent:` title also loses the four
     # only an orchestrator calls (mcp__orchestrator__review, supervision, settle,
-    # declare_wait); an `Orch:` title also loses the
-    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement); a `Coord:` or `Audit:`
-    # title those and mcp__pr-review, mcp__orchestrator__review, mcp__github__light_ci and record. --keep-tool removes a name from
-    # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
+    # declare_wait) and what an implementer never calls (AskUserQuestion, mcp__cloudflare,
+    # mcp__bugs-bot, mcp__pr-review); an `Orch:` title also loses the
+    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement, mcp__pr-review)
+    # and ReadNotifications; a `Coord:` or `Audit:` title those servers and
+    # mcp__orchestrator__review, mcp__github__light_ci and record. --keep-tool removes a name from
+    # that set (a brief that asks for a page keeps Artifact; a review or comments agent keeps
+    # mcp__pr-review, the bugs-bot agent mcp__bugs-bot); --drop-tool adds any tool name or
     # permission pattern to it. Both repeat, take one name each, and are honoured by every path
     # that builds a launch: a plain spawn, --successor, --wake, --open, --auditor and the
     # other special spawns, and `rotate`, which forwards them. Refused before a tab exists:
     # an empty name, and one name given to both options. A kept name the default never removed
     # is harmless. `tools` lists what exists. The dry run prints `tools_removed=` with the set.
     # The same launch carries the host's cuts in its one --settings: an `Agent:` session
-    # loses the away recap and the silent-turn reminder. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
+    # loses the away recap and the silent-turn reminder, and its `enabledPlugins` turn off
+    # pr-review and pr-review-toolkit for an `Agent:` (kept with --keep-tool mcp__pr-review),
+    # those and superpowers and norms for an `Orch:`. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
     # Every launched session loses the
     # token countdown, and the account's synced skills (`anthropic-skills:*`) are hidden
     # for it through `syncClaudeAiSkills: false` in that same --settings, which moves nothing
@@ -212,9 +217,10 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --mode
     # One of --prompt, --prompt-file or --brief is required, as for a spawn. A refusal comes
     # before the replacement's tab exists, the old session untouched.
     # --no-verify is refused: the old tab is closed only on a replacement verified running.
-    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp, and only
-    # those given to `rotate`: the replacement is opened with the default set, so a rotation
-    # of an agent that was given Artifact or the synced skills gives them again.
+    # What the old agent's launch line (its host's argv) kept or dropped beyond its role's
+    # default set is carried to the replacement, said on stderr (`rotate: tools carried …`).
+    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp; the synced
+    # skills are given again only when `rotate` is given --keep-synced-skills.
 
 $SCRIPT pair
     # read-only: the calling session's model and effort now, `model=<model> effort=<level>`,
@@ -255,7 +261,7 @@ An orchestrator's tab holds a tmux session of its own, its **home session**, on 
 - **`list`** prints the home session's windows, one row each, the caller's own marked `self`, then the app's tabs it did not make as windows (an auditor's, for one). **`screen`** reads a window with `capture-pane`.
 - **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL) and the checkout deleted, as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line. A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
 - **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs, after refusing before any spawn what `close` would refuse (window 0 included).
-- **`home --session <id> --name "Orch: <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
+- **`home --session <id> --name "Orch: <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: it first waits for the predecessor's « handed over » on its transcript, or five minutes of an idle transcript, and prints which (`takeover: « handed over » read on …` or `takeover: no « handed over » …`); then window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
 - **The tab bar** shows one block per window — the name, then the state icon the module wrote on the window: busy ●, idle ○, asks ✋, done ✓, gate ⚠. A click on a block or `C-b n` / `C-b p` switches; the windows keep their numbers, so `C-b <digit>` still selects one, though the bar shows none. `C-b C-b` sends a Ctrl-B to the pane.
 - **`ORCHESTRATOR_TMUX`** names the tmux binary (the suite stands a recorder in for it); `ORCHESTRATOR_HOME_WAIT` is how long window 0 waits for the moved session to end in its old place.
 

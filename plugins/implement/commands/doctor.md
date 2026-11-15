@@ -1,6 +1,7 @@
 ---
 name: doctor
 description: Re-check that the superpowers dependency is enabled
+disable-model-invocation: true
 ---
 
 ```bash

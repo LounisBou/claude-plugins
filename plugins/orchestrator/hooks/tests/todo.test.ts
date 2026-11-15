@@ -100,6 +100,16 @@ test('add records his words, dated, in the caller\'s own list, named for the ses
   expect(listOf(files, 'Orch: billing').map(item => [item.id, item.label, item.said_at])).toEqual([[1, 'merge acme/app#46 once ready', SAID], [2, 'the other', '2026-11-14T15:00:00Z']])
 })
 
+test('add keeps the images he gave, lists them, and refuses what is no list of absolute paths', async () => {
+  const { dollar, files } = world()
+  expect((await call(dollar, { action: 'add', words: 'this screen is wrong', said_at: SAID, images: ['/tmp/shots/a.png'] })).isError).toBe(undefined)
+  expect(listOf(files, 'Orch: billing').map(item => item.images)).toEqual([['/tmp/shots/a.png']])
+  expect((await call(dollar, { action: 'list' })).result).toContain('images: /tmp/shots/a.png')
+  const refused = await call(dollar, { action: 'add', words: 'x', images: ['a.png'] })
+  expect(refused.isError).toBe(true)
+  expect(listOf(files, 'Orch: billing').length).toBe(1)
+})
+
 test('add with to writes the recipient\'s list first, then sends the message the module drafts, in the same call', async () => {
   const order: string[] = []
   const { dollar, files, sent } = world({
@@ -268,7 +278,7 @@ test('the tool is registered loaded, not deferred, with flat fields', async () =
   expect(registrations).toHaveLength(1)
   expect(registrations[0]?.name).toBe(TODO_TOOL)
   expect(registrations[0]?.isDeferred).toBe(false)
-  expect(Object.keys(fieldsOf(registrations[0]?.inputSchema?.['properties']) ?? {})).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome', 'row'])
+  expect(Object.keys(fieldsOf(registrations[0]?.inputSchema?.['properties']) ?? {})).toEqual(['action', 'words', 'said_at', 'to', 'label', 'images', 'id', 'outcome', 'row'])
   expect(registrations[0]?.inputSchema?.['required']).toEqual(['action'])
 })
 
