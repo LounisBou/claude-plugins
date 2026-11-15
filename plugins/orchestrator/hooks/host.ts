@@ -32,13 +32,13 @@ type Nouns = {
     id(): Promise<string>
     model(): Promise<string>
     usage(): Promise<{ context: SessionContextUsage }>
-    send(args: { to: string; text: string }): Promise<SessionSendResult>
+    send(args: { to: string | { sessionId: string }; text: string }): Promise<SessionSendResult>
   }
   ui: { toast(text: string): void; invalidate(event: 'ui.render'): void; log(text: string): void }
   tool: { register(tool: ToolSpec): Promise<unknown>; call(input: { tool: string } & Record<string, unknown>): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
-  clock: { sleep(ms: number): Promise<void> }
+  clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
