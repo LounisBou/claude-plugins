@@ -5,6 +5,7 @@ import { act, isTransient, LOOP_SCHEMA, verdict } from '../loop.ts'
 import { loop } from '../state.ts'
 import { REPORT_REQUEST, reportOf } from '../report.ts'
 import { INSTALL_TIMEOUT_MS, PASSED_NOTE } from '../commands.ts'
+import { observedAs, watchJournal } from './journal.ts'
 
 const composer = { kind: 'composer' } as const
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -364,8 +365,9 @@ test('outside a session the orchestrator spawned, the loop reads no check plan',
   expect(stubs.ghCalls).toEqual([])
 })
 
-test('the Stop gate refuses a stop mid-loop once, naming the pass', async ($, on) => {
+test('a stop mid-loop goes through, and the journal keeps one line for it', async ($, on) => {
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   on('process.run', () => ({ value: ok }))
   on('skill.prompt', () => ({ text: '' }))
   on('tool.call', () => ({ result: 'ran' }))
@@ -375,14 +377,16 @@ test('the Stop gate refuses a stop mid-loop once, naming the pass', async ($, on
   await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review' + REPORT_REQUEST } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'findings', keys: ['a::b', 'c::d'] } as any)
   const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
-  expect(held.block).toContain('pass 1/3')
-  expect(held.block).toContain('2 finding(s)')
+  expect(held.block).toBeUndefined()
+  expect(journal()).toMatchObject([observedAs('pr-review.stop.loop-open')])
   const again: any = await $.classic.Stop({ stop_hook_active: true } as any)
   expect(again.block).toBeUndefined()
+  expect(journal().length).toBe(1)
 })
 
-test('the Stop gate lets a clean loop stop', async ($, on) => {
+test('a clean loop stops with no line in the journal', async ($, on) => {
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   on('tool.call', { tool: 'Agent' }, () => ({ result: '```json\n{"findings": []}\n```' }))
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
@@ -390,26 +394,31 @@ test('the Stop gate lets a clean loop stop', async ($, on) => {
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'findings', keys: [] } as any)
   const out: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(out.block).toBeUndefined()
+  expect(journal()).toEqual([])
 })
 
-test("the user's own prompt releases the loop's hold on a stop", async ($, on) => {
+test("the user's own prompt releases the loop's watch on a stop", async ($, on) => {
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   on('prompt.submit', (_$: any, e: any) => e)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
   await $.prompt.submit({ text: 'stop, I need the terminal', wait: false, origin: composer })
   const out: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(out.block).toBeUndefined()
+  expect(journal()).toEqual([])
 })
 
 test('an interrupted turn releases the loop', async ($, on) => {
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
   await $.turn.complete({ reason: 'aborted', answer: '', isAborted: true, turnId: 't', durationMs: 1 } as any)
   const out: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(out.block).toBeUndefined()
+  expect(journal()).toEqual([])
 })
 
 // ── the review record at the loop's exit ─────────────────────────────────────
@@ -1002,20 +1011,20 @@ test('a reader call that carries the request goes through with its input unchang
   expect(seen).toEqual(issued)
 })
 
-test('a reader call without the request is denied unrun, its message naming the text to end the prompt with', async ($, on) => {
+test('a reader call without the request runs, and the journal keeps one line for it', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
   wireRecord(on, stubs)
+  const journal = watchJournal(on)
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
-  const refused: any = await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', answer: agentAnswer([]) } as any)
-  expect(String(refused.deny)).toContain('Issue the same call again, its prompt ending with this text, verbatim:' + REPORT_REQUEST)
-  expect(stubs.prompts).toEqual([])
-  const none = await loopCall($, { action: 'findings', keys: [] })
-  expect(String(none.result)).toContain('no review agent ran in this pass')
+  const ran: any = await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', answer: agentAnswer([]) } as any)
+  expect(ran.deny).toBeUndefined()
+  expect(stubs.prompts).toEqual(['review the diff'])
+  expect(journal()).toMatchObject([observedAs('pr-review.reader.no-request')])
   await review($, [])
+  expect(journal().length).toBe(1)
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(String(out.result)).toContain('"exit": "clean"')
-  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST])
 })
 
 test('begin_pass hands the session the request its readers\' prompts end with', async () => {
@@ -1320,16 +1329,19 @@ test('a reviewer\'s pass where no reader ran asks for the readers and records no
   expect(String(status.result)).toContain('"exit": null')
 })
 
-test('the Stop gate lets the turn end while the pass\'s readers run in the background', async ($, on) => {
+test('a stop while the pass\'s readers run in the background leaves no line; once they handed back, one', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   wireHandBack(on)
   await backgroundReviewerPass(on, $, stubs)
   const waiting: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(waiting.block).toBeUndefined()
+  expect(journal()).toEqual([])
   await readerHandBack($, READER, agentAnswer([]))
   const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
-  expect(held.block).toContain('pass 1/3')
+  expect(held.block).toBeUndefined()
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.stop.loop-open'])
 })
 
 test('the findings action takes no severity count from the model', () => {
@@ -1599,8 +1611,7 @@ for (const reason of ['error', 'aborted']) {
 // ── a reviewer's pass as the transcripts of 2026-11-12 hold it ──
 
 // The sequence of a reviewer's loop at owner/api#44 and owner/plugins#23 (pr-review 0.9.14): each
-// reader's Agent call issued first without the findings-block request and denied by the hook, reissued
-// with it and launched in the background
+// reader's Agent call, its prompt ending with the findings-block request, launched in the background
 // (core's `async_launched` record, its `agentId`), then each reader's own SubagentHandback call,
 // `{agentId, message}`, answered `{success: true}`; `findings` comes after the last hand-back.
 // Every hand-back reached the session, and one reader's carried no ```json block: that reader,
@@ -1615,7 +1626,7 @@ const PROSE_NONE = 'No findings\n\nI read the whole diff `aaaa111..bbbb222` (src
 const PROSE_LINES = '[important] engine/fmt.py:54 — key (name, app.id) merges distinct checks — verified — add the suite id to the key.\n'
   + '[suggestion] engine/fmt.py:54 — a string id compared to an int raises TypeError — coerce via int().'
 
-// One reviewer's pass up to its first `findings`: each reader denied once, then launched with its
+// One reviewer's pass up to its first `findings`: each reader launched with its
 // id, then its hand-back, delivered the first time only; the held readers' hand-backs never come.
 async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, string, string][], keys: string[], held: string[] = []): Promise<any> {
   stubs.agent = (e: any) => coreLaunch(readers.find(([type]) => type === e.subagent_type)?.[1] ?? '')
@@ -1628,7 +1639,6 @@ async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, s
   })
   await loopCall($, { action: 'start', review_only: true })
   await loopCall($, { action: 'begin_pass' })
-  for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' } as any)
   for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' + REPORT_REQUEST } as any)
   for (const [, id, report] of readers) if (!held.includes(id)) await readerHandBack($, id, report)
   return loopCall($, { action: 'findings', keys })
@@ -1778,17 +1788,20 @@ test('a new loop starts with none of the last loop\'s readers', () => {
   expect(passState()).toEqual(EMPTY_PASS)
 })
 
-test('the Stop gate holds while a reader without its block waits to be asked again, and lets the asked one run', async ($, on) => {
+test('a stop while a reader without its block waits to be asked again is noted, and the asked one is not', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   on('classic.Stop', () => ({}))
+  const journal = watchJournal(on)
   wireHandBack(on)
   await backgroundReviewerPass(on, $, stubs)
   await readerHandBack($, READER, PROSE_NONE)
   const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
-  expect(held.block).toContain('1 review agent(s) handed back no findings block: call mcp__pr-review__loop findings')
+  expect(held.block).toBeUndefined()
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.stop.reader-blockless'])
   await loopCall($, { action: 'findings', keys: ['f0::s'] })
   const asked: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(asked.block).toBeUndefined()
+  expect(journal().length).toBe(1)
 })
 
 test('a reader asked again that never answers is silent after three waits: the record names it', async ($, on) => {

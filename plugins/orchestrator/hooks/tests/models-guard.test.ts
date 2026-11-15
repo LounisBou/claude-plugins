@@ -1,12 +1,13 @@
 // hooks/tests/models-guard.test.ts
-// The tier map's guard: a session of the orchestration never writes the operator's map,
-// whatever tool it reaches for, unless the last prompt he typed names the map or a tier.
+// The tier map's guard: a session of the orchestration that writes the operator's map, whatever
+// tool it reaches for, is observed (one escape in the journal) when it writes with a file tool, and
+// refused when a Bash line overwrites it, unless the last prompt he typed names the map or a tier.
 // A plan once told an orchestrator to bind the tiers in models.json, against the routing
 // skill's rule, and the rule — prose alone — lost.
 import { expect, test } from 'claude-code/testing'
-import { bashWritesTheMap, editsTheMap, mapPaths, namesTheMap, typedByOperator, MODELS_DENY } from '../models-guard.ts'
+import { bashWritesTheMap, editsTheMap, mapPaths, MODELS_DENY, namesTheMap, typedByOperator } from '../models-guard.ts'
 import { register as registerGuards } from '../guards.ts'
-import { logLineOf } from './fakes.ts'
+import { journalled, logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const MAP = `${HOME}/.claude/claude-orchestrator/models.json`
@@ -114,39 +115,66 @@ test('the guard mounts on the file tools and Bash', () => {
   expect(mounted().matcher).toEqual({ tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] })
 })
 
-test("an orchestrator's Write or Edit of the map is denied with the rule", async () => {
+const ESCAPE = 'escape orchestrator.models.map-write'
+
+test("an orchestrator's Write or Edit of the map goes through, with one escape in the journal each", async () => {
   const { guard } = mounted()
-  const { dollar } = fakeDollar('Orch: belt')
+  const fx = journalled(fakeDollar('Orch: belt').dollar)
   for (const e of [write, edit]) {
-    const out = await call(guard, dollar, e)
+    const out = await call(guard, fx.dollar, e)
+    expect(out.passed).toBe(e)
+    expect(out.answer).toBe(e)
+  }
+  expect(fx.journal()).toEqual([ESCAPE, ESCAPE])
+})
+
+test('a Bash overwrite of the map is refused with the rule and writes no escape, a read of it passes with none', async () => {
+  const { guard } = mounted()
+  const overwrites = [
+    `jq . x > ${MAP}`, `echo x | tee ${MAP}`, `sed -i '' s/a/b/ ${MAP}`, `mv x ${MAP}`, `cp x ${MAP}`, `install x ${MAP}`,
+  ]
+  for (const command of overwrites) {
+    const fx = journalled(fakeDollar('Orch: belt').dollar)
+    const out = await call(guard, fx.dollar, bash(command))
     expect((out.answer as any).deny).toBe(MODELS_DENY)
     expect(out.passed).toBeNull()
-  }
-})
-
-test('a Bash write of the map is denied, a read of it passes', async () => {
-  const { guard } = mounted()
-  const { dollar } = fakeDollar('Orch: belt')
-  for (const command of [`jq . x > ${MAP}`, `echo x | tee ${MAP}`, `sed -i '' s/a/b/ ${MAP}`, `mv x ${MAP}`]) {
-    expect(((await call(guard, dollar, bash(command))).answer as any).deny).toBe(MODELS_DENY)
+    expect(fx.journal()).toEqual([])
   }
   for (const command of [`cat ${MAP}`, 'bash iterm-agent.sh resolve-tier standard']) {
-    const out = await call(guard, dollar, bash(command))
+    const fx = journalled(fakeDollar('Orch: belt').dollar)
+    const out = await call(guard, fx.dollar, bash(command))
     expect(out.answer).toBe(out.passed)
+    expect(fx.journal()).toEqual([])
   }
 })
 
-test('the operator\'s typed word on the map lifts the guard; a peer\'s delivery does not', async () => {
+test('the operator\'s typed word on the map lifts the Bash refusal; a peer\'s delivery does not', async () => {
   const { guard, prompt } = mounted()
-  const { dollar } = fakeDollar('Orch: belt')
-  await prompt(dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
-  expect(((await call(guard, dollar, write)).answer as any).deny).toBe(MODELS_DENY)
-  await prompt(dollar, typed('bind standard to a-model'), (x: unknown) => x)
-  const lifted = await call(guard, dollar, write)
+  const fx = journalled(fakeDollar('Orch: belt').dollar)
+  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
+  expect(((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer as any).deny).toBe(MODELS_DENY)
+  await prompt(fx.dollar, typed('bind standard to a-model'), (x: unknown) => x)
+  const lifted = await call(guard, fx.dollar, bash(`mv x ${MAP}`))
   expect(lifted.answer).toBe(lifted.passed)
-  // His next typed prompt, on something else, puts the guard back.
-  await prompt(dollar, typed('go on with the next phase'), (x: unknown) => x)
-  expect(((await call(guard, dollar, write)).answer as any).deny).toBe(MODELS_DENY)
+  await prompt(fx.dollar, typed('go on with the next phase'), (x: unknown) => x)
+  expect(((await call(guard, fx.dollar, bash(`mv x ${MAP}`))).answer as any).deny).toBe(MODELS_DENY)
+  expect(fx.journal()).toEqual([])
+})
+
+test('the operator\'s typed word on the map writes no escape; a peer\'s delivery does', async () => {
+  const { guard, prompt } = mounted()
+  const fx = journalled(fakeDollar('Orch: belt').dollar)
+  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
+  await call(guard, fx.dollar, write)
+  expect(fx.journal()).toEqual([ESCAPE])
+  await prompt(fx.dollar, typed('bind standard to a-model'), (x: unknown) => x)
+  const lifted = await call(guard, fx.dollar, write)
+  expect(lifted.answer).toBe(lifted.passed)
+  expect(fx.journal()).toEqual([ESCAPE])
+  // His next typed prompt, on something else, puts the observation back.
+  await prompt(fx.dollar, typed('go on with the next phase'), (x: unknown) => x)
+  await call(guard, fx.dollar, write)
+  expect(fx.journal()).toEqual([ESCAPE, ESCAPE])
 })
 
 test("the operator's own session, with no role, is untouched", async () => {

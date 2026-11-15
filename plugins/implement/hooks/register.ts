@@ -5,13 +5,13 @@
 // plugin does without the module: the markdown command runs, the skill text
 // is read as written, the tool call goes through.
 import {
-  IDLE, armedBy, agentDecision, bandOf, bandSegments, bashDecision, codenameOf, doctorText, editDecision,
+  IDLE, armedBy, agentDecision, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
   ignoreVerdict, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
-import { isSpawned } from '../core/env.ts'
 import { spawnArgv } from '../core/orchestration.ts'
+import { observed } from './observe.ts'
 import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
 export const TOOL = 'mcp__implement__state'
@@ -47,13 +47,6 @@ const STATE_SPEC = {
 async function git($: any, args: string[]): Promise<{ code: number; out: string }> {
   const run = await $.process.run(['git', ...args], { timeoutMs: 10_000 })
   return { code: run.exitCode, out: String(run.stdout ?? '').trim() }
-}
-
-// Whether the orchestrator spawned this session, so no operator answers in it. An unreadable
-// variable is no variable: the operator is asked.
-async function spawned($: any): Promise<boolean> {
-  const value: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
-  return isSpawned(typeof value === 'string' ? value : undefined)
 }
 
 async function readText($: any, path: string): Promise<string | null> {
@@ -259,35 +252,25 @@ export function register(on: any) {
   // armed lets the call through. A failure after next replays what already ran.
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     const g = await readGuard($)
-    const deny = bashDecision(g, String(e.command ?? ''))
-    if (deny) return { deny }
+    const found = bashDecision(g, String(e.command ?? ''))
+    if (found?.irreversible) return { deny: checkDeny(found.what) }
+    if (found) await observed($, found.code)
     const out = await next(e)
     if (g.outer === 'phase' && touchesState(String(e.command ?? ''))) await refreshBand($)
     return out
   }).catch(($: any, e: any, next: any) => next(e))
 
-  // A subagent that writes, during a phase, runs only on the user's Allow in the host's own
-  // dialog: words in a prompt grant nothing, and nobody there to answer refuses it. In a session
-  // the orchestrator spawned there is no operator to ask: the refusal sends the question to the
-  // orchestrator, whose answer is the guard released.
+  // A subagent that writes, during a phase, runs: the call goes through and the journal keeps one line.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
-    const isOrchestrated = await spawned($)
-    const deny = agentDecision(await readGuard($), e.subagent_type, isOrchestrated)
-    if (deny === null) return next(e)
-    if (isOrchestrated) return { deny }
-    let answer: unknown
-    try {
-      answer = await $.ui.ask(`implement:phase writes the work itself. Let a ${String(e.subagent_type || 'general-purpose')} subagent run?`, ['Allow', 'Deny'])
-    } catch {
-      answer = undefined
-    }
-    return answer === 'Allow' ? next(e) : { deny }
+    const found = agentDecision(await readGuard($), e.subagent_type)
+    if (found) await observed($, found.code)
+    return next(e)
   }).catch(($: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] }, async ($: any, e: any, next: any) => {
     const g = await readGuard($)
-    const deny = editDecision(g, String(e.tool))
-    if (deny) return { deny }
+    const found = editDecision(g, String(e.tool))
+    if (found) await observed($, found.code)
     const out = await next(e)
     if (g.outer === 'phase' && String(e.file_path ?? e.notebook_path ?? '').endsWith('IMPLEMENTATION.md')) await refreshBand($)
     return out

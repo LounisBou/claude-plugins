@@ -93,8 +93,8 @@ export function heldReport(answer: string): string {
   return status ? `${cut}\n${status}` : cut
 }
 
-// The refusal of an agent's message over the limit that names no report file: the one line
-// that says what to do instead.
+// What an agent's message over the limit that names no report file should have done: the line
+// the guards log when they let it through.
 export function unnamedReport(length: number): string {
   return `Your message to the orchestrator is ${length} characters, over its ${VERDICT_LIMIT}: write the full report to a file first, then send its verdict line naming it (report: <absolute path>).`
 }

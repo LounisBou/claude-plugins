@@ -42,8 +42,8 @@ no fix, for a session that did not.
 Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
 answer carries `exit`, go to Step 7 with that reason and render the summary from
 the answer, not from memory. While the loop runs, a stop before either exit
-condition is refused once with the pass it stands at: go back to Step 2. Any
-prompt the user types, or an interrupted turn, ends that hold.
+condition is not refused: go back to Step 2. Any
+prompt the user types, or an interrupted turn, ends that watch.
 
 When the tool is not listed, keep the same state yourself, as the algorithm below
 spells it out.

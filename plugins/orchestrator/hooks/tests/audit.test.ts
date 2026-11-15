@@ -5,12 +5,11 @@
 // end to the next turn's start — as events core's reader takes, holding no point, reason, title,
 // body or command; a journal that cannot be written changes no answer.
 import { expect, test } from 'claude-code/testing'
-import { register, refusalCode, STOP_GATE_CODE } from '../audit.ts'
+import { register, refusalCode } from '../audit.ts'
+import { observed, STOP_GATE_CODE } from '../observe.ts'
 import { PULL_URL } from '../audit-events.ts'
 import { guardFallback, killDecision } from '../guards.ts'
-import { MODE_DIALOG_DENY } from '../mode-dialog.ts'
 import { MODELS_DENY } from '../models-guard.ts'
-import { unnamedReport } from '../relay.ts'
 import { NOT_ORCHESTRATOR } from '../review.ts'
 import { Declarations } from '../wait.ts'
 import { parseJournalEvent } from '../../core/learning.ts'
@@ -71,9 +70,7 @@ test('each refusal of the module\'s guards has its stable code; any other answer
   const cases: [unknown, string | null][] = [
     [killDecision('1', 'pkill -f agent'), 'orchestrator.kill.pattern'],
     [guardFallback(undefined, 'killall node', 'no environment'), 'orchestrator.kill.unread-mark'],
-    [{ deny: unnamedReport(5123) }, 'orchestrator.message.report-unnamed'],
     [{ deny: MODELS_DENY }, 'orchestrator.models.map-write'],
-    [{ deny: MODE_DIALOG_DENY }, 'orchestrator.mode.dialog'],
     [{ deny: 'github: refused by another plugin' }, null],
     [{ result: 'fine' }, null],
     [undefined, null],
@@ -99,13 +96,27 @@ test('a guard\'s refusal is written once, as a version 1 refusal, and the refusa
   expect(JSON.stringify(fx.journal()).includes('pkill')).toBe(false)
 })
 
-test('a held stop is the stop gate\'s refusal; a stop let through writes nothing', async () => {
-  const fx = fake()
-  const m = mounted()
-  await m.on('classic.Stop', fx.dollar, {}, undefined)
-  expect(fx.journal()).toEqual([])
-  expect(await m.on('classic.Stop', fx.dollar, {}, { block: 'waiting on nothing' })).toEqual({ block: 'waiting on nothing' })
-  expect(codes(fx.journal())).toEqual([['refusal', STOP_GATE_CODE]])
+test('a guard that observes writes one version 1 escape under its code; a journal that fails is one log line', async () => {
+  const fx = fake({ name: 'Orch: belt' })
+  await observed(fx.dollar as never, STOP_GATE_CODE)
+  const [event] = fx.journal()
+  expect(fx.journal().length).toBe(1)
+  expect(event).toEqual({
+    v: 1, id: event.id, at: event.at, kind: 'escape', source: { plugin: 'orchestrator', code: STOP_GATE_CODE },
+    subject: { repo: null, pr: null, head: null }, context: { role: 'orchestrator', mode: null, paths: [], languages: [], session: 'sess-1' },
+    evidence: [{ type: 'refusal', code: STOP_GATE_CODE }], trust: 'computed',
+  })
+  expect(parseJournalEvent(event)).toEqual(event)
+  const broken = fake({ broken: true })
+  await observed(broken.dollar as never, STOP_GATE_CODE)
+  expect(broken.journal()).toEqual([])
+  expect(broken.logged.some(line => line.includes('the journal could not be written'))).toBe(true)
+})
+
+test('the audit trail reads no stop: the stop gate, which only observes, writes its own escape', () => {
+  const events: string[] = []
+  register(((...args: unknown[]) => { events.push(String(args[0])); return { catch: () => undefined } }) as never, new Declarations())
+  expect(events.includes('classic.Stop')).toBe(false)
 })
 
 const WRITTEN = `${HOME}/.claude/pr-records/acme/thing/${HEAD}/review-1.json\ngithub: Not Ready`
@@ -210,7 +221,8 @@ test('a turn that declared nothing starts no wait; the session\'s end ends the o
 test('a journal that cannot be written is one line in the log, and the answer stands', async () => {
   const fx = fake({ broken: true })
   const m = mounted()
-  expect(await m.on('tool.call', fx.dollar, { tool: 'Bash' }, { deny: MODELS_DENY })).toEqual({ deny: MODELS_DENY })
+  const refusal = killDecision('1', 'pkill -f agent')
+  expect(await m.on('tool.call', fx.dollar, { tool: 'Bash', command: 'pkill -f agent' }, refusal)).toEqual(refusal)
   expect(fx.logged.length).toBe(1)
   expect(fx.logged[0]).toContain('| audit | the journal could not be written: disk full')
 })

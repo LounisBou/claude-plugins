@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { TOOL } from './register.ts'
 import { METHOD_LINE } from './core.ts'
+import { parseJournalEvent } from '../core/learning.ts'
 
 const FIXTURE = `**Codename**: demo
 **Bump**: minor
@@ -19,12 +20,17 @@ type World = {
   inside?: boolean
   ignored?: boolean
   files?: Record<string, string>
+  env?: Record<string, string>       // the session's variables, beside HOME
+  journalError?: string               // the journal's writes fail with this
+  logged?: string[]                   // the lines the module logs
 }
 
 // The repository, the settings and the files beneath the plugin, from memory.
-// Every Bash, Edit or Agent call that reaches the bottom is recorded as ran.
+// Every Bash, Edit or Agent call that reaches the bottom is recorded as ran, and every line the
+// module leaves in its journal is read back as an event.
 async function world(on: any, w: World = {}, specs: any[] = []) {
   const ran: any[] = []
+  const journal: any[] = []
   const writes: Record<string, string> = {}
   const files = { 'docs/features/demo/IMPLEMENTATION.md': FIXTURE, ...(w.files ?? {}) }
   on('session.start', () => ({ cwd: '/work' }))
@@ -34,6 +40,7 @@ async function world(on: any, w: World = {}, specs: any[] = []) {
     const args = e.argv.slice(1).join(' ')
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const no = { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (e.argv[0] === 'mv') return ok()
     if (args === 'rev-parse --is-inside-work-tree') return w.inside === false ? no : ok('true')
     if (args === 'branch --show-current') return ok(w.branch ?? 'feat/demo')
     if (args.startsWith('check-ignore')) return w.ignored === false ? no : ok()
@@ -50,7 +57,15 @@ async function world(on: any, w: World = {}, specs: any[] = []) {
     const text = writes[rel(e.path)] ?? files[rel(e.path)]
     return text === undefined ? { deny: `ENOENT ${e.path}` } : { value: text }
   })
-  on('fs.write', (_$: any, e: any) => { writes[rel(e.path)] = e.text; return { value: undefined } })
+  on('env.get', (_$: any, e: any) => ({ value: { HOME: '/home/op', ...w.env }[e.name as string] }))
+  on('ui.log', (_$: any, e: any) => { w.logged?.push(String(e.text)); return { value: undefined } })
+  on('session.id', () => ({ value: 'sess-1' }))
+  on('fs.write', (_$: any, e: any) => {
+    if (String(e.path).startsWith(JOURNAL) && w.journalError !== undefined) return { deny: w.journalError }
+    if (String(e.path).startsWith(JOURNAL)) journal.push(JSON.parse(String(e.text)))
+    else writes[rel(e.path)] = e.text
+    return { value: undefined }
+  })
   on('tool.call', (_$: any, e: any) => { ran.push(e); return { result: 'ran' } })
   on('attribution.text', (_$: any, e: any) => ({ text: e.text }))
   on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
@@ -60,8 +75,15 @@ async function world(on: any, w: World = {}, specs: any[] = []) {
     const { Text } = $.ui.resolve(e)
     return Text({ key: 'engine', children: ['the engine band'] })
   })
-  return { ran, writes }
+  return { ran, writes, journal }
 }
+
+// What a line of the module's journal holds for an observed guard: its code, as the source and as
+// the refusal it would have been.
+const JOURNAL = '/home/op/.claude/implement/journal/'
+const observedAs = (code: string) => ({
+  kind: 'escape', source: { plugin: 'implement', code }, evidence: [{ type: 'refusal', code }], context: { session: 'sess-1' },
+})
 
 const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 const skill = ($: any, name: string) => $.skill.prompt({ skill: `implement:${name}`, text: 'THE SKILL' })
@@ -187,12 +209,14 @@ test('the github tool\'s pull request writes and reads all run', async ($, on) =
   }
 })
 
-test('a phase dispatches Explore only', async ($, on) => {
-  await world(on)
+test('a phase lets every subagent run, and the journal keeps one line for each that is not a search', async ($, on) => {
+  const { journal } = await world(on)
   await start($)
   await skill($, 'phase')
-  expect(refused(await $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', prompt: 'write it', description: 'x' } as any))).toBe(true)
   expect((await $.tool.call({ tool: 'Agent', subagent_type: 'Explore', prompt: 'find it', description: 'x' } as any)).result).toBe('ran')
+  expect(journal).toEqual([])
+  expect((await $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', prompt: 'write it', description: 'x' } as any)).result).toBe('ran')
+  expect(journal).toMatchObject([observedAs('implement.phase.subagent')])
 })
 
 test('an allowed subagent call reaches the host with its input unchanged', async ($, on) => {
@@ -207,109 +231,153 @@ test('an allowed subagent call reaches the host with its input unchanged', async
   expect(reached).toEqual(input)
 })
 
-test('the guard stays armed across turns; words grant nothing, the user\'s Allow when asked does', async ($, on) => {
-  const replies: string[] = ['Deny', 'Allow']
+test('the observation stays armed across turns, asks nobody, and words change nothing', async ($, on) => {
   const asked: string[] = []
-  // The host's question reaches the chain as an AskUserQuestion call, answered before the engine.
   on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
-    const question = e.questions[0].question
-    asked.push(question)
-    return { result: { questions: e.questions, answers: { [question]: replies.shift() } } }
+    asked.push(e.questions[0].question)
+    return { result: { questions: e.questions, answers: {} } }
   })
-  await world(on)
+  const { journal } = await world(on)
   await start($)
   await skill($, 'phase')
   await turnEnd($, false)                     // stopped on a question
   await typed($, 'good, use a subagent now')
-  expect(refused(await agent($, 'general-purpose'))).toBe(true)
   expect((await agent($, 'general-purpose')).result).toBe('ran')
-  expect(asked.length).toBe(2)
-  expect(asked[0]).toContain('Let a general-purpose subagent run?')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(asked).toEqual([])
+  expect(journal.map(e => e.source.code)).toEqual(['implement.phase.subagent', 'implement.phase.subagent'])
 })
 
-test('in a session the orchestrator spawned, a subagent is refused without a dialog and the refusal names the orchestrator', async ($, on) => {
+test('in a session the orchestrator spawned, a subagent runs as anywhere, with no dialog and one line', async ($, on) => {
   const asked: string[] = []
   on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
     asked.push(e.questions[0].question)
-    return { result: { questions: e.questions, answers: { [e.questions[0].question]: 'Allow' } } }
+    return { result: { questions: e.questions, answers: {} } }
   })
-  on('env.get', (_$: any, e: any) => ({ value: e.name === 'ORCHESTRATOR_SPAWNED' ? '1' : undefined }))
-  await world(on)
+  const { journal } = await world(on, { env: { ORCHESTRATOR_SPAWNED: '1' } })
   await start($)
   await skill($, 'phase')
-  const out: any = await agent($, 'general-purpose')
-  expect(refused(out)).toBe(true)
-  expect(JSON.stringify(out)).toContain('your orchestrator decides, not the operator')
-  expect(asked).toEqual([])
-  // Its answer is the guard released.
-  await $.command.run({ command: 'implement:release-guard', args: '' })
   expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(asked).toEqual([])
+  expect(journal).toMatchObject([observedAs('implement.phase.subagent')])
 })
 
-test('an aborted turn releases the guard', async ($, on) => {
-  await world(on)
+test('an aborted turn releases the observation', async ($, on) => {
+  const { journal } = await world(on)
   await start($)
   await skill($, 'phase')
-  expect(refused(await agent($, 'general-purpose'))).toBe(true)
+  await agent($, 'general-purpose')
+  expect(journal.length).toBe(1)
   await turnEnd($, true)
   expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(journal.length).toBe(1)
 })
 
-test('/implement:release-guard releases the guard without a model turn', async ($, on) => {
-  await world(on)
+test('/implement:release-guard releases the observation without a model turn', async ($, on) => {
+  const { journal } = await world(on)
   await start($)
   await skill($, 'phase')
-  expect(refused(await agent($, 'general-purpose'))).toBe(true)
+  await agent($, 'general-purpose')
+  expect(journal.length).toBe(1)
   const { text } = await $.command.run({ command: 'implement:release-guard', args: '' })
   expect(text).toContain('released')
   expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(journal.length).toBe(1)
 })
 
-test('nothing is guarded before a skill, nor after feature took over', async ($, on) => {
-  await world(on)
+test('the line is an event core reads, and holds neither the path, the command nor the text of the call', async ($, on) => {
+  const { journal } = await world(on)
+  await start($)
+  await skill($, 'check')
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/secret-name.ts', old_string: 'a', new_string: 'hunter2' } as any)
+  await bash($, 'echo hunter2 > /repo/secret-out.txt')
+  expect(journal.length).toBe(2)
+  for (const event of journal) expect(parseJournalEvent(event)).toEqual(event)
+  expect(JSON.stringify(journal)).not.toMatch(/secret|hunter2|\/repo/)
+})
+
+test('a journal that cannot be written is one line in the log, and the call goes through', async ($, on) => {
+  const logged: string[] = []
+  const { ran } = await world(on, { journalError: 'disk full', logged })
+  await start($)
+  await skill($, 'check')
+  const out: any = await bash($, 'cp a b')
+  expect(out.result).toBe('ran')
+  expect(ran.map(e => e.command)).toEqual(['cp a b'])
+  expect(logged.length).toBe(1)
+  expect(logged[0]).toContain('the journal could not be written or pruned')
+  expect(logged[0]).toContain('disk full')
+})
+
+test('nothing is observed before a skill, nor after feature took over', async ($, on) => {
+  const { journal } = await world(on)
   await start($)
   expect((await agent($, 'general-purpose')).result).toBe('ran')
   await skill($, 'phase')
   await skill($, 'feature')
   expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(journal).toEqual([])
 })
 
-test('a check refuses edits until its verdict, then the phase writes again', async ($, on) => {
-  await world(on)
+test('a check lets an edit and a stage through, one line each, until its verdict, then the phase writes again', async ($, on) => {
+  const { journal } = await world(on)
   on('turn.step', async function* () {
     return { turnId: 't', index: 0, answer: '| check | evidence | result |\n|---|---|---|\n| 4 gate | exit 0 | PASS |\n\nPASS\nDONE', toolUses: [], stopReason: 'end_turn', usage: {} }
   })
   await start($)
   await skill($, 'phase')
   await skill($, 'check')
-  expect(refused(await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any))).toBe(true)
-  expect(refused(await bash($, 'git add -A'))).toBe(true)
+  expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
+  expect((await bash($, 'git add -A')).result).toBe('ran')
+  for (const command of ['git commit -m x', 'git diff > fix.patch', 'cp a b']) expect((await bash($, command)).result).toBe('ran')
+  expect(journal.map(e => e.source.code)).toEqual(['implement.check.edit', 'implement.check.stage', 'implement.check.commit', 'implement.check.redirect', 'implement.check.write'])
   const stream = $.turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 } as any) as any
   for await (const _ of stream) { /* drained */ }
   await stream
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
-  expect(refused(await agent($, 'general-purpose'))).toBe(true)   // the phase is still armed
+  expect(journal.length).toBe(5)
+  await agent($, 'general-purpose')   // the phase is still armed
+  expect(journal.map(e => e.source.code)).toEqual(['implement.check.edit', 'implement.check.stage', 'implement.check.commit', 'implement.check.redirect', 'implement.check.write', 'implement.phase.subagent'])
 })
 
-test('a shell line the reader cannot read is refused during a check, and runs once during a phase', async ($, on) => {
-  const { ran } = await world(on)
+test('a check refuses a removal unrun and leaves no line; a phase lets it run', async ($, on) => {
+  const { ran, journal } = await world(on)
+  await start($)
+  await skill($, 'phase')
+  expect((await bash($, 'rm tmp.txt')).result).toBe('ran')
+  await skill($, 'check')
+  for (const command of ['rm src/a.ts', 'git add a && rmdir out']) {
+    const out: any = await bash($, command)
+    expect(refused(out)).toBe(true)
+    expect(out.deny).toContain('implement:check removes nothing')
+  }
+  expect(ran.map(e => e.command)).toEqual(['rm tmp.txt'])
+  expect(journal).toEqual([])
+})
+
+test('a shell line the reader cannot read is observed during a check, and runs once during a phase', async ($, on) => {
+  const { ran, journal } = await world(on)
   await start($)
   await skill($, 'phase')
   const hidden = 'git {add,-A}{1..1001}'
   expect((await bash($, hidden)).result).toBe('ran')
   expect(ran.filter(e => e.command === hidden).length).toBe(1)
+  expect(journal).toEqual([])
   await skill($, 'check')
-  expect(refused(await bash($, hidden))).toBe(true)
-  expect(ran.filter(e => e.command === hidden).length).toBe(1)
+  expect((await bash($, hidden)).result).toBe('ran')
+  expect(ran.filter(e => e.command === hidden).length).toBe(2)
+  expect(journal).toMatchObject([observedAs('implement.check.unreadable')])
 })
 
 test('a check alone ends with its turn', async ($, on) => {
-  await world(on)
+  const { journal } = await world(on)
   await start($)
   await skill($, 'check')
-  expect(refused(await $.tool.call({ tool: 'Write', file_path: 'a.ts', content: 'x' } as any))).toBe(true)
+  expect((await $.tool.call({ tool: 'Write', file_path: 'a.ts', content: 'x' } as any)).result).toBe('ran')
+  expect(journal).toMatchObject([observedAs('implement.check.edit')])
   await turnEnd($, false)
   expect((await $.tool.call({ tool: 'Write', file_path: 'a.ts', content: 'x' } as any)).result).toBe('ran')
+  expect(journal.length).toBe(1)
 })
 
 test('the commit trailer is empty while a phase runs, the engine\'s otherwise', async ($, on) => {
@@ -321,7 +389,7 @@ test('the commit trailer is empty while a phase runs, the engine\'s otherwise', 
 })
 
 test('a guard that cannot read its state refuses nothing', async ($, on) => {
-  await world(on)
+  const { journal } = await world(on)
   on('state.get', () => ({ deny: 'no state' }))
   await start($)
   for (const command of ['ls', 'git push', 'git push --force origin main', 'git merge other', 'gh pr create --fill', 'gh pr merge 3']) {
@@ -332,6 +400,7 @@ test('a guard that cannot read its state refuses nothing', async ($, on) => {
   }
   expect((await agent($, 'general-purpose')).result).toBe('ran')
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
+  expect(journal).toEqual([])
 })
 
 const BAND_SITE = {
