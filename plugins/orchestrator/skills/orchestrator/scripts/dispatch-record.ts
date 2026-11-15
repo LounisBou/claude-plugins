@@ -606,7 +606,8 @@ function verdict(ctx: Context, id: string, args: readonly string[]): void {
   const unreviewed = reviewedHead === ''
   // `--reviewed`: the verdict is the review of its head (the review tool's), so a row whose review
   // is of another head, or of none, gets a review at this one, as `review` would write it.
-  const replaced = reviewed && reviewedHead !== head
+  // The same commit either side may abbreviate, as `ready` reads it: a stored head too short to name one is another head.
+  const replaced = reviewed && !(reviewedHead.length >= 7 && sameCommit(ctx, reviewedHead, head))
   if (unreviewed && !reviewed) warn(ctx, `verdict: row ${id} has no review recorded: recording the verdict anyway`)
   const at = stamp(ctx)
   rewrite(ctx, id, r => {

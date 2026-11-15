@@ -264,6 +264,13 @@ test('verdict --reviewed is itself the review at its head: it records the head w
   })
   const again = await cli(['fixed', r, '1', '--head', '9990000'])
   assert.doesNotMatch(again, /already has its correction round/)
+  // The same commit abbreviated on one side is the same head: the review keeps its norms and its correction round, no review step is said.
+  const long = `abc1234${'0'.repeat(33)}`
+  await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'tool'])
+  await cli(['fixed', r, '1', '--head', 'abc1234'])
+  await cli(['verdict', r, '1', '--head', long, '--result', 'pass', '--words', 'ok', '--reviewed'])
+  const abbreviated = rows()[0]?.['review'] as Record<string, unknown>
+  assert.deepEqual([abbreviated['head'], abbreviated['norms'], (abbreviated['fixed'] as Record<string, unknown>)['head']], ['abc1234', 'tool', 'abc1234'])
   // Without the flag the warning stays: a person who forgot `review` is told.
   const second = await cli(['open', r, '--class', 'c', '--tier', 'deep'])
   assert.equal(second.startsWith('0|2'), true)
