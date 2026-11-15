@@ -39,6 +39,7 @@ import { launcherOf } from '../core/orchestration.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
+import { messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { handsOver, unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
@@ -49,6 +50,14 @@ import {
   MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
+
+// The nouns the guards hold.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'clock' | 'ui'>
+
+// What a call beneath answered, read for the marks of one that did not go through.
+function answered(out: unknown): { isError?: unknown; deny?: unknown; isDelivered?: unknown } {
+  return (typeof out === 'object' && out !== null ? out : {}) as { isError?: unknown; deny?: unknown; isDelivered?: unknown }
+}
 
 export function roleLine(role: string, root = ''): string {
   // Verbatim from hooks/context-gate.sh:57-63 — the four role answers. The
@@ -157,7 +166,7 @@ function unmeasuredAnnouncement(env: { gate?: number; gateTokens?: number }): st
 // scanned, and the short window is the one holding the file's end. Every read
 // carries its own timeout: a read the caller stopped waiting for never outlives
 // the bound it was given.
-async function readBlock($: any, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
+async function readBlock($: Held, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)
   return bytesOfBase64(String(stdout ?? ''))
@@ -168,7 +177,7 @@ const NAME_WALK_MS = 5000
 
 // The host's record of a pid, the identity rule's first half: the text, or null
 // when the pid has none.
-function recordReader($: any, config: string, timeoutMs: () => number): ReadRecord {
+function recordReader($: Held, config: string, timeoutMs: () => number): ReadRecord {
   return async (pid: string) => {
     try {
       const text = await withDeadline($.fs.read(`${config}/sessions/${pid}.json`), timeoutMs())
@@ -182,7 +191,7 @@ function recordReader($: any, config: string, timeoutMs: () => number): ReadReco
 // The identity rule's second half: the basenames the host's binary goes by — the
 // name ORCHESTRATOR_HOST_CLI spells (the launcher's default beside it) and the
 // binary it resolves to through the PATH and its links.
-function hostNamesReader($: any, timeoutMs: () => number): HostNames {
+function hostNamesReader($: Held, timeoutMs: () => number): HostNames {
   return async () => {
     const host = (await $.env.get('ORCHESTRATOR_HOST_CLI')) ?? 'claude'
     let resolved: string | null = null
@@ -201,7 +210,7 @@ function hostNamesReader($: any, timeoutMs: () => number): HostNames {
 // transcript's last rename. The walk itself is session-name.ts's pure core;
 // this file's $ builds the readers it runs over (the fence law: $ never crosses
 // an import), each bounded by what is left of `until`.
-export async function readName($: any, transcriptPath: string, sessionId = '', until = Date.now() + NAME_WALK_MS):
+export async function readName($: Held, transcriptPath: string, sessionId = '', until = Date.now() + NAME_WALK_MS):
 Promise<{ tty: string | null; name: string | null; pid: string | null; known: boolean }> {
   const left = () => Math.max(1, until - Date.now())
   return walkName(
@@ -221,7 +230,7 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // $.session.id() being the transcript file's name. A miss returns '': the
 // rename fallback then names nothing, and a transcript nobody wrote holds no
 // assistant entry either.
-async function transcriptPathOf($: any, sessionId: string): Promise<string> {
+async function transcriptPathOf($: Held, sessionId: string): Promise<string> {
   try {
     const projects = `${await configDir($)}/projects`
     for (const entry of await $.fs.list(projects)) {
@@ -239,7 +248,7 @@ async function transcriptPathOf($: any, sessionId: string): Promise<string> {
 // is the session-name tail scan: from the end, one dd window at a time, the cut
 // first line carried, and it stops at the first assistant entry — they are
 // dense, so the walk is short and never a whole-file read.
-async function transcriptHasAnswer($: any, path: string): Promise<boolean> {
+async function transcriptHasAnswer($: Held, path: string): Promise<boolean> {
   // A transcript that cannot be read has answered nothing the gate can know.
   const until = Date.now() + NAME_WALK_MS
   const { line } = await scanTail(
@@ -259,7 +268,7 @@ function undeclaredOperatorWait(message: string, declarations: Declarations): bo
 }
 
 // `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, declarations: Declarations = DECLARATIONS) {
+export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
   // place and the unmeasured line are the session's own, keyed by its id: after a
   // /clear the id changes and no session.start fires, so a memo held across it
@@ -284,7 +293,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The last prompt the operator typed in this session, keyed by its id like the memos
   // above: the tier map's guard stands aside when it names the map or a tier.
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
-  on('prompt.submit', async ($: any, e: any, next: (e: any) => any) => {
+  on('prompt.submit', async ($, e, next) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
         lastTyped = { sessionId: await $.session.id(), text: String(e.text ?? ''), at: new Date().toISOString() }
@@ -346,10 +355,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     } catch (err) {
       // A gate that cannot measure lets the prompt through and says so once in
       // the log; the log's own failure stays quiet (the every-handler-logs rule).
-      await logLine($, 'guards', (err as Error).message)
+      await logLine($, 'guards', messageOf(err))
     }
     return answer()
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the body's own catch handles what throws inside it, this one what it
     // cannot — a handler overrunning its own time bound above all (Review
@@ -363,14 +372,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A subscription to a peer's idle notice, made by the main thread and sent: kept for
   // the stop gate, which reads it as something that will wake the session. Mounted
   // before the Bash guard below.
-  on('tool.call', { tool: 'SendMessage' }, async ($: any, e: any, next: (e: any) => any) => {
-    const to = typeof e.to === 'string' ? e.to.trim() : ''
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    const { to: target, message } = e
+    const to = typeof target === 'string' ? target.trim() : ''
     // An agent's message to an orchestrator over the verdict limit: cut to it with the pointer to the
     // report it names, let through whole when it names none. The sender is read only for such a message; one
     // that cannot be read lets the message through.
     let sending = e
-    if (to && typeof e.message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
-      const short = shorten(e.message)
+    if (to && typeof message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
+      const short = shorten(message)
       if (short.kind !== 'whole') {
         try {
           const sessionId = await $.session.id()
@@ -381,27 +391,27 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
               await logLine($, 'guards', `a message of ${short.length} characters to ${to} names no report file: let through`)
               await observed($, REPORT_UNNAMED_CODE)
             } else {
-              await logLine($, 'guards', `a message of ${e.message.length} characters to ${to} cut, its report at ${short.path}`)
+              await logLine($, 'guards', `a message of ${message.length} characters to ${to} cut, its report at ${short.path}`)
               sending = { ...e, message: short.text }
             }
           }
         } catch (err) {
-          await logLine($, 'guards', `the sender of a message to ${to} could not be read: ${(err as Error).message}`)
+          await logLine($, 'guards', `the sender of a message to ${to} could not be read: ${messageOf(err)}`)
         }
       }
     }
     const out = await next(sending)
-    if (!e.agentId && e.notify_when_idle === true && to && out && !out.isError && !out.deny) {
+    if (!e.agentId && e['notify_when_idle'] === true && to && out && !answered(out).isError && !answered(out).deny) {
       try {
         const sessionId = await $.session.id()
         if (!awaited || awaited.sessionId !== sessionId) awaited = { sessionId, peers: new Map() }
         awaited.peers.set(to, Date.now())
       } catch (err) {
-        await logLine($, 'guards', `the subscription to ${to} could not be kept: ${(err as Error).message}`)
+        await logLine($, 'guards', `the subscription to ${to} could not be kept: ${messageOf(err)}`)
       }
     }
     return out
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -414,26 +424,26 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // names the map or a tier: then the binding is his word on the point. Mounted before the
   // kill guard, so a Bash call reaches it first; the session's role is read only for a call
   // that writes the map. Never `ask`.
-  on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($: any, e: any, next: (e: any) => any) => {
+  on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($, e, next) => {
     const maps = mapPaths(await stateDir($), await configDir($))
-    const writes = e.tool === 'Bash'
-      ? bashWritesTheMap(String(e.command ?? ''), maps)
-      : editsTheMap(String(e.file_path ?? ''), maps)
+    const writes = e['tool'] === 'Bash'
+      ? bashWritesTheMap(String(e['command'] ?? ''), maps)
+      : editsTheMap(String(e['file_path'] ?? ''), maps)
     if (!writes) return next(e)
     const sessionId = await $.session.id()
     if (lastTyped && lastTyped.sessionId === sessionId && namesTheMap(lastTyped.text)) return next(e)
     const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
     if (!roleOf(name)) return next(e)                // the operator's own sessions: untouched
     // A Bash overwrite destroys the bindings: refused. A file tool's write is observed.
-    if (e.tool === 'Bash') {
+    if (e['tool'] === 'Bash') {
       await logLine($, 'guards', 'models guard: a Bash write of the tier map denied')
       return { deny: MODELS_DENY }
     }
     // Observed, not refused: the write goes through, and the journal holds the escape.
-    await logLine($, 'guards', `models guard: a write of the tier map let through (${e.tool})`)
+    await logLine($, 'guards', `models guard: a write of the tier map let through (${e['tool']})`)
     await observed($, MAP_WRITE_CODE)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // A guard that could not read lets the call through, and the log says why: the map is
     // the operator's file, and a session held on the guard's own failure helps nobody.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -445,10 +455,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // dialog: an orchestrator's that offers `build` and `investigate` is observed. While a coordinator
   // runs, an orchestrator and the coordinator are waited on: any dialog of theirs is observed. Both
   // open, each with one escape in the journal.
-  on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: (e: any) => any) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     const sessionId = await $.session.id()
     const role = roleOf((await readName($, await transcriptPathOf($, sessionId), sessionId)).name)
-    if (role === 'orchestrator' && asksTheMode(e)) {
+    if (role === 'orchestrator' && asksTheMode({ questions: e['questions'] })) {
       // Observed, not refused: the dialog opens, and the journal holds the escape.
       await logLine($, 'guards', 'mode dialog let through: the mode is asked in the question format, never by dialog')
       await observed($, MODE_DIALOG_CODE)
@@ -458,7 +468,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     await logLine($, 'guards', `dialog let through: a ${role} is waited on while a coordinator runs`)
     await observed($, WAITED_ON_DIALOG_CODE)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // A guard that could not read lets the dialog through, and the log says why.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -469,30 +479,30 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // the event is `{ deny: reason }`, the decision's own shape already, the
   // matcher keeping it to Bash calls. The same hook watches for the successor's
   // spawn: run without error, it is the hand-over the stop gate releases on.
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: (e: any) => any) => {
-    const command = String(e.command ?? '')
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = String(e['command'] ?? '')
     try {
       spawnedMark = (await $.env.get('ORCHESTRATOR_SPAWNED')) ?? null
     } catch (err) {
       // The mark cannot be read: the decision falls to what is known of it.
-      await logLine($, 'guards', (err as Error).message)
-      const fallback = guardFallback(spawnedMark, command, (err as Error).message)
+      await logLine($, 'guards', messageOf(err))
+      const fallback = guardFallback(spawnedMark, command, messageOf(err))
       if (fallback) return fallback
       return next(e)
     }
     const decision = killDecision(spawnedMark, command)
     if (decision) return decision
     const out = await next(e)
-    if (!e.agentId && isSuccessorSpawn(command) && out && !out.isError && !out.deny) {
+    if (!e.agentId && isSuccessorSpawn(command) && out && !answered(out).isError && !answered(out).deny) {
       try {
         handedOverIn = await $.session.id()
         declarations.handOver(handedOverIn)
       } catch (err) {
-        await logLine($, 'guards', `the hand-over could not be kept: ${(err as Error).message}`)
+        await logLine($, 'guards', `the hand-over could not be kept: ${messageOf(err)}`)
       }
     }
     return out
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see. A
     // call already run beneath is let through (next is replay-safe in a catch).
     // One not run yet — a re-entry, a guard past its budget — is decided on the
@@ -500,25 +510,25 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // operator started, and a kill by pattern refused while the mark is unknown.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     if (next.called) return next(e)
-    const fallback = guardFallback(spawnedMark, String(e.command ?? ''), next.error?.message ?? 'the guard did not finish')
+    const fallback = guardFallback(spawnedMark, String(e['command'] ?? ''), next.error?.message ?? 'the guard did not finish')
     return fallback ?? next(e)
   })
 
   // The model's own « handed over », delivered, is the hand-over too: the successor spawned by another
   // route (or before a reload of this module) leaves no spawn to read, and the session that sent its last
   // word to its successor is no more refused a done for what is now the successor's.
-  on('session.send', async ($: any, e: any, next: (e: any) => any) => {
+  on('session.send', async ($, e, next) => {
     const sent = await next(e)
-    if (!e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text) && sent?.isDelivered !== false) {
+    if (!e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text) && answered(sent).isDelivered !== false) {
       try {
         handedOverIn = await $.session.id()
         declarations.handOver(handedOverIn)
       } catch (err) {
-        await logLine($, 'guards', `the hand-over could not be kept: ${(err as Error).message}`)
+        await logLine($, 'guards', `the hand-over could not be kept: ${messageOf(err)}`)
       }
     }
     return sent
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -531,7 +541,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // passes, with one `let through` log line and one escape in the journal. The shell gate
   // that once answered the same stops is gone with the cutover — this handler is the only
   // stop gate.
-  on('classic.Stop', async ($: any, e: any, next: (e: any) => any) => {
+  on('classic.Stop', async ($, e, next) => {
     // The sweep's one shot, armed once the stop is known Orch-scoped: every passing
     // exit below calls it before next(e), a refusal never does, and the catch does too
     // (the shell gate's own finally — a stop the gate could not read through passes all
@@ -632,7 +642,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           const texts = await readRecords($, records, until)
           readyOnce = readyRowsLine(readyRows({ texts, lines: texts.flatMap(text => ledgerLines(text)), live: liveNames(rows) }))
         } catch (err) {
-          await logLine($, 'guards', `stop gate: ready rows unread: ${String((err as Error)?.message ?? err)}`)
+          await logLine($, 'guards', `stop gate: ready rows unread: ${reasonOf(err)}`)
           readyOnce = null
         }
         return readyOnce
@@ -784,14 +794,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // written where the read failed; anything else the gate broke on is said here.
       // Never a stop held on the gate's own failure.
       if (!(err instanceof GateUnread)) {
-        await logLine($, 'guards', `stop gate: ${String((err as Error)?.message ?? err)}`)
+        await logLine($, 'guards', `stop gate: ${reasonOf(err)}`)
       }
       // The shell gate swept in a finally over its checks: a stop it could not read
       // through passes all the same, and sweeps.
       await sweepAtStop?.()
       return next(e)
     }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see, both laws
     // above it: the stop is let through, the state dir says why, and next is
     // replay-safe in a catch, called or not.
@@ -814,14 +824,14 @@ const firstLine = (text: string): string => text.trim().split('\n')[0] ?? ''
 // wrote still holds the interval across the cutover: its token is a time, the same
 // fact whatever gate reads it. It is written BEFORE the run, so a sweep that hangs is
 // not retried by every stop that follows it.
-async function runSweep($: any, stateRoot: string, root: string, until: number): Promise<void> {
+async function runSweep($: Held, stateRoot: string, root: string, until: number): Promise<void> {
   try {
     // What is left of the whole gate's deadline, minus the margin its own exit needs.
     // Under a second, or not due: nothing runs, nothing is said.
     const left = (until - Date.now()) / 1000 - SWEEP_MARGIN
     if (left < 1) return
     let mtimeMs: number | null = null
-    try { mtimeMs = (await $.fs.stat(`${stateRoot}/sweep.stamp`)).mtimeMs } catch { mtimeMs = null }
+    try { mtimeMs = (await $.fs.stat(`${stateRoot}/sweep.stamp`)).mtimeMs ?? null } catch { mtimeMs = null }
     const every = (Number(await $.env.get('ORCHESTRATOR_SWEEP_INTERVAL')) || 600) * 1000
     if (mtimeMs !== null && Date.now() - mtimeMs < every) return
     await $.fs.write(`${stateRoot}/sweep.stamp`, `${Math.floor(Date.now() / 1000)}\n`)
@@ -842,7 +852,7 @@ async function runSweep($: any, stateRoot: string, root: string, until: number):
         ms,
       )
     } catch (err) {
-      await logLine($, 'guards', `stop gate: sweep error ${String((err as Error)?.message ?? err)}`)
+      await logLine($, 'guards', `stop gate: sweep error ${reasonOf(err)}`)
       return
     }
     if (isDegradedPass(outcome)) {
@@ -867,7 +877,7 @@ class GateUnread extends Error {}
 
 // The whole gate's deadline (stop_gate.py:109): seconds, the env override the operator
 // keeps, the shell gate's own default beside it.
-async function stopDeadline($: any): Promise<number> {
+async function stopDeadline($: Held): Promise<number> {
   const raw = await $.env.get('ORCHESTRATOR_STOP_GATE_DEADLINE')
   const n = raw === undefined ? NaN : Number(raw)
   return Number.isFinite(n) && n > 0 ? n * 1000 : 20000
@@ -876,7 +886,7 @@ async function stopDeadline($: any): Promise<number> {
 // The race without the meaning: null when the work lost the race, threw, or the
 // deadline was already spent. Each caller decides what that costs — loud (one line, the
 // stop passes) or quiet (a fallback), as stop_gate.py's reads were.
-async function inTime<T>($: any, work: () => Promise<T>, until: number): Promise<T | null> {
+async function inTime<T>($: Held, work: () => Promise<T>, until: number): Promise<T | null> {
   const left = until - Date.now()
   if (left <= 0) return null
   try {
@@ -890,7 +900,7 @@ async function inTime<T>($: any, work: () => Promise<T>, until: number): Promise
 // The host's status of each tty's session: the processes on the tty, each one's host
 // record read under the config dir. A tty no record answers for is left out, and its
 // agent falls back to the listing's glyph — never a stop held on this read.
-async function hostStatuses($: any, ttys: readonly string[], until: number): Promise<Map<string, 'idle' | 'busy'>> {
+async function hostStatuses($: Held, ttys: readonly string[], until: number): Promise<Map<string, 'idle' | 'busy'>> {
   const statuses = new Map<string, 'idle' | 'busy'>()
   const config = await configDir($)
   for (const tty of ttys) {
@@ -910,20 +920,20 @@ async function hostStatuses($: any, ttys: readonly string[], until: number): Pro
 // A process the gate runs under its deadline: the race above stops the gate's wait, and
 // the timeout given here stops the process itself — a hung read never outlives the stop
 // it was made for.
-function runUntil($: any, argv: readonly string[], until: number, cwd?: string): Promise<any> {
+function runUntil($: Held, argv: readonly string[], until: number, cwd?: string): Promise<ProcessRunResult> {
   const timeoutMs = Math.max(1, until - Date.now())
   return $.process.run(argv, cwd ? { timeoutMs, cwd } : { timeoutMs })
 }
 
 // A quiet read's fallback shape.
-async function quietly<T>($: any, work: () => Promise<T>, until: number, fallback: T): Promise<T> {
+async function quietly<T>($: Held, work: () => Promise<T>, until: number, fallback: T): Promise<T> {
   const done = await inTime($, work, until)
   return done === null ? fallback : done
 }
 
 // A read the gate stands down on: it could not be made, so the stop passes and the log
 // says so — never a stop held on the gate's own wait.
-async function mustRun($: any, argv: readonly string[], what: string, until: number): Promise<string> {
+async function mustRun($: Held, argv: readonly string[], what: string, until: number): Promise<string> {
   const done = await inTime($, () => runUntil($, argv, until), until)
   if (!done || done.exitCode !== 0) {
     await logLine($, 'guards', `stop gate: ${what} unread: ${!done ? 'it did not answer in time' : `it exited ${done.exitCode}`}`)
@@ -932,13 +942,13 @@ async function mustRun($: any, argv: readonly string[], what: string, until: num
   return String(done.stdout ?? '')
 }
 
-async function mustReadText($: any, path: string, what: string, until: number): Promise<string> {
+async function mustReadText($: Held, path: string, what: string, until: number): Promise<string> {
   let text: unknown = null
   try {
     const left = until - Date.now()
     text = left > 0 ? await withDeadline($.fs.read(path), left) : null
   } catch (err) {
-    await logLine($, 'guards', `stop gate: ${what} unread: ${String((err as Error)?.message ?? err)}`)
+    await logLine($, 'guards', `stop gate: ${what} unread: ${reasonOf(err)}`)
     throw new GateUnread(what)
   }
   if (text === null || isDegradedPass(text)) {
@@ -954,7 +964,7 @@ async function mustReadText($: any, path: string, what: string, until: number): 
 // run in that checkout — the only network the gate pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: the refusal simply does
 // not name the agent, never a stop held on it.
-async function pullRequestRead($: any, tty: string, until: number): Promise<{ number: string; state: string } | null> {
+async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
   const host = await inTime($, () => hostOn(
@@ -982,7 +992,7 @@ async function pullRequestRead($: any, tty: string, until: number): Promise<{ nu
 // The project's root (project_checkouts' first half): git's answer, or the cwd itself
 // when git gives none. The shell gate resolved the path; the sandbox exposes no
 // resolver, and the cwd names the same project to workspace.sh's own listing.
-async function projectTop($: any, cwd: string, until: number): Promise<string> {
+async function projectTop($: Held, cwd: string, until: number): Promise<string> {
   const done = await inTime($, () => runUntil($, ['git', '-C', cwd, 'rev-parse', '--show-toplevel'], until), until)
   const top = done && done.exitCode === 0 ? String(done.stdout ?? '').trim() : ''
   return top || cwd
@@ -990,7 +1000,7 @@ async function projectTop($: any, cwd: string, until: number): Promise<string> {
 
 // open_rows()'s reads (stop_gate.py:315-337): the register this session's records were
 // filed under, one path a line, then each record file. A read that fails is no row.
-async function registeredRecords($: any, state: string, sessionId: string, until: number): Promise<string[]> {
+async function registeredRecords($: Held, state: string, sessionId: string, until: number): Promise<string[]> {
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
   const register = await quietly($, () => $.fs.read(`${state}/records/${safe}`), until, '')
   return String(register).split('\n').map(line => line.trim()).filter(Boolean)
@@ -1000,7 +1010,7 @@ async function registeredRecords($: any, state: string, sessionId: string, until
 // the session's orchestration. A record another orchestration owns is not read, nor its goals.md:
 // the session never answers for what it did not open. Each one skipped is said in the log with
 // its path. A session whose orchestration is unknown owns nothing, and every owned record is skipped.
-async function ownRecords($: any, records: readonly string[], own: string | null, until: number): Promise<string[]> {
+async function ownRecords($: Held, records: readonly string[], own: string | null, until: number): Promise<string[]> {
   const kept: string[] = []
   for (const path of records) {
     const owner = ownerOf(String(await quietly($, () => $.fs.read(`${path}.owner`), until, '')))
@@ -1013,7 +1023,7 @@ async function ownRecords($: any, records: readonly string[], own: string | null
   return kept
 }
 
-async function readRecords($: any, records: readonly string[], until: number): Promise<string[]> {
+async function readRecords($: Held, records: readonly string[], until: number): Promise<string[]> {
   const texts: string[] = []
   for (const path of records) texts.push(String(await quietly($, () => $.fs.read(path), until, '')))
   return texts
@@ -1024,7 +1034,7 @@ async function readRecords($: any, records: readonly string[], until: number): P
 // opened before the file existed (open refuses without it now): it passes, said once. A
 // check that cannot run, runs out of time, or cannot read its file lets the stop pass on
 // that file, said in the log — the gate's own law. A spec that has moved is a note, logged.
-async function readGoals($: any, records: readonly string[], root: string, until: number): Promise<GoalsReading[]> {
+async function readGoals($: Held, records: readonly string[], root: string, until: number): Promise<GoalsReading[]> {
   const readings: GoalsReading[] = []
   for (const path of goalsPaths(records)) {
     const exists = await inTime($, () => $.fs.exists(path), until)
@@ -1047,7 +1057,7 @@ async function readGoals($: any, records: readonly string[], root: string, until
 // The session's repository (`owner/name`), read from the origin remote of the cwd —
 // the same fact the shell gate read from gh, a local read now. Null when it cannot be
 // known; `why` is the half-line ignored-checks says when it had entries to match.
-async function repositoryOf($: any, cwd: string, until: number): Promise<{ name: string | null; why: string }> {
+async function repositoryOf($: Held, cwd: string, until: number): Promise<{ name: string | null; why: string }> {
   const remote = await inTime($, () => runUntil($, ['git', '-C', cwd, 'remote', 'get-url', 'origin'], until), until)
   if (!remote) return { name: null, why: 'the origin remote did not answer in time' }
   if (remote.exitCode !== 0) return { name: null, why: 'git remote get-url origin did not answer' }
@@ -1063,7 +1073,7 @@ async function repositoryOf($: any, cwd: string, until: number): Promise<{ name:
 // that cannot be read, or a repository that cannot be known, is said once (its
 // unreadable line at :507) and filters nothing: a red is never lost for want of a read.
 async function ignoredChecks(
-  $: any,
+  $: Held,
   state: string,
   repository: () => Promise<{ name: string | null; why: string }>,
   until: number,
@@ -1073,7 +1083,7 @@ async function ignoredChecks(
     const left = until - Date.now()
     raw = left > 0 ? await withDeadline($.fs.read(`${state}/ignored-checks`), left) : null
   } catch (err) {
-    const message = String((err as Error)?.message ?? err)
+    const message = reasonOf(err)
     if (!/ENOENT|no such/i.test(message)) {
       await logLine($, 'guards', `stop gate: ignored-checks unreadable: ${message}`)
     }
@@ -1083,7 +1093,7 @@ async function ignoredChecks(
   const entries: [string, string][] = []
   for (const line of String(raw).split('\n')) {
     if (!line.trim() || line.trim().startsWith('#')) continue
-    const [repo, ...rest] = line.trim().split(/\s+/)
+    const [repo = '', ...rest] = line.trim().split(/\s+/)
     const name = rest.join(' ').trim()
     if (repo.includes('/') && name) entries.push([repo, name])
     else await logLine($, 'guards', `stop gate: ignored-checks malformed line: ${line}`)
@@ -1101,13 +1111,13 @@ async function ignoredChecks(
 // The watches ci-watch left behind (check 2's data): an absent directory is no watch
 // ever run — the state dir is born without one — and anything else that cannot be read
 // stands the check down. Null answers mean exactly that: already said in the log.
-async function listCiWatches($: any, dir: string, until: number): Promise<{ name: string; kind: string; mtimeMs: number }[] | null> {
-  let listed: unknown = null
+async function listCiWatches($: Held, dir: string, until: number): Promise<{ name: string; kind: string; mtimeMs: number }[] | null> {
+  let listed: FsEntry[] | DegradedPass | null = null
   try {
     const left = until - Date.now()
     listed = left > 0 ? await withDeadline($.fs.list(dir), left) : null
   } catch (err) {
-    const message = String((err as Error)?.message ?? err)
+    const message = reasonOf(err)
     if (/ENOENT|no such/i.test(message)) return []
     await logLine($, 'guards', `stop gate: the ci-watch watches unread: ${message}`)
     return null
@@ -1116,7 +1126,7 @@ async function listCiWatches($: any, dir: string, until: number): Promise<{ name
     await logLine($, 'guards', 'stop gate: the ci-watch watches unread: it did not answer in time')
     return null
   }
-  return (listed as { name: string; kind: string; mtimeMs: number }[])
+  return listed
     .filter(entry => entry && typeof entry.name === 'string')
     .map(entry => ({ name: entry.name, kind: String(entry.kind), mtimeMs: Number(entry.mtimeMs) || 0 }))
 }

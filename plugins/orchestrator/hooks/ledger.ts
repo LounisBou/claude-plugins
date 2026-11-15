@@ -11,8 +11,13 @@ import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
 import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
+import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { readOr, safe } from './unattended.ts'
+
+// The nouns a write holds.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
+type Call = Events['tool.call']
 
 // The bound of one write: the lookups of the mapping and the record's lock.
 export const LEDGER_BOUND_MS = 10_000
@@ -61,7 +66,7 @@ function htmlUrlOf(answer: string): string | null {
 
 // The orchestration the creating session belongs to: its session and its name. An orchestrator's own,
 // an agent's orchestrator found as the relay finds it; null for any other session.
-async function orchestrationOfSession($: any, sessionId: string, row: { role: string | null; name: string | null; tty?: string | null }): Promise<{ id: string; name: string | null } | null> {
+async function orchestrationOfSession($: Held, sessionId: string, row: { role: string | null; name: string | null; tty?: string | null }): Promise<{ id: string; name: string | null } | null> {
   if (row.role === 'orchestrator') return { id: sessionId, name: row.name }
   if (row.role !== 'agent' || !row.name) return null
   const to = await orchestratorOn($, row.tty ?? null, row.name, 'ledger')
@@ -69,7 +74,7 @@ async function orchestrationOfSession($: any, sessionId: string, row: { role: st
   const store = await storeOf($)
   let id: string | null = typeof to === 'string' ? null : to.sessionId
   if (typeof to === 'string') {
-    for (const entry of await $.fs.list(`${store}/sessions`).catch(() => []) as { name: string; kind: string }[]) {
+    for (const entry of await $.fs.list(`${store}/sessions`).catch((): FsEntry[] => [])) {
       if (entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
       const held = parseSessionRow(await readOr($, `${store}/sessions/${entry.name}`))
       if (held?.role === 'orchestrator' && held.name === to) id = entry.name
@@ -82,7 +87,7 @@ async function orchestrationOfSession($: any, sessionId: string, row: { role: st
 }
 
 // The records the orchestration owns that its session registered, each readable.
-export async function ownRecords($: any, state: string, id: string, name: string | null): Promise<string[]> {
+export async function ownRecords($: Host<'fs'>, state: string, id: string, name: string | null): Promise<string[]> {
   const own = orchestrationOf(name)
   if (own === null) return []
   const found: string[] = []
@@ -94,7 +99,7 @@ export async function ownRecords($: any, state: string, id: string, name: string
 
 // The line of the pull request, written once into the first record the orchestration owns; none when
 // any of its records already holds one.
-export async function writeLine($: any, pr: { repo: string; pr: number }, now: Date, signal: AbortSignal): Promise<void> {
+export async function writeLine($: Held, pr: { repo: string; pr: number }, now: Date, signal: AbortSignal): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
   if (row === null) return
@@ -112,7 +117,7 @@ export async function writeLine($: any, pr: { repo: string; pr: number }, now: D
 }
 
 // The call goes through; its answer is read for a creation and the line written within the bound.
-async function afterCall($: any, e: any, next: (e: any) => any, now: () => Date, bound: number): Promise<unknown> {
+async function afterCall($: Held, e: Call, next: Next<Call>, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
   const created = createdPr(e, result)
   if (created === null) return result
@@ -120,17 +125,17 @@ async function afterCall($: any, e: any, next: (e: any) => any, now: () => Date,
     const done = await withDeadline(signal => writeLine($, created, now(), signal), bound)
     if (isDegradedPass(done)) await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} did not finish within ${bound} ms`)
   } catch (err) {
-    await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} not written: ${(err as Error).message}`)
+    await logLine($, 'ledger', `the line of ${created.repo}#${created.pr} not written: ${messageOf(err)}`)
   }
   return result
 }
 
-async function net($: any, e: any, next: any): Promise<unknown> {
+const net: CatchHook<Held, Call> = async ($, e, next) => {
   await logLine($, 'ledger', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
   return next(e)
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, now: () => Date = () => new Date(), bound: number = LEDGER_BOUND_MS) {
-  on('tool.call', { tool: 'mcp__github__gh' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now, bound)).catch(net)
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: (e: any) => any) => afterCall($, e, next, now, bound)).catch(net)
+export function register(on: On<Held>, now: () => Date = () => new Date(), bound: number = LEDGER_BOUND_MS): void {
+  on('tool.call', { tool: 'mcp__github__gh' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
 }
