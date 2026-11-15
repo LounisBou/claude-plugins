@@ -28,7 +28,7 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
-import { answersChoice, leadingChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -2344,7 +2344,7 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
     if (!written) await logLine($, 'supervision', `round: ${entry.id} was settled meanwhile, left as it is`)
     else {
       if (closed) settled.push({ entry, answer })
-      await writeTabConsent($, entry, held.said ?? '', at, (await sessionRole($, sessionId)) === 'coordinator')
+      await writeTabConsent($, entry, held.said ?? '', at)
     }
   }
   if (direct.length === 0) await logLine($, 'supervision', `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
@@ -2380,11 +2380,10 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
 // one choice of the entry unambiguously (answersChoice) and that choice grants (« Accorder »,
 // core's grants): the record's answer is its text. A prompt typed there can be any instruction,
 // and a refusal is no consent: free prose, an ambiguous answer and a refusing choice leave no
-// record, and the log says so once. In the coordinator's own tab every order of his counts: the
-// words that open with a choice (« Accorder la dispense… ») answer it, `coordinator` says so.
-async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string, coordinator = false): Promise<void> {
+// record, and the log says so once.
+async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string): Promise<void> {
   if (!entry.consent) return
-  const chosen = answersChoice(typed, entry.choices) ?? (coordinator ? leadingChoice(typed, entry.choices) : undefined)
+  const chosen = answersChoice(typed, entry.choices)
   if (!chosen || !grants(chosen.text)) {
     await logLine($, 'supervision', `round: the words typed for ${entry.id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
     return

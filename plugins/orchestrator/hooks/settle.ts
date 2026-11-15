@@ -109,8 +109,10 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
       ...(request.outcome === 'answered-here' ? { typed: request.text } : {}),
     }
     const status = shown ? 'closed' : request.outcome === 'withdrawn' ? 'withdrawn' : 'answered'
-    // His consent is recorded from his answer only: in the coordinator's own tab every order of his is one, an orchestrator's own settle its word.
-    const consentBy = request.outcome === 'answered-here' && me.role === 'coordinator' ? 'tab' : null
+    // His consent is recorded from his answer only: in the coordinator's own tab every order of his is
+    // one, so its settle is recorded as the coordinator's (the words need no exact form, as the pane's
+    // and the coordinator's close of another's question); an orchestrator's own settle is its word.
+    const consentBy = request.outcome === 'answered-here' && me.role === 'coordinator' ? 'coordinator' : null
     return { entry: { ...entry, status, answer }, asker, deliver: null, consentBy, consentText: request.text, relayed: true, told: shown }
   }
   if (me.role !== 'coordinator') return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }

@@ -40,16 +40,33 @@ describe('consent records', () => {
     assert.equal(consentAnswer('  go without it  ', choices), 'go without it')
   })
 
-  it('takes an answer that opens with a choice for that choice, the words after it left out, so that « Accorder » with words after it grants', () => {
+  it('takes an answer that opens with a choice for that choice when it is leading, the words after it left out, so that « Accorder » with words after it grants', () => {
     const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
-    for (const answer of ['Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 !', 'accorder, merci', 'ACCORDER — go', 'Accorder\n(A)']) {
-      assert.equal(consentAnswer(answer, choices), 'Accorder', answer)
-      assert.equal(grants(consentAnswer(answer, choices)), true, answer)
+    for (const answer of ['Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris !', 'accorder, merci', 'ACCORDER — go']) {
+      assert.equal(consentAnswer(answer, choices, true), 'Accorder', answer)
+      assert.equal(grants(consentAnswer(answer, choices, true)), true, answer)
+      assert.equal(grants(consentAnswer(answer, choices)), false, answer)
     }
-    assert.equal(consentAnswer('Refuser, pas ce soir', choices), 'Refuser')
-    for (const answer of ['Accorderai', 'je dis Accorder', 'peut-être']) assert.equal(consentAnswer(answer, choices), answer, answer)
+    assert.equal(consentAnswer('Refuser, pas ce soir', choices, true), 'Refuser, pas ce soir')
+    assert.equal(consentAnswer('Refuser — go', choices, true), 'Refuser')
+    for (const answer of ['Accorderai', 'Accorderé', 'Accordée', 'je dis Accorder', 'peut-être']) assert.equal(consentAnswer(answer, choices, true), answer, answer)
+  })
+
+  it('takes an answer that takes its choice back for none: another choice, another letter, a condition or a refusal', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }, { letter: 'C', text: 'Accorder sous conditions' }]
+    for (const answer of ['Accorder pas', 'Accorder jamais', 'Accorder: non', 'Accorder ou refuser ?', 'Accorder (A) Refuser', 'Accorder (A) (B)', 'Accorder (B)', 'Accorder, mais pas avant lundi', 'Accorder sauf si la CI casse', 'Accorder, sous conditions']) {
+      assert.equal(leadingChoice(answer, choices), undefined, answer)
+      assert.equal(grants(consentAnswer(answer, choices, true)), false, answer)
+    }
+    assert.equal(leadingChoice('Accorder sous conditions : la CI', choices)?.letter, 'C')
     assert.equal(leadingChoice('yes or no', [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'yes' }]), undefined)
     assert.equal(leadingChoice('yes, and more', [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'yes, and' }])?.letter, 'B')
+  })
+
+  it('files a record from an answer opening with the choice only by the coordinator or the pane, never by a tab', () => {
+    const fields = { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 3 }, entry: 's-1', question: 'Waive E2E?', choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], at: '2026-11-10T00:00:00Z', answer: 'Accorder, et fusionne' }
+    for (const by of ['coordinator', 'pane'] as const) assert.equal(consentRecordOf({ ...fields, by })?.answer, 'Accorder', by)
+    assert.equal(consentRecordOf({ ...fields, by: 'tab' })?.answer, 'Accorder, et fusionne')
   })
 
   it('takes a choice pressed as its text then its letter in parentheses for its text, so that it grants', () => {
@@ -59,6 +76,7 @@ describe('consent records', () => {
     assert.equal(consentAnswer('Refuser (B)', choices), 'Refuser')
     assert.equal(grants(consentAnswer('Accorder (A)', choices)), true)
     assert.equal(consentAnswer('Accorder (B)', choices), 'Accorder (B)')
+    assert.equal(answersChoice('Accorder (A)', choices)?.letter, 'A')
   })
 
   it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {

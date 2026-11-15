@@ -4,6 +4,7 @@
 // once when another session settles it, its consent recorded, the work its answer asks recorded as a
 // to-do of the asker; and the relay's entry closed by its own sender as the answered tool closed it.
 import { expect, test } from 'claude-code/testing'
+import { grants } from '../../core/consent-record.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
 import { parseSettle, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
@@ -289,11 +290,11 @@ const GRANT_WORDS = "Accorder la dispense de acme/app et fusionner les PRS. Disp
 const consentOf = (id: string) => ({ consent: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 }, choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], kind: 'operator', question: 'Waive E2E on acme/app#7?', id })
 const recordsOf = (m: ReturnType<typeof machine>) => [...m.files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text))
 
-test('the coordinator settles its own wait that asks consent, answered in its tab with words after « Accorder »: the consent record is « Accorder », by the tab', async () => {
+test('the coordinator settles its own wait that asks consent, answered in its tab with words after « Accorder »: the consent record is « Accorder », by the coordinator', async () => {
   const m = machine()
   m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed({ ...consentOf('r-1'), from: COORD, session: 's-coord' })))
   await settle(m.coordinator, request('r-1', { text: GRANT_WORDS }), AT)
-  expect(recordsOf(m)).toMatchObject([{ answer: 'Accorder', by: 'tab', entry: 'r-1', subject: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 } }])
+  expect(recordsOf(m)).toMatchObject([{ answer: 'Accorder', by: 'coordinator', entry: 'r-1', subject: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 } }])
 })
 
 test('an orchestrator settling its own wait that asks consent records none: its words are its own, and a withdrawal records none', async () => {
@@ -305,13 +306,23 @@ test('an orchestrator settling its own wait that asks consent records none: its 
   expect(recordsOf(m)).toEqual([])
 })
 
+test('an orchestrator settling its own question with words after « Accorder » records them whole, which grants nothing; the coordinator\'s words that take it back record none that grants', async () => {
+  const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
+  const m = machine()
+  const own = await asked(m, consent)
+  await settle(m.asker, request(own, { text: 'Accorder, mais pas avant lundi' }), AT)
+  const theirs = await asked(m, consent)
+  await settle(m.coordinator, request(theirs, { text: 'Accorder pas' }), AT)
+  expect(recordsOf(m).map(r => [r.entry, r.answer, grants(r.answer)]).sort()).toEqual([[own, 'Accorder, mais pas avant lundi', false], [theirs, 'Accorder pas', false]].sort())
+})
+
 test('the coordinator closing another orchestrator\'s question with words after « Accorder » records « Accorder » for it, and « Refuser » words record « Refuser »', async () => {
   const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
   const m = machine()
   const granted = await asked(m, consent)
   await settle(m.coordinator, request(granted, { text: GRANT_WORDS }), AT)
   const refused = await asked(m, consent)
-  await settle(m.coordinator, request(refused, { text: 'Refuser, pas ce soir' }), AT)
+  await settle(m.coordinator, request(refused, { text: 'Refuser, merci' }), AT)
   expect(recordsOf(m).map(r => [r.entry, r.answer, r.by]).sort()).toEqual([[granted, 'Accorder', 'coordinator'], [refused, 'Refuser', 'coordinator']].sort())
 })
 

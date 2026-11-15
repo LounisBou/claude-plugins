@@ -131,10 +131,11 @@ export function givenAnswer(answer: string, choices: readonly { letter: string; 
 /**
  * What a quote must hold of an answer given in the pane: a choice is pressed as its letter then
  * its text (« A : yes »), and the text of that choice is the operator's word; a letter that is not
- * among the question's choices is nothing to quote (''). Any other answer is quoted whole.
+ * among the question's choices is nothing to quote (''). Any other answer is quoted whole, unless
+ * `leading`: an answer that opens with a choice (leadingChoice) is then that choice's text.
  */
-export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[]): string {
-  const chosen = answersChoice(answer, choices) ?? leadingChoice(answer, choices)
+export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[], leading = false): string {
+  const chosen = answersChoice(answer, choices) ?? (leading ? leadingChoice(answer, choices) : undefined)
   if (chosen) return chosen.text.trim()
   const given = givenAnswer(answer, choices)
   return given.letter === null && LETTERED.test(given.text) ? '' : given.text
@@ -144,10 +145,10 @@ export function consentAnswer(answer: string, choices: readonly { letter: string
  * The choice that words the operator typed in the asking session's own tab answer, case and
  * spacing aside: that choice's letter alone (« A »); its letter, a separator (`:`, `—`, `)`, `-`,
  * `.`) and nothing else or exactly that choice's text (« a) waive it, docs only »); exactly that
- * choice's text then its letter in parentheses (« Accorder (A) », as a relayed answer words it); or
- * exactly one choice's text and nothing else. Anything else answers nothing (undefined): a prompt typed there
- * can be any instruction, and a consent record lets an E2E waiver through, so only an unambiguous
- * answer counts. The record's answer is then the chosen choice's text.
+ * choice's text then its letter in parentheses (« Accorder (A) », as a relayed answer words it);
+ * or exactly one choice's text and nothing else. Anything else answers nothing (undefined): a
+ * prompt typed there can be any instruction, and a consent record lets an E2E waiver through, so
+ * only an unambiguous answer counts. The record's answer is then the chosen choice's text.
  */
 export function answersChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[]): C | undefined {
   const said = spaced(typed).toLowerCase()
@@ -167,26 +168,34 @@ export function answersChoice<C extends { letter: string; text: string }>(typed:
   return exact.length === 1 ? exact[0] : undefined
 }
 
+/** Words that turn an answer opening with a choice into a condition or a refusal: it then answers nothing. */
+const QUALIFIERS = new Set(['pas', 'non', 'jamais', 'sauf', 'sans', 'mais', 'si', 'not', 'never', 'but', 'except', 'unless', 'only', 'if', 'without', 'no', 'sous', 'condition', 'conditions'])
+
 /**
  * The choice an answer opens with: its text first, then the end of the answer or a character that
- * is no letter or digit (« Accorder la dispense jusqu'au 16/11 », « Accorder — fusionne »), case
- * and spacing aside; the longest such text when several do, undefined when two tie or when a
- * letter in parentheses after it names another choice. For the words
- * of an answer the operator himself gave, in the coordinator's tab or in its pane, where every
- * order counts: the record then holds that choice's text, which is what grants. The words typed in
- * any other session's tab stay answersChoice's, which refuses all but the exact forms.
+ * is no letter, digit or combining mark (« Accorder la dispense jusqu'au 16/11 »,
+ * « Accorder — fusionne »), case and spacing aside, and nothing after it that takes it back: no
+ * other choice's text, no letter in parentheses but its own, no word of QUALIFIERS (« Accorder
+ * pas », « Accorder, mais… »). Undefined otherwise, and when two choices open it alike. It
+ * words an answer the operator himself gave, in the coordinator's tab or its pane, where every
+ * order counts and no exact form is asked: the record then holds that choice's text, which is what
+ * grants. The words typed in any other session's tab stay answersChoice's, which refuses all but
+ * the exact forms.
  */
 export function leadingChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[]): C | undefined {
   const said = spaced(typed).toLowerCase()
-  const opening = choices.flatMap(choice => {
-    const text = spaced(choice.text).toLowerCase()
-    return text !== '' && said.startsWith(text) && (said.length === text.length || !/[\p{L}\p{N}]/u.test(said[text.length]!)) ? [{ choice, length: text.length }] : []
-  }).sort((a, b) => b.length - a.length)
-  const first = opening[0]
-  if (first === undefined || first.length === opening[1]?.length) return undefined
-  // « Accorder (B) » contradicts itself: the letter in parentheses must be the choice's own.
-  const named = /^\s*\(\s*([a-z])\s*\)$/.exec(said.slice(first.length))?.[1]
-  return named !== undefined && named !== first.choice.letter.toLowerCase() ? undefined : first.choice
+  const textOf = (choice: C) => spaced(choice.text).toLowerCase()
+  const opening = choices.filter(choice => {
+    const text = textOf(choice)
+    return text !== '' && said.startsWith(text) && !/^[\p{L}\p{N}\p{M}]/u.test(said.slice(text.length))
+  })
+  const first = opening.sort((a, b) => textOf(b).length - textOf(a).length)[0]
+  if (first === undefined || (opening[1] !== undefined && textOf(opening[1]) === textOf(first))) return undefined
+  const rest = said.slice(textOf(first).length)
+  const words = rest.match(/[\p{L}\p{N}']+/gu) ?? []
+  const letters = [...rest.matchAll(/\(\s*([a-z])\s*\)/g)].map(match => match[1])
+  const other = choices.some(choice => choice !== first && textOf(choice) !== '' && rest.includes(textOf(choice)))
+  return other || letters.some(letter => letter !== first.letter.toLowerCase()) || words.some(word => QUALIFIERS.has(word)) ? undefined : first
 }
 
 /**
@@ -198,7 +207,9 @@ export function consentRecordOf(fields: {
   subject: unknown; entry: string; question: string; answer: string
   choices: readonly { letter: string; text: string }[]; by: Answerer; at: string
 }): ConsentRecord | undefined {
-  const answer = consentAnswer(fields.answer, fields.choices)
+  // The coordinator's and the pane's words are the operator's own orders, which need no exact form;
+  // a tab's are the asking session's, and keep to answersChoice's exact forms.
+  const answer = consentAnswer(fields.answer, fields.choices, fields.by !== 'tab')
   if (answer === '') return undefined
   return parseConsentRecord({ v: CONSENT_VERSION, subject: fields.subject, entry: fields.entry, question: fields.question, answer, by: fields.by, at: fields.at })
 }
