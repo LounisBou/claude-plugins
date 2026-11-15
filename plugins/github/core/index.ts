@@ -12,9 +12,8 @@ export { blocks, carriesAcross, CI_CHECK, heldBy, missingEvidence, PLAN_NEEDS, P
 export { CONSENT_KINDS, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, consentAnswer, consentDir, consentPath, consentRecordOf, parseConsentRecord, parseConsentSubject, quotesConsent, sameSubject, type Answerer, type ConsentKind, type ConsentRecord, type ConsentSubject } from './consent-record.ts'
 export { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
 export {
-  entryQuestions, fencedLines, machineLine, markRow, nextRow, numberOfLine, openFence, outsideFences, parseChoices, parseState, questionBody,
-  questionParts, questionShape, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits,
-  type Choice, type QuestionField, type QuestionPart, type QuestionShape, type QuestionSource, type ReportStatus, type Row, type RowStatus, type State, type StatusWord,
+  machineLine, markRow, nextRow, parseChoices, parseState, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits,
+  type Choice, type ReportStatus, type Row, type RowStatus, type State, type StatusWord,
 } from './method.ts'
 export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS, STORE_CONTRACT, takeLockArgv, temporaryOf, updateOver, withLockOver, writeAtomicOver, type AsyncLockOptions, type RunResult, type StoreIo } from './store-io.ts'
 export { INSTALL_TIMEOUT_MS, installPlaywright, locatePlaywright, lockfileOf, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PACKAGES, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'

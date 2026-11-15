@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import {
-  entryQuestions, fencedLines, machineLine, markRow, nextRow, numberOfLine, openFence, outsideFences, parseChoices, parseState, questionBody,
-  questionParts, questionShape, reportStatus, twoDigits,
-} from './method.ts'
+import { machineLine, markRow, nextRow, parseChoices, parseState, reportStatus, twoDigits } from './method.ts'
 
 const STATE = `**Codename**: demo
 **Title**: A demo feature
@@ -197,17 +194,9 @@ describe('the lettered choices and the recommendation', () => {
     assert.equal(parseChoices(choices).recommendation, null)
   })
 
-  it('drops the choice lines and the recommendation from the body only when the choices were read', () => {
-    const { choices } = parseChoices(DECIDE)
-    assert.equal(questionBody({ question: DECIDE, choices }), [
-      'Question 1 of 1 — merge the scraper pull request now?',
-      '_Context._ It is green and reviewed.',
-      'You decide: A, B or C?',
-    ].join('\n'))
-    assert.equal(questionBody({ question: 'Merge it?\n- **A** : alone\n', choices: [] }), 'Merge it?\n- **A** : alone')
+  it('reads a recommendation whose label holds several words', () => {
     const question = 'Merge it?\n- **A** : one\n- **B** : two\n_Recommandation de l\'orchestrateur_ : B — the reason'
     assert.equal(parseChoices(question).recommendation, 'B')
-    assert.equal(questionBody({ question, choices: parseChoices(question).choices }), 'Merge it?')
   })
 })
 
@@ -237,150 +226,12 @@ describe('a question whose choices a prose summary restates above it', () => {
     ])
     assert.equal(read.recommendation, 'A')
   })
-
-  it('draws the picker of an entry that recorded them', () => {
-    const { choices, recommendation } = parseChoices(RESTATED)
-    const [part] = entryQuestions({ question: RESTATED, choices, recommendation })
-    assert.equal(part!.number, 'Question 1 of 1')
-    assert.deepEqual(part!.choices.map(c => c.letter), ['A', 'B'])
-    assert.equal(part!.recommendation, 'A')
-  })
-
-  it('keeps the prose above the block in the body, restated lines included', () => {
-    const { choices } = parseChoices(RESTATED)
-    const body = questionBody({ question: RESTATED, choices })
-    assert.match(body, /- \*\*B\*\* : je le fais après la prochaine release/)
-    assert.doesNotMatch(body, /- \*\*B\*\* : moi, après la release/)
-  })
 })
 
 describe('the question block', () => {
-  it('reads the sender\'s numbering of a wholly bold line holding two numbers', () => {
-    assert.equal(numberOfLine('**Question 2 of 3**'), 'Question 2 of 3')
-    assert.equal(numberOfLine('  **Question 5 sur 6**  '), 'Question 5 sur 6')
-    assert.equal(numberOfLine('**Question 3/4**'), 'Question 3/4')
-    assert.equal(numberOfLine('**Important**'), null)
-    assert.equal(numberOfLine('**Version 1.2**'), null)
-    assert.equal(numberOfLine('**3 sur 4**'), null)
-    assert.equal(numberOfLine('Question 1 of 2'), null)
-  })
-
-  it('gives the number, the labelled fields as written and the recommendation, nothing else', () => {
-    const { choices } = parseChoices(SHAPED)
-    assert.deepEqual(questionShape(SHAPED, choices), {
-      number: 'Question 5 sur 6',
-      fields: [
-        { label: 'Sujet', separator: ' : ', text: 'the numbering' },
-        { label: 'Contexte', separator: ' : ', text: 'the pane shows « 1 sur 1 ».\nTwo numbers for one question.' },
-        { label: 'Question', separator: ' : ', text: 'which one?' },
-        { label: 'Propositions', separator: ' : ', text: '' },
-      ],
-      recommendation: { label: 'Recommandation de l\'orchestrateur', separator: ' : ', text: 'A — one numbering' },
-    })
-  })
-
-  it('reads the fields by their shape in any language, the separator as written', () => {
-    const english = '**Question 2 of 3**\n_Subject_: the merge\n_Question_: merge it?\n- **A** : yes\n- **B** : no\n_Recommendation_: B'
-    const shape = questionShape(english, parseChoices(english).choices)!
-    assert.equal(shape.number, 'Question 2 of 3')
-    assert.deepEqual(shape.fields.map(f => `${f.label}${f.separator}${f.text}`), ['Subject: the merge', 'Question: merge it?'])
-    assert.deepEqual(shape.recommendation, { label: 'Recommendation', separator: ': ', text: 'B' })
-  })
-
-  it('has no number without a numbering line, and no recommendation from a field that names no letter', () => {
-    const plain = '_Sujet_ : x\n_Question_ : y ?'
-    assert.equal(questionShape(plain, [])!.number, null)
-    assert.equal(questionShape(`**Important**\n${plain}`, [])!.number, null)
-    const question = '_Question_ : y ?\n- **A** : one\n- **B** : two\n_Note_ : a cheap one\n_Recommandation_ : B\n_Autre_ : A'
-    const shape = questionShape(question, parseChoices(question).choices)!
-    assert.deepEqual(shape.fields.map(f => f.label), ['Question'])
-    assert.deepEqual(shape.recommendation, { label: 'Recommandation', separator: ' : ', text: 'B' })
-  })
-
-  it('takes a free answer opening on the article A for no recommendation', () => {
-    const five = [
-      '**Question 2 of 3**', '_Subject_ : the release', '_Choices_ :',
-      '- **A** : merge now', '- **B** : wait a day',
-      '_Free answer_ : A different answer, in your own words.',
-      '_Recommendation_ : B — one more review',
-    ].join('\n')
-    assert.match(questionShape(five, parseChoices(five).choices)!.recommendation!.text, /^B — /)
-    const without = five.split('\n').slice(0, -1).join('\n')
-    assert.equal(questionShape(without, parseChoices(without).choices)!.recommendation, null)
-  })
-
-  it('is no shaped question without a labelled field before its choices', () => {
-    assert.equal(questionShape(DECIDE, parseChoices(DECIDE).choices), null)
-    assert.equal(questionShape('Merge it?', []), null)
-    assert.equal(questionShape('Question 1 of 1 — **merge** it?\n_Context._ The review is green.', []), null)
-  })
-
-  it('splits an entry of two numbered questions at each numbering line, the first keeping what precedes it', () => {
-    const parts = questionParts(`Recorded: B.\n\n${TWO_QUESTIONS}`)
-    assert.equal(parts.length, 2)
-    assert.ok(parts[0]!.startsWith('Recorded: B.'))
-    assert.ok(parts[0]!.includes('**Question 3 sur 4**'))
-    assert.ok(!parts[0]!.includes('Question 4 sur 4'))
-    assert.ok(parts[1]!.startsWith('**Question 4 sur 4**'))
-    assert.deepEqual(questionParts('**Question 5 of 6**\n_Question_ : which?'), ['**Question 5 of 6**\n_Question_ : which?'])
-    assert.deepEqual(questionParts('Merge it?'), ['Merge it?'])
-  })
-
-  it('does not split at two bold lines that are no numbering', () => {
-    const text = '**Version 1.2**\n_Subject_ : a\n**Version 1.3**\n_Subject_ : b'
-    assert.deepEqual(questionParts(text), [text])
-    assert.equal(questionShape(text, [])!.number, null)
-    assert.equal(questionParts('**Question 3/4**\n_Subject_ : a\n**Question 4/4**\n_Subject_ : b').length, 2)
-    assert.equal(questionParts('**3 sur 4**\n_Subject_ : a\n**4 sur 4**\n_Subject_ : b').length, 1)
-  })
-
-  it('gives each of several questions its own choices, recommendation and number, whatever the entry recorded', () => {
-    const stale = [{ letter: 'A', text: 'stale one' }, { letter: 'B', text: 'stale two' }]
-    const parts = entryQuestions({ question: TWO_QUESTIONS, choices: stale, recommendation: 'B' })
-    assert.deepEqual(parts.map(part => [part.number, part.choices.map(c => c.text), part.recommendation]), [
-      ['Question 3 sur 4', ['1.15.0', '2.0.0'], 'A'],
-      ['Question 4 sur 4', ['one per module', 'one at the end'], 'B'],
-    ])
-    const shape = questionShape(parts[1]!.question, parts[1]!.choices)!
-    assert.deepEqual(shape.fields.map(f => f.label), ['Sujet', 'Question', 'Choix'])
-  })
-
-  it('keeps the choices an entry of one question recorded', () => {
-    const choices = [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }]
-    assert.deepEqual(entryQuestions({ question: 'Merge it?', choices, recommendation: 'B' }), [
-      { question: 'Merge it?', number: null, choices, recommendation: 'B' },
-    ])
-  })
-
   it('records the first question\'s choices as an entry\'s, the others read from their text', () => {
     assert.deepEqual(parseChoices(TWO_QUESTIONS).choices.map(c => c.text), ['1.15.0', '2.0.0'])
     assert.equal(parseChoices(TWO_QUESTIONS).recommendation, 'A')
   })
 })
 
-describe('the code fences a message is read outside of', () => {
-  const BLOCK = ['**Question 1 of 1**', '_Subject_ : a thing'].join('\n')
-
-  it('drops a fenced block, whatever its marker, and keeps the text around it', () => {
-    assert.equal(outsideFences(`before\n\`\`\`\n${BLOCK}\n\`\`\`\nafter`), 'before\nafter')
-    assert.equal(outsideFences(`before\n~~~\n${BLOCK}\n~~~\nafter`), 'before\nafter')
-    assert.equal(outsideFences('no fence'), 'no fence')
-  })
-
-  it('closes a fence only on its own marker, at least as long as the opening one', () => {
-    assert.equal(outsideFences(['````', BLOCK, '```', '````', 'after'].join('\n')), 'after')
-    assert.equal(outsideFences(['```', '~~~', BLOCK, '```', 'after'].join('\n')), 'after')
-    assert.equal(outsideFences(['```', 'closed ``` on a text line', '```', 'after'].join('\n')), 'after')
-  })
-
-  it('runs a fence never closed to the end, and says which marker is open', () => {
-    assert.equal(outsideFences(`before\n\`\`\`\n${BLOCK}`), 'before')
-    assert.equal(openFence(`before\n\`\`\`\n${BLOCK}`), '```')
-    assert.equal(openFence('````\ntext\n```'), '````')
-    assert.equal(openFence(`\`\`\`\n${BLOCK}\n\`\`\`\nafter`), null)
-  })
-
-  it('says which lines are fence lines or inside a fenced block', () => {
-    assert.deepEqual(fencedLines('a\n```\nb\n```\nc'), [false, true, true, true, false])
-  })
-})
