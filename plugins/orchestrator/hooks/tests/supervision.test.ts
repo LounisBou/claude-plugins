@@ -15,6 +15,8 @@ import { STALE_MS } from '../../core/store-io.ts'
 import { register } from '../register.ts'
 import { roundEntry } from '../round.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
+import type { Events, Host, Noun, On, ProcessRunInit, ProcessRunResult } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -32,7 +34,7 @@ test('the key is per session id', () => {
 // in-memory file map (one file per key, the store's own layout) and recorded
 // runs, the convention every wiring test in this suite follows.
 type Fx = {
-  dollar: any
+  dollar: Host<Noun>
   files: Map<string, string>
   // A file's modification time when a test sets one; any other is written now.
   mtimes: Map<string, number>
@@ -58,19 +60,19 @@ function fakeDollar(over: {
   const usage = { context: { tokens: 30000, window: 100000, percent: 30 } }
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.transcript !== undefined) files.set(`${PROJECTS}/-a-project/s-one.jsonl`, over.transcript)
-  const dollar = {
+  const dollar = hostOf({
     session: {
       id: async () => 's-one',
       usage: async () => usage,
       model: async () => 'a-model',
-      surfaces: async () => [],
     },
     env: { get: async (name: string) => env[name] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     fs: {
       read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => {
         files.set(p, text)
@@ -78,14 +80,14 @@ function fakeDollar(over: {
       stat: async (p: string) => {
         const text = files.get(p)
         if (text === undefined) throw new Error(`ENOENT: ${p}`)
-        return { kind: 'file', size: text.length, mtimeMs: 0, isLink: false }
+        return { kind: 'file', size: text.length, mtimeMs: 0 }
       },
       list: async (dir: string) => {
         const names = new Set<string>()
         for (const p of files.keys()) {
           if (!p.startsWith(`${dir}/`)) continue
           const rest = p.slice(dir.length + 1)
-          if (rest) names.add(rest.split('/')[0])
+          if (rest) names.add(rest.split('/')[0] ?? '')
         }
         return [...names].map(name => {
           const text = files.get(`${dir}/${name}`)
@@ -98,6 +100,7 @@ function fakeDollar(over: {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const [verb = '', first = '', second = '', third = '', fourth = ''] = argv
         const locked = lockRun(argv, files)
         if (locked) return locked
         const line = logLineOf(argv)
@@ -112,9 +115,9 @@ function fakeDollar(over: {
           for (const p of argv.slice(2)) files.delete(p)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
-        if (argv[0] === 'mv' && files.has(argv[2])) {
-          files.set(argv[3], files.get(argv[2])!)
-          files.delete(argv[2])
+        if (verb === 'mv' && files.has(second)) {
+          files.set(third, files.get(second)!)
+          files.delete(second)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         const alive = over.alive ?? ['501']
@@ -131,7 +134,7 @@ function fakeDollar(over: {
           // The pid-list form, as the machine answers it: one pid it refuses
           // (macOS: « process id too large ») fails the whole call, exit 1 and
           // nothing printed, the live ones with it.
-          const asked = String(argv[4]).split(',')
+          const asked = fourth.split(',')
           if (asked.some(pid => !alive.includes(pid))) return { exitCode: 1, stdout: '', stderr: 'ps: process id too large' }
           return { exitCode: 0, stdout: asked.map(pid => `  ${pid}\n`).join(''), stderr: '' }
         }
@@ -148,7 +151,7 @@ function fakeDollar(over: {
       },
     },
     ui: { toast: () => undefined, invalidate: () => undefined },
-  }
+  })
   return { dollar, files, mtimes, ran, written, usage, env }
 }
 
@@ -161,8 +164,8 @@ test('two sessions writing at once keep both rows', async () => {
     writeSession(dollar, 'second', { role: 'agent', context_percent: 55 }),
   ])
   const rows = await readSessions(dollar)
-  expect(rows['sessions/first'].context_percent).toBe(40)
-  expect(rows['sessions/second'].context_percent).toBe(55)
+  expect(rows['sessions/first']?.context_percent).toBe(40)
+  expect(rows['sessions/second']?.context_percent).toBe(55)
 })
 
 test('a session end removes its row, the file with it', async () => {
@@ -180,7 +183,7 @@ test('a patch merges into the row it finds, and the write stamps it', async () =
     context_tokens: 30000, window: 100000, model: 'a-model', busy: false,
   })
   await writeSession(dollar, 's', { context_percent: 55 })
-  const row = (await readSessions(dollar))['sessions/s']
+  const row = (await readSessions(dollar))['sessions/s']!
   expect(row.context_percent).toBe(55)
   expect(row.name).toBe('Agent: one')
   expect(Date.now() - Date.parse(row.updated_at)).toBeLessThan(60000)
@@ -207,7 +210,7 @@ test('a row lives while its host pid does, however long since its last measure',
 
 async function liveStore(over: Parameters<typeof fakeDollar>[0]): Promise<Fx> {
   const fx = fakeDollar(over)
-  for (const [id, pid] of [['orch-a', '501'], ['orch-b', '601'], ['orch-c', '701']]) {
+  for (const [id, pid] of [['orch-a', '501'], ['orch-b', '601'], ['orch-c', '701']] as const) {
     await writeSession(fx.dollar, id, { role: 'orchestrator', name: `Orch: ${id}`, pid })
   }
   return fx
@@ -312,7 +315,7 @@ test('the row is written to a temporary file beside it, then renamed into place'
   await writeSession(dollar, 's', { role: 'agent', name: 'Agent: one' })
   const moves = ran.filter(line => line.startsWith('mv '))
   expect(moves.length).toBe(1)
-  expect(new RegExp(`^mv -f ${SESSIONS}/s\\.tmp-\\d+-[0-9a-z]+ ${SESSIONS}/s$`).test(moves[0])).toBe(true)
+  expect(new RegExp(`^mv -f ${SESSIONS}/s\\.tmp-\\d+-[0-9a-z]+ ${SESSIONS}/s$`).test(moves[0] ?? '')).toBe(true)
   expect(parseSessionRow(files.get(`${SESSIONS}/s`)!)?.name).toBe('Agent: one')
   expect([...files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
 })
@@ -384,20 +387,20 @@ test('a session start removes the temporary files killed writers left in every d
 // The composed chain, one list per event: a domain's handler answers after the
 // ones registered before it, the engine's own order, so driving the list in
 // registration order is driving the chain the host drives.
-function mounted(registerAll: (on: any) => void): Record<string, Function[]> {
-  const chains: Record<string, Function[]> = {}
-  registerAll((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
-    return { catch: () => undefined }
-  })
-  return chains
+function mounted(registerAll: (on: On<Host<Noun>>) => void): Array<Captured<Host<Noun>>> {
+  return capture(registerAll)
 }
 
-async function drive(chains: Record<string, Function[]>, event: string, dollar: any, e: object) {
-  const run = async (i: number, ev: any): Promise<any> =>
-    i >= (chains[event] ?? []).length ? ev : chains[event][i](dollar, ev, (x: any) => run(i + 1, x))
+async function drive<K extends keyof Events>(hooks: ReadonlyArray<Captured<Host<Noun>>>, event: K, dollar: Host<Noun>, e: Events[K]): Promise<unknown> {
+  const chain = hooksOn(hooks, event)
+  const run = async (i: number, ev: Events[K]): Promise<unknown> => {
+    const hook = chain[i]
+    return hook === undefined ? ev : hook.handler(dollar, ev, async (x: Events[K]) => run(i + 1, x))
+  }
   return run(0, e)
 }
+// A measure event: the module reads the figures from the session, not from the event.
+const MEASURED: Events['session.measure'] = { context: { window: 0 } }
 
 test('the composed register writes the row the gauge just measured', async () => {
   // Two measures, 30 then 55: the row carries the second figure only because
@@ -406,11 +409,11 @@ test('the composed register writes the row the gauge just measured', async () =>
   // 30). The order is pinned here, not by courtesy.
   const chains = mounted(register)
   const fx = fakeDollar({ origin: 'git@github.com:me/belt.git' })
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   fx.usage.context.percent = 55
   fx.usage.context.tokens = 55000
-  await drive(chains, 'session.measure', fx.dollar, {})
-  const row = (await readSessions(fx.dollar))['sessions/s-one']
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  const row = (await readSessions(fx.dollar))['sessions/s-one']!
   expect(row.context_percent).toBe(55)
   expect(row.context_tokens).toBe(55000)
   expect(row.window).toBe(100000)
@@ -430,15 +433,15 @@ test('the composed register writes the row the gauge just measured', async () =>
 test('a steady measure reads the repository no more', async () => {
   const chains = mounted(register)
   const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch: belt' })
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.ran.filter(r => r.startsWith('git '))).toHaveLength(1)
   fx.ran.length = 0
   fx.usage.context.percent = 56
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.ran.filter(r => r.startsWith('git '))).toEqual([])
   expect(fx.ran.filter(r => r.startsWith('mv ')).length).toBe(3)
   expect(fx.ran.length).toBe(8)
-  expect((await readSessions(fx.dollar))['sessions/s-one'].repo).toBe('me/belt')
+  expect((await readSessions(fx.dollar))['sessions/s-one']?.repo).toBe('me/belt')
 })
 
 test('a walk that does not finish keeps the name and role the row already had', async () => {
@@ -446,14 +449,14 @@ test('a walk that does not finish keeps the name and role the row already had', 
   // stays — the coordinator's pane filters on the role, and a null would drop the row.
   const chains = mounted(register)
   const fx = fakeDollar({ origin: 'git@github.com:me/belt.git' })
-  await drive(chains, 'session.measure', fx.dollar, {})
-  fx.env.ORCHESTRATOR_SIDE_READ_MS = '30'
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  fx.env['ORCHESTRATOR_SIDE_READ_MS'] = '30'
   const hang = fx.dollar.process.run
-  fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
-    argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$' ? new Promise(() => undefined) : hang(argv, init)
+  fx.dollar.process.run = async (argv: readonly string[], init?: ProcessRunInit) =>
+    argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$' ? new Promise<ProcessRunResult>(() => undefined) : hang(argv, init)
   fx.usage.context.percent = 61
-  await drive(chains, 'session.measure', fx.dollar, {})
-  const row = (await readSessions(fx.dollar))['sessions/s-one']
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  const row = (await readSessions(fx.dollar))['sessions/s-one']!
   expect(row.context_percent).toBe(61)
   expect(row.name).toBe('Agent: belt-p3')
   expect(row.role).toBe('agent')
@@ -466,8 +469,8 @@ test('without a launch name the row is named by the transcript\'s last rename', 
   ].join('\n') + '\n'
   const chains = mounted(register)
   const fx = fakeDollar({ launchName: null, transcript: renamed })
-  await drive(chains, 'session.measure', fx.dollar, {})
-  const row = (await readSessions(fx.dollar))['sessions/s-one']
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  const row = (await readSessions(fx.dollar))['sessions/s-one']!
   expect(row.name).toBe('Agent: renamed')
   expect(row.role).toBe('agent')
 })
@@ -484,13 +487,13 @@ test('the end handler removes the row through the store', async () => {
 test('a row that cannot be written never blocks the measure, and is said', async () => {
   const chains = mounted(register)
   const fx = fakeDollar()
-  await drive(chains, 'session.measure', fx.dollar, {})
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
   const good = fx.dollar.fs.write
   fx.dollar.fs.write = async (p: string, text: string) => {
     if (p.startsWith(SESSIONS)) throw new Error('EIO: the store cannot be written')
     return good(p, text)
   }
-  const e = {}
+  const e = MEASURED
   const answer = await drive(chains, 'session.measure', fx.dollar, e)
   expect(answer).toBe(e)
   expect(fx.written.some(l => l.includes('| supervision |') && l.includes('EIO'))).toBe(true)
@@ -605,7 +608,7 @@ test('an entry naming no session, or from another machine, stays open though a r
   const list = dollar.fs.list
   dollar.fs.list = async (dir: string) => {
     const listed = await list(dir)
-    return dir === SESSIONS ? [...listed, { name: '', kind: 'file' }] : listed
+    return dir === SESSIONS ? [...listed, { name: '', kind: 'file' as const, size: 0, isLink: false }] : listed
   }
   const unnamed = openEntry(files, 'x', 'done', { session: '' })
   const remote = openEntry(files, 'far', 'done', { origin: { machine: 'Elsewhere', address: 'x' } })

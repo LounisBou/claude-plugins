@@ -119,7 +119,7 @@ test('the entry of two questions records the first one\'s choices, so the round 
   const entry = roundEntry('s-1', 'Orch: s', wait, '2026-10-25T11:52:50.299Z', '2026-10-25T11:52:50.302Z')
   expect(entry.question).toBe(TWO_QUESTIONS)
   expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
-  expect(entry.choices[0].text.startsWith('1.15.0, puis des 1.x.')).toBe(true)
+  expect(entry.choices[0]?.text.startsWith('1.15.0, puis des 1.x.')).toBe(true)
   expect(entry.recommendation).toBe('A')
 })
 

@@ -11,6 +11,12 @@ import { registerEnd, statusText } from '../commands.ts'
 import type { SessionRow } from '../supervision.ts'
 import { todoCounts } from '../todo.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Hook, type Host, type Noun, type ToolSpec } from '../../core/host.ts'
+
+type World = Host<Noun>
+// What a tool or a command answers, as far as these tests read it.
+type Out = { readonly result?: unknown; readonly isError?: boolean; readonly passed?: unknown }
 
 const HOME = '/tmp/todo-home'
 const MODULE = `${HOME}/.claude/claude-orchestrator`
@@ -21,7 +27,7 @@ const SAID = '2026-11-14T14:58:00Z'
 const row = (role: string, name: string) =>
   JSON.stringify({ role, name, repo: null, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() })
 
-type Options = { me?: [role: string, name: string]; send?: (args: { to: string; text: string }) => { isDelivered: boolean; reason?: string }; files?: Record<string, string>; unreadable?: string[]; launchName?: string | null }
+type Options = { me?: [role: string, name: string]; send?: (args: { to: unknown; text: string }) => { isDelivered: true } | { isDelivered: false; reason: string }; files?: Record<string, string>; unreadable?: string[]; launchName?: string | null }
 
 function world(options: Options = {}) {
   const [role, name] = options.me ?? ['orchestrator', 'Orch: billing [ref-1]']
@@ -30,17 +36,17 @@ function world(options: Options = {}) {
     [`${MODULE}/store/sessions/s-coord`, row('coordinator', 'Coord: general')],
     ...Object.entries(options.files ?? {}),
   ])
-  const sent: { to: string; text: string }[] = []
+  const sent: { to: unknown; text: string }[] = []
   const writes: string[] = []
   const logs: string[] = []
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : key === 'ORCHESTRATOR_HOST_CLI' ? 'hostcli' : undefined) },
     session: {
       id: async () => 's-me',
-      send: async (args: { to: string; text: string }) => {
+      send: async (args: { to: unknown; text: string }) => {
         sent.push(args)
-        return (options.send ?? (() => ({ isDelivered: true })))(args)
+        return (options.send ?? (() => ({ isDelivered: true as const })))(args)
       },
     },
     clock: { sleep: async () => undefined },
@@ -50,10 +56,10 @@ function world(options: Options = {}) {
         if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)!
       },
       write: async (p: string, text: string) => { files.set(p, text) },
-      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file', size: 1, mtimeMs: NOW.getTime() } },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file' as const, size: 1, mtimeMs: NOW.getTime() } },
       exists: async (p: string) => files.has(p),
       list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
-        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 1, isLink: false })),
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false })),
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -65,16 +71,16 @@ function world(options: Options = {}) {
         if (argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=')) return { exitCode: 0, stdout: '1 ttys001\n', stderr: '' }
         if (argv[0] === 'sh' && String(argv[2]).startsWith('command -v')) return { exitCode: 1, stdout: '', stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: options.launchName ? `  501 hostcli --name ${options.launchName}\n` : '  501 hostcli\n', stderr: '' }
-        if (argv[0] === 'mv') { writes.push(argv[3]); files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
+        if (argv[0] === 'mv') { writes.push(argv[3]!); files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, files, sent, writes, logs }
 }
 
-const call = (dollar: any, input: Record<string, unknown>) => callTodo(dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, ...input }, NOW)
+const call = (dollar: World, input: Record<string, unknown>) => callTodo(dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, ...input }, NOW)
 const listOf = (files: Map<string, string>, name: string) => todoItems(files.get(`${LISTS}/${name}.jsonl`) ?? '')
 
 test('add records his words, dated, in the caller\'s own list, named for the session without its reference', async () => {
@@ -249,31 +255,29 @@ test('only an orchestrator, a coordinator or an auditor keeps a list: an agent, 
     expect([...files.keys()].some(path => path.startsWith(LISTS))).toBe(keeps)
   }
   const { dollar } = world()
-  const registered: Record<string, Function> = {}
-  registerTodo((...args: any[]) => { registered[args[0]] = args[args.length - 1]; return { catch: () => undefined } })
-  const sub = await registered['tool.call'](dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, action: 'list', agentId: 'a-1' })
+  const tool = hooksOn(capture<World>(registerTodo), 'tool.call').at(-1)!.handler
+  const sub = await tool(dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, action: 'list', agentId: 'a-1' }, async () => undefined) as Out
   expect(sub.isError).toBe(true)
 })
 
 test('the tool is registered loaded, not deferred, with flat fields', async () => {
-  const registrations: any[] = []
-  const handlers: Record<string, Function> = {}
-  registerTodo((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } })
-  await handlers['session.start']({ tool: { register: async (spec: unknown) => { registrations.push(spec) } }, plugin: { root: '/p' }, env: { get: async () => undefined }, process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) } }, {}, (e: unknown) => e)
+  const registrations: ToolSpec[] = []
+  const start = hooksOn(capture<World>(registerTodo), 'session.start').at(-1)!.handler
+  const partial = hostOf({ tool: { register: async (spec: ToolSpec) => { registrations.push(spec) } }, plugin: { root: '/p' }, env: { get: async () => undefined }, process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) } })
+  await start(partial, { cwd: '/w' }, async (e: unknown) => e)
   expect(registrations).toHaveLength(1)
-  expect(registrations[0].name).toBe(TODO_TOOL)
-  expect(registrations[0].isDeferred).toBe(false)
-  expect(Object.keys(registrations[0].inputSchema.properties)).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome', 'row'])
-  expect(registrations[0].inputSchema.required).toEqual(['action'])
+  expect(registrations[0]?.name).toBe(TODO_TOOL)
+  expect(registrations[0]?.isDeferred).toBe(false)
+  expect(Object.keys(fieldsOf(registrations[0]?.inputSchema?.['properties']) ?? {})).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome', 'row'])
+  expect(registrations[0]?.inputSchema?.['required']).toEqual(['action'])
 })
 
 // What the session start registers, over a world: the tools the module declares to this session.
-async function registeredAt(dollar: any): Promise<string[]> {
+async function registeredAt(dollar: World): Promise<string[]> {
   const names: string[] = []
-  const handlers: Record<string, Function> = {}
-  registerTodo((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } })
-  dollar.tool = { register: async (spec: { name: string }) => { names.push(spec.name) } }
-  await handlers['session.start'](dollar, {}, (e: unknown) => e)
+  const start = hooksOn(capture<World>(registerTodo), 'session.start').at(-1)!.handler
+  dollar.tool.register = async (spec: { name: string }) => { names.push(spec.name) }
+  await start(dollar, { cwd: '/w' }, async (e: unknown) => e)
   return names
 }
 
@@ -297,10 +301,9 @@ test('an orchestrator, a coordinator, an auditor and a session of no known role 
 })
 
 function declarer() {
-  const handlers: Record<string, Function> = {}
   const declarations = new Declarations()
-  registerWait((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } }, declarations)
-  return { declarations, declare: (dollar: any, input: object) => handlers['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input }) }
+  const tool = hooksOn(capture<World>(on => registerWait(on, declarations)), 'tool.call').at(-1)!.handler
+  return { declarations, declare: async (dollar: World, input: object) => await tool(dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input }, async () => undefined) as Out }
 }
 
 test('declare_wait refuses done while an item is open, and deferred while one he did not put off is, naming each', async () => {
@@ -337,9 +340,9 @@ test('a coordinator or an auditor with an open item is held the same; an agent, 
 })
 
 function ender() {
-  const handlers: Record<string, Function> = {}
-  registerEnd((...args: any[]) => { handlers[args[1].command] = args[args.length - 1]; return { catch: () => undefined } })
-  const run = (dollar: any, command = 'orchestrator:coordinator-end') => handlers[command](dollar, { command, args: '' }, (e: unknown) => ({ passed: e }))
+  const handlers: Record<string, Hook<World, Events['command.run']>> = {}
+  for (const hook of hooksOn(capture<World>(registerEnd), 'command.run')) handlers[String(hook.matcher?.['command'])] = hook.handler
+  const run = async (dollar: World, command = 'orchestrator:coordinator-end') => await handlers[command]!(dollar, { command, args: '' }, async (e: unknown) => ({ passed: e })) as Out
   return { handlers, run }
 }
 

@@ -15,6 +15,10 @@ import { register } from '../register.ts'
 import { fingerprint } from '../relay.ts'
 import { parseQ } from '../remote-round.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
+
+type World = Host<Noun>
 
 const HOME = '/tmp/h'
 const STORE = `${HOME}/.claude/claude-orchestrator/store`
@@ -41,28 +45,29 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
   files.set(ROW, storeRow())
   if (over.learnt !== false) files.set(LEARNT, JSON.stringify({ name: 'Coord: ops', from: COORD_FROM, at: 'T' }) + '\n')
   if (over.local) files.set(RECORD, JSON.stringify({ name: 'Coord: here', tty: '/dev/ttys9' }))
-  const dollar = {
+  const dollar = hostOf({
     session: {
       id: async () => 's-one',
-      send: async (args: { to: unknown; text: string }) => {
+      send: async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
         if (over.refuseAddress && args.to === COORD_FROM) return { isDelivered: false, reason: 'gone' }
         sent.push(args)
         return { isDelivered: true }
       },
     },
     env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     fs: {
       read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => { files.set(p, text) },
       exists: async (p: string) => files.has(p),
       list: async (dir: string) => {
         const names = [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
         if (names.length === 0) throw new Error(`ENOENT: ${dir}`)
-        return names.map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 0, mtimeMs: mtimes.get(p) ?? 0, isLink: false }))
+        return names.map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, mtimeMs: mtimes.get(p) ?? 0, isLink: false }))
       },
       stat: async (p: string) => { throw new Error(`ENOENT: ${p}`) },
     },
@@ -73,9 +78,10 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'bench-mac.local\n', stderr: '' }
-        if (argv[0] === 'mv' && files.has(argv[2])) {
-          files.set(argv[3], files.get(argv[2])!)
-          files.delete(argv[2])
+        const [verb, , from = '', to = ''] = argv
+        if (verb === 'mv' && files.has(from)) {
+          files.set(to, files.get(from)!)
+          files.delete(from)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'rm') {
@@ -88,34 +94,32 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
     },
     ui: {
       resolve: () => ({
-        Box: (props: any) => ({ box: props }),
-        Text: (props: any) => props.children,
+        Box: (props: Readonly<Record<string, unknown>>) => ({ box: props }),
+        Text: (props: Readonly<Record<string, unknown>>) => props['children'],
+        Button: (props: Readonly<Record<string, unknown>>) => props['label'],
+        Link: (props: Readonly<Record<string, unknown>>) => props['children'],
       }),
     },
-  }
+  })
   return { dollar, files, sent, logged, mtimes }
 }
 
-function mounted(): Record<string, Function[]> {
-  const chains: Record<string, Function[]> = {}
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
-    return { catch: () => undefined }
-  })
-  return chains
+function mounted() {
+  return capture<World>(register)
 }
 
-async function receive(chains: Record<string, Function[]>, dollar: any, text: string, kind = 'peer') {
+async function receive(chains: ReturnType<typeof mounted>, dollar: World, text: string, kind = 'peer') {
   const queued: string[] = []
-  const handlers = chains['session.receive'] ?? []
-  const run = async (i: number, ev: any): Promise<any> => {
-    if (i >= handlers.length) {
+  const handlers = hooksOn(chains, 'session.receive')
+  const run = async (i: number, ev: Events['session.receive']): Promise<unknown> => {
+    const hook = handlers[i]
+    if (hook === undefined) {
       queued.push(ev.text)
       return { text: ev.text }
     }
-    return handlers[i](dollar, ev, (x: any) => run(i + 1, x))
+    return hook.handler(dollar, ev, x => run(i + 1, x))
   }
-  const result = await run(0, { origin: { kind, plugin: 'orchestrator' }, text })
+  const result = fieldsOf(await run(0, { origin: { kind, plugin: 'orchestrator' }, text }))
   return { result, queued }
 }
 
@@ -149,15 +153,15 @@ test('the row goes to the learnt coordinator once, and a repeat sends nothing', 
   await sendRow(fx.dollar, 's-one')
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(1)
-  expect(fx.sent[0].to).toBe(COORD_FROM)
-  expect(fx.sent[0].text.startsWith(ROW_MARKER)).toBe(true)
-  const row = parseRemoteRow(fx.sent[0].text)!
+  expect(fx.sent[0]!.to).toBe(COORD_FROM)
+  expect(fx.sent[0]!.text.startsWith(ROW_MARKER)).toBe(true)
+  const row = parseRemoteRow(fx.sent[0]!.text)!
   expect(row.name).toBe('Orch: belt')
   expect(row.machine).toBe('bench-mac')
   // Only the pane's fields, the repository and its pull requests travel: no path, no tty, no pid, no model.
   expect(row.repo).toBe('acme/app')
-  expect(fx.sent[0].text).not.toContain('ttys3')
-  expect(fx.sent[0].text).not.toContain('a-model')
+  expect(fx.sent[0]!.text).not.toContain('ttys3')
+  expect(fx.sent[0]!.text).not.toContain('a-model')
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
 })
 
@@ -173,8 +177,8 @@ test('a wait change is sent, and so is a band crossing; a move inside the band i
   fx.files.set(WAIT, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', waiting_since: new Date().toISOString(), relayed: null, name: 'Orch: belt', pid: '501' }) + '\n')
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(3)
-  expect(parseRemoteRow(fx.sent[2].text)!.waiting).toBe('operator')
-  expect(parseRemoteRow(fx.sent[2].text)!.blocks).toBe('phase 3')
+  expect(parseRemoteRow(fx.sent[2]!.text)!.waiting).toBe('operator')
+  expect(parseRemoteRow(fx.sent[2]!.text)!.blocks).toBe('phase 3')
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(3)
 })
@@ -209,8 +213,8 @@ test('no coordinator known: nothing is sent; an address that refuses falls back 
 test('the wait relay uses the learnt coordinator when none is registered here', async () => {
   const chains = mounted()
   const fx = fake()
-  for (const handler of chains['turn.complete']) {
-    await handler(fx.dollar, { answer: 'Everything merged.\n\nwaiting: done\n', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }, (e: any) => e)
+  for (const hook of hooksOn(chains, 'turn.complete')) {
+    await hook.handler(fx.dollar, { answer: 'Everything merged.\n\nwaiting: done\n', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
   }
   const report = fx.sent.find(s => parseQ(s.text)?.event.kind === 'ask')
   expect(report?.to).toBe(COORD_FROM)
@@ -242,7 +246,7 @@ test('a marked delivery is consumed and written as a remote row; an unmarked one
   const chains = mounted()
   const fx = fake()
   const marked = await receive(chains, fx.dollar, envelope(rowText(remote())))
-  expect(typeof marked.result.consumed).toBe('string')
+  expect(typeof marked.result?.['consumed']).toBe('string')
   expect(marked.queued.length).toBe(0)
   expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__far`)!).name).toBe('Orch: far')
   const bare = await receive(chains, fx.dollar, rowText(remote({ name: 'Orch: bare' })))
@@ -265,7 +269,7 @@ for (const [label, body] of [
     const chains = mounted()
     const fx = fake()
     const { result, queued } = await receive(chains, fx.dollar, envelope(body))
-    expect(typeof result.consumed).toBe('string')
+    expect(typeof result?.['consumed']).toBe('string')
     expect(queued.length).toBe(0)
     expect([...fx.files.keys()].some(p => p.startsWith(`${STORE}/remote/`))).toBe(false)
     expect(fx.logged.some(l => l.includes('receive: a marked row was refused'))).toBe(true)
@@ -284,15 +288,15 @@ test('the pane shows a remote row with its machine and drops a stale one', () =>
   const old = remote({ name: 'Orch: old', updated_at: new Date(now - REMOTE_STALE_AFTER_MS - 60000).toISOString() })
   const rows = paneRows(withRemote({}, [remote(), old], now, REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
-  expect(rows[0].label).toContain('Orch: far · orchestrator · remote bench-mac · 12%')
+  expect(rows[0]!.label).toContain('Orch: far · orchestrator · remote bench-mac · 12%')
 })
 
 test('a live local row beats a remote one of the same name', () => {
   const local = JSON.parse(storeRow({ name: 'Orch: far', context_percent: 40 })) as SessionRow
   const rows = paneRows(withRemote({ 'sessions/x': local }, [remote()], Date.now(), REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
-  expect(rows[0].label).toContain('40%')
-  expect(rows[0].label).not.toContain('remote')
+  expect(rows[0]!.label).toContain('40%')
+  expect(rows[0]!.label).not.toContain('remote')
 })
 
 test('a received row is read back from the store, and a stale one is swept as it is met', async () => {
@@ -346,7 +350,7 @@ test('a row its writer holds locked during the sweep is kept: the sweep waits fo
     }
     return out
   }
-  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  fx.dollar.clock = { ...fx.dollar.clock, sleep: async () => undefined }
   const rows = await readRemoteRows(fx.dollar)
   expect(fx.files.get(path)).toBe(fresh)
   expect(rows.map(r => r.context_percent)).toEqual([40])
@@ -380,7 +384,7 @@ test('a received row is written under the lock the sweep takes, and the lock is 
     if (out.exitCode !== 0 && String(argv[4] ?? '') === `${path}.lock` && ++polled === 2) fx.files.delete(`${path}.lock`)
     return out
   }
-  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  fx.dollar.clock = { ...fx.dollar.clock, sleep: async () => undefined }
   await receive(chains, fx.dollar, envelope(rowText(remote())))
   expect(polled).toBe(2)
   expect(JSON.parse(fx.files.get(path)!).name).toBe('Orch: far')
@@ -396,9 +400,9 @@ test('a received row whose lock stays held is consumed, with one log line, and n
   // Another writer holds the row's lock past every try.
   fx.files.set(`${path}.lock`, '1\n')
   fx.mtimes.set(`${path}.lock`, Date.now())
-  ;(fx.dollar as any).clock = { sleep: async () => undefined }
+  fx.dollar.clock = { ...fx.dollar.clock, sleep: async () => undefined }
   const { result, queued } = await receive(chains, fx.dollar, envelope(rowText(remote())))
-  expect(typeof result.consumed).toBe('string')
+  expect(typeof result?.['consumed']).toBe('string')
   expect(queued.length).toBe(0)
   expect(fx.files.has(path)).toBe(false)
   expect(fx.logged.filter(l => l.includes('receive: a remote row of Orch: far was not stored:')).length).toBe(1)
@@ -423,9 +427,9 @@ test('a remote orchestrator waiting on the operator stays drawn for hours; past 
   expect(fx.files.has(`${STORE}/remote/Orch__gone`)).toBe(false)
   const rows = paneRows(withRemote({}, read, Date.now(), REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
-  expect(rows[0].label).toContain('Orch: waits · orchestrator · remote bench-mac')
-  expect(rows[0].label).toContain('3h')
-  expect(rows[0].label).toContain('waiting for the operator')
+  expect(rows[0]!.label).toContain('Orch: waits · orchestrator · remote bench-mac')
+  expect(rows[0]!.label).toContain('3h')
+  expect(rows[0]!.label).toContain('waiting for the operator')
 })
 
 // --- the repository and the pull requests in flight ------------------------------------
@@ -538,7 +542,7 @@ test('the row sent carries the pull requests this session watches, read from the
   fx.files.set(`${CI_WATCH}/here-pr3.log.session`, `${ME}\n`)
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  const row = parseRemoteRow(fx.sent[0].text)!
+  const row = parseRemoteRow(fx.sent[0]!.text)!
   expect(row.repo).toBe('acme/app')
   expect(row.prs).toEqual(['acme/app#3', 'acme/app#7'])
 })
@@ -552,14 +556,14 @@ test('a watch armed later sends the row again at once, with its pull request add
   fx.files.set(`${CI_WATCH}/acme_app-pr9.log.session`, `${ME}\n`)
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(2)
-  expect(parseRemoteRow(fx.sent[1].text)!.prs).toEqual(['acme/app#7', 'acme/app#9'])
+  expect(parseRemoteRow(fx.sent[1]!.text)!.prs).toEqual(['acme/app#7', 'acme/app#9'])
 })
 
 test('a ci-watch directory that cannot be read means no pull request, never a failure', async () => {
   const fx = fake()
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  expect(parseRemoteRow(fx.sent[0].text)!.prs).toEqual([])
+  expect(parseRemoteRow(fx.sent[0]!.text)!.prs).toEqual([])
 })
 
 test('a ci-watch listing that rejects, not only a missing directory, means no pull request and the row is still sent', async () => {
@@ -573,7 +577,7 @@ test('a ci-watch listing that rejects, not only a missing directory, means no pu
   }
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  expect(parseRemoteRow(fx.sent[0].text)!.prs).toEqual([])
+  expect(parseRemoteRow(fx.sent[0]!.text)!.prs).toEqual([])
 })
 
 test('a store row whose repository is not the receiver\'s shape is sent with none', async () => {
@@ -581,7 +585,7 @@ test('a store row whose repository is not the receiver\'s shape is sent with non
   fx.files.set(ROW, storeRow({ repo: '/srv/app' }))
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  expect(parseRemoteRow(fx.sent[0].text)!.repo).toBeNull()
+  expect(parseRemoteRow(fx.sent[0]!.text)!.repo).toBeNull()
 })
 
 test('a received row keeps its repository and pull requests, and an old row is stored with none', async () => {
@@ -607,8 +611,8 @@ test('twenty maximum-length pull requests: the row is cut from the end to fit th
   }
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  expect(fx.sent[0].text.length).toBeLessThanOrEqual(ROW_TEXT_CAP)
-  const row = parseRemoteRow(fx.sent[0].text)!
+  expect(fx.sent[0]!.text.length).toBeLessThanOrEqual(ROW_TEXT_CAP)
+  const row = parseRemoteRow(fx.sent[0]!.text)!
   expect(row).not.toBeNull()
   expect(row.prs.length).toBeGreaterThan(0)
   expect(row.prs.length).toBeLessThan(PRS_CAP)
@@ -634,44 +638,45 @@ test('past 256 listed entries, the newest watches are still read and a base log 
   fx.mtimes.set(`${CI_WATCH}/acme_app-pr1000.log`, 5000)
   await sendRow(fx.dollar, ME)
   expect(fx.sent.length).toBe(1)
-  expect(parseRemoteRow(fx.sent[0].text)!.prs).toEqual(['acme/app#1000'])
+  expect(parseRemoteRow(fx.sent[0]!.text)!.prs).toEqual(['acme/app#1000'])
 })
 
 // --- the questions a row holds open ------------------------------------------------------
 
-const HELD = [{ since: '2026-11-14T10:00:00.000Z', blocks: 'phase 3' }]
+const FIRST_HELD = { since: '2026-11-14T10:00:00.000Z', blocks: 'phase 3' }
+const HELD = [FIRST_HELD]
 
 test('the row sent says the question the wait file vouches for, delivered or sent and not acknowledged', async () => {
   const fx = fake()
-  const wait = { waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501' }
+  const wait = { waiting: 'operator', blocks: 'phase 3', waiting_since: FIRST_HELD.since, name: 'Orch: belt', pid: '501' }
   fx.files.set(WAIT, JSON.stringify({ ...wait, relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }) + '\n')
   await sendRow(fx.dollar, 's-one')
-  expect(parseRemoteRow(fx.sent[0].text)!.held).toEqual(HELD)
+  expect(parseRemoteRow(fx.sent[0]!.text)!.held).toEqual(HELD)
   fx.files.set(WAIT, JSON.stringify({ ...wait, relayed: null, pending: 'x', pending_key: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }) + '\n')
   fx.files.set(SENT, JSON.stringify({ ...JSON.parse(fx.files.get(SENT)!), held: [] }))
   await sendRow(fx.dollar, 's-one')
-  expect(parseRemoteRow(fx.sent[1].text)!.held).toEqual(HELD)
+  expect(parseRemoteRow(fx.sent[1]!.text)!.held).toEqual(HELD)
 })
 
 test('a session that works on while its question stays held says so: its wait cleared, the question still listed', async () => {
   const fx = fake()
-  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501',
+  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: FIRST_HELD.since, name: 'Orch: belt', pid: '501',
     relayed: fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' }) }
   fx.files.set(WAIT, JSON.stringify(wait) + '\n')
   await sendRow(fx.dollar, 's-one')
-  const row = parseRemoteRow(fx.sent[0].text)!
+  const row = parseRemoteRow(fx.sent[0]!.text)!
   expect([row.waiting, row.held]).toEqual([null, HELD])
 })
 
 test('a question withdrawn says none held; a wait that vouches for nothing says unknown', async () => {
   const fx = fake()
-  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: HELD[0].since, name: 'Orch: belt', pid: '501', relayed: null }
+  const wait = { waiting: null, last_waiting: 'operator', blocks: 'phase 3', waiting_since: FIRST_HELD.since, name: 'Orch: belt', pid: '501', relayed: null }
   fx.files.set(WAIT, JSON.stringify(wait) + '\n')
   await sendRow(fx.dollar, 's-one')
-  expect(parseRemoteRow(fx.sent[0].text)!.held).toEqual([])
+  expect(parseRemoteRow(fx.sent[0]!.text)!.held).toEqual([])
   fx.files.set(WAIT, JSON.stringify({ ...wait, waiting: 'done', blocks: null, last_waiting: null }) + '\n')
   await sendRow(fx.dollar, 's-one')
-  expect(parseRemoteRow(fx.sent[1].text)!.held).toBeNull()
+  expect(parseRemoteRow(fx.sent[1]!.text)!.held).toBeNull()
 })
 
 test('the questions held changing is news at once, whatever the session is doing', () => {
@@ -679,7 +684,8 @@ test('the questions held changing is news at once, whatever the session is doing
   const row = remote({ held: HELD })
   expect(rowIsNews(row, rowSent(row, now), now)).toBe(false)
   expect(rowIsNews(remote({ held: [] }), rowSent(row, now), now)).toBe(true)
-  expect(rowIsNews(row, { ...rowSent(row, now), held: undefined }, now)).toBe(true)
+  const { held: _held, ...unheld } = rowSent(row, now)
+  expect(rowIsNews(row, unheld, now)).toBe(true)
 })
 
 test('the row of 0.60 and the older ones are read as no word on the questions held, never as none held', () => {
@@ -692,8 +698,8 @@ test('the row of 0.60 and the older ones are read as no word on the questions he
 for (const [label, held] of [
   ['two entries', [...HELD, ...HELD]],
   ['a start that is no time', [{ since: 'soon', blocks: 'phase 3' }]],
-  ['a field more', [{ ...HELD[0], extra: 1 }]],
-  ['blocks past the cap', [{ since: HELD[0].since, blocks: 'x'.repeat(201) }]],
+  ['a field more', [{ ...FIRST_HELD, extra: 1 }]],
+  ['blocks past the cap', [{ since: FIRST_HELD.since, blocks: 'x'.repeat(201) }]],
   ['not an array', 'phase 3'],
 ] as const) {
   test(`a row whose held questions are malformed (${label}) is refused`, () => {

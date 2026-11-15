@@ -12,10 +12,16 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 import { appendedArgv, consumedOf, ingest, newBook, settle, sumsOf } from '../hooks/usage.ts'
 
+// The reader's argv run here, as the module's process.run runs it.
+function run(argv: readonly string[]): string {
+  const [cmd, ...args] = argv
+  if (cmd === undefined) throw new Error('the reader gave no argv')
+  return execFileSync(cmd, args, { encoding: 'utf8' })
+}
+
 const [mode, transcript, pricesPath, split] = process.argv.slice(2)
 if (mode === 'read' && transcript && pricesPath && split) {
-  const [cmd, ...args] = appendedArgv(transcript, Number(pricesPath), Number(split))
-  process.stdout.write(execFileSync(cmd, args, { encoding: 'utf8' }))
+  process.stdout.write(run(appendedArgv(transcript, Number(pricesPath), Number(split))))
   process.exit(0)
 }
 if (mode !== 'cost' || !transcript || !pricesPath) {
@@ -29,8 +35,7 @@ settle(book, Date.now(), JSON.parse(pricesText), pricesText)
 const size = statSync(transcript).size
 for (const end of [split === undefined ? Math.floor(size / 2) : Number(split), size]) {
   const offset = book.files.get(transcript)?.offset ?? 0
-  const [cmd, ...args] = appendedArgv(transcript, offset, end - offset)
-  const read = consumedOf(execFileSync(cmd, args, { encoding: 'utf8' }))
+  const read = consumedOf(run(appendedArgv(transcript, offset, end - offset)))
   if (!read) throw new Error('the reader gave no answer')
   ingest(book, transcript, offset, read.text, read.consumed)
 }

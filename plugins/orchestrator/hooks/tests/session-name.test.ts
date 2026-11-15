@@ -9,6 +9,15 @@ import {
   blockArgv, bytesOfBase64, BLOCK, TAIL_CAP,
 } from '../session-name.ts'
 import { blockOf } from './fakes.ts'
+import { fieldsOf } from '../../core/host.ts'
+
+// The two nouns the walk reads the transcript through: stat for the size, a run for the window.
+type Reader = {
+  fs: { stat(path: string): Promise<{ size: number }> }
+  process: { run(argv: readonly string[]): Promise<{ exitCode: number; stdout: string }> }
+}
+// A $ that carries both nouns, as the harness may hand one.
+const isReader = (value: unknown): value is Reader => { const fields = fieldsOf(value); return Boolean(fields?.['fs'] && fields['process']) }
 
 test('the role is the prefix of the name', () => {
   expect(roleOf('Orch: payments')).toBe('orchestrator')
@@ -37,7 +46,7 @@ const FIXTURE_TEXT = [
 // module reads (stat for the size, dd for the window), the way the band test
 // fakes its own $ whole. The fixture is plain ASCII, so chars count as bytes
 // here.
-function fakeDollar(text: string): any {
+function fakeDollar(text: string): Reader {
   const bytes = new TextEncoder().encode(text)
   return {
     fs: { stat: async () => ({ kind: 'file', size: bytes.length }) },
@@ -49,7 +58,7 @@ function fakeDollar(text: string): any {
 
 // The walk's core driven the way the $-holding files drive it: stat for the
 // size, the block argv for the window, both plain thunks over the fake $.
-const lastTitle = (dollar: any, path: string): Promise<string | null> =>
+const lastTitle = (dollar: Reader, path: string): Promise<string | null> =>
   lastCustomTitle(
     async (p: string) => (await dollar.fs.stat(p)).size,
     async (p: string, index: number) => {
@@ -63,7 +72,7 @@ const lastTitle = (dollar: any, path: string): Promise<string | null> =>
 // The brief spells the fixture from the repo root; the plugin test runner
 // stands in hooks/. The spelling that stats is the one read, wherever the
 // runner's working directory is.
-async function spelled(dollar: any, path: string): Promise<string> {
+async function spelled(dollar: Reader, path: string): Promise<string> {
   for (const s of [path, `../${path}`]) {
     try {
       await dollar.fs.stat(s)
@@ -73,9 +82,9 @@ async function spelled(dollar: any, path: string): Promise<string> {
   return path
 }
 
-test('the last custom-title entry wins, read from the end', async ($: any) => {
+test('the last custom-title entry wins, read from the end', async ($) => {
   const path = 'tests/fixtures/transcript-renamed.jsonl'
-  const dollar = ($ && $.fs && $.process) ? $ : fakeDollar(FIXTURE_TEXT)
+  const dollar = isReader($) ? $ : fakeDollar(FIXTURE_TEXT)
   expect(await lastTitle(dollar, await spelled(dollar, path))).toBe('Agent: renamed-later')
 })
 
@@ -224,7 +233,7 @@ const UNDERNEATH: Record<string, { ppid: string; tty: string; command: string }>
 const runUnder = (session: string) => async (argv: readonly string[]) => {
   if (argv[0] === 'sh') return { exitCode: 0, stdout: `${session} ??\n` }
   if (argv[0] === 'ps' && argv[1] === '-p') {
-    const at = UNDERNEATH[argv[2]]
+    const at = UNDERNEATH[argv[2] ?? '']
     return at ? { exitCode: 0, stdout: `${at.ppid} ${at.tty}\n` } : { exitCode: 1, stdout: '' }
   }
   if (argv[0] === 'ps' && argv[1] === '-t') {

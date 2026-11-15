@@ -12,6 +12,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { sessionKey, writeSession } from '../hooks/supervision.ts'
+import { hostOf } from '../core/capture.ts'
+import type { ProcessRunInit } from '../core/host.ts'
 
 const [mode, id, patch] = process.argv.slice(2)
 if (mode === 'key' && id !== undefined) {
@@ -24,7 +26,7 @@ if (mode !== 'write' || id === undefined || patch === undefined) {
 }
 
 const moved: string[] = []
-const $ = {
+const $ = hostOf({
   env: { get: async (name: string) => process.env[name] },
   fs: {
     read: async (path: string) => readFileSync(path, 'utf8'),
@@ -34,12 +36,13 @@ const $ = {
     },
   },
   process: {
-    run: async (argv: readonly string[], opts: { timeoutMs?: number } = {}) => {
-      if (argv[0] === 'mv') moved.push(argv[2])
-      const done = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: opts.timeoutMs })
-      return { exitCode: done.status, stdout: done.stdout, stderr: done.stderr }
+    run: async (argv: readonly string[], opts: ProcessRunInit = {}) => {
+      const [cmd = '', ...args] = argv
+      if (cmd === 'mv') moved.push(argv[2] ?? '')
+      const done = spawnSync(cmd, args, { encoding: 'utf8', ...(opts.timeoutMs === undefined ? {} : { timeout: opts.timeoutMs }) })
+      return { exitCode: done.status ?? 1, stdout: done.stdout, stderr: done.stderr }
     },
   },
-}
+})
 await writeSession($, id, JSON.parse(patch))
 process.stdout.write(moved.join('\n') + '\n')

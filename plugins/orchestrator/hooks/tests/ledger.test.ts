@@ -6,6 +6,8 @@
 import { expect, test } from 'claude-code/testing'
 import { createdPr, register } from '../ledger.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
+import type { CatchHook, Events, Hook, Host, Noun } from '../../core/host.ts'
 
 const HOME = '/tmp/ledger-home'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -46,8 +48,8 @@ function fake(over: Over = {}) {
   const logged: string[] = []
   const runs: string[][] = []
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : undefined) },
     session: { id: async () => over.session ?? 's-agent' },
     clock: { sleep: async () => undefined },
@@ -60,9 +62,9 @@ function fake(over: Over = {}) {
       },
       write: async (p: string, text: string) => { if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
       exists: async (p: string) => files.has(p),
-      stat: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return { kind: 'file', size: files.get(p)!.length, mtimeMs: 1 } },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return { kind: 'file' as const, size: files.get(p)!.length, mtimeMs: 1 } },
       list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
-        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 1, isLink: false, mtimeMs: 0 })),
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false, mtimeMs: 0 })),
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -71,29 +73,39 @@ function fake(over: Over = {}) {
         runs.push([...argv])
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
-        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2])!); files.delete(argv[2]!) }
+        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: argv[0] === 'ps' ? 1 : 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, files, logged, runs }
 }
 
+type World = Host<Noun>
+type ToolCall = Events['tool.call']
+
+// The tool-call hooks by the tool their matcher names, with their nets.
+function byTool(hooks: ReadonlyArray<Captured<World>>) {
+  const handlers: Record<string, Hook<World, ToolCall>> = {}
+  const nets: Record<string, CatchHook<World, ToolCall>> = {}
+  for (const hook of hooksOn(hooks, 'tool.call')) {
+    const tool = String(hook.matcher?.['tool'])
+    handlers[tool] = hook.handler
+    if (hook.net !== undefined) nets[tool] = hook.net
+  }
+  return { handlers, nets }
+}
+
 function mounted() {
-  const handlers: Record<string, Function> = {}
-  register(((...args: unknown[]) => {
-    handlers[String((args[1] as { tool?: string })?.tool)] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  }) as never, () => new Date('2026-11-14T10:15:00.400Z'))
-  return handlers
+  return byTool(capture<World>(on => register(on, () => new Date('2026-11-14T10:15:00.400Z')))).handlers
 }
 
 const github = (extra: object = {}) => ({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 't', draft: true }, ...extra })
 const created = (url: string) => ({ result: JSON.stringify({ number: Number(url.split('/').pop()), html_url: url }) })
 const ledgerOf = (files: Map<string, string>, path = RECORD) =>
   (files.get(path) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.ledger === 'pr')
-const call = async (handlers: Record<string, Function>, dollar: unknown, e: Record<string, unknown>, answer: unknown) =>
+const call = async (handlers: Record<string, Hook<World, ToolCall>>, dollar: World, e: ToolCall, answer: unknown) =>
   handlers[String(e['tool'])]!(dollar, e, async () => answer)
 
 test('a pull request opened through the github tool takes its line in its orchestrator\'s record, as its agent works it', async () => {
@@ -242,14 +254,7 @@ test('a command line the shell reader cannot read is no creation, and throws not
 
 // The registrations with their safety nets, and the write's bound set short enough to wait for.
 function mountedWithNets(bound: number) {
-  const handlers: Record<string, Function> = {}
-  const nets: Record<string, Function> = {}
-  register(((...args: unknown[]) => {
-    const tool = String((args[1] as { tool?: string })?.tool)
-    handlers[tool] = args[args.length - 1] as Function
-    return { catch: (net: Function) => { nets[tool] = net } }
-  }) as never, () => new Date('2026-11-14T10:15:00.400Z'), bound)
-  return { handlers, nets }
+  return byTool(capture<World>(on => register(on, () => new Date('2026-11-14T10:15:00.400Z'), bound)))
 }
 
 test('a write that never settles is given up at the bound: the answer goes on, one line says so, nothing is written', async () => {
@@ -268,7 +273,7 @@ test('a tool call that throws is caught by the hook\'s net: one log line, the ca
   const e = github()
   await expect(handlers['mcp__github__gh']!(dollar, e, async () => { throw new Error('boom') })).rejects.toThrow('boom')
   const passed: unknown[] = []
-  const next = Object.assign((x: unknown) => { passed.push(x); return { passed: x } }, { called: false, error: { kind: 'failure', message: 'boom' } })
+  const next = Object.assign(async (x: unknown) => { passed.push(x); return { passed: x } }, { called: false, error: { kind: 'failure', message: 'boom' } })
   expect(await nets['mcp__github__gh']!(dollar, e, next)).toEqual({ passed: e })
   expect(passed).toEqual([e])
   expect(logged.some(l => l.includes('ledger') && l.includes('unhandled (failure): boom'))).toBe(true)

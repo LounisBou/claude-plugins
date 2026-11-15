@@ -9,6 +9,9 @@ import { readOr, safe } from '../unattended.ts'
 import { register as registerWait, Declarations } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import type { Reply } from 'claude-code/testing'
+import { capture, hookOf, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Events, Host, Noun, On } from '../../core/host.ts'
 
 const HOME = '/tmp/unattended-home'
 const MODULE = `${HOME}/.claude/claude-orchestrator`
@@ -23,7 +26,7 @@ const line = (pr: number, status: string, detail: Record<string, string>, update
 const row = (role: string, name: string, repo: string | null = 'acme/app', extra: Record<string, unknown> = {}) =>
   JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null }
+type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined }
 
 function world(answers: Answers = {}) {
   const files = new Map<string, string>([
@@ -44,8 +47,8 @@ function world(answers: Answers = {}) {
   const logs: string[] = []
   const runs: string[][] = []
   const forge = answers.forge ?? { 'acme/app': JSON.stringify([7, 8, 6, 9, 10].map(n => ({ number: n, createdAt: `2026-11-1${n % 10}T08:00:00Z` }))) }
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
     session: { id: async () => 's-orch' },
     clock: { sleep: async () => undefined },
@@ -64,10 +67,11 @@ function world(answers: Answers = {}) {
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
         runs.push([...argv])
-        if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]); return { exitCode: 0, stdout: '', stderr: '' } }
+        const [verb, , from = '', to = ''] = argv
+        if (verb === 'mv') { files.set(to, files.get(from)!); files.delete(from); return { exitCode: 0, stdout: '', stderr: '' } }
         if (argv[0] === 'rm') { for (const p of argv.slice(2)) files.delete(p); return { exitCode: 0, stdout: '', stderr: '' } }
         if (argv[0] === 'gh') {
-          const answer = forge[argv[4]]
+          const answer = forge[String(argv[4])]
           return answer === null || answer === undefined ? { exitCode: 1, stdout: '', stderr: 'HTTP 502' } : { exitCode: 0, stdout: answer, stderr: '' }
         }
         if (argv[0] === 'ps') {
@@ -81,7 +85,7 @@ function world(answers: Answers = {}) {
       },
     },
     ui: { invalidate: () => undefined },
-  }
+  })
   return { dollar, files, logs, runs }
 }
 
@@ -212,16 +216,16 @@ test('the turn end leaves the ready rows beside the unattended pull requests for
   const { dollar, files } = world()
   files.set(RECORD, readyRecord(READY_ROWS.slice(0, 1)))
   const handlers = mounted()
-  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
-  const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] }, (x: any) => x)
-  expect(first.context[0]).toBe('before')
-  expect(first.context[1]).toContain('PR délaissées : acme/app#8')
-  expect(first.context.slice(2)).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
-  expect((await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
+  const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
+  expect(first.context?.[0]).toBe('before')
+  expect(first.context?.[1]).toContain('PR délaissées : acme/app#8')
+  expect(first.context?.slice(2)).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
+  expect((await handlers['prompt.submit'](dollar, { text: 'go' })).context).toBe(undefined)
   // Nothing ready, nothing unattended: no line at all.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
-  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
-  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  await handlers['turn.complete'](quiet, { reason: 'answer' })
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' })).context).toBe(undefined)
 })
 
 test('a session that is no orchestrator reads nothing', async () => {
@@ -231,34 +235,50 @@ test('a session that is no orchestrator reads nothing', async () => {
   expect(runs).toEqual([])
 })
 
+// What a hook answered, as a test reads it.
+const answered = (x: unknown): Reply => x as Reply
+const through = async <E>(e: E): Promise<E> => e
+
 function mounted() {
-  const handlers: Record<string, Function> = {}
-  registerUnattended((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
-  return handlers
+  const hooks = capture(registerUnattended)
+  const hook = <K extends keyof Events>(event: K) => {
+    const found = hooksOn(hooks, event)[0]
+    if (found === undefined) throw new Error(`no hook ${event}`)
+    return found
+  }
+  return {
+    'turn.complete': (dollar: Host<Noun>, e: Events['turn.complete']) => hook('turn.complete').handler(dollar, e, through),
+    'prompt.submit': async (dollar: Host<Noun>, e: Events['prompt.submit']) => answered(await hook('prompt.submit').handler(dollar, e, through)),
+  }
+}
+
+// declare_wait's hook over these declarations: the tool's input called with no hook beneath.
+function declaring(declarations: Declarations) {
+  const hooks = capture((on: On<Host<Noun>>) => registerWait(on, declarations))
+  const hook = hookOf(hooks, 'tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` })
+  return async (dollar: Host<Noun>, input: Readonly<Record<string, unknown>>) =>
+    answered(await hook.handler(dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input }, async () => { throw new Error('declare_wait calls nothing beneath') }))
 }
 
 test('the turn end leaves the line for the next prompt\'s context, once, and on the session\'s row', async () => {
   const { dollar, files } = world()
   const handlers = mounted()
-  await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'x' }, (x: unknown) => x)
+  await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'x' })
   const published = JSON.parse(files.get(`${MODULE}/store/sessions/s-orch`) ?? '{}').unattended
   expect(published.prs.map((u: { pr: number }) => u.pr)).toEqual([8, 9])
   expect(published.line).toContain('PR délaissées : acme/app#8')
-  const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] }, (x: any) => x)
+  const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
   expect(first.context).toEqual(['before', published.line])
-  const second = await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)
+  const second = await handlers['prompt.submit'](dollar, { text: 'go' })
   expect(second.context).toBe(undefined)
 })
 
 test('a line already said at the previous turn end is not said again, until it changes or goes away', async () => {
   const { dollar } = world()
   const handlers = mounted()
-  const said = async (target: any) => {
-    await handlers['turn.complete'](target, { reason: 'answer' }, (x: unknown) => x)
-    return (await handlers['prompt.submit'](target, { text: 'go' }, (x: any) => x)).context
+  const said = async (target: Host<Noun>) => {
+    await handlers['turn.complete'](target, { reason: 'answer' })
+    return (await handlers['prompt.submit'](target, { text: 'go' })).context
   }
   expect((await said(dollar))?.[0]).toContain('PR délaissées : acme/app#8')
   // The same reading at the next wakes: nothing is added to the prompt.
@@ -277,10 +297,10 @@ test('a changed line is said without the lines that did not change: the ready ro
   const { dollar, files } = world()
   const handlers = mounted()
   const turn = async () => {
-    await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
-    return (await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context
+    await handlers['turn.complete'](dollar, { reason: 'answer' })
+    return (await handlers['prompt.submit'](dollar, { text: 'go' })).context
   }
-  expect((await turn()).length).toBe(1)
+  expect((await turn())?.length).toBe(1)
   files.set(RECORD, `${files.get(RECORD)}${JSON.stringify(READY_ROWS[0])}\n`)
   expect(await turn()).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
 })
@@ -288,19 +308,19 @@ test('a changed line is said without the lines that did not change: the ready ro
 test('a line no prompt has said yet is kept across turn ends, while it still holds, beside what changed since', async () => {
   const { dollar, files } = world()
   const handlers = mounted()
-  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
   // Nothing was said between: a ready row appears, and the unattended line still waits for its prompt.
   files.set(RECORD, `${files.get(RECORD)}${JSON.stringify(READY_ROWS[0])}\n`)
-  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
-  const said = (await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context
-  expect(said.length).toBe(2)
-  expect(said[0]).toContain('PR délaissées : acme/app#8')
-  expect(said[1]).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
+  const said = (await handlers['prompt.submit'](dollar, { text: 'go' })).context
+  expect(said?.length).toBe(2)
+  expect(said?.[0]).toContain('PR délaissées : acme/app#8')
+  expect(said?.[1]).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
   // A line that stopped holding before its prompt is not said.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
-  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
-  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
-  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
+  await handlers['turn.complete'](quiet, { reason: 'answer' })
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' })).context).toBe(undefined)
 })
 
 test('a line owed by a turn end whose prompt has not come yet is dropped by the quiet turn end that follows', async () => {
@@ -308,32 +328,27 @@ test('a line owed by a turn end whose prompt has not come yet is dropped by the 
   const { dollar: owing } = world()
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   // The memory is shared by the file's tests: a prompt empties whatever an earlier one left owed.
-  await handlers['prompt.submit'](owing, { text: 'first' }, (x: any) => x)
+  await handlers['prompt.submit'](owing, { text: 'first' })
   // A turn end leaves its line owed, no prompt is submitted, then a quiet turn end: the line stopped holding.
-  await handlers['turn.complete'](owing, { reason: 'answer' }, (x: unknown) => x)
-  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
-  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  await handlers['turn.complete'](owing, { reason: 'answer' })
+  await handlers['turn.complete'](quiet, { reason: 'answer' })
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' })).context).toBe(undefined)
 })
 
 test('a turn end with nothing unattended leaves no line', async () => {
   const { dollar } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   const handlers = mounted()
-  await handlers['turn.complete'](dollar, { reason: 'answer' }, (x: unknown) => x)
-  expect((await handlers['prompt.submit'](dollar, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
+  expect((await handlers['prompt.submit'](dollar, { text: 'go' })).context).toBe(undefined)
   // A subagent's turn end reads nothing.
   const { dollar: quiet, runs } = world()
-  await handlers['turn.complete'](quiet, { agentId: 'a-1' }, (x: unknown) => x)
+  await handlers['turn.complete'](quiet, { agentId: 'a-1' })
   expect(runs).toEqual([])
 })
 
 test('declare_wait refuses done and deferred while a pull request is unattended, naming it, and takes every other kind', async () => {
-  const handlers: Record<string, Function> = {}
   const declarations = new Declarations()
-  registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  }, declarations)
-  const declare = (dollar: any, input: object) => handlers['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input })
+  const declare = declaring(declarations)
   const { dollar } = world()
   const done = await declare(dollar, { kind: 'done' })
   expect(done.isError).toBe(true)
@@ -360,13 +375,8 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
 })
 
 test('declare_wait takes a done from a session that handed over: the unattended pull requests are its successor\'s', async () => {
-  const handlers: Record<string, Function> = {}
   const declarations = new Declarations()
-  registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  }, declarations)
-  const declare = (dollar: any, input: object) => handlers['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input })
+  const declare = declaring(declarations)
   const { dollar } = world()
   expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
   declarations.handOver('another-session')
@@ -378,7 +388,7 @@ test('declare_wait takes a done from a session that handed over: the unattended 
 
 test('the helpers every reader of a registered record shares: a session id made a file name, a read that gives "" for a file that is not there', async () => {
   expect(safe('a b/c:d.e-f_g')).toBe('a_b_c_d.e-f_g')
-  const $ = { fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } }
+  const $ = hostOf({ fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } })
   expect(await readOr($, '/there')).toBe('text')
   expect(await readOr($, '/gone')).toBe('')
 })

@@ -11,6 +11,12 @@ import { todoPath } from '../todo-format.ts'
 import { waitKey } from '../supervision.ts'
 import { entryFingerprint, type RoundEntry } from '../round.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Host, type Noun, type ToolSpec } from '../../core/host.ts'
+
+type World = Host<Noun>
+// What the settle tool answers: its text, and whether it is an error.
+type Out = { readonly result: string; readonly isError?: boolean }
 
 const HOME = '/tmp/settle-home'
 const MODULE = `${HOME}/.claude/claude-orchestrator`
@@ -32,8 +38,8 @@ const QUESTION = {
 function machine(options: { refuse?: string } = {}) {
   const files = new Map<string, string>([[`${SESSIONS}/s-ask`, row('orchestrator', ASKER)], [`${SESSIONS}/s-coord`, row('coordinator', COORD)]])
   const sent: { to: unknown; text: string }[] = []
-  const as = (session: string): any => ({
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const as = (session: string): World => hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
     session: {
       id: async () => session,
@@ -48,10 +54,10 @@ function machine(options: { refuse?: string } = {}) {
     fs: {
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
       write: async (p: string, text: string) => { files.set(p, text) },
-      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file', size: 1, mtimeMs: NOW.getTime() } },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file' as const, size: 1, mtimeMs: NOW.getTime() } },
       exists: async (p: string) => files.has(p),
       list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
-        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 1, isLink: false })),
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false })),
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -59,7 +65,7 @@ function machine(options: { refuse?: string } = {}) {
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'box-1.local\n', stderr: '' }
-        if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
+        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -75,7 +81,7 @@ async function asked(m: ReturnType<typeof machine>, extra: Record<string, unknow
   askTurnStarted()
   askedCount += 1
   const answer = await callAsk(m.asker, { ...QUESTION, context: `${QUESTION.context} (${askedCount})`, ...extra }, NOW)
-  return /Asked as (\S+?):/.exec(answer.result)![1]
+  return /Asked as (\S+?):/.exec(answer.result)![1]!
 }
 
 const entryOf = (m: ReturnType<typeof machine>, id: string) => JSON.parse(m.files.get(`${ROUND}/${id}.json`)!)
@@ -106,20 +112,17 @@ test('a call names its entry, its outcome and what that outcome needs; anything 
 
 test('the tool is registered with flat fields, for every main session but an agent, and a subagent\'s call is refused', async () => {
   const m = machine()
-  const handlers: Record<string, Function> = {}
-  registerSettle(((event: string, ...rest: any[]) => {
-    const [matcher, handler] = rest.length === 2 ? rest : [{}, rest[0]]
-    handlers[`${event}${matcher.tool ? `:${matcher.tool}` : ''}`] = handler
-    return { catch: () => undefined }
-  }) as any)
-  const registered: any[] = []
-  m.asker.tool = { register: async (spec: unknown) => { registered.push(spec) } }
-  await handlers['session.start'](m.asker, { cwd: '/w' }, async () => undefined)
+  const hooks = capture<World>(registerSettle)
+  const registered: ToolSpec[] = []
+  m.asker.tool.register = async (spec: ToolSpec) => { registered.push(spec) }
+  await hooksOn(hooks, 'session.start').at(-1)!.handler(m.asker, { cwd: '/w' }, async () => undefined)
   expect(registered.map(spec => spec.name)).toEqual(['settle'])
-  expect(Object.keys(registered[0].inputSchema.properties).sort()).toEqual(['answer', 'author', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'id', 'outcome', 'reason', 'said_at', 'until', 'work'])
+  const settleHook = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'mcp__orchestrator__settle').at(-1)!
+  const call = async (dollar: World, e: Record<string, unknown>) => await settleHook.handler(dollar, e, async () => undefined) as Out
+  expect(Object.keys(fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {}).sort()).toEqual(['answer', 'author', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'id', 'outcome', 'reason', 'said_at', 'until', 'work'])
   const id = await asked(m)
-  expect((await handlers['tool.call:mcp__orchestrator__settle'](m.asker, { id, outcome: 'answered-here', answer: 'A', agentId: 'a-1' })).isError).toBe(true)
-  expect((await handlers['tool.call:mcp__orchestrator__settle'](m.asker, { id, outcome: 'answered-here', answer: 'A' })).isError).toBeUndefined()
+  expect((await call(m.asker, { id, outcome: 'answered-here', answer: 'A', agentId: 'a-1' })).isError).toBe(true)
+  expect((await call(m.asker, { id, outcome: 'answered-here', answer: 'A' })).isError).toBeUndefined()
   expect(entryOf(m, id).status).toBe('answered')
 })
 
@@ -304,14 +307,14 @@ test('the coordinator settling its own ask that asks consent takes the same path
   const m = machine()
   askTurnStarted()
   const made = await callAsk(m.coordinator, { ...QUESTION, ...CONSENT_ASK }, NOW)
-  const id = /Asked as (\S+?):/.exec(made.result)![1]
+  const id = /Asked as (\S+?):/.exec(made.result)![1]!
   const limited = await settle(m.coordinator, request(id, { text: LIMIT_WORDS }), AT)
   expect(recordsOf(m)).toEqual([])
   expect(limited.result).toContain('The consent is not recorded')
   const again = await settle(m.coordinator, request(id, { text: GRANT_WORDS }), AT)
   expect(again.result).toContain('is answered already')
   askTurnStarted()
-  const second = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'second', ...CONSENT_ASK }, NOW)).result)![1]
+  const second = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'second', ...CONSENT_ASK }, NOW)).result)![1]!
   await settle(m.coordinator, request(second, { text: GRANT_WORDS }), AT)
   expect(recordsOf(m).map(r => [r.entry, r.answer, r.by])).toEqual([[second, 'Accorder', 'coordinator']])
 })
@@ -323,7 +326,7 @@ test('the coordinator\'s settle of an exemption question that states its expiry,
   const ask = async (until: string) => {
     askTurnStarted()
     const made = await callAsk(m.coordinator, { ...QUESTION, context: `until ${until}`, question: `Exempt acme/app from E2E until ${until}?`, ...exemption }, NOW)
-    return /Asked as (\S+?):/.exec(made.result)![1]
+    return /Asked as (\S+?):/.exec(made.result)![1]!
   }
   const right = await ask('2026-11-16T11:00:00Z')
   await settle(m.coordinator, request(right, { text: sentence }), AT)
@@ -332,7 +335,7 @@ test('the coordinator\'s settle of an exemption question that states its expiry,
   expect(refused.result).toContain('The consent is not recorded')
   expect(recordsOf(m).map(r => [r.entry, r.answer, r.by, r.subject.kind])).toEqual([[right, sentence, 'coordinator', 'e2e-exemption']])
   askTurnStarted()
-  const waiver = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'waiver', question: 'Waive E2E on acme/app#7 until 2026-11-16T11:00:00Z?', ...CONSENT_ASK }, NOW)).result)![1]
+  const waiver = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'waiver', question: 'Waive E2E on acme/app#7 until 2026-11-16T11:00:00Z?', ...CONSENT_ASK }, NOW)).result)![1]!
   expect((await settle(m.coordinator, request(waiver, { text: sentence }), AT)).result).toContain('adds words after its choice')
   expect(recordsOf(m).length).toBe(1)
 })
@@ -377,12 +380,12 @@ test('a question asked with ask the coordinator here was shown is settled by its
   await settle(m.asker, request(shown), AT)
   expect(entryOf(m, shown)).toMatchObject({ status: 'answered', answer: { by: 'tab' } })
   expect(m.sent.length).toBe(1)
-  expect(m.sent[0].text).toContain(shown)
-  expect(JSON.stringify(m.sent[0].to)).not.toContain('s-ask')
+  expect(m.sent[0]?.text).toContain(shown)
+  expect(JSON.stringify(m.sent[0]?.to)).not.toContain('s-ask')
   // The coordinator's own settle sends the answer to its asker, and itself no notice.
   await settle(m.coordinator, request(held), AT)
   expect(m.sent.length).toBe(2)
-  expect(m.sent[1].to).toEqual({ sessionId: 's-ask' })
+  expect(m.sent[1]?.to).toEqual({ sessionId: 's-ask' })
 })
 
 test('a relay\'s entry the coordinator here was shown is closed by its sender\'s settle, and the coordinator told so', async () => {

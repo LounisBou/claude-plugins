@@ -1,4 +1,5 @@
 // hooks/tests/fakes.ts
+import { fieldsOf, type FsStat, type ProcessRunInit, type ProcessRunResult } from '../../core/host.ts'
 // What every fake $ answers the same way: the module's log line, appended through
 // hooks/log-append.sh by $.process.run (module-log.ts) — never a $.fs write. A fake
 // hands each run here first; a log run is captured and answered, anything else is the
@@ -20,8 +21,8 @@ const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 export function base64Of(bytes: Uint8Array): string {
   let out = ''
   for (let i = 0; i < bytes.length; i += 3) {
-    const [a, b, c] = [bytes[i], bytes[i + 1], bytes[i + 2]]
-    out += B64[a >> 2] + B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+    const [a = 0, b, c] = [bytes[i], bytes[i + 1], bytes[i + 2]]
+    out += `${B64[a >> 2]}${B64[((a & 3) << 4) | ((b ?? 0) >> 4)]}`
     out += b === undefined ? '=' : B64[((b & 15) << 2) | ((c ?? 0) >> 6)]
     out += c === undefined ? '=' : B64[c & 63]
   }
@@ -52,12 +53,13 @@ export function disk(files: Map<string, string> = new Map()) {
     fs: {
       write: async (p: string, text: string) => { if (!p.includes('.tmp-')) inPlace.push(p); put(p, text) },
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
-      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { size: files.get(p)!.length } },
+      stat: async (p: string): Promise<FsStat> => { if (!files.has(p)) throw new Error('ENOENT'); return { kind: 'file', size: files.get(p)!.length } },
     },
     process: {
       run: async (argv: readonly string[]) => {
-        if (argv[0] === 'mv') { put(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
-        if (argv[0] === 'rm') for (const path of argv.slice(2)) files.delete(path)
+        const [verb, , from = '', to = ''] = argv
+        if (verb === 'mv') { put(to, files.get(from)!); files.delete(from) }
+        if (verb === 'rm') for (const path of argv.slice(2)) files.delete(path)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -73,7 +75,11 @@ export const MEASURES = '/tmp/cfg/claude-orchestrator/measure'
  * `<config>/orchestrator/journal/`, each as `<kind> <code>`. Wraps a fake `$` whose fs.write and
  * process.run it observes, answering what they answer.
  */
-export function journalled<D extends { fs: any; process: any }>(dollar: D): { dollar: D; journal: () => string[] } {
+type Journalled = {
+  fs: { write?(path: string, text: string): Promise<void> }
+  process: { run(argv: readonly string[], init?: ProcessRunInit): Promise<ProcessRunResult> }
+}
+export function journalled<D extends Journalled>(dollar: D): { dollar: D; journal: () => string[] } {
   const texts = new Map<string, string>()
   const events: string[] = []
   const wrapped = {
@@ -81,14 +87,14 @@ export function journalled<D extends { fs: any; process: any }>(dollar: D): { do
     fs: { ...dollar.fs, write: async (path: string, text: string) => { texts.set(path, text); return dollar.fs.write?.(path, text) } },
     process: {
       ...dollar.process,
-      run: async (argv: readonly string[], ...rest: unknown[]) => {
+      run: async (argv: readonly string[], init?: ProcessRunInit) => {
         const to = String(argv[argv.length - 1] ?? '')
         if (argv[0] === 'mv' && to.includes('/orchestrator/journal/')) {
-          const event = JSON.parse(texts.get(String(argv[argv.length - 2])) ?? '{}')
-          events.push(`${event.kind} ${event.source?.code}`)
+          const event = fieldsOf(JSON.parse(texts.get(String(argv[argv.length - 2])) ?? '{}'))
+          events.push(`${String(event?.['kind'])} ${String(fieldsOf(event?.['source'])?.['code'])}`)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
-        return dollar.process.run(argv, ...rest)
+        return init === undefined ? dollar.process.run(argv) : dollar.process.run(argv, init)
       },
     },
   }
