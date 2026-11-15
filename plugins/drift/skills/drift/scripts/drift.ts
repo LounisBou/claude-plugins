@@ -11,7 +11,7 @@
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { compareTrees, DriftError, render, type Link, type Report, type Tree } from './lib/compare.ts'
 import { installPlaywright, PLAYWRIGHT_VERSION } from '../../../core/index.ts'
 import { parseArgs, parseConfig, USAGE, type Config } from './lib/config.ts'
@@ -123,7 +123,8 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
 }
 
 /* node:coverage ignore next 13 */
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const entry = process.argv[1]
+if (entry !== undefined && existsSync(entry) && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
   const controller = new AbortController()
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(name, () => controller.abort())
   const code = await main(process.argv.slice(2), {

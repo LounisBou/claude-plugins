@@ -364,6 +364,23 @@ describe('prompts run', () => {
     assert.match(io.lines.out[0] ?? '', /^said 2×: .* in plugins\/alpha\/skill\.md, plugins\/beta\/skill\.md$/)
   })
 
+  it('prints its figures as one JSON object, the faults inside it, and still fails over a ceiling', () => {
+    const io = recorder()
+    assert.equal(prompts(withPrompts({ budgets: { alpha: 1, beta: 100 }, duplicates: 1 }), ['--json'], io), 1)
+    assert.equal(io.lines.err.length, 0)
+    assert.equal(io.lines.out.length, 1)
+    const json = JSON.parse(io.lines.out[0] ?? '')
+    assert.deepEqual(json.budgets, { alpha: { tokens: 22, budget: 1 }, beta: { tokens: 22, budget: 100 } })
+    assert.deepEqual(json.duplicates, { count: 1, ceiling: 1 })
+    assert.match(json.faults[0], /^alpha: 22 prompt tokens, over its budget of 1$/)
+  })
+
+  it('says null for a plugin with no budget in its JSON', () => {
+    const io = recorder()
+    prompts(withPrompts({ budgets: { alpha: 100 }, duplicates: 1 }), ['--json'], io)
+    assert.equal(JSON.parse(io.lines.out[0] ?? '').budgets.beta.budget, null)
+  })
+
   it('fails over a ceiling and lowers nothing', () => {
     const root = withPrompts({ budgets: { alpha: 1, beta: 100 }, duplicates: 1 })
     const io = recorder()

@@ -3,6 +3,7 @@
 // or the duplicate count may fall, never rise (docs/conventions.md, « Prompts »).
 //
 //   npm run prompts              check against ci/prompts.json
+//   npm run prompts -- --json    the same as one JSON object on stdout (what the weekly report reads)
 //   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured (the release runs it)
 //   npm run prompts -- --base <ref>   also refuse a ceiling lowered since <ref>, unless a commit since is the release
 import { execFileSync } from 'node:child_process'
@@ -144,8 +145,13 @@ export function run(root: string, args: readonly string[], io: Io): number {
     const { base, released } = sinceBase(root, ref)
     faults.push(...loweredOutsideRelease(ceilings, base, released))
   }
-  for (const fault of faults) io.err(fault)
-  for (const { sentence, paths } of measured.duplicates) io.out(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
+  if (args.includes('--json')) {
+    const budgets = Object.fromEntries(Object.entries(measured.tokens).map(([plugin, tokens]) => [plugin, { tokens, budget: ceilings.budgets[plugin] ?? null }]))
+    io.out(JSON.stringify({ budgets, duplicates: { count: measured.duplicates.length, ceiling: ceilings.duplicates }, faults }))
+  } else {
+    for (const fault of faults) io.err(fault)
+    for (const { sentence, paths } of measured.duplicates) io.out(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
+  }
   if (faults.length > 0) return 1
   if (lower) {
     writeFileSync(join(root, CEILINGS_PATH), `${JSON.stringify({ ...authored, budgets: measured.tokens, duplicates: measured.duplicates.length }, null, 2)}\n`)

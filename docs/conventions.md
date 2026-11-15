@@ -99,15 +99,17 @@ changed by a pull request that edits this file and the code it governs together.
   name, an account, a time zone, a language, a stack) lives in configuration, never in a
   plugin.
 - Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
-  more than once, both held by CI against their ceilings (`ci/prompts.json`, `npm run prompts`);
-  a pull request may lower one after a cut (`npm run prompts -- --lower`), and no ceiling rises
-  outside the release (`npm run release`).
+  more than once, both measured by CI against their ceilings (`ci/prompts.json`, `npm run prompts`).
+  CI reports them, a warning and a line of the weekly report (`telemetry.ts report`), and does not
+  refuse a pull request over them; the release lowers the budgets (`npm run release`), and none
+  should rise outside it.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
 - A rule enters a prompt only when an eval shows it changes an outcome, and it replaces one.
 - `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
-  rule left to prose alone is a candidate for a guard, an eval, or removal.
+  rule left to prose alone is a candidate for a guard, an eval, or removal. It reports: a line of the
+  weekly report, and CI's summary; it blocks nothing.
 
 ## Changes and releases
 
@@ -129,9 +131,9 @@ changed by a pull request that edits this file and the code it governs together.
 ## Ratchets
 
 Some coverage grows one step at a time: the TypeScript under the strict check
-(`tsconfig.json`), the platforms where a suite blocks (`ci/plugins.json`), the prompt budgets
-and the duplicate ceiling (`ci/prompts.json`).
+(`tsconfig.json`) and the platforms where a suite blocks (`ci/plugins.json`).
 A ratchet only tightens. A pull request that loosens one is refused unless it says why in its
-description and the operator accepts it.
+description and the operator accepts it. The prompt budgets and the duplicate ceiling
+(`ci/prompts.json`) fall the same way, but CI only reports them.
 A pull request that touches a hooks file not yet under the strict check makes it pass and adds it to
 `include` in `tsconfig.json`.

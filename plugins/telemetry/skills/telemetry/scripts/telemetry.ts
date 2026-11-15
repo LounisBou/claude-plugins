@@ -13,14 +13,14 @@
 // <dir> is the host's configuration directory; the store is <dir>/telemetry. The operator's
 // ~/.env (TELEMETRY_ENV_FILE in tests) is read for its secrets, which never leave this process.
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { runAuto } from './lib/auto.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
-import { parseOptions, report, type Gh } from './lib/report.ts'
+import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
 import { summarizeFile, transcriptOf } from './lib/transcript.ts'
@@ -45,6 +45,8 @@ export interface Deps {
   readonly exportWaitMs: number
   /** The report's reads of GitHub and of a directory's remote, and the directory it runs in. */
   readonly gh: Gh
+  /** Runs `npm run -s <script> -- --json` in the checkout the report is run in. */
+  readonly check: Check
   readonly repositoryAt: (dir: string) => string | undefined
   readonly cwd: string
 }
@@ -109,7 +111,7 @@ export function run(args: readonly string[], deps: Deps): number {
       deps.err(`report: ${options}`)
       return 2
     }
-    for (const line of report({ config, env: deps.env, now: deps.now(), ...options, cwd: deps.cwd, gh: deps.gh, repositoryAt: deps.repositoryAt })) deps.out(line)
+    for (const line of report({ config, env: deps.env, now: deps.now(), ...options, cwd: deps.cwd, gh: deps.gh, check: deps.check, repositoryAt: deps.repositoryAt })) deps.out(line)
     return 0
   }
   const read = readSecrets(deps.env)
@@ -189,6 +191,17 @@ export const realGh: Gh = args => {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
 }
 
+/**
+ * One of the tooling checkout's report scripts, as JSON, under a deadline. It runs only where
+ * `scripts/<script>.ts` exists, so another project's own `prompts` or `rules` script is never run.
+ * Its status is not read: a script that fails still printed its figures.
+ */
+export const realCheck: Check = (checkout, script) => {
+  if (!existsSync(join(checkout, 'scripts', `${script}.ts`))) return { status: 1, stdout: '', stderr: `no scripts/${script}.ts in it, so it is not the tooling's checkout` }
+  const result = spawnSync('npm', ['run', '-s', script, '--', '--json'], { cwd: checkout, encoding: 'utf8', timeout: GIT_TIMEOUT_MS })
+  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr || (result.error?.message ?? '') }
+}
+
 /** The `owner/name` the git remotes of a directory name, if it is a clone of one. */
 export const realRepositoryAt = (dir: string): string | undefined => {
   const result = realGit(remoteUrlsArgv(dir).slice(1), dir)
@@ -201,7 +214,7 @@ export const realDetach = (config: string): void => {
   spawn(process.execPath, argv, { detached: true, stdio: 'ignore', env: process.env }).unref()
 }
 
-/* node:coverage ignore next 14 */
+/* node:coverage ignore next 15 */
 const entry = process.argv[1]
 if (entry !== undefined && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
   process.exitCode = run(process.argv.slice(2), {
@@ -214,6 +227,7 @@ if (entry !== undefined && realpathSync(entry) === realpathSync(fileURLToPath(im
     detach: realDetach,
     exportWaitMs: EXPORT_WAIT_MS,
     gh: realGh,
+    check: realCheck,
     repositoryAt: realRepositoryAt,
     cwd: process.cwd(),
   })

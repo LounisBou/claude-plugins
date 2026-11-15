@@ -1,8 +1,8 @@
 // What a script of the orchestrator's skill reaches outside itself: the commands it runs and the
 // streams it writes. Passed in as values, so a test stands in for each one.
 import { spawn } from 'node:child_process'
-import { closeSync, openSync, writeSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import { closeSync, openSync, realpathSync, writeSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 export interface Ran {
   /** The exit status, or null when the command was killed or could not start. */
@@ -90,7 +90,20 @@ export function fdWriter(fd: number, write: (fd: number, bytes: Uint8Array) => n
 
 export const processIo: Io = { out: fdWriter(1), err: fdWriter(2) }
 
-/** Whether the module at `moduleUrl` is the script node was started with. */
+/**
+ * The path with its symbolic links resolved, so a script started through a link (the deploy's
+ * `current` link) and the module it links to compare equal. A path that does not exist stays as
+ * it is.
+ */
+export function resolvedPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
+/** Whether the module at `moduleUrl` is the script node was started with, links resolved. */
 export function isEntry(moduleUrl: string, script: string | undefined = process.argv[1]): boolean {
-  return script !== undefined && moduleUrl === pathToFileURL(script).href
+  return script !== undefined && resolvedPath(fileURLToPath(moduleUrl)) === resolvedPath(script)
 }
