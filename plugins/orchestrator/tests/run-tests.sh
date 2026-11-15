@@ -5153,6 +5153,18 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$CWB/gh"
+# The github plugin's engine, as the script finds it (CLAUDE_GITHUB_ROOT): its `pr-gate` answers
+# `<RESULT>:<running>` from the file `gate` beside it, as the gate's JSON, `fail` for a failed read.
+mkdir -p "$CW/github/engine"
+cat > "$CW/github/engine/gh.py" <<'GATEPY'
+import json, os, sys
+answer = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gate")).read().strip()
+if answer == "fail":
+    sys.stderr.write("error: no GitHub token\n")
+    sys.exit(3)
+result, running = answer.split(":")
+print(json.dumps({"ci": {"result": result, "running": int(running)}}))
+GATEPY
 HA=aaaa1111bbbb2222cccc3333dddd4444eeee5555
 HB=bbbb2222cccc3333dddd4444eeee5555ffff6666
 CWSCRIPT="$ROOT/skills/orchestrator/scripts/ci-watch.sh"
@@ -5179,7 +5191,8 @@ cw() {
   [ -z "$reg" ] || printf '%b\n' "$reg" > "$CW/reg"
   [ -z "$failing" ] || printf '%b\n' "$failing" > "$CW/failing"
   printf '%b\n' "$code" > "$CW/watch-code"
-  out=$(env -u CLAUDE_CODE_SESSION_ID ${sid[@]+"${sid[@]}"} PATH="$CWB:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
+  printf '%s\n' "${CW_GATE:-SUCCESS:0}" > "$CW/github/gate"
+  out=$(env -u CLAUDE_CODE_SESSION_ID ${sid[@]+"${sid[@]}"} PATH="$CWB:$PATH" CLAUDE_GITHUB_ROOT="$CW/github" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
     CI_WATCH_BASE_WAIT="${CW_BASE_WAIT:-2}" CI_WATCH_MERGE_WAIT="${CW_MERGE_WAIT:-4}" CI_WATCH_BASE_WORKFLOWS="${CW_BASE_WORKFLOWS:-}" bash "$CWSCRIPT" "$@" 2>/dev/null); rc=$?
   printf '%s|%s' "$out" "$rc"
 }
@@ -5203,6 +5216,15 @@ check "a watch that exits 0 over skipped checks only is no green: no-checks with
 # A conflicting pull request starts no workflow run: an external check that passed is no green.
 check "a conflicting pull request over a passing external check is no green: no-checks conflicting, exit 2" "ci-watch: no-checks 7 $HA conflicting|2" \
   "$(CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA conflicting" "1" 0 "" 7 --interval 1)"
+# A head whose only check is a third-party one (a secret scanner) is no green while the gate still
+# counts a required check as running: the repository's own run has not registered, so after the
+# bound the line is no-checks, not green; with nothing awaited it is green, and a failed gate read is unread.
+check "a head with a third-party check alone, the gate awaiting the required one: no-checks, exit 2" "ci-watch: no-checks 7 $HA|2" \
+  "$(CW_GATE="PENDING:1" CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA" "1" 0 "" 7 --interval 1)"
+check "the gate awaiting nothing, though PENDING: green" "ci-watch: green 7 $HA $CWGATE|0" \
+  "$(CW_GATE="PENDING:0" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+check "a gate read that fails is unread, exit 5" "ci-watch: unread 7 pr-gate failed: error: no GitHub token|5" \
+  "$(CW_GATE="fail" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A slower workflow's checks are not registered yet when a faster one's are done: the watch
 # exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
 # a run still going is watched to its end, then the checks are watched again.

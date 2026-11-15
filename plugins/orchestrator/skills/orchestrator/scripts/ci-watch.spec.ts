@@ -34,13 +34,16 @@ interface Script {
   guardFails?: string
   repoView?: string
   repoViewFails?: string
+  /** What the gate answers per read, `<RESULT>:<running>` (an answer for no read: SUCCESS:0), or `fail`, or `bad`. */
+  gate?: string[]
 }
 
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
 const failed = (stderr: string): Ran => ({ status: 1, stdout: '', stderr })
 
-function fake(script: Script): Deps & { readonly calls: string[]; readonly out: string[]; readonly logs: Map<string, RunOptions['log']> } {
+function fake(script: Script): Deps & { readonly calls: string[]; readonly gates: string[]; readonly out: string[]; readonly logs: Map<string, RunOptions['log']> } {
   const calls: string[] = []
+  const gates: string[] = []
   const out: string[] = []
   const logs = new Map<string, RunOptions['log']>()
   const counters = new Map<string, number>()
@@ -52,11 +55,19 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly out: 
   }
   let clock = 0
   return {
-    calls, out, logs,
+    calls, gates, out, logs,
     io: { out: text => out.push(text), err: () => {} },
     now: () => clock,
     sleep: async seconds => { clock += seconds * 1000 },
     draftGuard: '/plugin/draft_guard.py',
+    gate: async (repo, pr) => {
+      gates.push(`${repo}#${pr}`)
+      const answer = nth('gate', script.gate) ?? 'SUCCESS:0'
+      if (answer === 'fail') return failed('error: no GitHub token; run /github:install\nmore\n')
+      if (answer === 'bad') return ok('not json\n')
+      const [result = '', running = '0'] = answer.split(':')
+      return ok(JSON.stringify({ repo, pr: Number(pr), ci: { result, running: Number(running), failed: [], skipped: [], total: 1, unverified: [] } }))
+    },
     run: async (argv, options = {}) => {
       const line = argv.join(' ')
       calls.push(line)
@@ -295,6 +306,34 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
   assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved 7 ${HA} ${HB}|3`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread 7 workflow runs of the head still unfinished: 201|5')
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+})
+
+test('a head with a third-party check alone is no green: it waits for the repository\'s own run, within the bound', async () => {
+  // Only a secret scanner has registered and passed: the gate still counts the required `ci` as running.
+  const alone = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:1'] }
+  assert.equal(await said(alone), `no-checks 7 ${HA}|2`)
+  // The run registers late: it is watched to its end, the checks read again, and only then is it green.
+  const late = fake({ ...alone, headRuns: ['-', '-', '201:in_progress', '201:completed'], gate: ['PENDING:1', 'PENDING:1', 'SUCCESS:0'], buckets: 'scanner:pass\nci:pass' })
+  assert.equal((await watch(options(), late)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(late.calls.filter(call => call.startsWith('gh run watch 201')).length, 1)
+  assert.equal(late.calls.filter(call => call.includes('--watch')).length, 2)
+  // The gate is read on the repository the watch names.
+  const named = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
+  await watch(options(['7', '--repo', 'o/r', '--interval', '1']), named)
+  assert.deepEqual(named.gates, ['o/r#7'])
+  // A head that moves while the run is awaited is said at once.
+  assert.equal(await said({ ...alone, view: [`OPEN ${HA}`, `OPEN ${HB}`] }), `moved 7 ${HA} ${HB}|3`)
+})
+
+test('the gate: nothing to await, or a read that failed', async () => {
+  // PENDING over something that proved nothing (a skipped check) awaits no run: the line is the bucket read's.
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }), 'unread 7 pr-gate failed: error: no GitHub token; run /github:install|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['bad'] }), 'unread 7 pr-gate failed: an answer with no ci result|5')
+  // A head whose watch is not green never reads the gate.
+  const red = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'e2e' })
+  await watch(options(), red)
+  assert.deepEqual(red.gates, [])
 })
 
 test('a draft: a red of guards alone settles, and its green needs a check behind a guard', async () => {
