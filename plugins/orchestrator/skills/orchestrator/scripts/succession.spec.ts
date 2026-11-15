@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -63,7 +63,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   ])))
   for (const entry of over.round ?? [
     { id: 'q-2', session: SESSION, from: NAME, kind: 'operator', status: 'open', question: '**Question 1 of 1**\nWhich schema?' },
-    { id: 'q-1', session: SESSION, from: NAME, kind: 'operator', status: 'answered', question: 'Done?' },
+    { id: 'q-1', session: SESSION, from: NAME, kind: 'operator', status: 'answered', question: 'Done?', answer: { text: 'yes', by: 'tab' } },
     { id: 'q-3', session: 'other', from: 'Orch: other', kind: 'operator', status: 'open', question: 'Not ours' },
   ]) writeFileSync(join(state, 'round', `${(entry as { id: string }).id}.json`), JSON.stringify(entry))
   writeFileSync(join(state, 'todo', `${NAME}.jsonl`), over.todo ?? [todo(1, [2, 4]), todo(2, [1]), todo(3, [9]), todo(4, [1], 'closed'), todo(5, undefined)].join('\n') + '\n')
@@ -507,13 +507,14 @@ test('the relay\'s entries follow the same rule: answered or closed is applied, 
 
 test('the takeover prints the answers to apply and the withdrawn questions to ask again, and none once an open entry holds the key', () => {
   const asked = (id: string, status: 'open' | 'answered' | 'withdrawn', over: Record<string, unknown> = {}) => storedAsk(id, status, over)
-  const w = world({ round: [asked('q-a', 'answered'), asked('q-w', 'withdrawn', { ask: 'Which later?' }), asked('q-o', 'open', { ask: 'Which third?' }), asked('q-v', 'withdrawn', { ask: 'Which third?' })] })
+  const pending = { answer: { text: 'B', by: 'coordinator', at: '2026-11-15T09:00:00.000Z', settler: 'Coord: general' } }
+  const w = world({ round: [asked('q-a', 'answered', pending), asked('q-w', 'withdrawn', { ask: 'Which later?' }), asked('q-o', 'open', { ask: 'Which third?' }), asked('q-v', 'withdrawn', { ask: 'Which third?' })] })
   assert.equal(w.run(), 0)
   const text = w.text()
-  assert.ok(text.includes('merge order: B\n'))
+  assert.ok(text.includes('[q-a] merge order: B\n'))
   assert.ok(text.includes('[q-w] the sender\'s session ended\n_Subject_ : merge order\n_Context_ : Two pull requests touch one file.\n_Question_ : Which later?'))
   assert.ok(text.includes('[q-o] _Subject_ : merge order'))
-  assert.ok(!text.includes('[q-v]') && !text.includes('[q-a]'))
+  assert.ok(!text.includes('[q-v]') && !text.includes('[q-a] _Subject_'))
 })
 
 test('the archive is read for the keys: a question answered a day ago, or withdrawn since, still holds its key', () => {
@@ -539,10 +540,10 @@ test('an entry is its orchestration\'s by the name alone or by the session alone
   assert.deepEqual(roundSettled(texts(relayed('r-4', '2026-11-15T08:00:00Z', { from: 'Orch: other', session: 'x' })), [], NAME, SESSION).reask, [])
 })
 
-test('with nothing settled in the round, the takeover says none of both', () => {
+test('with nothing to apply in the round, the takeover prints no answered section and says none of the withdrawn', () => {
   const empty = world({ round: [] })
   assert.equal(empty.run(), 0)
-  assert.match(empty.text(), /^- Questions the operator answered[^\n]*: none$/m)
+  assert.ok(!empty.text().includes('Questions the operator answered'))
   assert.match(empty.text(), /^- Questions withdrawn[^\n]*: none$/m)
 })
 
@@ -742,4 +743,86 @@ test('an owner file that names none says on stderr that the session\'s own name 
   const f = flowWorld()
   f.takeover()
   assert.ok(f.w.err.some(line => line.includes('names no orchestration, using this session\'s: Orch: flow')))
+})
+
+// The takeover carries the meaning of what he said, never his words: they stay in the round and the to-do list, named by id.
+
+test('an answer its asker already received is not printed; one still to apply is one line under its round id, its letter or first sentence', () => {
+  const answer = (text: string, by: string, over: Record<string, unknown> = {}) => ({ answer: { text, by, at: '2026-11-15T09:00:00.000Z', settler: 'Coord: general' }, ...over })
+  const asked = (id: string, subject: string, over: Record<string, unknown>) => storedAsk(id, 'answered', { subject, ...over })
+  const w = world({ round: [
+    asked('q-tab', 'typed in the tab', answer('A', 'tab')),
+    asked('q-sent', 'delivered answer', answer('B', 'coordinator', { delivery: { state: 'delivered', at: '2026-11-15T09:01:00.000Z', attempts: 1 } })),
+    asked('q-late', 'pending answer', answer('C — his words: « a very long justification of the choice, given at length »', 'coordinator', { delivery: { state: 'pending', at: '2026-11-15T09:01:00.000Z', attempts: 1 } })),
+    asked('q-said', 'free answer', answer('Yes, apply it everywhere. Then drop the old guard and tell me when it is done.', 'coordinator')),
+  ] })
+  assert.equal(w.run(), 0)
+  const text = w.text()
+  assert.ok(text.includes('[q-late] pending answer: C\n'))
+  assert.ok(text.includes('[q-said] free answer: Yes, apply it everywhere.\n'))
+  assert.ok(!text.includes('q-tab') && !text.includes('q-sent') && !text.includes('very long justification') && !text.includes('drop the old guard'))
+  const entries = [...texts(asked('q-1', 'x', answer('A', 'tab')), asked('q-2', 'y', answer('B', 'coordinator'))), 'not json']
+  assert.deepEqual(toApply(roundSettled(entries, [], NAME, SESSION).answered, entries).map(q => q.id), ['q-2'])
+})
+
+test('an answer is its letter when it opens on one, else its first sentence cut short, without a quotation of his', () => {
+  assert.equal(answerMeaning('B'), 'B')
+  assert.equal(answerMeaning('B — his words: « Non, à tout de suite »'), 'B')
+  assert.equal(answerMeaning('Accorder (A)'), 'Accorder (A)')
+  assert.equal(answerMeaning('Oui, j\'accorde 1.0 ce soir. Le reste attend.'), 'Oui, j\'accorde 1.0 ce soir.')
+  assert.equal(answerMeaning('Ordre : lighten d\'abord — decided by the orchestrator'), 'Ordre : lighten d\'abord')
+  assert.ok(answerMeaning('x'.repeat(400)).length <= 120)
+})
+
+test('a row\'s ruling and note are one line, his quotation replaced by the id of the round entry or to-do item that holds it', () => {
+  const holders = [{ id: 'q-9', text: 'Q5 à Q8 reprises quand la télémétrie atteint 14 jours' }, { id: 'to-do 15', text: 'the context at a session\'s birth becomes a drift signal' }]
+  assert.equal(oneLine('ruled « Q5 à Q8,  reprises quand la télémétrie » (estimated 11-28)', holders), 'ruled « … » (estimated 11-28)')
+  assert.equal(oneLine('ruled « Q5 à Q8 reprises quand la télémétrie »\nthen wait', holders), 'ruled [words: q-9] then wait')
+  assert.equal(oneLine('see « the Context at a session\'s birth » now', holders), 'see [words: to-do 15] now')
+  assert.equal(oneLine('see « … » and « ok »', holders), 'see « … » and « … »')
+  assert.equal(oneLine('plain note', holders), 'plain note')
+  assert.ok(oneLine('word '.repeat(100), holders).length <= 200)
+  const rows = openRows([{ id: 7, label: 'X: y', state: 'open', deferred: 'ruling « Q5 à Q8 reprises quand la télémétrie »', note: 'Dispatched: Agent: api « Q5 à Q8 reprises quand la télémétrie »' }], holders)
+  assert.match(rows[0]?.line ?? '', /^deferred=7 label=X: y ruling=ruling \[words: q-9\] note=Dispatched: Agent: api \[words: q-9\]$/)
+  // What owners are read from stays whole: the printed line is the only one shortened.
+  assert.equal(rows[0]?.note, 'Dispatched: Agent: api « Q5 à Q8 reprises quand la télémétrie »')
+  assert.equal(rows[0]?.ruling, 'ruling « Q5 à Q8 reprises quand la télémétrie »')
+})
+
+test('in the takeover a row\'s quotation of his words names the round entry that holds them', () => {
+  const said = 'Je veux le brief de reprise léger, pas de garde sur sa taille'
+  const w = world({
+    rows: [JSON.stringify({ id: 1, label: 'LIGHT: brief', state: 'open', blocker: 'none', note: `his C: « ${said} »` })].join('\n') + '\n',
+    round: [storedAsk('q-held', 'answered', { answer: { text: said, by: 'tab', at: '2026-11-15T09:00:00.000Z', settler: NAME } })],
+  })
+  assert.equal(w.run(), 0)
+  assert.ok(w.text().includes('note=his C: [words: q-held]'))
+  assert.ok(!w.text().includes('pas de garde'))
+})
+
+test('a note several rows share is printed once, naming the rows; a note one row holds stays on its row', () => {
+  const row = (id: number, note: string) => ({ id, label: `R${id}: x`, state: 'open', note })
+  const lines = rowLines(openRows([row(1, 'after the report (row 9)'), row(2, 'own note'), row(3, 'after the report (row 9)'), row(4, 'after the  report (row 9)')]))
+  assert.deepEqual(lines, ['open=1 label=R1: x', 'open=2 label=R2: x note=own note', 'open=3 label=R3: x', 'open=4 label=R4: x', 'note of rows 1, 3, 4: after the report (row 9)'])
+  const w = world({ rows: [row(1, 'shared-ruling-text'), row(2, 'shared-ruling-text'), row(3, 'other')].map(r => JSON.stringify(r)).join('\n') + '\n' })
+  assert.equal(w.run(), 0)
+  assert.equal(w.text().split('shared-ruling-text').length - 1, 1)
+  assert.ok(w.text().includes('note of rows 1, 2: shared-ruling-text'))
+  assert.deepEqual(ownersOf({ rows: openRows([row(1, 'Agent: api'), row(2, 'Agent: api')]), prs: [], agents: ['Agent: api'], questions: [] }), ['1 api', '2 api'])
+})
+
+test('the project line prints the objective\'s first sentence and the goals count, without the history behind it', () => {
+  assert.equal(objectiveOf('claude-plugins 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z). An early reading leaves time to act. The drift goals G1-G5 are archived.'), 'claude-plugins 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z)')
+  assert.equal(objectiveOf('a belt that holds.'), 'a belt that holds')
+  assert.equal(objectiveOf(''), '')
+  const w = world({ goals: '# Goals\nspec: /s.md\naim: ship the belt. It was first planned in March. G1-G5 are in the archive.\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | open | b | p2 | |\n' })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Project: objective ship the belt; spec \/s\.md; goals met=1\/2 open=G2 \(plan: p2\)\n/)
+})
+
+test('fill leaves a line out whose optional placeholder is empty, and keeps it filled otherwise', () => {
+  assert.equal(fill('a\n- list: {{X?}}\nb\n', { X: '' }), 'a\nb\n')
+  assert.equal(fill('a\n- list: {{X?}}\nb\n', {}), 'a\nb\n')
+  assert.equal(fill('a\n- list: {{X?}}\nb\n', { X: 'x' }), 'a\n- list: x\nb\n')
+  assert.equal(fill('a {{Y}}', { Y: '' }), 'a ')
 })
