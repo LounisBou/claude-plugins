@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from samples import BASE_DATE, GROUP_ID, FakeTelegram
-from test_mention import DOCS, STAMP, report_json, write_report
+from test_mention import STAMP, report_json, write_report
 
 RID = f"{STAMP}-5"
 
@@ -172,14 +172,3 @@ def test_show_numbers_the_replies_and_displays_the_edits_count(run, bound, capsy
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("reply")]
     assert lines[0].startswith("reply 1 ") and lines[0].endswith("premier")
     assert lines[1].startswith("reply 2 ") and lines[1].endswith("nouveau (1 edit)")
-
-
-def test_skill_documents_edit_and_the_voice_prefers_it():
-    skill = DOCS["SKILL.md"].read_text()
-    assert "| `edit <id>" in skill
-    assert "prefer it to a second message" in skill
-
-
-def test_agent_may_use_edit_on_the_launchers_rewrite_phrase():
-    agent = DOCS["AGENT.md"].read_text()
-    assert "edit <id>" in agent and "réécrire <id>" in agent

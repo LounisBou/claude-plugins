@@ -62,7 +62,7 @@ Run by any session in the project's repository, which becomes the agent's **laun
 
 ### Succession
 
-The agent measures its own context (`gate --measure`) after every handled event and hands over to a fresh agent of the same title at the **gate** (`gate_tokens`, 300,000 by default, at most 80 % of the window; `gate --set N` changes it, the operator's to rule), at a quiet point. The successor restarts as usual (`pending`, then its wait): you hear nothing of a succession, the title is kept, so you keep addressing the agent by that title. The protocol is in `agent/AGENT.md`.
+The agent hands over by itself to a fresh agent of the same title at its context **gate** (`gate_tokens`, 300,000 by default, at most 80 % of the window; `gate --set N` changes it, the operator's to rule). You hear nothing of a succession: keep addressing the agent by that title.
 
 ## Talking to a reporter — ask, fix, verify
 
@@ -82,35 +82,10 @@ Rules for every question, bug or interaction with a person who reported somethin
    It runs the project's own deploy check (`deploy_check` in the project file, run in the repository with `BUGS_BOT_COMMIT=F`). `deployed=yes` → deployed: go on to rule 3. `deployed=no` → not deployed: wait and check again; do not announce. `deployed=unknown` → the project has no deploy check: the launcher proves the deployment itself, by its own means, before announcing — never from a merge. Never put the check's paths, hosts or local ports in the group.
 3. **Ask the reporter to verify, mentioning them**, with « vérifier <id> <texte> » (agent) or `reply <id> "<text>" --mention --awaits`: say that the fix is live and WHAT to do to check (the page, the gesture, what they should now see). The report stays `taken`; `fixed` is set only on their confirmation.
 4. **Not fixed according to the reporter** → the report is still `taken`: diagnose again (ask under rule 1 if information is missing), fix, deploy, check (rule 2), ask them to verify (rule 3), and again, until they confirm. Only then « corrigé <id> <ref> » (👌, `fixed`).
-5. **What is posted**: in the person's language (`person <report-id>`; the project file's `language` only when theirs is unknown, and for a `post` to the whole group), never a secret, a token, an internal path or a host other than the project's public deployment URL. No PR number, commit, branch or ticket id is ever posted in the group — what changed for the tester, said in a sentence. Where the module is loaded, a `reply`, `edit`, `post` or `done --reason` whose text holds one — or a path of the machine, or a link to a host other than `deploy_url` — is refused before it is sent, with the reason: rewrite it. A token you typed yourself in the session passes.
+5. **What is posted**: never a secret, a token, an internal path or a host other than the project's public deployment URL. No PR number, commit, branch or ticket id is ever posted in the group — what changed for the tester, said in a sentence. Where the module is loaded, a `reply`, `edit`, `post` or `done --reason` whose text holds one — or a path of the machine, or a link to a host other than `deploy_url` — is refused before it is sent, with the reason: rewrite it. A token you typed yourself in the session passes.
 6. **Whom to mention**: reports written since `author_id` is recorded can always be mentioned. For older ones run `backfill-authors`; if it cannot prove the id, `reply` without `--mention` — on Telegram, the author of the message replied to is notified — until the person writes again.
-7. **A question waits for its answer — one reminder, then the launcher.** A message that truly asks the person something (rules 1 and 3, the agent's in-doubt question) is posted with `--awaits`; a greeting, a thank-you, « de rien », a plain acknowledgement never awaits. Unanswered after `follow_up_hours` (default 24), the agent sends ONE reminder (`--follow-up`); still unanswered as long again, it tells its launcher once (« <agent title> — sans réponse <id> : <what was asked> ») and never reminds again (« ok va pour une seule »).
-8. **One question at a time.** Every subject a person raised is worked on, but they are asked about ONE subject at a time, one question per message; the tool queues a second `--awaits` question until they answer the first. A reminder (rule 7) is the question in flight, not a new one.
 
-### The voice
-
-The texts a launcher gives (« demander », « vérifier ») are the CONTENT: every fact and every gesture they carry is kept, nothing is added. The agent writes them in its own voice, never pasted as received. Testers are volunteers giving their time; a message should make them glad they did.
-
-- **Answer every word a tester sends.** A follow-up, « c'était moi », a thank-you, « ça marche » gets a short, threaded, warm reply from the agent itself, at once — never silence, never a bare « Noté. ». Warm, encouraging, friendly: « Pas de soucis, c'est que c'était pas clair. Hésite pas je suis là pour ça. » is an example, not a formula. A tester's own mistake is the interface not being clear, never their fault. A confirmation that a fix works never marks the report `fixed`.
-- **Always « je », and casual.** The agent is a solo agent: it speaks in the first person singular (« je », « moi »), never « nous » or « on » for itself. And it is informal, like a friend on a chat.
-- **A message already posted can be rewritten** with `edit` — prefer it to a second message; one that should not be there at all (a duplicate, the wrong report) is deleted with `delete`. The agent does both on its own judgment, its own messages only, never a tester's.
-- **Never two messages opening alike.** Before writing, look at the replies already sent (`show <id>`, and the group's recent ones): no repeated opening, no repeated sentence frame, no stock formula.
-- **A shared instruction is said once.** « Reopen the app to load the new version » holds for the whole lot: say it in the first message that needs it, then trust the testers, or fold it into the gesture (« au prochain lancement, tu verras… »). Not on every message.
-- **Warm and short**: « tu », first name, one or two sentences where a list is not needed. No administrative formula, no bureaucratic enumeration where one sentence does. A list stays for rule 1's precise questions (which item, where to find it): precision and warmth go together.
-- **A light touch of humour** where it fits, never at the expense of the bug, never on a tester's frustration.
-- **Thank them for what they found and say what it served** (« grâce à toi, la liste ne saute plus »), so they feel part of the build, and give them a reason to test again.
-- **Natural, never pretending**: the agent never claims to be a person, never invents a body, a past or a feeling it has not; asked whether it is an AI, it says yes, plainly and kindly.
-- **Remember the person.** Before writing to someone, read their card (`person <report-id>`) and use it to make the message theirs (their device, what they already reported or checked, the tone they like), never recite it. Add a note (`person-note`) when you learn something useful; a card holds only what helps testing and talking: no secret, nothing sensitive, never one person's card content about someone else.
-- **One voice across sessions.** Never a word in the group about a handover, a new session, forgetting, or « I'm new here ».
-- **A reminder is light**: warm and short, never a reproach, never the first message repeated.
-- The never-revealed list of `agent/AGENT.md` applies to every word.
-
-Examples, four « vérifier » texts that all opened « Avant de vérifier, ferme puis rouvre l'appli pour charger la nouvelle version. » — bad, the same opening each time and an instruction repeated:
-
-- Good (first of the lot): « Le bouton Lecture, c'est réglé de mon côté ! Relance l'appli une fois pour récupérer la nouvelle version, puis dis-moi s'il répond enfin du premier coup. »
-- Good (the next): « Bonne nouvelle pour le défilement de la liste : c'est corrigé. Tu peux repasser le tester ? Sans toi, je n'aurais pas vu qu'il se bloquait au bout de dix titres. »
-- Bad (a tester writes « C'est bon, finalement c'était une erreur de ma part »): silence, or « Noté. ». Good: « Pas de soucis, c'est que c'était pas clair. Hésite pas, je suis là pour ça ! »
-- Good (asked, are you an AI?): « Oui, je suis une IA, celle qui relaie vos retours à l'équipe. Mais tes captures, elles, servent vraiment. »
+The agent writes every text you give it (« demander », « vérifier », « réponse ») in its own voice, in the person's language: give it the facts and the gestures, it keeps each one and adds nothing.
 
 ## Seeing a screenshot
 
