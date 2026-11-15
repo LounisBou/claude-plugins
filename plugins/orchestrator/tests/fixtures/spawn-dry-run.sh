@@ -27,7 +27,10 @@ export CLAUDE_CONFIG_DIR="$WORK/config"
 export CLAUDE_CODE_SESSION_ID=s-dry
 # Outside tmux, whatever shell runs this: the owner is the caller's app session id.
 unset TMUX TMUX_PANE
-mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure"
+mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure" "$CLAUDE_CONFIG_DIR/plugins"
+# The host's install record: the plugins a role turns off are found under their keys there.
+printf '{"plugins":{"pr-review@m":[],"pr-review-toolkit@o":[],"superpowers@o":[],"norms@m":[],"method@m":[]}}\n' \
+  > "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json"
 printf '{"model":"a-model"}\n' > "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure/s-dry.json"
 # The caller's live pair, on its transcript: a succession runs on it, and no measure file is read.
 export ORCHESTRATOR_PROJECTS_DIR="$WORK/projects"

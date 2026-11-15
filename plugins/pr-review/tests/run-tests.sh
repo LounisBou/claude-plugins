@@ -371,8 +371,16 @@ check "no relative skill paths" "" "$stale"
 
 echo "== extracted skills =="
 
+# A skill is its SKILL.md and the references it reads at a given moment: the
+# document checks below read them as one text, SKILL.md first.
+mkdir -p "$WORK/skilltext"
 for skill in start-review auto-fix-loop process-comments; do
-  doc="$ROOT/skills/$skill/SKILL.md"
+  cat "$ROOT/skills/$skill/SKILL.md" $(ls "$ROOT/skills/$skill/references/"*.md 2>/dev/null) \
+    > "$WORK/skilltext/$skill.md"
+done
+
+for skill in start-review auto-fix-loop process-comments; do
+  doc="$WORK/skilltext/$skill.md"
 
   check "$skill frontmatter names itself" "$skill" \
     "$(awk '/^name:/ {print $2; exit}' "$doc" 2>/dev/null)"
@@ -520,7 +528,7 @@ check "triage's Bash route checks both node id sets" "2" \
 
 echo "== process-comments: review body resolution =="
 
-PC_DOC="$ROOT/skills/process-comments/SKILL.md"
+PC_DOC="$WORK/skilltext/process-comments.md"
 
 # The two paragraphs asserting a review body cannot be resolved via the API
 # are gone. A pull request review implements the same Minimizable interface
@@ -612,7 +620,7 @@ if [ ! -f "$GHDIR/gh.py" ]; then
   printf '       fix: /plugin install github@lounisbou, or set CLAUDE_GITHUB_ROOT\n'
   fail=$((fail + 1))
 else
-  phantom=$(python3 - "$GHDIR" "$ROOT" <<'PYREV'
+  phantom=$(python3 - "$GHDIR" "$ROOT" "$WORK/skilltext" <<'PYREV'
 import os, re, sys
 sys.path.insert(0, sys.argv[1])
 import gh
@@ -621,7 +629,7 @@ subs = set([a for a in gh.build_parser()._actions if a.dest == "command"][0].cho
 fmts = set(fmt._FORMATTERS)
 bad = []
 for name in ("start-review", "process-comments", "auto-fix-loop"):
-    path = os.path.join(sys.argv[2], "skills", name, "SKILL.md")
+    path = os.path.join(sys.argv[3], name + ".md")
     for i, line in enumerate(open(path, encoding="utf-8"), 1):
         # All four spellings of the same call. The quoted form was the only
         # one matched, so `python3 $GH pr-frobnicate` slipped past the one
@@ -643,7 +651,7 @@ PYREV
   # parsed by the real parser, placeholders filled with a value of their type.
   # An unknown command, an argument the subcommand does not take, a missing
   # positional or a formatter that does not exist all land here.
-  requests=$(python3 - "$GHDIR" "$ROOT" <<'PYREQ'
+  requests=$(python3 - "$GHDIR" "$ROOT" "$WORK/skilltext" <<'PYREQ'
 import json, os, re, sys, tempfile
 sys.path.insert(0, sys.argv[1])
 import gh
@@ -659,7 +667,7 @@ def fill(key, value):
     return value
 bad, seen = [], 0
 for name in ("start-review", "process-comments", "auto-fix-loop"):
-    path = os.path.join(sys.argv[2], "skills", name, "SKILL.md")
+    path = os.path.join(sys.argv[3], name + ".md")
     fence = None
     for i, line in enumerate(open(path, encoding="utf-8"), 1):
         stripped = line.strip()
@@ -697,7 +705,7 @@ fi
 
 echo "== start-review pending review =="
 
-START_DOC="$ROOT/skills/start-review/SKILL.md"
+START_DOC="$WORK/skilltext/start-review.md"
 
 # The pending review is the default destination of a kept comment; the immediate
 # path stays for an explicit request. So review-submit lives in exactly one fence,
