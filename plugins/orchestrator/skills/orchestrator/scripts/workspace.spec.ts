@@ -812,6 +812,23 @@ test('list <repo>: only that repository\'s checkouts, named by its directory or 
   assert.deepEqual(await ws(w, 'list', 'a', 'b'), { code: 1, out: '', err: 'workspace: list: usage: list [<repo>]\n' })
 })
 
+test('list reads a checkout without running the fsmonitor or the hooks its own settings name', async () => {
+  const src = pushed('proj')
+  const w = world()
+  const c = await clone(w, src, 'agent', 'work')
+  const marker = join(dir, 'ran')
+  const script = join(dir, 'fsmonitor.sh')
+  writeFileSync(script, `#!/bin/sh\necho ran >> '${marker}'\n`)
+  chmodSync(script, 0o755)
+  mkdirSync(join(dir, 'hooks'))
+  g(c, 'config', 'core.fsmonitor', script)
+  g(c, 'config', 'core.hooksPath', join(dir, 'hooks'))
+  assert.match((await ws(w, 'list')).out, /agent \| work \| \S+ \| clean \| pushed\n$/)
+  assert.equal(existsSync(marker), false, 'the checkout\'s fsmonitor ran')
+  g(c, 'status', '--porcelain')
+  assert.equal(existsSync(marker), true, 'a plain git status runs it: the test reads what it claims')
+})
+
 test('list: one line per checkout under the root, the trash and loose files left out', async () => {
   const src = pushed('proj')
   const w = world()
