@@ -2,6 +2,7 @@
 // order, the orchestrator's launcher from the host's record, and the markdown as
 // the fallback whenever a step before the spawn cannot be read.
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import { mount, ROOT_LISTING, type Reply } from './fakes.ts'
 
 const ORCH = '/home/op/.claude/plugins/cache/lounisbou/orchestrator/0.49.1-2afa38391c2b'
@@ -22,8 +23,9 @@ const ok = (stdout = ''): Reply => ({ exitCode: 0, stdout, stderr: '' })
 function machine(overrides: Record<string, Reply> = {}, list = ['w1/t1 | /dev/ttys001 | orch | Orch: demo | self', 'w1/t2 | /dev/ttys009 | Bugs : demo | Bugs : demo']) {
   let lists = 0
   return (argv: string[]): Reply => {
-    const verb = argv[0] === SCRIPT ? argv[1] : argv[2]
-    if (verb in overrides) return overrides[verb]
+    const verb = String(argv[0] === SCRIPT ? argv[1] : argv[2])
+    const override = overrides[verb]
+    if (override !== undefined) return override
     if (verb === 'plugin-path') return ok(`${ORCH}\n`)
     if (verb === 'agent-prompt') return ok('/home/op/.bugs-bot/demo/agent/startup-prompt.txt\n')
     if (verb === 'spawn') return ok('spawned\n/dev/ttys009\n')
@@ -36,7 +38,7 @@ function machine(overrides: Record<string, Reply> = {}, list = ['w1/t1 | /dev/tt
 
 const verbs = (runs: { argv: string[] }[]) => runs.map(r => (r.argv[0] === SCRIPT ? r.argv[1] : r.argv[2]))
 
-async function begin($: any) {
+async function begin($: Engine) {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/repo' })
 }
 
@@ -45,10 +47,10 @@ test('it runs the seven steps and spawns the resident agent right of the launche
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
   expect(verbs(runs)).toEqual(['plugin-path', 'agent-prompt', 'spawn', 'list', 'verify'])
-  expect(runs[1].argv.slice(2)).toEqual(['agent-prompt', '--launcher', 'Orch: demo [a1b2c3]'])
-  expect(runs[2].argv).toEqual([SCRIPT, 'spawn', '--dir', '/repo', '--title', 'Bugs : demo', '--prompt-file',
+  expect(runs[1]?.argv.slice(2)).toEqual(['agent-prompt', '--launcher', 'Orch: demo [a1b2c3]'])
+  expect(runs[2]?.argv).toEqual([SCRIPT, 'spawn', '--dir', '/repo', '--title', 'Bugs : demo', '--prompt-file',
     '/home/op/.bugs-bot/demo/agent/startup-prompt.txt', '--right-of', 'self', '--resident'])
-  expect(runs[2].timeoutMs).toBeGreaterThanOrEqual(60_000)
+  expect(runs[2]?.timeoutMs).toBeGreaterThanOrEqual(60_000)
   expect(out.text).toContain('Spawned « Bugs : demo » on /dev/ttys009, launched by Orch: demo [a1b2c3].')
   expect(out.text).toContain('It sits right of this session.')
   expect(out.text).toContain('Verified')
@@ -58,9 +60,9 @@ test('the CLI that runs is this plugin\'s own, through the chosen interpreter', 
   const { runs } = mount(on, { files: files(), run: machine(), env: { BUGS_BOT_PYTHON: '/opt/py311/bin/python3' } })
   await begin($)
   await $.command.run({ command: 'bugs-bot:start', args: '' })
-  expect(runs[0].argv[0]).toBe('/opt/py311/bin/python3')
-  expect(runs[0].argv[1].endsWith('/bin/bugs-bot')).toBe(true)
-  expect(runs[0].argv.slice(2)).toEqual(['plugin-path', 'orchestrator'])
+  expect(runs[0]?.argv[0]).toBe('/opt/py311/bin/python3')
+  expect(runs[0]?.argv[1]?.endsWith('/bin/bugs-bot')).toBe(true)
+  expect(runs[0]?.argv.slice(2)).toEqual(['plugin-path', 'orchestrator'])
 })
 
 test('without BUGS_BOT_PYTHON, the interpreter bin/setup remembered in the bugs home runs the CLI', async ($, on) => {
@@ -68,7 +70,7 @@ test('without BUGS_BOT_PYTHON, the interpreter bin/setup remembered in the bugs 
   const { runs } = mount(on, { files: { ...files(), '/srv/bugs/python': `${remembered}\n` }, run: machine(), env: { BUGS_BOT_HOME: '/srv/bugs' } })
   await begin($)
   await $.command.run({ command: 'bugs-bot:start', args: '' })
-  expect(runs[0].argv[0]).toBe(remembered)
+  expect(runs[0]?.argv[0]).toBe(remembered)
 })
 
 test('a tab spawned elsewhere is moved right of the launcher, and listed again', async ($, on) => {
@@ -79,7 +81,7 @@ test('a tab spawned elsewhere is moved right of the launcher, and listed again',
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
   expect(verbs(runs)).toEqual(['plugin-path', 'agent-prompt', 'spawn', 'list', 'move', 'list', 'verify'])
-  expect(runs[4].argv).toEqual([SCRIPT, 'move', '--tty', '/dev/ttys009', '--right-of', 'self'])
+  expect(runs[4]?.argv).toEqual([SCRIPT, 'move', '--tty', '/dev/ttys009', '--right-of', 'self'])
   expect(out.text).toContain('Moved right of this session.')
 })
 
@@ -95,7 +97,7 @@ test('the project file of a parent directory is found, as the CLI finds it', asy
   const { runs } = mount(on, { cwd: '/repo/src/deep', files: files(), run: machine() })
   await begin($)
   await $.command.run({ command: 'bugs-bot:start', args: '' })
-  expect(runs[2].argv.slice(2, 4)).toEqual(['--dir', '/repo'])
+  expect(runs[2]?.argv.slice(2, 4)).toEqual(['--dir', '/repo'])
 })
 
 test('no orchestrator installed: it says so and spawns nothing', async ($, on) => {

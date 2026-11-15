@@ -1,6 +1,16 @@
-// The cloudflare mod: a thin facade over the engine. The $, e and next
-// arguments are typed loosely here; Claude Code writes the exact API types
-// to .claude-plugin/types/ the first time the mod loads (gitignored).
+// The cloudflare mod: a thin facade over the engine.
+import { fieldsOf, reasonOf, type Bytes, type Events, type Host, type On } from '../core/host.ts'
+
+// What the module reads of the host.
+type CfHost = Host<'plugin' | 'process' | 'session' | 'tool' | 'ui'> & Bytes
+
+// A call of the tool, as far as the module reads it: its command, its arguments and the account named.
+type CfCall = { readonly command: string; readonly args: Readonly<Record<string, unknown>>; readonly account: string | undefined }
+
+function callOf(e: Events['tool.call']): CfCall {
+  const account = e['account']
+  return { command: String(e['command'] ?? ''), args: fieldsOf(e['args']) ?? {}, account: typeof account === 'string' ? account : undefined }
+}
 
 // The engine's commands, for the tool's command enum. The engine itself maps
 // the arguments (--stdin-json); tests/run-tests.sh fails when this list and
@@ -50,7 +60,7 @@ export function entryFor(command: string): string {
 // The request travels as JSON on stdin: the engine maps it onto its own
 // parser and refuses what that parser does not declare. No argv is built
 // from the input, and the token never leaves the engine.
-async function runCf($: any, command: string, args: Record<string, unknown> = {}, account?: string): Promise<string> {
+async function runCf($: CfHost, command: string, args: Record<string, unknown> = {}, account?: string): Promise<string> {
   const entry = entryFor(command)
   const r = await $.process.run(
     ['python3', $.plugin.root + '/engine/' + entry, '--stdin-json'],
@@ -68,8 +78,7 @@ async function runCf($: any, command: string, args: Record<string, unknown> = {}
  * and puts a write to the person. An ask from an explicit rule always asks.
  * Where nobody can answer (a -p run) the ask rejects and the call is refused.
  */
-async function permit($: any, e: any): Promise<string | undefined> {
-  const input = { command: e.command, args: e.args, account: e.account }
+async function permit($: CfHost, e: CfCall, input: Readonly<Record<string, unknown>>): Promise<string | undefined> {
   const verdict = await $.tool.check({ tool: TOOL, input })
   if (verdict.decision === 'deny') return verdict.reason || 'refused by a permission rule'
   if (verdict.decision === 'allow') return undefined
@@ -97,7 +106,7 @@ async function permit($: any, e: any): Promise<string | undefined> {
   return 'the user refused cf ' + e.command
 }
 
-async function ask($: any, question: string, options: string[], command: string): Promise<string | undefined> {
+async function ask($: CfHost, question: string, options: string[], command: string): Promise<string | undefined> {
   try {
     if ((await $.ui.ask(question, options)) === options[0]) return undefined
   } catch {
@@ -114,7 +123,7 @@ function isCaddy(command: string): boolean {
 // The writes that change a zone and the local Caddy in one command.
 const SPANNING = new Set(['publish', 'unpublish'])
 
-function where(e: any): string {
+function where(e: CfCall): string {
   if (isCaddy(e.command)) return 'the local Caddy'
   const account = e.account ? 'account ' + String(e.account).toLowerCase() : 'the default account'
   return SPANNING.has(e.command) ? account + ' and the local Caddy' : account
@@ -124,12 +133,12 @@ function cut(text: string): string {
   return text.length > 200 ? text.slice(0, 199) + '…' : text
 }
 
-function zoneOf(e: any): string {
-  const zone = e.args?.zone
+function zoneOf(e: CfCall): string {
+  const zone = e.args['zone']
   return zone === undefined || zone === null ? '' : String(zone).toLowerCase()
 }
 
-function inZone(e: any): string {
+function inZone(e: CfCall): string {
   return zoneOf(e) ? ' in zone ' + zoneOf(e) : ''
 }
 
@@ -138,9 +147,9 @@ function inZone(e: any): string {
 const NAMED = ['zone', 'record', 'name', 'path']
 
 // The command and its target come first, whole: only the remaining arguments are cut.
-async function describe($: any, e: any): Promise<string> {
-  const args = e.args ?? {}
-  const host = (isCaddy(e.command) || SPANNING.has(e.command)) && typeof args.host === 'string' ? args.host : undefined
+async function describe($: CfHost, e: CfCall): Promise<string> {
+  const args = e.args
+  const host = (isCaddy(e.command) || SPANNING.has(e.command)) && typeof args['host'] === 'string' ? args['host'] : undefined
   const named = NAMED.filter((k) => args[k] !== undefined && args[k] !== null)
     .map((k) => k + ' ' + (typeof args[k] === 'string' ? args[k] : JSON.stringify(args[k])))
   const head = 'Run cf ' + e.command + ' on ' + where(e) + (host ? ' for ' + host : '')
@@ -156,7 +165,7 @@ async function describe($: any, e: any): Promise<string> {
 // What a publish does, in the order a person reads it: the target, the
 // address, the proxy, what it may overwrite, then the extra file by its size
 // and digest, never its text; the other arguments last, cut.
-async function publishing($: any, args: Record<string, unknown>, host: string | undefined): Promise<string> {
+async function publishing($: CfHost, args: Record<string, unknown>, host: string | undefined): Promise<string> {
   const known = ['host', 'to', 'ip', 'no-proxy', 'extra-file']
   const parts = [
     '--to ' + cut(String(args['to'])),
@@ -172,7 +181,7 @@ async function publishing($: any, args: Record<string, unknown>, host: string | 
   return Object.keys(rest).length ? text + ' Other arguments: ' + cut(JSON.stringify(rest)) : text
 }
 
-async function fingerprint($: any, path: string): Promise<string> {
+async function fingerprint($: CfHost, path: string): Promise<string> {
   try {
     const read = await $.fs.read(path, { as: 'bytes' })
     const bytes = Uint8Array.from(atob(read.base64), (c) => c.charCodeAt(0))
@@ -186,7 +195,7 @@ async function fingerprint($: any, path: string): Promise<string> {
 
 // A grant is the session's, the command's, the account's (named or the
 // default one) and the zone's; for a Caddy command, the local Caddy's.
-async function grantKey($: any, e: any): Promise<string | undefined> {
+async function grantKey($: CfHost, e: CfCall): Promise<string | undefined> {
   try {
     const session = await $.session.id()
     return session + '\n' + e.command + '\n' + where(e) + '\n' + zoneOf(e)
@@ -212,16 +221,16 @@ export const DIAGNOSTIC: Record<number, string> = {
 
 // install.sh run in the session's directory, its output verbatim and its exit
 // code named. Both commands only check; install also says how to set up.
-export async function diagnose($: any, check = false): Promise<string> {
+export async function diagnose($: CfHost, check = false): Promise<string> {
   const argv = ['bash', $.plugin.root + '/install.sh', ...(check ? ['--check'] : [])]
   const r = await $.process.run(argv, { timeoutMs: 120_000 })
-  const out = [r.stdout, r.stderr].map((t: string) => (t ?? '').trimEnd()).filter(Boolean).join('\n')
+  const out = [r.stdout, r.stderr].map((t) => (t ?? '').trimEnd()).filter(Boolean).join('\n')
   const meaning = DIAGNOSTIC[r.exitCode] ?? 'an unexpected failure'
   return out + '\n\nExit code ' + r.exitCode + ': ' + meaning + '.'
 }
 
-export function register(on: any): void {
-  on('session.start', async ($: any, e: any, next: any) => {
+export function register(on: On<CfHost>): void {
+  on('session.start', async ($, e, next) => {
     const root = $.plugin.root
     await $.tool.register({
       name: 'cf',
@@ -253,22 +262,23 @@ export function register(on: any): void {
       },
     })
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: TOOL }, async ($: any, e: any) => {
-    const refused = await permit($, e)
+  on('tool.call', { tool: TOOL }, async ($, e) => {
+    const call = callOf(e)
+    const refused = await permit($, call, { command: e['command'], args: e['args'], account: e['account'] })
     if (refused) return { deny: refused }
     try {
-      return { result: await runCf($, e.command, e.args ?? {}, e.account) || '(no output)' }
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+      return { result: await runCf($, call.command, call.args, call.account) || '(no output)' }
+    } catch (err) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'cloudflare mod error: the hook itself failed' }))
 
   // The markdown commands answered here without a model turn. A failure falls
   // back to the markdown, which runs the same script through the model.
-  on('command.run', { command: 'cloudflare:install' }, async ($: any) => ({ text: await diagnose($) }))
-    .catch(async (_$: any, e: any, next: any) => next(e))
-  on('command.run', { command: 'cloudflare:doctor' }, async ($: any) => ({ text: await diagnose($, true) }))
-    .catch(async (_$: any, e: any, next: any) => next(e))
+  on('command.run', { command: 'cloudflare:install' }, async ($) => ({ text: await diagnose($) }))
+    .catch(async (_$, e, next) => next(e))
+  on('command.run', { command: 'cloudflare:doctor' }, async ($) => ({ text: await diagnose($, true) }))
+    .catch(async (_$, e, next) => next(e))
 }

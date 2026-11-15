@@ -2,13 +2,14 @@
 // operator's grant of the shell form honoured; `gate --measure` measured from the
 // session's own figures, the measure file left as the fallback.
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import { mount } from './fakes.ts'
 import { READS, TOOL, TOOL_COMMANDS } from '../core.ts'
 
 const ALLOW = { decision: 'allow' }
 const shellGrant = { [TOOL]: { decision: 'ask' }, Bash: ALLOW }
 
-async function begin($: any) {
+async function begin($: Engine) {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/repo' })
 }
 
@@ -16,8 +17,8 @@ test('session.start registers the tool, schema listed from the start, wait not a
   const { registered } = mount(on)
   await begin($)
   const spec = registered.find(r => r.name === 'bugs')
-  expect(spec.isDeferred).toBe(false)
-  expect(spec.inputSchema.properties.command.enum).toEqual(TOOL_COMMANDS)
+  expect(spec?.isDeferred).toBe(false)
+  expect(spec?.inputSchema).toMatchObject({ properties: { command: { enum: TOOL_COMMANDS } } })
   expect(TOOL_COMMANDS).not.toContain('wait')
   expect(TOOL_COMMANDS).not.toContain('pull')
 })
@@ -30,9 +31,9 @@ test('a text with quotes and apostrophes reaches the CLI as one argument, intact
   expect(out.isError).toBe(false)
   expect(out.result).toBe('replied 1')
   expect(runs.length).toBe(1)
-  expect(runs[0].argv[0]).toBe('python3')
-  expect(runs[0].argv[1].endsWith('/bin/bugs-bot')).toBe(true)
-  expect(runs[0].argv.slice(2)).toEqual(['reply', '20261002-101112-45', text, '--mention', '--awaits'])
+  expect(runs[0]?.argv[0]).toBe('python3')
+  expect(runs[0]?.argv[1]?.endsWith('/bin/bugs-bot')).toBe(true)
+  expect(runs[0]?.argv.slice(2)).toEqual(['reply', '20261002-101112-45', text, '--mention', '--awaits'])
 })
 
 test('the interpreter bin/setup remembered runs the CLI', async ($, on) => {
@@ -40,14 +41,14 @@ test('the interpreter bin/setup remembered runs the CLI', async ($, on) => {
   const { runs } = mount(on, { verdicts: shellGrant, files: { '/home/op/.bugs-bot/python': `${remembered}\n` } })
   await begin($)
   await $.tool.call({ tool: TOOL, command: 'list', args: [] })
-  expect(runs[0].argv[0]).toBe(remembered)
+  expect(runs[0]?.argv[0]).toBe(remembered)
 })
 
 test('BUGS_BOT_PYTHON wins over the remembered interpreter', async ($, on) => {
   const { runs } = mount(on, { verdicts: shellGrant, env: { BUGS_BOT_PYTHON: '/opt/py311/bin/python3' }, files: { '/home/op/.bugs-bot/python': '/elsewhere/python3\n' } })
   await begin($)
   await $.tool.call({ tool: TOOL, command: 'list', args: [] })
-  expect(runs[0].argv[0]).toBe('/opt/py311/bin/python3')
+  expect(runs[0]?.argv[0]).toBe('/opt/py311/bin/python3')
 })
 
 test('an exit other than 0 is said with its code, the CLI\'s line kept', async ($, on) => {
@@ -99,21 +100,21 @@ test('gate --measure takes the session\'s own figures, never the measure file', 
   const { runs } = mount(on, { verdicts: shellGrant, usage: { tokens: 312_000, window: 1_000_000 } })
   await begin($)
   await $.tool.call({ tool: TOOL, command: 'gate', args: ['--measure'] })
-  expect(runs[0].argv.slice(2)).toEqual(['gate', '--tokens', '312000', '--window', '1000000'])
+  expect(runs[0]?.argv.slice(2)).toEqual(['gate', '--tokens', '312000', '--window', '1000000'])
 })
 
 test('gate --measure before any answer keeps --measure: the CLI reads the measure file', async ($, on) => {
   const { runs } = mount(on, { verdicts: shellGrant, usage: { window: 1_000_000 } })
   await begin($)
   await $.tool.call({ tool: TOOL, command: 'gate', args: ['--measure'] })
-  expect(runs[0].argv.slice(2)).toEqual(['gate', '--measure'])
+  expect(runs[0]?.argv.slice(2)).toEqual(['gate', '--measure'])
 })
 
 test('gate --measure with no usage at all keeps --measure', async ($, on) => {
   const { runs } = mount(on, { verdicts: shellGrant, usage: null })
   await begin($)
   await $.tool.call({ tool: TOOL, command: 'gate', args: ['--measure'] })
-  expect(runs[0].argv.slice(2)).toEqual(['gate', '--measure'])
+  expect(runs[0]?.argv.slice(2)).toEqual(['gate', '--measure'])
 })
 
 test('a child that cannot run is an error result, not a skipped hook', async ($, on) => {

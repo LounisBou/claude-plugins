@@ -8,7 +8,8 @@
 // own comparator. Both specs are generated in the run directory, never in the target repository.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { locatePlaywright, NotInstalled, type Playwright } from '../../../../core/index.ts'
+import { NotInstalled } from '../../../../core/locate.ts'
+import { locatePlaywright, type Playwright } from '../../../../core/playwright.ts'
 import { DriftError } from './compare.ts'
 import { parseShots, parseShotsArgs, type ShotsConfig } from './config.ts'
 import { comparePair, diffOf, sizeOfPng, type Box, type Compared, type Sizes } from './png.ts'

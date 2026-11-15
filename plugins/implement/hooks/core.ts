@@ -166,6 +166,20 @@ export function shellActions(command: string, depth = 0): Action[] {
 export type Guard = { outer: 'feature' | 'prepare' | 'phase' | 'close' | null; checking: boolean; typed: string }
 export const IDLE: Guard = { outer: null, checking: false, typed: '' }
 
+const OUTERS: ReadonlyArray<Guard['outer']> = ['feature', 'prepare', 'phase', 'close', null]
+
+// The guard as the host kept it: each field it holds in its shape, the idle value in place of any other.
+export function guardOf(value: unknown): Guard {
+  if (typeof value !== 'object' || value === null) return IDLE
+  const kept: Partial<Record<keyof Guard, unknown>> = value
+  const outer = OUTERS.find(o => o === kept.outer)
+  return {
+    outer: outer === undefined ? IDLE.outer : outer,
+    checking: typeof kept.checking === 'boolean' ? kept.checking : IDLE.checking,
+    typed: typeof kept.typed === 'string' ? kept.typed : IDLE.typed,
+  }
+}
+
 // The user's last prompt is kept across the start: a prompt that asks for a
 // subagent and names the skill in one breath arms the skill after it was read,
 // and the subagent guard still finds the request.
@@ -278,6 +292,17 @@ export function silencesAttribution(g: Guard): boolean {
 // ── The band ─────────────────────────────────────────────────────────────────
 
 export type Band = { codename: string; phase: string; of: number; status: string; title: string; milestone: string; head: string }
+
+// The band as the host kept it, or null for anything that is not one.
+export function keptBand(value: unknown): Band | null {
+  if (typeof value !== 'object' || value === null) return null
+  const kept: Partial<Record<keyof Band, unknown>> = value
+  const { codename, phase, of, status, title, milestone, head } = kept
+  return typeof codename === 'string' && typeof phase === 'string' && typeof of === 'number' && typeof status === 'string'
+    && typeof title === 'string' && typeof milestone === 'string' && typeof head === 'string'
+    ? { codename, phase, of, status, title, milestone, head }
+    : null
+}
 
 export function bandOf(s: Snapshot): Band | null {
   if (!s.state || s.state.rows.length === 0) return null

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parsePlan, planExcuses, planInput, planPath, planText } from './check-plan.ts'
 
-const plan = (e2e: string, norms: string, review?: string) => {
+const plan = (e2e: string | undefined, norms: string | undefined, review?: string) => {
   const checks = planInput({ e2e, norms, review })
   if (typeof checks === 'string') throw new Error(checks)
   return { v: 1, repo: 'acme/thing', pr: 12, ...checks, at: '2026-11-14T09:00:00Z' }
@@ -42,7 +42,7 @@ test('the plan file sits under the data directory by repository and number, and 
 })
 
 test('only an explicit required requires: a check left out of a plan is not required, norms or E2E', () => {
-  const omitted = plan(undefined as any, undefined as any)
+  const omitted = plan(undefined, undefined)
   expect(omitted.e2e.need).toBe('none')
   expect(omitted.norms.need).toBe('none')
   expect(planExcuses(omitted).required).toEqual([])
