@@ -65,6 +65,33 @@ test('an orchestrator\'s acceptance is written through github\'s record tool, ea
   expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128` })
 })
 
+// github's line repeats the detail the orchestrator just wrote: the tool's answer names it instead
+// of carrying it back (measured: a quarter of the tool's output), the record's path line kept whole.
+test('the detail github echoes back is named, never carried back', async () => {
+  const detail = 'set aside: a.ts:3 — naming only; b.ts — out of the phase\'s scope'
+  const echoed = `/cfg/records/x/review.json\ngithub: acme/thing#128 Ready at 0123456: review accepted by the orchestrator (${detail}), passed E2E and green CI hold at its head.`
+  const fx = fake('Orch: belt [a1b2c3]', { result: echoed })
+  const out = await handler()(fx.dollar, ACCEPTED)
+  expect(out.result.split('\n').slice(0, 2)).toEqual([
+    '/cfg/records/x/review.json',
+    'github: acme/thing#128 Ready at 0123456: review accepted by the orchestrator (the detail sent), passed E2E and green CI hold at its head.',
+  ])
+  const failed = fake('Orch: belt', { result: 'github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, two to fix' })
+  const said = await handler()(failed.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' })
+  expect(said.result.split('\n')[0]).toBe('github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, the detail sent')
+})
+
+test('only the echo is named: a detail found elsewhere, absent, or never sent leaves the answer, and a refusal, whole', async () => {
+  const line = '/cfg/records/x/Ready.json\ngithub: acme/thing#128 Ready at 0123456: a clean review, passed E2E and green CI hold at its head.'
+  const short = fake('Orch: belt', { result: line })
+  expect((await handler()(short.dollar, { pr: 128, verdict: 'pass', detail: 'Ready' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
+  const bare = fake('Orch: belt', { result: line })
+  expect((await handler()(bare.dollar, { pr: 128, verdict: 'pass' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
+  const refused = fake('Orch: belt', { deny: 'github: refused, two to fix by orchestrator, two to fix' })
+  expect(await handler()(refused.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' }))
+    .toEqual({ result: 'github: refused, two to fix by orchestrator, two to fix', isError: true })
+})
+
 for (const verdict of ['pass', 'fail']) {
   test(`an orchestrator's ${verdict} is written as a review record with its line`, async () => {
     const fx = fake('Orch: belt')

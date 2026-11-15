@@ -37,6 +37,13 @@ test('the messages: a header, the reply address, then the text cut past the cap'
   expect(relayText(AGENT, { kind: 'blocked', blocks: 'no fixture', question: '' }, 'T')).toBe(`[module] ${AGENT} is blocked — no fixture\n${REPLY}`)
   expect(relayText(AGENT, { kind: 'delivered', blocks: 'PR #12', question: 'head abc' }, 'T', '120,000 (12%)'))
     .toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${REPLY}\n\nhead abc`)
+  // A wait on background work carries its status line alone: the text above it is the agent's
+  // acknowledgment, which the orchestrator acts on nowhere (measured: half the relayed text).
+  expect(relayText(AGENT, { kind: 'waiting', blocks: '3 review lenses', question: 'Lenses running, I touch nothing.' }, 'T'))
+    .toBe(`[module] ${AGENT} waits on its background work — 3 review lenses\n${REPLY}`)
+  // A bare `status: waiting` names nothing: its text is the only word of what it watches.
+  expect(relayText(AGENT, { kind: 'waiting', blocks: '', question: 'CI of #12 running.' }, 'T'))
+    .toBe(`[module] ${AGENT} waits on its background work\n${REPLY}\n\nCI of #12 running.`)
   const long = relayText(AGENT, { kind: 'question', blocks: '', question: 'x'.repeat(RELAY_CAP + 5) }, 'T')
   expect(long).toContain(`[cut at ${RELAY_CAP} of ${RELAY_CAP + 5} characters]`)
   expect(gateText(AGENT, 312000, 31)).toBe(`[module] ${AGENT} context 312,000 (31%) — at the gate`)
@@ -606,7 +613,7 @@ test('a waiting status is reported once, however many turns repeat it, and again
   const fx = fake()
   const waiting = (what: string, text = 'Lenses running.') => `${text}\nstatus: waiting — ${what}`
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('3 review lenses'), 'turn-1'))
-  expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} waits on its background work — 3 review lenses\n${REPLY}\n\nLenses running.` }])
+  expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} waits on its background work — 3 review lenses\n${REPLY}` }])
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('3 review lenses', 'Still running.'), 'turn-2'))
   expect(fx.sent.length).toBe(1)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('the suite'), 'turn-3'))
