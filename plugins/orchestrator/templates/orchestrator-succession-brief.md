@@ -30,7 +30,7 @@ Measure, wait and close: `references/succession-successor.md`, « Succession —
 1. Read the rulings that bind now, `grep -v '\[for: ' {{RULINGS_FILE}}`, the rulebook and THIS text, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it.
 2. The Analysis above; then the Project line's goals, nothing more unless it lists open or deferred goals: then, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1: its state, blocker, owner, note and verdict line.
 3. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, asking nothing back (its state is below, its fill on `/orchestrator-status`), and subscribe to its idle notice (`notify_when_idle: true`). Then `workspace.sh list {{PROJECT}}`: delete no checkout before you know its phase.
-4. His standing order: you ALWAYS close your predecessor, one the launcher did not open included, and ask him nothing. Then message the predecessor "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over » (five minutes without it, read its screen with `screen --tty`; close on a prompt with nothing in flight). Then CLOSE ITS TAB, the first line on tabs, the second in a home session (never `close` there), and prove its end on its tty:
+4. His standing order: you ALWAYS close your predecessor, one the launcher did not open included, and ask him nothing. Then message the predecessor "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over » (five minutes without it, read its screen with `screen --tty`; close on a prompt with nothing in flight). Then CLOSE ITS TAB, the first line on tabs, the second in a home session (never `close` there), its success line the proof:
    ```
    {{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    {{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
@@ -59,4 +59,4 @@ Printed by `succession.sh takeover` from the dispatch record, the to-do list, th
 
 # Expected result
 
-« takeover confirmed » sent; the predecessor closed, proved on its tty; the announcement; the turn ended.
+« takeover confirmed » sent; the predecessor closed; the announcement; the turn ended.

@@ -307,7 +307,6 @@ evals/stops-when-no-tab-can-be-made/graders/no-other-terminal.md
 evals/stops-when-no-tab-can-be-made/graders/says-why-and-stops.md
 evals/commits-or-drops-before-closing/prompt.md
 evals/commits-or-drops-before-closing/graders/close-by-tty-and-title.md
-evals/commits-or-drops-before-closing/graders/close-proved-by-ps.md
 evals/commits-or-drops-before-closing/graders/commit-or-drop-before-close.md
 evals/rotates-only-after-the-stand-down/prompt.md
 evals/rotates-only-after-the-stand-down/graders/no-title-on-rotate.md
