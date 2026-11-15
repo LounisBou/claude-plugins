@@ -1,5 +1,5 @@
-// short-commands — writes the plugin's short names as user commands: `/orchestrator-agents`,
-// `/orchestrator-status` and the rest, one file per row of short-names.tsv in the host's user
+// short-commands — writes the plugin's short names as user commands: `/orchestrator-audit`,
+// `/orchestrator-sleeping` and the rest, one file per row of short-names.tsv in the host's user
 // commands directory.
 //
 //   short-commands.sh install   [--dry-run] [--dir <path>]   write the absent, rewrite its own

@@ -21,7 +21,7 @@ the machine: the operator's machine-wide decide, with or without a coordinator.
 
    Load `orchestrator:coordination` for what a round presents, in both cases.
 
-The round's shape is `/orchestrator-decide`'s, read from `commands/decide.md` and followed as
+The round's shape is `/orchestrator:decide`'s, read from `commands/decide.md` and followed as
 written, the question's shape and what it blocks being `method:lifecycle`, « Questions to the
 operator »; a question left open in the round, never repeated; his words standing and a reading questioned. The coordination
 skill's rules for relayed questions hold too: the question and every field of its block are

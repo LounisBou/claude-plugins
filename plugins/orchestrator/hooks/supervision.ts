@@ -1827,7 +1827,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (role !== 'coordinator' && role !== 'orchestrator') {
-      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator-status lists the sessions here.' }
+      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
     // the pane holds no focus), beside the pane's own ✕.
