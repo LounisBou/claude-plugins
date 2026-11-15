@@ -7,6 +7,8 @@
 //                                                         the export a session's end starts: at most once a day,
 //                                                         detached unless --foreground
 //   telemetry.ts backfill --config <dir> <transcript>...  one session_summary per past transcript
+//   telemetry.ts report   --config <dir> [--week <first day>] [--tool <owner/name>]...
+//                                                         the week's cost, delay, questions, refusals and figures
 //
 // <dir> is the host's configuration directory; the store is <dir>/telemetry. The operator's
 // ~/.env (TELEMETRY_ENV_FILE in tests) is read for its secrets, which never leave this process.
@@ -15,14 +17,15 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { makeEvent, type Event } from '../../../hooks/collect.ts'
+import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { runAuto } from './lib/auto.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
+import { parseOptions, report, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
 import { summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
@@ -40,6 +43,10 @@ export interface Deps {
   /** Starts `export --auto --foreground` for `config` as a detached process. */
   readonly detach: (config: string) => void
   readonly exportWaitMs: number
+  /** The report's reads of GitHub and of a directory's remote, and the directory it runs in. */
+  readonly gh: Gh
+  readonly repositoryAt: (dir: string) => string | undefined
+  readonly cwd: string
 }
 
 /**
@@ -95,6 +102,16 @@ export function run(args: readonly string[], deps: Deps): number {
   }
   const operands = rest.filter((_, i) => i !== at && i !== at + 1)
   const stateDir = join(config, 'telemetry')
+  if (sub === 'report') {
+    // Read-only and secret-free: an unreadable env file does not stop it.
+    const options = parseOptions(operands)
+    if (typeof options === 'string') {
+      deps.err(`report: ${options}`)
+      return 2
+    }
+    for (const line of report({ config, env: deps.env, now: deps.now(), ...options, cwd: deps.cwd, gh: deps.gh, repositoryAt: deps.repositoryAt })) deps.out(line)
+    return 0
+  }
   const read = readSecrets(deps.env)
   if ('error' in read) {
     deps.err(`telemetry: ${sub} refused, nothing written or pushed: ${read.error}`)
@@ -166,6 +183,18 @@ export const realGit: Git = (args, cwd) => {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
 }
 
+/** gh under a deadline, never prompting. */
+export const realGh: Gh = args => {
+  const result = spawnSync('gh', [...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, env: { ...process.env, GH_PROMPT_DISABLED: '1' } })
+  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? (result.error?.message ?? '') }
+}
+
+/** The `owner/name` the git remotes of a directory name, if it is a clone of one. */
+export const realRepositoryAt = (dir: string): string | undefined => {
+  const result = realGit(remoteUrlsArgv(dir).slice(1), dir)
+  return result.status === 0 ? firstRepository(result.stdout) : undefined
+}
+
 /** The automatic export as a process of its own, which outlives the session that started it. */
 export const realDetach = (config: string): void => {
   const argv = ['--experimental-strip-types', '--no-warnings', fileURLToPath(import.meta.url), 'export', '--auto', '--foreground', '--config', config]
@@ -184,5 +213,8 @@ if (entry !== undefined && realpathSync(entry) === realpathSync(fileURLToPath(im
     now: Date.now,
     detach: realDetach,
     exportWaitMs: EXPORT_WAIT_MS,
+    gh: realGh,
+    repositoryAt: realRepositoryAt,
+    cwd: process.cwd(),
   })
 }

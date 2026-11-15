@@ -1815,14 +1815,6 @@ test('a remote withdrawal writes no consent record, whatever words it quotes', a
 
 // --- a closing proposal settled by the coordinator ------------------------------------------
 
-// An open entry as the coordinator's settle leaves it: closed with the coordinator's answer,
-// its delivery pending for the module, stamped as the answer.
-function closedByCoordinator(asked: RoundEntry, text = 'A, ship it'): RoundEntry {
-  const at = new Date().toISOString()
-  const delivery = asked.origin ? { state: 'pending', at, attempts: 0 } : { state: 'pending', at, attempts: 0, answerAt: at }
-  return { ...asked, status: 'closed', answer: { text, by: 'coordinator', at }, delivery } as RoundEntry
-}
-
 // The sends of a coordinator's module, delivered or refused with `refuse`.
 function sends(fx: Fx, refuse?: string) {
   const sent: { to: unknown; text: string }[] = []

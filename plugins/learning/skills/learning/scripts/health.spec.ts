@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { auditEvent, eventId, journalDir, type LearningEvent } from '../../../core/learning.ts'
+import { auditEvent, eventId, foldedText, journalDir, JOURNAL_FOLD_FILE, type LearningEvent } from '../../../core/learning.ts'
 import { HEALTH_USAGE, readJournals, readRemovals, render, repoRootOf, run, summarize, undelivered, type Removal } from './health.ts'
 
 const NOW = Date.parse('2026-11-14T10:00:00Z')
@@ -50,6 +50,29 @@ test('readJournals reads each plugin\'s own journal and counts what is not an ev
     const journals = readJournals(config)
     assert.deepEqual(journals.map(j => [j.plugin, j.events.length, j.unreadable]), [['github', 1, 0], ['norms', 1, 2], ['pr-review', 0, 0]])
   })
+})
+
+test('readJournals recognises the fold file by its name: its counts are the folded events, it is never an unreadable file', () => {
+  scratch(config => {
+    write(config, 'github', event('github', 1))
+    const fold = join(journalDir(config, 'github'), JOURNAL_FOLD_FILE)
+    writeFileSync(fold, foldedText([
+      { signature: 'refusal:github.a.b', week: '2026-11-02', count: 4 },
+      { signature: 'refusal:github.a.b', week: '2026-11-09', count: 3 },
+    ]))
+    const [journal] = readJournals(config)
+    assert.deepEqual([journal?.events.length, journal?.folded, journal?.unreadable], [1, 7, 0])
+    const s = summarize(readJournals(config), NOW)
+    assert.deepEqual([s.folded, s.unreadable], [7, 0])
+    assert.match(render(s), /7 older events folded into weekly counts/)
+    writeFileSync(fold, 'garbled')
+    const [broken] = readJournals(config)
+    assert.deepEqual([broken?.folded, broken?.unreadable], [0, 1])
+  })
+})
+
+test('render says nothing of a fold when there is none', () => {
+  assert.doesNotMatch(render(summarize([{ plugin: 'github', unreadable: 0, events: [event('github', 1)] }], NOW)), /folded/)
 })
 
 test('readJournals reads a configuration directory with no journal, or none at all', () => {

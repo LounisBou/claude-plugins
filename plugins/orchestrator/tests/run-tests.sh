@@ -621,6 +621,10 @@ check "the phase brief template reads « under load » as emulated throttling" "
 # The orchestrator writes no guard, not even over its own directives (the freeze of 2026-11-14).
 check "the directives rule lives in the briefs reference, and the orchestrator writes no guard" "yes|no" \
   "$(spells "$ORCH_REFS/directives.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/directives.md" 'the one instrument you may write yourself')"
+# The review verdict counts its round on the row whose label names the pull request: the open line
+# of a pair asks for the reference, and `round` is for a manual round only.
+check "the record's open line asks for the pull request in the label, and round is manual only" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" '--explore] --label "<what> <repo>#<n>"')|$(spells "$ROOT/skills/model-routing/SKILL.md" '# manual only')|$(spells "$ORCH_REFS/review-verdict.md" '`round`: manual only;')"
 check "the rounds rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review-thresholds.md" '**The check plan'"'"'s `review` max sets the rounds (github `check-plan.ts`), each a review round then a correction round, and you close it.**')|$(spells "$ORCH_REFS/review-thresholds.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review-comments.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
@@ -1216,7 +1220,8 @@ check "and prints no review refusal and no label command" "0|0" \
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms]|join("|")' "$G")"
-check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
+# The review verdict tool is the one writer of `rounds`: a review records the head and raises none.
+check "a review raises no round: the verdict tool counts it" "0" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
 check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 
 # The head moves on every corrective round and on a rebase: the head a review read is the github
@@ -1226,7 +1231,7 @@ check "and names no head a review read" "0" \
   "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
-check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
+check "the row keeps the LAST review, and raises no round" "bbb2222|none|0" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check "a review adds no row" "1" "$(wc -l < "$G" | tr -d ' ')"
 check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
@@ -1262,10 +1267,10 @@ check "the correction round is recorded anyway" "ddd4444|1" \
 # A proper review round replaces the whole `.review` object — the out-of-order fix it
 # carried does not survive it, which is the point: a review is the row's fresh read.
 bash "$REC" review "$G" "$g3" --head ccc3333 --norms tool >/dev/null
-check "the review starts the row fresh" "ccc3333|tool||2" \
+check "the review starts the row fresh" "ccc3333|tool||1" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.norms,(.review.fixed.head // ""),.rounds]|join("|")' "$G")"
 bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
-check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
+check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|2" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
 check "and says the surface it read, not a reading of the heads" "1|0" \
@@ -1278,7 +1283,7 @@ check "and names no head" "0" \
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
-check "the second fix overwrites the first" "eee5555|4" \
+check "the second fix overwrites the first" "eee5555|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "fixed without --head is an error" 1 bash "$REC" fixed "$G" "$g2"
 check "and says the head is required" "1" "$(bash "$REC" fixed "$G" "$g2" 2>&1 | grep -c 'fixed: --head is required')"
@@ -1288,7 +1293,7 @@ check_status "fixed on an unknown option is an error" 1 bash "$REC" fixed "$G" "
 # `none` is a fact about the PROJECT, not a verdict a round may reach for: any third value
 # is refused rather than recorded, because an unreadable record gates nothing.
 check_status "a norms value that is neither tool nor none is refused" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms manual
-check "a refused review leaves the row as it was" "bbb2222|none|2" \
+check "a refused review leaves the row as it was" "bbb2222|none|0" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
@@ -1369,7 +1374,7 @@ check "and names the subcommand that records it" "1" \
 srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
 check "audit records the head, the images and no defect" "aaa1111|1|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
-check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
+check "an audit is not a round" "0" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
 check_status "ready refuses an audit that covered fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111
 check "and names both counts" "1" \
   "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#14 carries 2: audit every image')"
@@ -9993,7 +9998,7 @@ check "an uninstall that could not unwire keeps the tap's copy, removes the rest
 # What the old pipeline left behind: the tap's ctx/ directory, its copy and saved object,
 # the shell gates' logs and heads, and measure files from sessions long ended. A session
 # writes its measure file only when a turn ends, so age alone proves nothing: an idle one
-# waits for days. A file is pruned only past a week AND when no live session owns it —
+# waits for days. A file is pruned only past 90 days AND when no live session owns it —
 # the host's registry names each session's pid; a dead or absent pid frees the file.
 H5="$WORK/home5"; mkdir -p "$H5/.claude"; stub_venv "$H5"
 S5="$H5/.claude/claude-orchestrator"
@@ -10003,7 +10008,7 @@ for f in statusline-tap.sh context-gate.log stop-gate.log stop-gate/s-a.heads st
   printf 'old\n' > "$S5/$f"
 done
 printf '{"type":"command","command":"/x/bar.sh"}\n' > "$S5/statusline.previous.json"
-for sid in s-gone s-dead s-live s-idle s-kept; do
+for sid in s-gone s-dead s-live s-idle s-kept s-month s-quarter; do
   printf '{"context_tokens":1,"context_window":200000,"context_percent":0,"model":"a-model","updated_at":"2026-10-10T00:00:00Z"}\n' \
     > "$S5/measure/$sid.json"
 done
@@ -10012,13 +10017,19 @@ printf '{"pid":%s,"sessionId":"s-live"}\n' "$$" > "$H5/.claude/sessions/$$.json"
 printf '{"pid":%s,"sessionId":"s-dead"}\n' "$deadpid" > "$H5/.claude/sessions/$deadpid.json"
 touch -t 202001010000 "$S5/measure/s-gone.json" "$S5/measure/s-dead.json" "$S5/measure/s-live.json"
 touch -t "$(date -v-3d +%Y%m%d%H%M 2>/dev/null || date -d '3 days ago' +%Y%m%d%H%M)" "$S5/measure/s-idle.json"
+touch -t "$(date -v-30d +%Y%m%d%H%M 2>/dev/null || date -d '30 days ago' +%Y%m%d%H%M)" "$S5/measure/s-month.json"
+touch -t "$(date -v-91d +%Y%m%d%H%M 2>/dev/null || date -d '91 days ago' +%Y%m%d%H%M)" "$S5/measure/s-quarter.json"
 inst "$H5" >/dev/null 2>&1
 check "the tap's ctx/ is purged" "gone" \
   "$([ -d "$S5/ctx" ] && echo kept || echo gone)"
 present() { [ -e "$1" ] && echo present || echo absent; }
-check "a measure file is pruned only past a week with no live session: gone, dead pid, live pid, idle, fresh" \
+check "a measure file is pruned only past 90 days with no live session: gone, dead pid, live pid, idle, fresh" \
   "absent|absent|present|present|present" \
   "$(present "$S5/measure/s-gone.json")|$(present "$S5/measure/s-dead.json")|$(present "$S5/measure/s-live.json")|$(present "$S5/measure/s-idle.json")|$(present "$S5/measure/s-kept.json")"
+# The series of closed sessions is what shows whether a change of method helped: a closed session's
+# file (no live session owns it) is kept for 90 days, a month old included, and pruned past them.
+check "a closed session's measure file is kept 90 days: a month old stays, 91 days old goes" "present|absent" \
+  "$(present "$S5/measure/s-month.json")|$(present "$S5/measure/s-quarter.json")"
 check "with no tap wired, the old pipeline's files are removed and the module's heads kept" \
   "absent|absent|absent|absent|absent|present" \
   "$(present "$S5/statusline-tap.sh")|$(present "$S5/statusline.previous.json")|$(present "$S5/context-gate.log")|$(present "$S5/stop-gate.log")|$(present "$S5/stop-gate/s-a.heads")|$(present "$S5/stop-gate/s-a.mheads")"
@@ -12891,6 +12902,12 @@ check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ens
 
 
 fi
+
+# The implementer reviews its own change before its pull request (the method's « Self-review »):
+# the phase brief orders it and allows its readers, the standing rules except them, the review brief
+# and the review round read its section first and size the round by risk.
+check "the self-review is ordered, its readers allowed, its section read first, the round sized by risk" "yes|yes|yes|yes|yes|yes|yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" "- Self-review (\`method:lifecycle\`): each finding fixed")|$(spells "$ROOT/templates/agent-phase-brief.md" "and the self-review's \`orchestrator:lens\` readers only")|$(spells "$ROOT/templates/agent-phase-brief.md" "The « Self-review » section (§4) goes in too.")|$(spells "$ORCH_REFS/standing-rules.md" "the \`orchestrator:lens\` readers of its own self-review (\`method:lifecycle\`)")|$(spells "$ORCH_REFS/brief.md" "then the self-review (\`method:lifecycle\`).")|$(spells "$ROOT/templates/agent-review-brief.md" "(its « Self-review » section first)")|$(spells "$ORCH_REFS/review-round.md" "reads the pull request's « Self-review » section first, and you size its readers by risk — full for security, guards and data, one pass for docs and small fixes.")"
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
