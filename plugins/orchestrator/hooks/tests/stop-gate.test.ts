@@ -2193,11 +2193,13 @@ test('a declared operator wait releases the stop whatever the last line says', a
 
 test('a declared done is held to the open rows, and passes once none is', async () => {
   const wait = waitMounted()
+  // The declaration itself refuses a done while a row is open (wait.ts holdsRecord): the row here opens after it.
+  const none = fakeDollar({})
+  expect((await declare(wait, none.dollar, { kind: 'done' })).isError).toBeUndefined()
   const open = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
-  await declare(wait, open.dollar, { kind: 'done' })
+  expect(String((await declare(waitMounted(), open.dollar, { kind: 'done' })).result)).toContain('row r-12 (the report row) is open')
   const held = await chainedStop(wait, open.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
   expect(String(held.observed)).toContain('row r-12 (the report row) is open')
-  const none = fakeDollar({})
   const passed = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
   expect(passed.observed).toBeUndefined()
@@ -2205,11 +2207,13 @@ test('a declared done is held to the open rows, and passes once none is', async 
 
 test('a declared deferred wait is refused when nothing is deferred, and passes on the right count', async () => {
   const wait = waitMounted()
+  // The declaration itself refuses a deferred wait when nothing is deferred (wait.ts holdsRecord): the ruling here goes after it.
   const none = fakeDollar({})
-  await declare(wait, none.dollar, { kind: 'deferred', blocks: '1 items' })
+  expect(String((await declare(waitMounted(), none.dollar, { kind: 'deferred', blocks: '1 items' })).result)).toContain('Nothing is deferred')
+  const put = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open","deferred":"later, 2026-11-08"}\n'] })
+  expect((await declare(wait, put.dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBeUndefined()
   const held = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
   expect(String(held.observed)).toContain('Nothing is deferred')
-  const put = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open","deferred":"later, 2026-11-08"}\n'] })
   const passed = await chainedStop(wait, put.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
   expect(passed.observed).toBeUndefined()
@@ -2232,8 +2236,10 @@ test('a wait declared in an earlier turn is stale and never read', async () => {
 
 test('the turn\'s end hands the declared wait to its readers, and shows the answer unchanged', async () => {
   const wait = waitMounted()
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  await declare(wait, dollar, { kind: 'deferred', blocks: '2 items' })
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, records: [
+    '{"id":"r-1","label":"one","state":"open","deferred":"later, 2026-11-08"}\n{"id":"r-2","label":"two","state":"open","deferred":"later, 2026-11-08"}\n',
+  ] })
+  expect((await declare(wait, dollar, { kind: 'deferred', blocks: '2 items' })).isError).toBeUndefined()
   let seen = ''
   const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, async x => { seen = String(x.answer); return { text: x.answer } })
   expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'deferred', blocks: '2 items' }))

@@ -29,12 +29,12 @@ import { detectPatternKills } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
   listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, projectCheckouts,
-  headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
+  headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
 } from './stop-gate.ts'
-import { launcherOf, RECORDS_DIR } from '../core/orchestration.ts'
+import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
@@ -702,7 +702,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         await sweepAtStop?.()
         return next(e)
       }
-      const watches = await listCiWatches($, `${state}/ci-watch`, until)
+      const watches = await listCiWatches($, `${state}/${CI_WATCH_DIR}`, until)
       if (watches === null) return await passing()
       // The universe of check 2 is this session's own watches: ci-watch wrote beside each
       // log its owner file, `<log>.session`, holding the id of the session that armed the
@@ -719,9 +719,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       for (const entry of watches) {
         const number = watchNumberOf(entry.name)
         if (!number || entry.kind !== 'file') continue
-        const owner = String(await quietly($, () => $.fs.read(`${state}/ci-watch/${entry.name}.session`), until, '')).trim()
+        const owner = String(await quietly($, () => $.fs.read(`${state}/${CI_WATCH_DIR}/${entry.name}.session`), until, '')).trim()
         if (owner !== sessionId) continue
-        const text = await mustReadText($, `${state}/ci-watch/${entry.name}`, `the ci-watch log ${entry.name}`, until)
+        const text = await mustReadText($, `${state}/${CI_WATCH_DIR}/${entry.name}`, `the ci-watch log ${entry.name}`, until)
         const buckets = parseCiWatchLog(text)
         logs.push({ number, tell: logTell(text), checks: Object.entries(buckets).map(([name, bucket]) => ({ name, bucket })) })
       }
@@ -963,8 +963,7 @@ async function projectTop($: Held, cwd: string, until: number): Promise<string> 
 // open_rows()'s reads (stop_gate.py:315-337): the register this session's records were
 // filed under, one path a line, then each record file. A read that fails is no row.
 async function registeredRecords($: Held, state: string, sessionId: string, until: number): Promise<string[]> {
-  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
-  const register = await quietly($, () => $.fs.read(`${state}/${RECORDS_DIR}/${safe}`), until, '')
+  const register = await quietly($, () => $.fs.read(recordsRegistryPath(state, sessionId)), until, '')
   return String(register).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
