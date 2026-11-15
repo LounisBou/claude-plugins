@@ -373,7 +373,7 @@ the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate` rea
 clean, else names both shas. A session writes `e2e` only. `waived` (E2E or norms) and `exempt` rest on his
 words quoted in `detail` with their date, from any channel: « « <his words> », 2026-11-15T08:50Z ». The
 refusal is an empty `detail`, one with no date (`YYYY-MM-DD`, with or without a time), one with fewer than
-8 letters or digits besides the date, or one past 500 characters. No consent record is read; the quote stays
+6 letters besides its dates and times, or one past 500 characters. No consent record is read; the quote stays
 in the record or the exemption file. Auto-merge and auto-deploy keep their recorded consent.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or

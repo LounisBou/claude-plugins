@@ -2491,6 +2491,29 @@ test('an expiry that is past, unreadable or given to a revocation is refused', a
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
+// The limits of «quoted with its date», at their edges: accepted forms, one by one.
+const QUOTED_FORMS: Array<[string, string]> = [
+  ['the documented time with no seconds', '« plus de dérogation », 2026-11-15T08:50Z'],
+  ['a date alone', 'plus de dérogation E2E, 2026-11-15'],
+  ['six letters', 'abcdef 2026-11-15'],
+  ['500 characters', 'plus de dérogation E2E, 2026-11-15 '.padEnd(500, 'x')],
+]
+for (const [why, detail] of QUOTED_FORMS) {
+  test('a quote with ' + why + ' stands for an E2E waiver and an exemption', async ($, on) => {
+    const seen = await world($, on, { git: CLEAN })
+    expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
+    expect(((await $.tool.call(exemptCall(true, detail))) as any).deny).toBeUndefined()
+    expect(recordRun(seen)).toBeDefined()
+  })
+}
+
+test('a recorded « Accorder » of the E2E waiver does not stand for an unquoted detail', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, ...consentWorld({ a: granted() }) })
+  const out: any = await $.tool.call(waiveCall(''))
+  expect(out.deny).toContain('an E2E waiver rests on the operator\'s words, quoted in "detail" with their date')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
 // What «quoted with its date» means for an exemption and for a waiver: words, and a date.
 const UNQUOTED: Array<[string, string]> = [
   ['an empty detail', ''],
@@ -2498,6 +2521,10 @@ const UNQUOTED: Array<[string, string]> = [
   ['words with no date', 'plus de dérogation E2E sur thing'],
   ['a date with no words', '2026-11-13'],
   ['a date with a few characters', 'ok, 2026-11-13T10:00:00Z'],
+  ['digits for words', '12345678 2026-11-13'],
+  ['two dates and no words', '2026-11-13, 2026-11-13'],
+  ['a time and no words', '2026-11-13 08:50:00 UTC'],
+  ['501 characters', 'plus de dérogation E2E sur thing, 2026-11-13 '.padEnd(501, 'x')],
   ['a detail past the record\'s limit', 'plus de dérogation E2E sur thing, 2026-11-13 ' + 'x'.repeat(500)],
 ]
 for (const [why, detail] of UNQUOTED) {

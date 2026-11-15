@@ -303,13 +303,15 @@ export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.
  * date, from any channel. No consent record is read: the quote is the record, and it stays visible in the file it writes.
  */
 const QUOTED_DATE = /\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?Z?)?/
+// The letters his words hold at least, dates and times left out: digits are no words.
+const QUOTE_LETTERS_MIN = 6
 export function quotedWordsRefusal(what: string, detail: string): string | undefined {
   const asks = 'github: ' + what + ' rests on the operator\'s words, quoted in "detail" with their date ("« <his words> », 2026-11-15T08:50Z")'
   if (detail.trim() === '') return asks + ': "detail" is empty.'
   if (detail.length > DETAIL_MAX) return asks + ': "detail" is at most ' + DETAIL_MAX + ' characters.'
   if (!QUOTED_DATE.test(detail)) return asks + ': it carries no date.'
-  const letters = detail.replace(QUOTED_DATE, ' ').replace(/[^\p{L}\p{N}]/gu, '')
-  if (letters.length < CONSENT_QUOTE_MIN) return asks + ': it quotes no words, only a date.'
+  const words = detail.replace(new RegExp(QUOTED_DATE.source, 'g'), ' ').replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ').replace(/[^\p{L}]/gu, '')
+  if (words.length < QUOTE_LETTERS_MIN) return asks + ': it quotes no words, only a date.'
   return undefined
 }
 
@@ -2190,7 +2192,7 @@ export function register(on: any): void {
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
-            until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z); the question asking it states it' },
+            until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z)' },
             plan: {
               type: 'object',
               description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
