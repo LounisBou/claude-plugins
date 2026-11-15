@@ -132,7 +132,8 @@ under `<config dir>/deploys/` and what is kept are the header of `scripts/deploy
 reads a plugin of a directory marketplace in place, so each commit is extracted once into a
 directory of its own, never changed after, its manifests' versions stamped with the commit, and
 the marketplace is pointed at it: a new session reads the new directory, a running one keeps the
-one it loaded. `--rollback` points back at the commit installed before; `--status` prints the
+one it loaded, and a running orchestrator or coordinator is told at its next prompt, once per
+commit, to hand over to a successor. `--rollback` points back at the commit installed before; `--status` prints the
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
 Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
 `deploy.ts --status` fails is refused before `current` moves), its output and errors kept in a
