@@ -3586,7 +3586,7 @@ CDECIDE="$ROOT/commands/coordinator-decide.md"
 check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
   "yes|yes|yes|yes|1|yes" \
   "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator-decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/coordinator-decide` |')"
-COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
+COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$ROOT/skills/coordination/references/succession.md" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn $(needs_tier "$@") "$@" 2>&1; }
@@ -10538,10 +10538,11 @@ rm -f "$ASTATE/round/w6.json"
 # time an answer the pane had sent (the operator's report of 2026-10-25). The record keeps the
 # ids printed before while the round holds them, drops the others, and is written by one rename.
 printf '["gone-entry","w1"]\n' > "$ASTATE/round-listed.json"
-ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | sed -n 's/^round \([^ ]*\) .*| open.*/\1/p' | sort | paste -sd, -)
-check "round records the ids of the open entries it printed, keeps those printed before while the round holds them" \
-  "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
-  "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
+# Only the entries whose question it printed: one printed as its header alone is the pane's.
+ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | awk '/^round / { id = ($0 ~ /\| open/) ? $2 : ""; next } /^    / && id != "" { print id; id = "" }' | sort | paste -sd, -)
+check "round records the ids of the open entries whose question it printed, keeps those printed before while the round holds them" \
+  "$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | grep . | sort | paste -sd, -)|0" \
+  "$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
   "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'call `settle` for it')"
@@ -10968,19 +10969,21 @@ LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
+# A coordinator and an auditor lose those and the review tools too.
+LEANWATCH="$LEANORCH mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record"
 check "an agent loses the five unused tools and the four only an orchestrator calls" "$LEANBASE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and the four servers it never calls, and keeps the four" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all nine" "$LEANBASE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
-check "an auditor loses the five and keeps the four only an orchestrator calls" "$LEANBASE" \
+check "an auditor loses the five and the review tools, and keeps the four only an orchestrator calls" "$LEANBASE $LEANWATCH" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
 check "--keep-tool brings one of the four back to an agent" "$LEANBASE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
   "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
-check "the coordinator's successor keeps the four" "$LEANBASE" \
+check "the coordinator's successor keeps the four and loses the review tools" "$LEANBASE $LEANWATCH" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
 check "a successor keeps the four and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
@@ -11019,7 +11022,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c "^SendFeedback Workflow ScheduleWakeup ReportFindings $LEANWATCH WebSearch$")"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
