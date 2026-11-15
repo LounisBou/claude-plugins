@@ -11,3 +11,8 @@ the head it read, and computed from the tool's output.
 
 **Cost.** Each plugin's guards and skills change; the transitional reading of the old forms is
 kept until the new one has shipped and the prompts teach only it.
+
+**Amended 2026-11-15.** An E2E or norms waiver and an E2E exemption no longer need a consent
+record: they rest on the operator's words quoted with their date in the record's `detail`. The
+quote is visible, not judged; no forged waiver was observed, and the recorded route cost more than
+it caught. Auto-merge and auto-deploy keep the recorded consent.
