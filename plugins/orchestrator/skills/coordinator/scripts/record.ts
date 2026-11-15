@@ -114,12 +114,19 @@ export function clear(ctx: Context, args: readonly string[]): number {
   return 0
 }
 
+/** The coordinator the record names while its session runs: undefined with no record, a stale one or an unreadable one (said on the error stream). */
+export function liveCoordinator(ctx: Context): { readonly name: string; readonly tty: string } | undefined {
+  const path = recordPath(ctx.env)
+  if (!isFile(path)) return undefined
+  const { name, tty, pid } = readRecord(path)
+  if (name !== '' && tty !== '' && alive(ctx, tty, pid)) return { name, tty }
+  say(ctx, `stale record: ${name === '' ? 'an unreadable record' : name} on ${tty === '' ? 'no tty' : tty}`)
+  return undefined
+}
+
 export function lookup(ctx: Context, args: readonly string[]): number {
   if (args.length > 0) die(`lookup: unexpected argument ${args[0]}`)
-  const path = recordPath(ctx.env)
-  if (!isFile(path)) return 0
-  const { name, tty, pid } = readRecord(path)
-  if (name !== '' && tty !== '' && alive(ctx, tty, pid)) ctx.out(name)
-  else say(ctx, `stale record: ${name === '' ? 'an unreadable record' : name} on ${tty === '' ? 'no tty' : tty}`)
+  const live = liveCoordinator(ctx)
+  if (live !== undefined) ctx.out(live.name)
   return 0
 }

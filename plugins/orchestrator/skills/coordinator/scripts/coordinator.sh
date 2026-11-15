@@ -26,6 +26,13 @@
 #                            counting the answered and the withdrawn ones it leaves out;
 #                            --all prints those too, the answered then the withdrawn
 #                            (--by-urgency prints the same order, every question's text)
+#   coordinator.sh round --decide [--as "<name>"]   where the operator's decide runs, then its
+#                            entries: one line, « decide: coordinator » (the live coordinator's own
+#                            session, named by --as: round --by-urgency follows), « decide: machine | <n> open »
+#                            (no coordinator live: the open operator entries of every session of the machine
+#                            follow, in the round's order, every question's text, none recorded as listed),
+#                            « decide: elsewhere | <name> | <tty> » (a coordinator is live and this is not it:
+#                            nothing follows) or « decide: empty | no open question »; exit 0 in each
 #   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
 #

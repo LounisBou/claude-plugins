@@ -11,6 +11,7 @@ import { isTemporary } from '../../../core/store-io.ts'
 import { update } from '../../../core/store.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { die, moduleOf, say, stateOf, type Context } from './context.ts'
+import { liveCoordinator } from './record.ts'
 
 export { parseEntry } from '../../orchestrator/scripts/lib/round-archive.ts'
 
@@ -300,12 +301,22 @@ function parsed(text: string | undefined): unknown {
 export function round(ctx: Context, args: readonly string[]): number {
   let all = false
   let full = false
-  for (const arg of args) {
+  let decide = false
+  let me: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
     if (arg === '--all') all = full = true
     // The decision round asks for it: the one order, every question's text.
     else if (arg === '--by-urgency') full = true
-    else die(`round: unexpected argument ${arg}`)
+    else if (arg === '--decide') decide = true
+    else if (arg === '--as') {
+      me = args[++i]
+      if (me === undefined) die('round: --as needs a value')
+    } else die(`round: unexpected argument ${arg}`)
   }
+  if (me !== undefined && !decide) die('round: --as goes with --decide')
+  if (decide && all) die('round: --decide takes no --all')
+  if (decide) return decideRound(ctx, (me ?? '').trim())
   const state = stateOf(ctx.env)
   const module = moduleOf(ctx.env)
   const dir = join(state, ROUND_DIR)
@@ -332,4 +343,34 @@ function isDir(path: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * `round --decide [--as <name>]`, the operator's decide machine-wide: its first line says where it
+ * runs. The live coordinator's own session (named by `--as`) reads the round as `round --by-urgency`
+ * prints it; any other session, while a coordinator is live, is told where to run it; with none
+ * live, the open operator entries of every session of the machine are listed in the round's order,
+ * or one line says there are none.
+ */
+function decideRound(ctx: Context, me: string): number {
+  const coordinator = liveCoordinator(ctx)
+  if (coordinator !== undefined && coordinator.name !== me) {
+    ctx.out(`decide: elsewhere | ${coordinator.name} | ${coordinator.tty}`)
+    return 0
+  }
+  if (coordinator !== undefined) {
+    ctx.out('decide: coordinator')
+    return round(ctx, ['--by-urgency'])
+  }
+  const state = stateOf(ctx.env)
+  const open = ordered(roundEntries(join(state, ROUND_DIR)).filter(e => e['status'] === 'open' && e['kind'] === 'operator'))
+  if (open.length === 0) {
+    ctx.out('decide: empty | no open question')
+    return 0
+  }
+  const module = moduleOf(ctx.env)
+  const view = { pane: paneOpen(ctx, state), text: true, live: liveSessions(module), remote: remoteMachines(module) }
+  ctx.out(`decide: machine | ${open.length} open`)
+  for (const entry of open) entryLines(entry, view).forEach(line => ctx.out(line))
+  return 0
 }
