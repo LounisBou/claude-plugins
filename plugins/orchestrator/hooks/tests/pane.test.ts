@@ -809,6 +809,89 @@ test('a pane the command opened and closed before the first turn ended is not op
   expect(fx.opened.length).toBe(1)
 })
 
+// --- the pane stays as he left it, through a succession -----------------------------------------
+
+const CHOICE = `${HOME}/.claude/claude-orchestrator/pane-choice.json`
+
+// The successor coordinator: a fresh session (the host's state of one session starts empty, so
+// its paneOpened flag is unset), a fresh module, the machine's files as the predecessor left them.
+function successorOf(predecessor: Fx): Fx {
+  const successor = coordinatorSession()
+  for (const [path, text] of predecessor.files) if (!successor.files.has(path)) successor.files.set(path, text)
+  return successor
+}
+
+test('a pane he closed with the command stays closed in the successor coordinator', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  expect(fx.opened.length).toBe(1)
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
+  const successor = successorOf(fx)
+  const { handlers: next } = mounted(registerSupervision)
+  await next['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+  await next['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+  expect(successor.opened).toEqual([])
+  expect(successor.timers).toEqual([])
+  expect(successor.files.has(PANE_FILE)).toBe(false)
+})
+
+test('a pane he closed with the tool or with its ✕ stays closed in the successor coordinator', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const byTool = coordinatorSession()
+  await handlers['turn.complete'](byTool.dollar, firstTurn, (x: unknown) => x)
+  await handlers['tool.call'](byTool.dollar, toolCall('close'))
+  const byCross = coordinatorSession()
+  await handlers['turn.complete'](byCross.dollar, firstTurn, (x: unknown) => x)
+  await handlers['ui.close'](byCross.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
+  for (const fx of [byTool, byCross]) {
+    expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
+    const successor = successorOf(fx)
+    await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+    expect(successor.opened).toEqual([])
+  }
+})
+
+test('a close that is not his word, an orchestrator\'s command and a pane he closed then opened again do not keep the pane closed', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const host = coordinatorSession()
+  await handlers['turn.complete'](host.dollar, firstTurn, (x: unknown) => x)
+  await handlers['ui.close'](host.dollar, { id: 'supervision', origin: { kind: 'host' } }, (x: unknown) => x)
+  expect(host.files.has(CHOICE)).toBe(false)
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
+  orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
+  await handlers['command.run'](orch.dollar, supervisionRun)
+  await handlers['command.run'](orch.dollar, supervisionRun)
+  expect(orch.files.has(CHOICE)).toBe(false)
+  const reopened = coordinatorSession()
+  await handlers['command.run'](reopened.dollar, supervisionRun)
+  await handlers['command.run'](reopened.dollar, supervisionRun)
+  await handlers['command.run'](reopened.dollar, supervisionRun)
+  expect(JSON.parse(String(reopened.files.get(CHOICE))).pane).toBe('open')
+  for (const fx of [host, reopened]) {
+    const successor = successorOf(fx)
+    await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+    expect(successor.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  }
+})
+
+test('with the pane left closed by his choice, the successor presents each due question in its tab', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(askedOf(asked)) + '\n')
+  fx.files.set(`${SESSIONS}/${asked.session}`, JSON.stringify(row({ role: 'orchestrator', name: asked.from })) + '\n')
+  const successor = successorOf(fx)
+  await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+  expect(successor.opened).toEqual([])
+  await successor.later.filter(t => t.ms === 30000)[0].fn()
+  expect(successor.submitted.length).toBe(1)
+  expect(successor.submitted[0]).toContain(asked.from)
+})
+
 for (const [label, fx, e] of [
   ['an orchestrator', () => coordinatorSession({ role: 'orchestrator' }), firstTurn],
   ['no coordinator recorded', () => coordinatorSession({ record: false }), firstTurn],
