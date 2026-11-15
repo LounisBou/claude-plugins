@@ -203,6 +203,16 @@ describe('release run', () => {
     assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0')
   })
 
+  it('prints the balance since the last release with its plan', () => {
+    const root = released()
+    git(root, 'commit', '-q', '--allow-empty', '-m', 'chore(release): alpha 1.0.0')
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed, and longer.\n')
+    git(root, 'commit', '-q', '-am', 'change alpha again')
+    const io = recorder()
+    assert.equal(release(root, ['--dry-run', '--base', 'HEAD~2'], io), 0)
+    assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+3 prompt tokens \(7 -> 10\)$/)
+  })
+
   it('writes no budget on a dry run', () => {
     const root = released()
     assert.equal(release(root, ['--dry-run'], recorder()), 0)
@@ -417,6 +427,30 @@ describe('prompts run', () => {
     it('accepts the same lowering in a release commit, and an unchanged file', () => {
       assert.equal(prompts(branched('chore(release): alpha 1.0.1'), ['--base', 'main'], recorder()), 0)
       assert.equal(prompts(branched('chore: lower a budget'), ['--base', 'work'], recorder()), 0)
+    })
+
+    it('prints the prompt tokens gained since the last release as a warning, lost ones as a plain line', () => {
+      const root = branched('chore(release): alpha 1.0.1')
+      writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), `${sentence}\n${sentence}\n`)
+      writeFileSync(join(root, 'plugins', 'alpha', 'notes.md'), 'é\n')
+      const io = recorder()
+      assert.equal(prompts(root, ['--balance'], io), 0)
+      assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+22 prompt tokens \(44 -> 66\)$/)
+      const json = JSON.parse((() => { const out = recorder(); prompts(root, ['--json'], out); return out.lines.out[0] ?? '' })())
+      assert.deepEqual([json.balance.released, json.balance.now], [44, 66])
+      writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'x\n')
+      const lost = recorder()
+      prompts(root, ['--balance'], lost)
+      assert.match(lost.lines.out.at(-1) ?? '', /^balance since the last release \([0-9a-f]{8}\): -20 prompt tokens \(44 -> 24\)$/)
+    })
+
+    it('says so when the history holds no release', () => {
+      const io = recorder()
+      prompts(branched('chore: lower a budget'), ['--balance'], io)
+      assert.equal(io.lines.out.at(-1), 'balance: no release in this history')
+      const json = recorder()
+      prompts(withPrompts({ budgets: { alpha: 100, beta: 100 }, duplicates: 1 }), ['--json'], json)
+      assert.equal(JSON.parse(json.lines.out[0] ?? '').balance, null)
     })
 
     it('refuses --base without a ref', () => {
