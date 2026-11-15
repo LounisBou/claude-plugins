@@ -36,6 +36,7 @@
     "plugins/orchestrator/hooks/todo-format.ts",
     "plugins/orchestrator/hooks/pattern-kills.ts",
     "plugins/orchestrator/hooks/stop-gate.ts",
+    "plugins/orchestrator/hooks/short-commands.ts",
     "plugins/telemetry/skills/*/scripts/**/*.ts",
     "plugins/telemetry/hooks/collect.ts",
     "plugins/telemetry/hooks/register.ts",
