@@ -187,7 +187,7 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
 test('blocker and note: set at open or later on an open row, checked against their forms, printed on the open line', async () => {
   await withGoals()
   const r = rec()
-  assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', 'after lunch']), /open: --blocker takes `none`, `PR <owner\/repo>#<n> merged`, `row <n> closed` or `release installed`, got: after lunch/)
+  assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', 'after lunch']), /open: --blocker takes `none`, `PR <owner\/repo>#<n> merged`, `row <n> closed`, `release installed`, `until <ISO UTC time>` or `measure <what>`, got: after lunch/)
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'one', '--blocker', 'PR acme/app#12 merged']), '0|1\n|')
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'two']), '0|2\n|')
   assert.equal(rows()[0]?.['blocker'], 'PR acme/app#12 merged')
@@ -208,6 +208,24 @@ test('blocker and note: set at open or later on an open row, checked against the
   await cli(['close', r, '2', '--verdict', 'done'])
   assert.equal(await cli(['blocker', r, '2', 'none']), '1||ERROR: blocker: row 2 is not open\n')
   assert.equal(await cli(['note', r, '2', 'x']), '1||ERROR: note: row 2 is not open\n')
+})
+
+test('blocker: the moment (until, an existing ISO UTC time) and the measure (free words) are accepted by open and blocker, the rest refused', async () => {
+  await withGoals()
+  const r = rec()
+  assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'moment', '--blocker', 'until 2026-11-15T11:00:00Z']), '0|1\n|')
+  assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'measure', '--blocker', 'measure dashboard p95 under 300 ms']), '0|2\n|')
+  assert.equal(rows()[0]?.['blocker'], 'until 2026-11-15T11:00:00Z')
+  assert.equal(rows()[1]?.['blocker'], 'measure dashboard p95 under 300 ms')
+  assert.equal(await cli(['blocker', r, '1', 'until 2026-11-15T12:30:00Z']), '0||')
+  assert.equal(await cli(['blocker', r, '2', 'measure 3 runs green']), '0||')
+  assert.equal(rows()[0]?.['blocker'], 'until 2026-11-15T12:30:00Z')
+  assert.equal(rows()[1]?.['blocker'], 'measure 3 runs green')
+  // An until that is not an existing instant, or not in the form, and a measure with no words, are refused.
+  for (const bad of ['until 2026-02-30T00:00:00Z', 'until 2026-11-15 11:00', 'until 2026-11-15T11:00:00+02:00', 'measure ', 'measure']) {
+    assert.match(await cli(['blocker', r, '2', bad]), /blocker: `none`, .* got: /, bad)
+    assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', bad]), /open: --blocker takes `none`, .* got: /, bad)
+  }
 })
 
 test('verdict: the row carries the verdict, its few words and the findings index, level 1 of the review', async () => {

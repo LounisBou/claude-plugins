@@ -234,6 +234,27 @@ test('a blocker is checked on its artifact: a row closed, a pull request merged,
   assert.equal(fallOf('after lunch', facts()), 'unread')
 })
 
+test('a moment blocker falls once its until time has passed, a measure stands and never falls by itself', () => {
+  const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+  const facts = (now: number): Artifacts => ({ rows: [], prState: () => undefined, installed: () => '', now })
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT - 1)), 'standing')
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT)), 'fallen')
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT + 86_400_000)), 'fallen')
+  assert.equal(fallOf('measure dashboard p95 under 300 ms', facts(MOMENT + 86_400_000)), 'standing')
+  assert.equal(fallOf('until 2026-02-30T00:00:00Z', facts(MOMENT + 86_400_000)), 'unread')
+})
+
+test('ownersOf: a row whose until has passed reads READY NOT STARTED, a row on a measure reads blocked', () => {
+  const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+  const rows = [
+    { id: '1', line: '', label: 'WAKE: at eleven', blocker: 'until 2026-11-15T11:00:00Z' },
+    { id: '2', line: '', label: 'SPEED: p95', blocker: 'measure p95 under 300 ms' },
+  ]
+  const at = (now: number) => (blocker: string) => fallOf(blocker, { rows: [], prState: () => undefined, installed: () => '', now })
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT - 1)), ['1 blocked: until 2026-11-15T11:00:00Z', '2 blocked: measure p95 under 300 ms'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT)), ['1 READY NOT STARTED', '2 blocked: measure p95 under 300 ms'])
+})
+
 test('ownersOf names each open row\'s live agent by its label word, a deferred row\'s ruling, its fallen or standing blocker, and flags a row with none recorded', () => {
   const rows = [
     { id: '1', line: '', label: 'TAKEOVERLEAN: a takeover reads less', blocker: 'none' },

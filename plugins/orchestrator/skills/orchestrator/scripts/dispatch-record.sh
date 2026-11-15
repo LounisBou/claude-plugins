@@ -12,7 +12,7 @@
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row)
 #   dispatch-record.sh undefer <record> <id>
-#   dispatch-record.sh blocker <record> <id> <b>   (what the open row waits on: none | PR <owner/repo>#<n> merged | row <n> closed | release installed)
+#   dispatch-record.sh blocker <record> <id> <b>   (what the open row waits on: none | PR <owner/repo>#<n> merged | row <n> closed | release installed | until <ISO UTC time> | measure <what>)
 #   dispatch-record.sh note    <record> <id> "<text>"   (the open row's note of judgment; "" removes it)
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
@@ -35,6 +35,11 @@
 # needs on it. `summary --open` prints both; the takeover (`succession.sh takeover`) checks each
 # blocker on its artifact and reads an open row whose blocker fell and that no live agent holds as
 # READY NOT STARTED. A row written without a blocker has none recorded.
+#
+# A blocker that waits on a moment is `until <ISO UTC time>` (`until 2026-11-15T11:00:00Z`, to the
+# second, `Z` only): it falls once that time has passed, read on the clock by the takeover and by
+# the « Lignes prêtes sans agent » line. A blocker that waits on a measure is `measure <what>`
+# (free words): it never falls by itself; the orchestrator sets it to `none` or closes the row.
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then
