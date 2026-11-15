@@ -730,8 +730,7 @@ async function cost(ctx: Context, id: string, args: readonly string[]): Promise<
     warn(ctx, `cost: session ${session} is already counted on row ${id} (a row written before the unpriced list takes --recount naming its unpriced session)`)
     return
   }
-  const alias = text(or(row['model'], ''))
-  const measured = await ctx.deps.run(['python3', ctx.deps.routingPy, 'cost', '--session', session, ...(alias === '' ? [] : ['--alias', alias]), '--json'], { stderr: 'inherit' })
+  const measured = await ctx.deps.run(['python3', ctx.deps.routingPy, 'cost', '--session', session, '--json'], { stderr: 'inherit' })
   if (measured.status !== 0) die(ctx, `cost: could not measure session ${session}`)
   let usd: unknown
   try {
