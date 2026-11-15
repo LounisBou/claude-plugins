@@ -119,6 +119,21 @@ test('a delivery reaches the orchestrator with its facts read on the repository,
   expect(asks.sent[0]!.text.includes('facts')).toBe(false)
 })
 
+// Seen 2026-11-15 (review 395, row 259's delivery): the facts were read in the directory the
+// module runs in (~/.claude, head fbece9e, 1 dirty path), never the agent's checkout, and said
+// FALSE CLAIM of two clean deliveries.
+test("a delivery's facts are read in the agent's own checkout, not in the module's directory", async () => {
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const view = JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
+  const clean = fake({
+    checkout: '/w/takeoversense',
+    repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view },
+    elsewhere: { 'git status --porcelain': ' M settings.json\n', 'git rev-parse HEAD': OTHER, 'git rev-list --count': '0', 'gh pr view': view },
+  })
+  await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
+  expect(clean.sent[0]!.text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
+})
+
 test('the owner is the chain naming the tty, the one written last when two do', () => {
   const entry = (tty: string) => JSON.stringify({ tab_id: 't', tty, owner: 'o' })
   const chains = [
@@ -150,7 +165,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { repo?: Record<string, string>; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -190,6 +205,7 @@ function fake(over: Over = {}) {
   const dollar = {
     session: {
       id: async () => 's-one',
+      root: async () => over.checkout ?? '/w/agent',
       usage: async () => usage,
       model: async () => 'a-model',
       send: async (args: { to: unknown; text: string }) => {
@@ -214,7 +230,7 @@ function fake(over: Over = {}) {
       stat: async (p: string) => { throw new Error(`ENOENT: ${p}`) },
     },
     process: {
-      run: async (argv: readonly string[]) => {
+      run: async (argv: readonly string[], init?: { cwd?: string }) => {
         const [verb = '', first = '', second = '', third = ''] = argv
         const locked = lockRun(argv, files)
         if (locked) return locked
@@ -239,7 +255,8 @@ function fake(over: Over = {}) {
         if (argv[0] === 'ps' && argv[1] === '-A' && (over.alive || over.exiting)) return { exitCode: 0, stdout: (over.alive ?? []).map(pid => `${pid}\n`).join('') + (over.exiting ?? []).map(pid => `${pid} ?Es ??\n`).join(''), stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
         // The agent's checkout, as git and gh answer for it: by the command's first three words.
-        const repo = over.repo?.[argv.slice(0, 3).join(' ')]
+        // A run outside it (`elsewhere`) reads the directory the module itself runs in.
+        const repo = (over.elsewhere && init?.cwd !== (over.checkout ?? '/w/agent') ? over.elsewhere : over.repo)?.[argv.slice(0, 3).join(' ')]
         if (repo !== undefined) return { exitCode: 0, stdout: repo, stderr: '' }
         return { exitCode: 1, stdout: '', stderr: '' }
       },

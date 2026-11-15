@@ -2401,9 +2401,14 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     ? { tokens: now.tokens, percent: now.percent }
     : row && row.context_tokens > 0 ? { tokens: row.context_tokens, percent: row.context_percent } : null
   const context = figure ? `${figure.tokens.toLocaleString('en-US')} (${figure.percent}%)` : null
-  // A delivery's facts are read on the repository, not taken from its report (relay.ts readDeliveryFacts).
-  const facts = wait?.kind === 'delivered'
-    ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS }), whole))
+  /*
+   * A delivery's facts are read on the repository, not taken from its report (relay.ts readDeliveryFacts),
+   * in the session's own checkout: the module runs in another directory, and a read there said FALSE
+   * CLAIM of clean deliveries (2026-11-15). A checkout the host does not name gives no facts line.
+   */
+  const checkout = wait?.kind === 'delivered' ? await $.session.root().catch(() => $.session.cwd()).catch(() => '') : ''
+  const facts = checkout
+    ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS, cwd: checkout }), whole))
     : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
   const sent = orchestrating ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
