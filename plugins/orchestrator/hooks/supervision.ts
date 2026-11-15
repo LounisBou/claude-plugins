@@ -31,7 +31,7 @@ import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
-  type WaitKind,
+  hostStopOf, stopInTail, stopKey, stopText, type HostStop, type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
@@ -1632,10 +1632,11 @@ export function register(on: On<Held>): void {
   })
   on('turn.complete', {}, async ($, e, next) => {
     try {
-      if (!e.agentId && e.reason === 'answer') {
+      // A turn the person interrupted is his; any other end is read, a stop the host wrote included.
+      if (!e.agentId && e.reason !== 'aborted' && e.isAborted !== true) {
         const inFlight = inFlightAtStop
         inFlightAtStop = null
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer'), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -2267,7 +2268,10 @@ export function entersRound(role: string | null): boolean {
 // its wait is written, so its row shows it waiting, and no entry is entered or sent.
 // An agent's turn without a status line that ended with work still in flight (`inFlight`, what the
 // host listed at the stop) is no idle agent: nothing is sent; its next turn's end reports.
-export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null): Promise<void> {
+// An agent's turn the host ended in its own words (a usage limit, an API error: relay.ts hostStopOf,
+// read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
+// flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
+export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer'): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2284,6 +2288,11 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const role = roleOf(name)
   const orchestrating = entersRound(role)
   if (!name || (!orchestrating && role !== 'agent')) return
+  if (role === 'agent') {
+    const stop = hostStopOf(answer) ?? (reason !== 'answer' || answer.trim() === '' ? await stopAtTail($, sessionId) : null)
+    if (stop) return relayStop($, sessionId, name, pid, tty, stop, turnId)
+  }
+  if (reason !== 'answer') return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   const whole = answer
   if (role === 'agent') answer = heldReport(answer)
@@ -2362,6 +2371,35 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   } else {
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
+}
+
+// The bytes of the transcript's end read for a stop the host wrote: its last lines, never the whole file.
+const STOP_TAIL_BYTES = 65536
+
+// The stop the session's transcript ends on (relay.ts stopInTail), null when it cannot be read.
+async function stopAtTail($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<HostStop | null> {
+  const path = await transcriptPathOf($, sessionId)
+  if (path === '') return null
+  const tail = await $.process.run(['tail', '-c', String(STOP_TAIL_BYTES), path], { timeoutMs: FACTS_BOUND_MS }).catch(() => null)
+  return tail && tail.exitCode === 0 ? stopInTail(String(tail.stdout ?? '')) : null
+}
+
+// An agent stopped by the host, told to its orchestrator in one line, once per stop (relay.ts
+// stopKey in the wait file's `relayed`); a wait it carried is cleared. Nobody to tell, or a send
+// refused, is one log line, and the next turn's end tries again.
+async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, name: string,
+  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown): Promise<void> {
+  const before = await readWait($, sessionId)
+  const key = stopKey(turnId, stop)
+  if (before?.relayed === key) return
+  const to = await orchestratorOn($, tty, name, 'relay')
+  if (!to) {
+    await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    return
+  }
+  const sent = await $.session.send({ to, text: stopText(name, stop) })
+  if (sent?.isDelivered) await writeWait($, sessionId, { ...(before?.waiting ? clearedWait(before) : before ?? {}), relayed: key, name, pid })
+  else await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
 // The session's open entries moved to the successor it learnt, or, none learnt, withdrawn by its

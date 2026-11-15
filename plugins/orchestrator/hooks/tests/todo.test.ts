@@ -339,6 +339,64 @@ test('a coordinator or an auditor with an open item is held the same; an agent, 
   }
 })
 
+// The orchestrator's dispatch record, registered under its session: one row per entry, open unless closed.
+const RECORD = '/w/docs/dispatch.jsonl'
+const recorded = (rows: readonly Record<string, unknown>[]) => ({
+  [`${MODULE}/records/s-me`]: `${RECORD}\n`,
+  [RECORD]: rows.map(r => JSON.stringify({ rounds: 0, ...r })).join('\n'),
+})
+
+test('declare_wait refuses done while the dispatch record holds an open row, naming it, and says to declare nothing for an agent', async () => {
+  const { declare } = declarer()
+  const { dollar } = world({ files: recorded([{ id: 51, label: 'merged', state: 'closed' }, { id: 52, label: 'rotation', state: 'open' }]) })
+  const done = await declare(dollar, { kind: 'done' })
+  expect(done.isError).toBe(true)
+  expect(done.result).toContain('row 52 (rotation) is open')
+  expect(done.result).toContain('declare nothing')
+})
+
+test('declare_wait refuses done while a goal of the spec is open, naming it', async () => {
+  const { declare } = declarer()
+  const { dollar, files } = world({ files: recorded([{ id: 1, label: 'p1', state: 'closed' }]) })
+  files.set('/w/docs/goals.md', '# goals')
+  const goals = JSON.stringify({ ok: false, open: ['G3'], deferred: [], faults: [], notes: [] })
+  const run = dollar.process.run
+  const answering = hostOf({ ...dollar, process: { run: async (argv: readonly string[]) => (String(argv[1]).endsWith('goals.sh') ? { exitCode: 1, stdout: goals, stderr: '' } : run(argv)) } })
+  const done = await declare(answering, { kind: 'done' })
+  expect(done.isError).toBe(true)
+  expect(done.result).toContain('G3 open')
+})
+
+test('declare_wait refuses deferred when the operator put nothing off: waiting on an agent is no deferral', async () => {
+  const { declare } = declarer()
+  const { dollar } = world({ files: recorded([{ id: 52, label: 'rotation', state: 'open' }]) })
+  const deferred = await declare(dollar, { kind: 'deferred', blocks: '4 items: row 52 rotation reply pending' })
+  expect(deferred.isError).toBe(true)
+  expect(deferred.result).toContain('row 52 (rotation) is open')
+  expect(deferred.result).toContain('declare nothing')
+  const none = await declare(world().dollar, { kind: 'deferred', blocks: '1 items' })
+  expect(none.isError).toBe(true)
+  expect(none.result).toContain('Nothing is deferred')
+})
+
+test('declare_wait takes deferred when the count matches the rows and to-dos he put off, and refuses a wrong count', async () => {
+  const { declare } = declarer()
+  const { dollar } = world({ files: recorded([{ id: 52, label: 'rotation', state: 'open', deferred: 'after the release, 2026-11-15' }]) })
+  await call(dollar, { action: 'add', words: 'later' })
+  await call(dollar, { action: 'defer', id: 1, words: 'after the release, 2026-11-14' })
+  const wrong = await declare(dollar, { kind: 'deferred', blocks: '1 items' })
+  expect(wrong.isError).toBe(true)
+  expect(wrong.result).toContain('the right count is 2 items')
+  expect((await declare(dollar, { kind: 'deferred', blocks: '2 items' })).isError).toBe(undefined)
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(true)
+})
+
+test('the dispatch record holds no coordinator\'s done: only an orchestrator\'s records are read', async () => {
+  const { declare } = declarer()
+  const { dollar } = world({ me: ['coordinator', 'Coord: general [1]'], files: recorded([{ id: 52, label: 'rotation', state: 'open' }]) })
+  expect((await declare(dollar, { kind: 'done' })).isError).toBe(undefined)
+})
+
 function ender() {
   const handlers: Record<string, Hook<World, Events['command.run']>> = {}
   for (const hook of hooksOn(capture<World>(registerEnd), 'command.run')) handlers[String(hook.matcher?.['command'])] = hook.handler

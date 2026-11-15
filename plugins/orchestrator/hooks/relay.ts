@@ -343,6 +343,74 @@ export function noStatusText(name: string, context: string | null, text: string 
   return said === '' ? header : `${header}\nreply with SendMessage to: ${name}\n\n${cutQuestion(said)}`
 }
 
+// ── A turn the host ended in its own words ───────────────────────────────────
+// A usage limit, a spend limit or an API error ends the turn on a text the host writes itself
+// (an assistant message whose model is `<synthetic>`, `isApiErrorMessage` on its transcript line):
+// « You've hit your weekly limit · resets Nov 20 at 8pm (Europe/Paris) », « API Error: … ». The
+// agent then sits idle until someone resumes it, background work or not, so its orchestrator is
+// told once per stop, never left waiting on a reply that cannot come.
+export type HostStop = { kind: 'limit' | 'error'; text: string }
+
+// The host's limit and spend texts: « You've hit your session|weekly|Opus|Sonnet|monthly spend… limit »,
+// « …team's shared budget », a credit balance too low.
+const LIMIT_TEXT = /^(?:You['’]ve hit your\b|Credit balance is too low\b)/i
+// The host's error texts: « API Error: … », and a session logged out of the API.
+const ERROR_TEXT = /^(?:API Error\b|Please run \/login\b|Not logged in\b)/i
+
+// The stop a turn's text is, read on its first line; null for any text the model wrote.
+export function hostStopOf(text: string): HostStop | null {
+  const first = (text.trim().split('\n')[0] ?? '').trim()
+  if (LIMIT_TEXT.test(first)) return { kind: 'limit', text: first }
+  if (ERROR_TEXT.test(first)) return { kind: 'error', text: first }
+  return null
+}
+
+// The stop a transcript's tail ends on: its last message line (the user's or the assistant's, the
+// host's system lines skipped) when the host wrote it — the model `<synthetic>` or an API error
+// line — read by its text, an unknown error text said as an API error. Null when the turn ended on
+// the model's own words, or a prompt came after.
+export function stopInTail(tail: string): HostStop | null {
+  const lines = tail.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let line: unknown
+    try {
+      line = JSON.parse(lines[i] ?? '')
+    } catch {
+      continue
+    }
+    const fields = typeof line === 'object' && line !== null ? line as { type?: unknown; isApiErrorMessage?: unknown; message?: { model?: unknown; content?: unknown } } : {}
+    if (fields.type === 'user') return null
+    if (fields.type !== 'assistant') continue
+    const content = fields.message?.content
+    const text = typeof content === 'string' ? content
+      : Array.isArray(content) ? content.map(part => (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('') : ''
+    const stop = hostStopOf(text)
+    if (stop) return stop
+    return fields.isApiErrorMessage === true && text.trim() !== '' ? { kind: 'error', text: text.trim().split('\n')[0] ?? '' } : null
+  }
+  return null
+}
+
+// The deduplication key of a stop, kept in the wait file's `relayed` like noStatusKey: the turn
+// names it, so one stop handled twice is sent once and the next stop is sent again.
+export function stopKey(turnId: unknown, stop: HostStop, now: number = Date.now()): string {
+  return typeof turnId === 'string' && turnId !== '' ? `stop:${turnId}` : `stop:${now}-${stop.text.length}`
+}
+
+// The one line its orchestrator is sent: what stopped the agent, its reset when the host gave one,
+// and the host's own words. Never an instruction: the rotation is the orchestrator's
+// (references/rotation.md).
+export function stopText(name: string, stop: HostStop): string {
+  const words = shortLine(stop.text)
+  const reset = /\bresets\s+(.+)$/i.exec(stop.text)?.[1]?.trim()
+  const what = stop.kind === 'limit'
+    ? `usage limit${reset ? ` (resets ${reset})` : ''}`
+    : `API error — ${words.replace(/^API Error:?\s*/i, '')}`
+  return `[module] ${name} stopped: ${what}${stop.kind === 'limit' ? ` — « ${words} »` : ''}`
+}
+
+const shortLine = (text: string): string => (text.length > 300 ? `${text.slice(0, 300)}…` : text)
+
 // The orchestrator's tty an agent's tty belongs to: the launcher's chains, one file per
 // orchestrator tty, each entry an agent's tty. A chain outlives its tab and a tty is
 // recycled, so a chain counts only while its owner (the tty that names the file) is one
