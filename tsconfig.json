@@ -10,6 +10,7 @@
     "plugins/implement/hooks/core.ts",
     "plugins/implement/hooks/observe.ts",
     "plugins/implement/hooks/register.ts",
+    "plugins/implement/hooks/retrospective.ts",
     "plugins/implement/hooks/review.ts",
     "plugins/implement/types/*.d.ts",
     "plugins/norms/hooks/*.ts",
