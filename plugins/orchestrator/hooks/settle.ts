@@ -84,7 +84,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     asker,
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
-    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own ? 'tab' : 'coordinator',
+    consentBy: !answered || request.outcome === 'answered-by-message' ? null : own && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
     relayed: false,
     told: false,

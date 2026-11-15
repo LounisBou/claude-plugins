@@ -396,9 +396,10 @@ test('words that open with « Accorder » typed in the coordinator\'s own tab ar
     await settleClaimed(dollar, [], NOW)
     return [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer)
   }
-  const words = "Accorder la dispense et fusionner. Valable jusqu'au 16/11 !"
+  const words = 'Accorder la dispense et fusionner, merci'
   expect(await records(['coordinator', 'Coord: general [a1b2c3]'], words)).toEqual(['Accorder'])
   expect(await records(['orchestrator', 'Orch: belt [a1b2c3]'], words)).toEqual([])
+  expect(await records(['coordinator', 'Coord: general [a1b2c3]'], "Accorder la dispense, valable jusqu'au 16/11")).toEqual([])
 })
 
 test('a subagent\'s call is refused', async () => {
