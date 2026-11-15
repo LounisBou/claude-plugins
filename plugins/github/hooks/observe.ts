@@ -7,6 +7,7 @@
 // that cannot be written is one line in the log, and the call goes on.
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
 import { journalDir, learningEvent } from '../core/learning.ts'
+import { reasonOf, type Host } from '../core/host.ts'
 
 export const PLUGIN = 'github'
 
@@ -33,25 +34,33 @@ let pruned = false
 // A file that is not there: the only read failure that is no failure (core reads an absent file as empty).
 const ABSENT = /ENOENT|no such file|not found/i
 
+// The `code` a rejection carries, when it is an object that has one.
+const codeOf = (err: unknown): unknown => (typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined)
+
+// Whether a call's answer is a promise, whose rejection can be caught.
+export function isCatchable(value: unknown): value is { catch(handler: () => undefined): unknown } {
+  return typeof value === 'object' && value !== null && 'catch' in value && typeof value.catch === 'function'
+}
+
 // The journal's I/O over the host's nouns: what core's store-io needs, run by the host.
-function ioOf($: any): JournalIo {
+function ioOf($: Host<'fs' | 'process' | 'clock'>): JournalIo {
   return {
     write: (path, text) => $.fs.write(path, text),
-    read: (path) => $.fs.read(path).then((text: unknown) => String(text), (err: any) => {
-      if (ABSENT.test(String(err?.code ?? '') + ' ' + String(err?.message ?? err))) return undefined
+    read: (path) => $.fs.read(path).then((text: unknown) => String(text), (err: unknown) => {
+      if (ABSENT.test(String(codeOf(err) ?? '') + ' ' + reasonOf(err))) return undefined
       throw err
     }),
     run: (argv) => $.process.run(argv, { timeoutMs: 5000 }),
-    mtimeMs: (path) => $.fs.stat(path).then((stat: any) => Number(stat.mtimeMs), () => undefined),
+    mtimeMs: (path) => $.fs.stat(path).then((stat) => Number(stat.mtimeMs), () => undefined),
     sleep: (ms) => $.clock.sleep(ms),
     now: Date.now,
     tag: () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    list: (dir) => $.fs.list(dir).then((entries: any[]) => entries.map((entry) => String(entry?.name ?? '')), () => []),
+    list: (dir) => $.fs.list(dir).then((entries) => entries.map((entry) => String(entry?.name ?? '')), () => []),
   }
 }
 
 /** Writes the refusal event of `code` into the journal under `config`; never throws. */
-export async function observe($: any, config: string | undefined, code: string): Promise<void> {
+export async function observe($: Host<'fs' | 'process' | 'clock' | 'session' | 'ui'>, config: string | undefined, code: string): Promise<void> {
   try {
     if (!config) throw new Error('no configuration directory')
     const id = String(await $.session.id().catch(() => ''))
@@ -68,10 +77,10 @@ export async function observe($: any, config: string | undefined, code: string):
       Promise.resolve().then(() => $.clock.sleep(OBSERVE_DEADLINE_MS)).then(() => reject(new Error('no answer in ' + OBSERVE_DEADLINE_MS + ' ms')), () => undefined)
     })
     await Promise.race([appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, prune), deadline])
-  } catch (err: any) {
+  } catch (err: unknown) {
     try {
-      const sent = $.ui.log('github: the observation ' + code + ' could not be journaled or the journal pruned: ' + String(err?.message ?? err).trim())
-      if (sent && typeof sent.catch === 'function') sent.catch(() => undefined)
+      const sent: unknown = $.ui.log('github: the observation ' + code + ' could not be journaled or the journal pruned: ' + reasonOf(err).trim())
+      if (isCatchable(sent)) sent.catch(() => undefined)
     } catch {
       // Nowhere to say it: the call goes on.
     }

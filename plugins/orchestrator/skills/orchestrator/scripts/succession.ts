@@ -28,6 +28,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
+import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, orchForm, parseRecord, sessionOrchestration, stateRoot, type Row } from './dispatch-record.ts'
@@ -123,23 +125,11 @@ function object(text: string | undefined): Fields | undefined {
   }
 }
 
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
-
 /** The deck's orchestrator of that name, local: its pull requests and its agents' names. */
 export function deckOpen(deckText: string | undefined, name: string): { prs: string[]; agents: string[]; repo?: string } {
-  const deck = object(deckText)
-  const orchestrators = Array.isArray(deck?.['orchestrators']) ? (deck['orchestrators'] as unknown[]) : []
-  for (const entry of orchestrators) {
-    const orch = typeof entry === 'object' && entry !== null ? (entry as Fields) : {}
-    if (orch['name'] !== name || (orch['machine'] ?? null) !== null) continue
-    const agents = Array.isArray(orch['agents']) ? (orch['agents'] as unknown[]) : []
-    return {
-      prs: strings(orch['prs']),
-      agents: agents.map(agent => (typeof agent === 'object' && agent !== null ? (agent as Fields)['name'] : undefined)).filter((n): n is string => typeof n === 'string'),
-      ...(typeof orch['repo'] === 'string' && orch['repo'] !== '' ? { repo: orch['repo'] } : {}),
-    }
-  }
-  return { prs: [], agents: [] }
+  const orch = (deckText === undefined ? null : parseDeck(deckText))?.orchestrators.find(o => o.name === name && o.machine === null)
+  if (orch === undefined) return { prs: [], agents: [] }
+  return { prs: orch.prs, agents: orch.agents.map(agent => agent.name), ...(orch.repo ? { repo: orch.repo } : {}) }
 }
 
 /** A question asked with `ask` (hooks/question.ts, `v` 2) as its block reads, from its fields. */
@@ -280,13 +270,13 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
   // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
   const ledger = ledgerLines(recordText)
-  const { agents, repo } = deckOpen(readText(join(state, 'deck.json')), request.name)
+  const { agents, repo } = deckOpen(readText(join(state, DECK_FILE)), request.name)
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
   const found = linkRows(openRows(parseRecord(recordText)), ledger, [repo, projectOf(request.worktree, request.record)], openPrs)
   const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
-  const round = join(state, 'round')
+  const round = join(state, ROUND_DIR)
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
     rows: found.rows,
@@ -466,7 +456,7 @@ export function fill(template: string, values: Readonly<Record<string, string>>)
 // a move that fails is said, and the takeover goes on.
 function archiveRound(state: string, now: Date, io: Io): number {
   try {
-    return archiveSettled(join(state, 'round'), now)
+    return archiveSettled(join(state, ROUND_DIR), now)
   } catch (error) {
     io.err(`succession: ${(error as Error).message}\n`)
     return 0

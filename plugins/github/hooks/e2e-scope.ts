@@ -47,9 +47,9 @@ const VERSION_LINE = /^[+-]\s*"version"\s*:\s*"[^"]*"\s*,?\s*$/
 // Whether a path, by itself, holds no runtime.
 function quietPath(path: string): boolean {
   const parts = path.split('/')
-  const base = parts[parts.length - 1]
+  const base = parts[parts.length - 1] ?? ''
   if (DOC_FILE.test(base) || NOTICE.test(base) || TEST_FILE.test(base) || CI_FILE.has(base)) return true
-  if (parts.length > 1 && (DOC_TOP.has(parts[0]) || CI_TOP.has(parts[0]))) return true
+  if (parts.length > 1 && (DOC_TOP.has(parts[0] ?? '') || CI_TOP.has(parts[0] ?? ''))) return true
   return parts.slice(0, -1).some((dir) => TEST_DIRS.has(dir))
 }
 
@@ -147,7 +147,7 @@ export function globMatches(glob: string, path: string): boolean {
   const pattern = glob.endsWith('/') ? glob + '**' : glob
   let source = ''
   for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i]
+    const c = pattern[i] ?? ''
     const segment = (i === 0 || pattern[i - 1] === '/') && (i + 2 === pattern.length || pattern[i + 2] === '/')
     if (c === '*' && pattern[i + 1] === '*' && segment) {
       // `**/` is any directories, none included; a final `**` is anything below.

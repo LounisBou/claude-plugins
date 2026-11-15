@@ -21,6 +21,21 @@ const ledger = (repo: string, pr: number, agent: string): string =>
 const todo = (id: number, rows: number[] | undefined, state = 'open'): string =>
   JSON.stringify({ v: 1, id, opened: '2026-11-14T09:00:00Z', label: `item ${id}`, state, verdict: '', words: `words ${id}`, said_at: '2026-11-14T09:00:00Z', from: NAME, ...(rows ? { rows } : {}) })
 
+/** A deck session, and a deck of orchestrators, whole as core's parser reads them. */
+const session = (name: string, repo: string | null = null) => ({
+  key: name, name, tty: null, tmux: null, repo, context: { percent: 1, tokens: 1, window: 1, past_gate: false }, waiting: null, updated_at: '2026-11-14T09:00:00.000Z', usage: null,
+})
+const orchestrator = (name: string, repo: string | null, prs: string[] = [], agents: string[] = [], machine: string | null = null) =>
+  ({ ...session(name, repo), machine, prs, agents: agents.map(agent => session(agent)) })
+function deckOf(orchestrators: object[]): object {
+  const period = { from: '2026-11-13T23:00:00.000Z', tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0 }
+  return {
+    version: 3, generated_at: '2026-11-14T09:00:00.000Z', machine: 'mbp', coordinator: null, orchestrators, unattached_agents: [], sleeping: [],
+    round: { open: 0, urgent: 0, oldest_since: null }, usage_totals: { day: period, week: period, at: '2026-11-14T09:00:00.000Z' },
+    usage_basis: { currency: 'USD', prices: 'api-list-equivalent', timezone: 'Europe/Paris' },
+  }
+}
+
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
 function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string> } = {}) {
   const state = join(dir, 'state')
@@ -41,13 +56,10 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   writeFileSync(`${record}.owner`, `${NAME}\n`)
   rmSync(join(briefs, 'goals.md'), { force: true })
   if (over.goals !== null) writeFileSync(join(briefs, 'goals.md'), over.goals ?? '# Goals\nspec: /specs/belt.md\nrepo: /w\naim: a belt that holds\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | tables | phase 1 | pr:acme/app#11 |\n| G2 | open | routes | phase 2 | |\n')
-  writeFileSync(join(state, 'deck.json'), JSON.stringify(over.deck ?? {
-    version: 3,
-    orchestrators: [
-      { name: NAME, machine: null, prs: ['acme/other#99'], agents: [{ name: 'Agent: api' }] },
-      { name: 'Orch: other', machine: null, prs: ['acme/site#7'], agents: [{ name: 'Agent: site' }] },
-    ],
-  }))
+  writeFileSync(join(state, 'deck.json'), JSON.stringify(over.deck ?? deckOf([
+    orchestrator(NAME, null, ['acme/other#99'], ['Agent: api']),
+    orchestrator('Orch: other', null, ['acme/site#7'], ['Agent: site']),
+  ])))
   for (const entry of over.round ?? [
     { id: 'q-2', session: SESSION, from: NAME, kind: 'operator', status: 'open', question: '**Question 1 of 1**\nWhich schema?' },
     { id: 'q-1', session: SESSION, from: NAME, kind: 'operator', status: 'answered', question: 'Done?' },
@@ -254,7 +266,9 @@ test('todoStray reads the open items only, each row they name once against the r
 test('the deck and the round are read as data: a remote orchestrator, a malformed file, none', () => {
   assert.deepEqual(deckOpen(undefined, NAME), { prs: [], agents: [] })
   assert.deepEqual(deckOpen('not json', NAME), { prs: [], agents: [] })
-  assert.deepEqual(deckOpen(JSON.stringify({ orchestrators: [{ name: NAME, machine: 'mini', prs: ['a#1'] }] }), NAME), { prs: [], agents: [] })
+  assert.deepEqual(deckOpen(JSON.stringify(deckOf([orchestrator(NAME, null, ['a#1'], [], 'mini')])), NAME), { prs: [], agents: [] })
+  assert.deepEqual(deckOpen(JSON.stringify(deckOf([orchestrator(NAME, 'acme/app', ['a#1'], ['Agent: api'])])), NAME), { prs: ['a#1'], agents: ['Agent: api'], repo: 'acme/app' })
+  assert.deepEqual(deckOpen(JSON.stringify({ ...deckOf([orchestrator(NAME, null)]), version: 2 }), NAME), { prs: [], agents: [] })
   assert.deepEqual(roundOpen([undefined, { id: 'a', from: NAME, kind: 'operator', status: 'open' }], NAME, SESSION), [{ id: 'a', text: '' }])
 })
 
@@ -355,7 +369,7 @@ function flowWorld() {
     JSON.stringify({ id: 42, label: 'ggf P15 infra sync prod: pre-flight', state: 'open', verdict: '', review: { head, norms: 'tool', at: '2026-11-03T16:03:31Z', fixed: { head: fixed, at: '2026-11-03T16:37:39Z' } }, surface: { kind: 'none', pr: '', reason: '', at: '2026-11-03T16:03:31Z' } }),
     JSON.stringify({ id: 46, label: 'ggf P16 release in conflict with main', state: 'open', verdict: '' }),
   ].join('\n') + '\n'
-  const deck = { version: 3, orchestrators: [{ name: 'Orch: flow', machine: null, repo: 'acme/flow', prs: [], agents: [] }] }
+  const deck = deckOf([orchestrator('Orch: flow', 'acme/flow')])
   const w = world({ rows, deck, round: [], todo: '' })
   writeFileSync(`${w.record}.owner`, '')
   const config = join(dir, 'config')
@@ -408,7 +422,7 @@ test('a short repository name two known repositories share names no pull request
     JSON.stringify({ id: 5, label: 'SURFACE: named there', state: 'open', surface: { kind: 'x', pr: 'acme/flow#6' } }),
     JSON.stringify({ id: 6, label: 'AGENT: api has it', state: 'open', surface: { kind: 'x', pr: 'acme/flow#6' } }),
   ].join('\n') + '\n'
-  const deck = { version: 3, orchestrators: [{ name: NAME, machine: null, repo: 'acme/flow', prs: [], agents: [{ name: 'Agent: agent' }] }] }
+  const deck = deckOf([orchestrator(NAME, 'acme/flow', [], ['Agent: agent'])])
   const w = world({ rows, deck, round: [], todo: '' })
   writeFileSync(join(w.briefs, 'second.jsonl'), '')
   writeFileSync(w.record, `${readFileSync(w.record, 'utf8')}${ledger('beta/flow', 8, 'Agent: other')}\n`)
@@ -429,7 +443,7 @@ test('a row\'s pull request named in its label by a short or a full repository, 
     JSON.stringify({ id: 3, label: 'NOTE other#9 not a known repository', state: 'open' }),
     ledger('acme/flow', 30, 'Agent: tokens'),
   ].join('\n') + '\n'
-  const deck = { version: 3, orchestrators: [{ name: NAME, machine: null, repo: 'acme/flow', prs: [], agents: [] }] }
+  const deck = deckOf([orchestrator(NAME, 'acme/flow')])
   const w = world({ rows, deck, round: [], todo: '' })
   const out: string[] = []
   const forge = (repo: string) => (repo === 'acme/flow' ? [{ repo, pr: 30, head: 'a'.repeat(40) }] : undefined)
@@ -446,7 +460,7 @@ test('a blocker still standing keeps its word over an open pull request the row 
     JSON.stringify({ id: 2, label: 'FIX acme/flow#31 merged since', state: 'open' }),
     ledger('acme/flow', 31, 'Agent: gone'),
   ].join('\n') + '\n'
-  const deck = { version: 3, orchestrators: [{ name: NAME, machine: null, repo: 'acme/flow', prs: [], agents: [] }] }
+  const deck = deckOf([orchestrator(NAME, 'acme/flow')])
   const w = world({ rows, deck, round: [], todo: '', prs: { 'acme/flow#30': 'OPEN' } })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }

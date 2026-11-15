@@ -18,6 +18,8 @@ changed by a pull request that edits this file and the code it governs together.
 ## Types and boundaries
 
 - `strict` with the options of `tsconfig.base.json`. No `any`; `unknown` at every boundary.
+  Not held yet for the host's `$`, typed `any` in hook files under the strict check
+  (`specs/program-design.md`, goal 5).
 - Every value read from outside (a file, an event payload, a command's output, an environment
   variable) goes through a validator that returns a typed value or an error. A cast is allowed
   only inside a validator.
@@ -62,7 +64,8 @@ changed by a pull request that edits this file and the code it governs together.
 
 - Coverage is a floor, not a target: 85 % of lines and functions, 80 % of branches, for
   TypeScript (node's coverage, `npm test` fails under it) and for Python (`coverage.py
-  --fail-under`). A part joins the measure the day it is strict. A test is written for a
+  --fail-under`). The Python floor is not measured yet: nothing runs `coverage.py`
+  (`specs/program-design.md`, goal 18). A part joins the measure the day it is strict. A test is written for a
   behaviour worth protecting, never to raise a percentage.
 - What cannot run under a test (a process entry point, a call into the host or an outside API)
   is a thin adapter around tested logic, so the floor is reached without tests of plumbing.

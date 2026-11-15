@@ -15,7 +15,12 @@
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
 import { machineLine } from '../core/method.ts'
+import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
+import type { Host } from './host.ts'
+
+// A parsed value that holds fields: an object, an array among them.
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 // --- the decision shapes -----------------------------------------------------------------
 
@@ -64,10 +69,8 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // --- the declared wait (hooks/wait.ts) ----------------------------------------------------------
 
 // What a turn may declare will wake it, by `declare_wait({kind, blocks})`: a question for the
-// operator, every goal met, or only deferred work left. A command, monitor, subagent or agent of
-// its own is read by the gate itself (checkWake), never declared.
-export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const
-export type WaitKind = typeof WAIT_KINDS[number]
+// operator, every goal met, or only deferred work left (core's WAIT_KINDS). A command, monitor,
+// subagent or agent of its own is read by the gate itself (checkWake), never declared.
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
 // consent: the subject an operator question asks his consent on (core's consent-record.ts), which the
 // audit trail names.
@@ -137,7 +140,7 @@ export const todoOpen = (names: readonly string[], verb: 'done' | 'deferred' = '
 // Where the rows and the goals were read: the record files and goals.md files that hold them,
 // said in the refusal so a session sees whose file it is being asked about. Nothing is said
 // when the caller does not know them.
-type Where = { rows?: readonly string[]; goals?: readonly string[] }
+type Where = { rows?: readonly string[] | undefined; goals?: readonly string[] | undefined }
 const placed = (paths: readonly string[] | undefined) => (paths && paths.length > 0 ? ` in ${paths.join(', ')}` : '')
 // One pass over the template, so a label or a path that spells a placeholder is never filled twice.
 const fill = (template: string, names: readonly string[], paths: readonly string[] | undefined) =>
@@ -164,7 +167,7 @@ export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:\(urgent\)\s*)?(?:—|
 const DEFERRED_LINE = /^waiting:\s*deferred\s*(?:—|–|--|-)\s*(.+)$/i
 export function deferredIds(line: string): string | null {
   const matched = DEFERRED_LINE.exec(line)
-  return matched ? matched[1].trim() : null
+  return matched ? (matched[1] ?? '').trim() : null
 }
 export const URGENT_LINE = /^waiting:\s*operator\s*\(urgent\)/i
 // A wait on the operator whose reason blocks nothing: no question for him, so no wait on him.
@@ -178,7 +181,7 @@ const NAMES_SOMETHING = /\bG\d+\b|#\d+|\brow\s+\d+\b|\b(?:than|but|except|before
 export function blocksNothing(line: string): boolean {
   const matched = OPERATOR_LINE.exec(line)
   if (matched === null) return false
-  const reason = matched[1].trim().replace(/\.$/, '').trim()
+  const reason = (matched[1] ?? '').trim().replace(/\.$/, '').trim()
   return NOTHING_BLOCKED.test(reason) && !NAMES_SOMETHING.test(reason)
 }
 // The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
@@ -198,7 +201,7 @@ function parseRow(line: string): Row | null {
   const parts = line.split(' | ')
   if (parts.length < 4) return null
   while (parts.length > 4 && (parts[parts.length - 1] === 'self' || parts[parts.length - 1] === 'hidden')) parts.pop()
-  return { tty: parts[1], title: parts.slice(2, -1).join(' | '), name: parts[parts.length - 1] }
+  return { tty: parts[1] ?? '', title: parts.slice(2, -1).join(' | '), name: parts[parts.length - 1] ?? '' }
 }
 
 export function listing(out: string): Row[] {
@@ -279,7 +282,7 @@ export function ownAgents(rows: readonly Row[], entries: readonly ChainEntry[], 
 // `tmux:<socket path>:<pane id>` (the socket is the first field of TMUX). Elsewhere it is
 // the part of ITERM_SESSION_ID after its last colon. The launcher states the same rule
 // (iterm_agent.py, `tmux_owner`); empty when neither names a session.
-export async function chainOwner($: any): Promise<string> {
+export async function chainOwner($: Host<'env'>): Promise<string> {
   const tmux = String((await $.env.get('TMUX')) ?? '')
   const pane = String((await $.env.get('TMUX_PANE')) ?? '')
   if (tmux && pane) return `tmux:${tmux.split(',')[0]}:${pane}`
@@ -318,9 +321,9 @@ export function chainEntries(text: string): ChainEntry[] {
 export function pullRequestOf(branch: string | null, answer: string | null): { number: string; state: string } | null {
   if (!branch || !answer) return null
   try {
-    const pr = JSON.parse(answer)
-    if (pr === null || typeof pr !== 'object' || pr.number === undefined || pr.state === undefined) return null
-    return { number: String(pr.number), state: String(pr.state) }
+    const pr: unknown = JSON.parse(answer)
+    if (!isObject(pr) || pr['number'] === undefined || pr['state'] === undefined) return null
+    return { number: String(pr['number']), state: String(pr['state']) }
   } catch {
     return null
   }
@@ -331,23 +334,23 @@ export function pullRequestOf(branch: string | null, answer: string | null): { n
 // open_rows() ported over the already-read record files: `<id> (<label>)` for each
 // row still open, no matter which record file carries it.
 export function openRows(texts: readonly string[]): string[] {
-  return rowsWhere(texts, row => row.state === 'open')
+  return rowsWhere(texts, row => row['state'] === 'open')
 }
 
 // The open rows the operator deferred (`deferred` carries his ruling): still open, put off.
 export function deferredRows(texts: readonly string[]): string[] {
-  return rowsWhere(texts, row => row.state === 'open' && typeof row.deferred === 'string' && row.deferred.trim() !== '')
+  return rowsWhere(texts, row => row['state'] === 'open' && typeof row['deferred'] === 'string' && row['deferred'].trim() !== '')
 }
 
-function rowsWhere(texts: readonly string[], keep: (row: Record<string, any>) => boolean): string[] {
+function rowsWhere(texts: readonly string[], keep: (row: Record<string, unknown>) => boolean): string[] {
   const rows: string[] = []
   for (const text of texts) {
     for (const line of text.split('\n')) {
       if (!line.trim()) continue
       try {
-        const row = JSON.parse(line)
-        if (row && typeof row === 'object' && keep(row)) {
-          rows.push(`${row.id} (${row.label || 'no label'})`)
+        const row: unknown = JSON.parse(line)
+        if (isObject(row) && keep(row)) {
+          rows.push(`${row['id']} (${row['label'] || 'no label'})`)
         }
       } catch { /* a line that is no row: no row */ }
     }
@@ -364,7 +367,7 @@ export function projectCheckouts(top: string, listOut: string): string[] {
   const project = basename(top)
   const found: string[] = []
   for (const line of listOut.split('\n')) {
-    const path = line.split(' | ', 1)[0].trim()
+    const path = (line.split(' | ', 1)[0] ?? '').trim()
     if (path && path !== top && basename(dirname(path)) === project) found.push(path)
   }
   return found
@@ -527,7 +530,7 @@ function peerKeys(to: string): string[] {
   const m = /^(.*?)\s*\[([^\]]+)\]\s*$/.exec(to.trim())
   if (m) {
     if (m[1]) keys.add(m[1])
-    keys.add(m[2])
+    keys.add(m[2] ?? '')
   }
   return [...keys].filter(k => k !== '')
 }
@@ -578,7 +581,7 @@ function idsMismatch(listed: string, rows: readonly string[], goals: readonly st
     return countWrong
   }
   const wanted = new Map<string, string>()
-  for (const row of rows) wanted.set(row.split(' ')[0].toUpperCase(), `row ${row.split(' ')[0]}`)
+  for (const row of rows) wanted.set((row.split(' ')[0] ?? '').toUpperCase(), `row ${row.split(' ')[0]}`)
   for (const goal of goals) wanted.set(goal.toUpperCase(), goal)
   for (const todo of todos) wanted.set(`T${todo.split(' ')[0]}`.toUpperCase(), `to-do ${todo.split(' ')[0]}`)
   const named = listed.split(/[,\s]+/).filter(id => id !== '' && !/^rows?$/i.test(id))
@@ -603,7 +606,7 @@ export function checkWakeDone(left: {
   rowRecords?: readonly string[]
   goalsRecords?: readonly string[]
   ending?: 'done' | 'deferred'
-  ids?: string
+  ids?: string | undefined
 }): Held | null {
   // The working copies are not read by session, so they only warn (the caller logs them); the agents refuse.
   const stillThere = left.agents.map(a => a.label)
@@ -640,11 +643,11 @@ export type GoalsReading = {
 // parse is a read that failed, and lets the stop pass.
 export function parseGoalsCheck(path: string, text: string): GoalsReading | null {
   try {
-    const a = JSON.parse(text)
-    if (!a || typeof a !== 'object' || typeof a.ok !== 'boolean' || !Array.isArray(a.open) || !Array.isArray(a.faults)) return null
+    const a: unknown = JSON.parse(text)
+    if (!isObject(a) || typeof a['ok'] !== 'boolean' || !Array.isArray(a['open']) || !Array.isArray(a['faults'])) return null
     const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
     return {
-      path, ok: a.ok, open: strings(a.open), deferred: strings(a.deferred), faults: strings(a.faults), notes: strings(a.notes),
+      path, ok: a['ok'], open: strings(a['open']), deferred: strings(a['deferred']), faults: strings(a['faults']), notes: strings(a['notes']),
     }
   } catch {
     return null
@@ -669,7 +672,7 @@ export function orchestrationOf(name: string | null | undefined): string | null 
 // The owner an owner file names: its first line, as the orchestration when it reads as one,
 // null when the file is blank.
 export function ownerOf(text: string): string | null {
-  const line = text.split('\n')[0].trim()
+  const line = (text.split('\n')[0] ?? '').trim()
   return line === '' ? null : orchestrationOf(line) ?? line
 }
 
@@ -680,7 +683,7 @@ export const isOwnRecord = (owner: string | null, own: string | null): boolean =
 // about rows names. `texts` runs parallel to `records`.
 export function recordsWithOpenRows(records: readonly string[], texts: readonly string[]): string[] {
   return records.filter((_, i) => rowsWhere([texts[i] ?? ''], row =>
-    row.state === 'open' && !(typeof row.deferred === 'string' && row.deferred.trim() !== '')).length > 0)
+    row['state'] === 'open' && !(typeof row['deferred'] === 'string' && row['deferred'].trim() !== '')).length > 0)
 }
 
 // The goals.md of each registered record: the file beside it, once per directory.
@@ -717,9 +720,9 @@ export function readHeads(text: string): Heads {
     const state = parts.length > 2 ? parts[2] : 'done'
     if (state !== 'pending' && state !== 'done') continue
     const failing = parts.length === 4
-      ? new Set(parts[3].split(',').map(n => decodeName(n)))
+      ? new Set((parts[3] ?? '').split(',').map(n => decodeName(n)))
       : new Set<string>()
-    heads.set(parts[0], [parts[1], state, failing])
+    heads.set(parts[0] ?? '', [parts[1] ?? '', state, failing])
   }
   return heads
 }
@@ -795,7 +798,7 @@ export function parseCiWatchLog(text: string): Record<string, string> {
   for (const raw of text.split('\n')) {
     const parts = raw.replace(/\r$/, '').split('\t')
     if (parts.length < 2 || !parts[0]) continue
-    checks[parts[0]] = parts[1]
+    checks[parts[0]] = parts[1] ?? ''
   }
   return checks
 }
@@ -805,7 +808,7 @@ export function parseCiWatchLog(text: string): Record<string, string> {
 export function watchNumberOf(name: string): string | null {
   if (/-pr\d+-base\.log$/.test(name)) return null
   const m = /-pr(\d+)\.log$/.exec(name)
-  return m ? m[1] : null
+  return m ? m[1] ?? null : null
 }
 
 // watched_numbers() ported: the pull request numbers a ci-watch process is alive for.
@@ -821,7 +824,7 @@ export function processTable(out: string): ProcessRow[] {
   const rows: ProcessRow[] = []
   for (const line of out.split('\n')) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.*\S)/.exec(line)
-    if (m) rows.push({ pid: m[1], ppid: m[2], command: m[3] })
+    if (m) rows.push({ pid: m[1] ?? '', ppid: m[2] ?? '', command: m[3] ?? '' })
   }
   return rows
 }
@@ -859,7 +862,7 @@ const SHOWN_CAP = 80
 // undone and its newlines (ps prints them \012) one space, cut past the cap.
 function evaled(command: string): string {
   const m = EVALED.exec(command)
-  const text = (m ? m[1].replace(/'"'"'|'\\''/g, "'") : command).replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim()
+  const text = (m ? (m[1] ?? '').replace(/'"'"'|'\\''/g, "'") : command).replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim()
   return text.length > SHOWN_CAP ? `${text.slice(0, SHOWN_CAP - 1)}…` : text
 }
 
@@ -899,7 +902,7 @@ export function watchedNumbers(psOut: string): Set<string> {
   const watched = new Set<string>()
   for (const line of psOut.split('\n')) {
     const m = WATCH_PROCESS.exec(line)
-    if (m) watched.add(m[1])
+    if (m) watched.add(m[1] ?? '')
   }
   return watched
 }

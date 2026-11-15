@@ -26,8 +26,8 @@ the same defects again and again — a rule implemented in several languages and
 consent inferred from words, readiness self-attested, guards that let everything through
 when they fail, untyped TypeScript, suites that pass only on the author's Mac, prompts heavy
 with history. This program gathers the plugins in one repository and rebuilds their
-foundations so that the next change is cheap and the drift cannot return. The operator moves
-to this repository only once it is proved stable (`docs/migration.md`).
+foundations so that the next change is cheap and the drift cannot return. The operator installs
+from this repository's catalogue (`docs/migration.md`).
 
 ## Operator priorities (they rank every trade-off)
 
@@ -71,7 +71,7 @@ to this repository only once it is proved stable (`docs/migration.md`).
 ## State on main (2026-11-15)
 
 What the code on `main` (`d540c0c6`, release 3.1) holds for each goal, read from the code and CI
-on 2026-11-15, not from the history; the previous reading was `b36f7ae2` (2026-11-14). Pull
+on 2026-11-15, not from the history, rows 5, 6, 9, 14, 17 and 18 again at `775d7fdc`; the previous reading was `b36f7ae2` (2026-11-14). Pull
 requests are named with the repository, `claude-plugins#N`. « Open » says what is left and why;
 a goal is met only when its row says so, and a met row names its pull requests. Goals 2, 16 and
 17 are about the operator's machines and configuration, outside this repository: their rows say
@@ -80,27 +80,28 @@ what was read there.
 | # | State | Evidence | Open, and why |
 |---|---|---|---|
 | 1 | met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is run without a shell, its command split into words (`_check_argv`), and refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | — |
-| 2 | met | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check`; the operator installs from the `lounisbou` catalogue in his own profile, the plan's separate one having been left, and `npm run deploy` installs each green commit of `main` on his MacBook by itself (claude-plugins#264, claude-plugins#266, claude-plugins#272; `d540c0c6` is the commit installed) | — (the install on IznoServer is a step of the finish line below) |
-| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: the session-name shape (`coordinator.sh`, statusbar's prefixes) and the read/write classification of cloudflare (`hooks/register.ts`, `engine/cf.py`, `engine/cf-write.py`) |
+| 2 | met | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check`; the operator installs from the `lounisbou` catalogue in his own profile, the plan's separate one having been left, and `npm run deploy` installs each green commit of `main` on his MacBook by itself (claude-plugins#264, claude-plugins#266, claude-plugins#272; `d540c0c6` is the commit installed) | — (the install on IznoServer is the cutover's step 2, goal 17) |
+| 3 | met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); cloudflare's read/write classification is data in `hooks/register.ts`, read by `engine/cf.py`; pr-review runs github's installer (claude-plugins#29) | — |
 | 4 | partly met | typed in core with a version: PR records, the `tests` kind of a stacked pull request's light CI included (tested from both sides, `scripts/contracts.test.ts`; claude-plugins#242), consent records (claude-plugins#78), the learning events and the install record, the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`); the launcher's `spawn` line and the `ListAgents` reading are core's | `deck.json` and the declared wait kinds are not typed in core, and the launcher's command lines carry no version (`docs/contracts.md`) |
-| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, implement, learning, norms, pr-review, statusbar and telemetry, and eleven of the orchestrator's, one of them by import | 33 hook files are outside the strict check, github's 8 and the orchestrator's 25; 9 of them still type `$` as `any` |
+| 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, github, implement, learning, norms, pr-review, statusbar and telemetry, and twelve of the orchestrator's, one of them by import; every plugin's hook tests run in its suite, so in CI (`claude plugin test`) | 26 hook files are outside the strict check, the orchestrator's, 8 of them typing `$` as `any`; under the check, 20 hook files of bugs-bot, cloudflare, implement, norms, pr-review and statusbar type their handlers' `$` as `any`, 190 times, against « No `any` » (`docs/conventions.md`) |
 | 6 | met | `ci/plugins.json`: twelve plugins block on Linux and macOS, drift running only at the release and the night (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); a pull request runs the Linux suites of what it changes, `main` every plugin but drift on Linux, macOS the release and each night (`scripts/plugin-matrix.ts`) | — |
 | 7 | met | `npm run deps` (`scripts/deps.ts`, claude-plugins#5) | — |
 | 8 | partly met | github's ready gate reads records bound to the head and refuses a review record written by the session that pushed it (claude-plugins#20, claude-plugins#130); the review verdict is computed from the review agents' findings (claude-plugins#18); norms' pass is held to the findings its agents report, the figures passed to `check_done` having to account for each once (claude-plugins#181); a check plan is accepted only from the orchestrator (claude-plugins#164); a stacked pull request's `tests` record is written by github's light CI alone (claude-plugins#242) | the E2E record: `mcp__github__record` writes the `pass` the running session states, on a clean checkout; no tool computes it |
-| 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78); the orchestrator's stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, claude-plugins#179), and reads tool waits itself (claude-plugins#268); an operator wait is declared on the questions asked with `ask`, no question block in the wait (claude-plugins#240, claude-plugins#271) | other readers of an orchestrator turn's last line remain in `hooks/guards.ts` (`undeclaredOperatorWait`, and `deferredIds` in the done branch), and the relay parses an agent's `status:` line |
+| 9 | partly met | no grant read from words in norms (claude-plugins#28), pr-review (claude-plugins#17), implement (claude-plugins#30); github reads consent from consent records declared with `declare_wait` (claude-plugins#78); the orchestrator's stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, claude-plugins#179), and reads tool waits itself (claude-plugins#268); an operator wait is declared on the questions asked with `ask`, no question block in the wait (claude-plugins#240, claude-plugins#271) | other readers of an orchestrator turn's last line remain in `hooks/guards.ts` (`undeclaredOperatorWait`, and `deferredIds` in the done branch), and the relay parses an agent's `status:` line; `mcp__github__record` takes an E2E or norms waiver and an E2E exemption on the operator's words quoted with their date in `detail`, held to a quote and a date and read from no consent record (`quotedWordsRefusal`, `plugins/github/hooks/register.ts`) |
 | 10 | met for the guards listed in the defects | github (claude-plugins#15), bugs-bot (claude-plugins#16), norms' push guard (claude-plugins#28) refuse when they cannot decide | — |
 | 11 | met | `npm run permissions`; the installer rules of `docs/contracts.md` (claude-plugins#21) | — |
 | 12 | met | `/github:protect [apply]` (claude-plugins#21); the orchestrator's local push guard removed (claude-plugins#72) | — |
 | 13 | partly met | « Verified defects by plugin » below, each item marked | the items marked open or partly |
-| 14 | met | `ci/prompts.json` held by CI (claude-plugins#1); the simulator (claude-plugins#32); `npm run context`: the orchestrator's start is 2,105 tokens in `build`, 1,521 in `investigate` | — |
+| 14 | met | `ci/prompts.json` held by CI (claude-plugins#1); the simulator (claude-plugins#32); `npm run context`: the orchestrator's start is 2,153 tokens in `build`, 1,552 in `investigate` | — |
 | 15 | not met | the harness, the cases and the caps (`evals/outcome/`, `npm run outcome`; claude-plugins#42, claude-plugins#47, claude-plugins#49), the orchestration arm run as an orchestration (claude-plugins#97) | no pilot of the rebuilt arm and no measure is recorded: paid runs are the operator's, on their machine, under `evals/outcome/caps.json`; the release pull request asks whether to re-run the measure (`docs/architecture.md`, « Release »), and nothing runs without the operator's yes |
 | 16 | partly met, outside this repository | the operator's configuration (`~/.claude`, branch `home` of `claude-code`) was adapted on `next-home` and merged (claude-code#43, 2026-11-10); its plugins are enabled as `@lounisbou` | no sweep for a stale reference was run: his repository is outside this one |
-| 17 | partly met | `docs/migration.md`: criterion 1 (CI green on `main`, every plugin blocking) holds; the cutover's step 1 is taken (claude-code#43) and the catalogue is installed on the MacBook | criteria 2 and 3 follow goals 15 and 21, not met, and stay so if they are closed where they are; no rehearsal (criterion 5) is recorded, and the stale-reference sweep (criterion 6) is goal 16's; criterion 4 asks one to two weeks of use, the finish line 24 hours; the install on IznoServer and the restart of the sessions (step 2) are the finish line's |
-| 18 | met for the strict parts | claude-plugins#1: `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured; a part joins the day it is strict |
+| 17 | partly met | `docs/migration.md`: CI is green on `main` and every plugin blocks on both platforms; the cutover's step 1 is taken (claude-code#43) and the catalogue is installed on the MacBook | criterion 2 is every goal of this table and criterion 3 goal 15, not met; no rehearsal (criterion 4) is recorded, and the stale-reference sweep (criterion 5) is goal 16's; the install on IznoServer and the restart of the sessions (the cutover's step 2) are not recorded |
+| 18 | met for the strict parts | claude-plugins#1: `npm test` fails under 85 % of lines and functions, 80 % of branches, over `scripts/`, core and the skill scripts | no Python part is measured: nothing in the repository or CI runs `coverage.py`, though the conventions set the floor for Python too |
 | 19 | met | `plugins/method` (the kernel and its references), core's `method.ts`; implement and the orchestrator point at `method:lifecycle` (claude-plugins#19, claude-plugins#67, claude-plugins#74) | none: the orchestrator reads an agent's status line and the operator's question block through core's `method.ts` (`reportStatus`, `parseChoices`, …), its own parsers removed |
 | 20 | met | `/implement:review` runs the review in another session (claude-plugins#20) | the operator's open decision on implement in orchestrated briefs (below) |
 | 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32); each closed generation's measure is kept from now on (claude-plugins#262) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280, read on 2026-11-14 and not re-read; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
 | 22 | met | `npm run rules` (claude-plugins#33) | — |
+| — | two disagreements between designs, open | goal 15 and goal 9 of `orchestrator-refoundation-design.md` want the outcome measure at every release, question 4 of `learning-design.md` and `docs/architecture.md` (« Release ») monthly and before a learned method change; goal 3 of `orchestrator-refoundation-design.md` wants the orchestrator's Python reduced to a thin iTerm2 adapter, non-goal 4 below ports no Python engine | neither is settled: which cadence goal 15 is held to, and whether `routing.py`, `goals.py`, `draft_guard.py` and the logic of `iterm_agent.py` are engines kept or scripts to port |
 
 ## The end of the program
 
@@ -131,9 +132,8 @@ the orchestration stands, not conditions of the end.
 - « je veux qu'on livre l'ensemble du développement »
 - « Je ne dois pas être à un point de blocage. »
 
-Goals 3, 5, 15 and 21 are therefore open like the others, after what slows his daily work: the two
-remaining copies (the session-name shape, cloudflare's read/write classification), strict typing of
-github's 8 hook files and the orchestrator's 25, the outcome measure run on the harness in place, and
+Goals 5, 15 and 21 are therefore open like the others, after what slows his daily work: strict typing of
+github's 9 hook files and the orchestrator's 26, the outcome measure run on the harness in place, and
 the calibration on more first-turn measures.
 
 ## Constraints
@@ -144,7 +144,7 @@ the calibration on more first-turn measures.
 - Kept as they are: the orchestrator's iTerm sessions and home session, `deck.json`'s format,
   the cost accounting, the spawn without
   approval, the launcher's trust write (made safe, not removed), review on evidence, the merge
-  reserved to the operator, the context gauge, the `workspace.sh delete` guards.
+  reserved to the operator outside auto-merge (this repository is in it, `CLAUDE.md`), the context gauge, the `workspace.sh delete` guards.
 - `docs/conventions.md` governs every change; a convention changes with the code it governs.
 - A port replaces its source in the same pull request.
 
@@ -194,16 +194,15 @@ cap is the operator's.
   norms leaves locating the github plugin to it; pr-review's is the one copy.
 - The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`,
   `skills/coordinator/scripts/coordinator.sh:316`, `skills/iterm-agents/scripts/iterm_agent.py:114`,
-  `dispatch-record.sh:168`, and statusbar's prefixes. **Open**: core's `names.ts` is read by
-  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts` and
-  `session-name.ts`; `iterm_agent.py` reads it as `names.json`; `coordinator.sh` and statusbar
-  still hold their own.
+  `dispatch-record.sh:168`, and statusbar's prefixes. **Done**: core's `names.ts` is read by
+  implement, bugs-bot, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts` and
+  `session-name.ts`; `iterm_agent.py`, `coordinator.sh` and statusbar read it as `names.json`.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`, and
   bugs-bot's third copy of the thresholds in `gate.py`. **Done**: core's `orchestration.ts`;
   statusbar shows the measure file's gate, `gate.py` reads the percentage as data.
 - The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in `hooks/usage.ts`, read by `routing.py`; one price table, `routing/prices.json` under the orchestrator's state directory.
 - The negative-phrase list in `plugins/github/engine/ghlib/assets.py:25` and `hooks/writing.ts`. **Done** (#199): one file, `engine/negative-phrases.json`, read by both.
-- The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Open.**
+- The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Done**: the list is data in `hooks/register.ts` (`READS`), read by `engine/cf.py`.
 - `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Done**: one module, `hooks/module-io.ts`, imported by every hook file.
 - The gh installer of `plugins/pr-review/install.sh:49-150`, which duplicates github's. **Done** (#29).
 
@@ -295,8 +294,9 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 **orchestrator** — `orchestrator-refoundation-design.md`, whose « State on main » holds its state.
 
 **Every plugin** — TypeScript handlers typed `$: any` with no tsconfig; TypeScript tests that run only inside the host (`claude-code/testing`), to be made runnable in CI or replaced by tests of pure modules.
-**Partly**: see goal 5. The suites of cloudflare, implement, norms and the orchestrator run
-`claude plugin test`; those of bugs-bot, github, pr-review and statusbar do not.
+**Partly**: see goal 5. Every plugin that has hook tests (bugs-bot, cloudflare, github, implement,
+norms, the orchestrator, pr-review and statusbar) runs them in its suite with `claude plugin test`,
+so CI runs them; cloudflare's suite alone skips them when `claude` is not on PATH.
 
 ## Non-goals
 

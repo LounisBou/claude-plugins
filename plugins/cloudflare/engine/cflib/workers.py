@@ -332,11 +332,11 @@ def restore_domain(ctx, saved):
 
 def register(subparsers):
     parser = subparsers.add_parser("workers", help="the Worker scripts of the account")
-    parser.set_defaults(handler=workers, read=True)
+    parser.set_defaults(handler=workers)
 
     parser = subparsers.add_parser("worker-routes", help="the Worker routes of a zone")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=worker_routes, read=True)
+    parser.set_defaults(handler=worker_routes)
 
     parser = subparsers.add_parser("worker-deploy", help="upload a script as an ES module")
     parser.add_argument("name", help="the script's name")
@@ -361,7 +361,7 @@ def register(subparsers):
 
     parser = subparsers.add_parser("worker-domains", help="the custom domains of the account, or of a zone")
     parser.add_argument("zone", nargs="?", help="zone name or id (default: every zone)")
-    parser.set_defaults(handler=worker_domains, read=True)
+    parser.set_defaults(handler=worker_domains)
 
     parser = subparsers.add_parser("worker-domain-add", help="serve a hostname from a script (custom domain)")
     parser.add_argument("hostname", help="a host of one of the account's zones")

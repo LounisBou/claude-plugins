@@ -6,13 +6,16 @@
 // returns, and the verdict stands.
 import { prRefsOf } from '../core/learning.ts'
 import { updateOver } from '../core/store-io.ts'
-import { messageOf } from './host.ts'
+import { messageOf, type Host } from './host.ts'
 import { ownRecords } from './ledger.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { parseSessionRow, sessionKey, storeOf } from './supervision.ts'
 import { readOr } from './unattended.ts'
 
 type Row = Record<string, unknown>
+
+// The nouns the count holds.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 
 const PROCESS_BOUND_MS = 5000
 
@@ -43,7 +46,7 @@ function names(row: Row, repo: string, pr: number): boolean {
 }
 
 // What git says in `cwd`: one trimmed line, or null.
-async function git($: any, cwd: string | undefined, argv: readonly string[]): Promise<string | null> {
+async function git($: Host<'process'>, cwd: string | undefined, argv: readonly string[]): Promise<string | null> {
   if (cwd === undefined) return null
   const done = await $.process.run(['git', ...argv], { cwd, timeoutMs: PROCESS_BOUND_MS }).catch(() => null)
   const line = done !== null && done.exitCode === 0 ? String(done.stdout ?? '').trim() : ''
@@ -51,13 +54,13 @@ async function git($: any, cwd: string | undefined, argv: readonly string[]): Pr
 }
 
 /** The repository `owner/name` the verdict is about: the one given, else the checkout's origin. */
-async function repositoryOf($: any, given: string, cwd: string | undefined): Promise<string | null> {
+async function repositoryOf($: Host<'process'>, given: string, cwd: string | undefined): Promise<string | null> {
   if (given !== '') return given
   return /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec((await git($, cwd, ['remote', 'get-url', 'origin'])) ?? '')?.[1] ?? null
 }
 
 // Raises `rounds` of the row `id` of `path`: the new count, or 0 when the row is gone.
-async function raise($: any, path: string, id: number): Promise<number> {
+async function raise($: Held, path: string, id: number): Promise<number> {
   let raised = 0
   await updateOver(storeIo($), path, current => {
     const lines = (current ?? '').split('\n')
@@ -79,7 +82,7 @@ async function raise($: any, path: string, id: number): Promise<number> {
  * one writer of `rounds` for a review round: `dispatch-record.sh review` records the head and
  * raises nothing.
  */
-export async function countRound($: any, input: { pr: number; repo: string; dir?: string; cwd?: string; at?: { record: string; row: number } }): Promise<string> {
+export async function countRound($: Held, input: { pr: number; repo: string; dir?: string; cwd?: string; at?: { record: string; row: number } }): Promise<string> {
   try {
     if (input.at !== undefined) {
       const { record, row: id } = input.at
@@ -98,8 +101,9 @@ export async function countRound($: any, input: { pr: number; repo: string; dir?
     const found: { path: string; id: number; open: boolean }[] = []
     for (const path of await ownRecords($, await stateDir($), sessionId, session?.name ?? null)) {
       for (const { row } of rowsOf(await readOr($, path))) {
-        if (!names(row, repo, input.pr)) continue
-        found.push({ path, id: row['id'] as number, open: row['state'] === 'open' })
+        const id = row['id']
+        if (typeof id !== 'number' || !names(row, repo, input.pr)) continue
+        found.push({ path, id, open: row['state'] === 'open' })
       }
     }
     const open = found.filter(row => row.open)
