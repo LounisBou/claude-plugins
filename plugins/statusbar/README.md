@@ -8,7 +8,7 @@ geonative-api │ ⎇ main* ↑1↓2 {3} │ a-model │ Fix the status bar…
 ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓▓▓▓░░░░░ → 3d │ +649/-167
 ```
 
-**Line 1** — current directory · enriched git branch · open PR · model · session name
+**Line 1** — current directory · enriched git branch · open PR · model · session name · open questions
 **Line 2** — context consumed · 5-hour quota · 7-day quota · lines added/removed
 
 ## Install
@@ -153,6 +153,11 @@ cleanliness, ahead/behind and stash count in one shot. It runs with
 In an orchestration session, the context segment shows the tokens against the
 orchestrator's context gate, read from the session's measure file the orchestrator plugin
 writes (`docs/contracts.md` of the repository, « Measure file »).
+
+When the orchestrator plugin runs on the machine, line 1 ends with `✋ N` (red, `✋ N (U urgent)`,
+once U of the N are urgent): the operator's open questions, read from the `round` of the machine's
+`deck.json` (`docs/contracts.md` of the repository, « `deck.json` »). Nothing shows when none is open,
+when the file is absent or torn, or when its stamp is more than three minutes old. The file is only read.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.
