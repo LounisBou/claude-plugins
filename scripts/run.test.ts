@@ -2,7 +2,7 @@
 // the pure functions of scripts.test.ts do not reach.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -515,6 +515,7 @@ describe('core copies', () => {
 
   it('writes the copy into every plugin holding a core directory, then finds it current', () => {
     const root = withCore()
+    writeFileSync(join(root, 'plugins', 'alpha', 'a.ts'), "import { A } from './core/a.ts'\n")
     const io = recorder()
     assert.equal(core(root, [], io), 0)
     assert.deepEqual(io.lines.out, ['plugins/alpha/core rewritten'])
@@ -522,8 +523,26 @@ describe('core copies', () => {
     assert.equal(core(root, ['--check'], recorder()), 0)
   })
 
+  it('copies only the modules a plugin imports, with theirs, and the data files it names', () => {
+    const root = withCore()
+    const src = join(root, 'packages', 'core', 'src')
+    writeFileSync(join(src, 'b.ts'), "import type { C } from './c.ts'\nexport const B = 1\n")
+    writeFileSync(join(src, 'c.ts'), 'export type C = 1\n')
+    writeFileSync(join(src, 'd.ts'), 'export const D = 1\n')
+    mkdirSync(join(root, 'plugins', 'alpha', 'hooks'))
+    writeFileSync(join(root, 'plugins', 'alpha', 'hooks', 'h.ts'), "export { B } from '../core/b.ts'\nconst a = await import('../core/a.ts')\n")
+    writeFileSync(join(root, 'plugins', 'alpha', 'run.py'), "open(join('core', 'kept.json'))\n")
+    const data = { 'kept.json': { version: 1 }, 'unread.json': { version: 1 } }
+    assert.equal(core(root, [], recorder(), data), 0)
+    assert.deepEqual(readdirSync(join(root, 'plugins', 'alpha', 'core')).sort(), ['a.ts', 'b.ts', 'c.ts', 'kept.json'])
+    assert.equal(core(root, ['--check'], recorder(), data), 0)
+    writeFileSync(join(root, 'plugins', 'alpha', 'core', 'd.ts'), `${MARK}export const D = 1\n`)
+    assert.equal(core(root, ['--check'], recorder(), data), 1)
+  })
+
   it('fails a check on a copy edited by hand', () => {
     const root = withCore()
+    writeFileSync(join(root, 'plugins', 'alpha', 'a.ts'), "import { A } from './core/a.ts'\n")
     core(root, [], recorder())
     writeFileSync(join(root, 'plugins', 'alpha', 'core', 'a.ts'), 'edited\n')
     const io = recorder()

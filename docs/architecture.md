@@ -69,7 +69,10 @@ cloudflare stands outside it; telemetry observes every role and changes none; le
 The host installs a plugin by copying its directory into its cache: nothing outside
 `plugins/<name>/` exists at run time. `core` therefore reaches each plugin as a generated copy
 in its `core/` directory, written by `npm run core` and checked identical to the source by CI
-(decision 0002). A plugin imports `../core/<module>.ts`; nobody edits the copy.
+(decision 0002). A plugin imports `../core/<module>.ts`; nobody edits the copy. The copy holds only
+what the plugin uses: the modules its TypeScript imports from `core/` and the modules those import,
+and each of core's JSON contracts a file of the plugin names (`orchestration.json` read by a shell
+or Python script). A new import, then `npm run core`, brings the module in.
 
 ## State
 
