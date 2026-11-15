@@ -128,6 +128,20 @@ test('another orchestrator\'s line claims a pull request only while that claim i
   expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9])
 })
 
+test('only the repositories of the session\'s dispatch record are read, never its checkout\'s own', async () => {
+  const { dollar, files, runs } = world({ forge: { 'acme/app': '[]', 'acme/home': JSON.stringify([{ number: 45, createdAt: '2026-11-13T08:00:00Z' }]) } })
+  files.set(`${MODULE}/store/sessions/s-orch`, row('orchestrator', 'Orch: app', 'acme/home'))
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(runs.filter(argv => argv[0] === 'gh').map(argv => argv[4])).toEqual(['acme/app'])
+  expect(reading?.line).toBe(null)
+  // A record with no pull request line asks the forge nothing.
+  const empty = world({ forge: { 'acme/home': JSON.stringify([{ number: 45, createdAt: '2026-11-13T08:00:00Z' }]) } })
+  empty.files.set(`${MODULE}/store/sessions/s-orch`, row('orchestrator', 'Orch: app', 'acme/home'))
+  empty.files.set(RECORD, JSON.stringify({ id: 1, state: 'open', label: 'a row' }) + '\n')
+  expect((await readUnattended(empty.dollar, 's-orch', NOW))?.list).toEqual([])
+  expect(empty.runs.filter(argv => argv[0] === 'gh')).toEqual([])
+})
+
 test('the line of a pull request the forge no longer lists open moves to the archive beside its record', async () => {
   const { dollar, files } = world()
   await readUnattended(dollar, 's-orch', NOW)

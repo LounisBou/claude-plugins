@@ -30,7 +30,7 @@ import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentReco
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  declaredWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   hostStopOf, stopInTail, stopKey, stopText, type HostStop, type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
@@ -51,6 +51,8 @@ import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
 import { messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
+import { DECLARATIONS, type Declarations } from './wait.ts'
+import type { DeclaredWait } from './stop-gate.ts'
 
 // The host's nouns this file calls.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui' | 'tool' | 'prompt'>
@@ -805,14 +807,20 @@ export function agentPaneRows(agents: readonly AgentView[]): { label: string; na
 // through the process on the agent's tty to the host's record of it, and that
 // session's store row. An entry no live session answers for is an agent gone.
 async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promise<AgentView[]> {
-  const config = await configDir($)
-  const state = await stateDir($)
   const owner = await chainOwner($)
   if (!owner) return []
+  return (await chainAgents($, tty, owner)).map(({ name, status, row }) => ({ name, status, row }))
+}
+
+// The live agents of the chain kept under `tty` (those `owner` launched, or every one when null),
+// each by the host's record of the session on its tty.
+async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string })[]> {
+  const config = await configDir($)
+  const state = await stateDir($)
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
-  const views: AgentView[] = []
+  const views: (AgentView & { sessionId: string })[] = []
   for (const entry of chainEntries(chain)) {
-    if (entry.owner !== owner) continue
+    if (owner !== null && entry.owner !== owner) continue
     const ps = await $.process.run(['ps', '-t', entry.tty.replace(/^\/dev\//, ''), '-o', 'pid='])
     if (ps.exitCode !== 0) continue
     for (const pid of String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))) {
@@ -820,11 +828,36 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
       if (!record || !record.sessionId) continue
       const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(record.sessionId)}`).catch(() => '')))
       // The host's record says the agent lives: its row is shown whatever its age.
-      views.push({ name: record.name, status: record.status, row })
+      views.push({ name: record.name, status: record.status, row, sessionId: record.sessionId })
       break
     }
   }
   return views
+}
+
+// The line an agent is sent when its orchestrator's successor confirmed the takeover.
+export function successorText(successor: { name: string; session: string | null }): string {
+  return `[module] Your orchestrator is now ${successor.name}${successor.session ? ` (session ${successor.session})` : ''}: it confirmed the takeover. Send your reports, questions and deliveries to it; the previous one takes no more.`
+}
+
+/*
+ * At a successor's « takeover confirmed », the agents of the chain are told who their orchestrator
+ * is now: the chain the launcher handed to the successor's tty, and what is left under this
+ * session's own. Each send refused is one log line.
+ */
+async function tellAgentsSuccessor($: Host<'env' | 'fs' | 'process' | 'session' | 'plugin'>, sessionId: string, successor: { name: string; session: string | null }): Promise<void> {
+  const own = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  const theirs = successor.session ? parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(successor.session)}`).catch(() => ''))) : null
+  const ttys = [...new Set([theirs?.tty, own?.tty].flatMap(tty => (tty ? [tty] : [])))]
+  const told = new Set<string>([sessionId, ...(successor.session ? [successor.session] : [])])
+  for (const tty of ttys) {
+    for (const agent of await chainAgents($, tty, null)) {
+      if (told.has(agent.sessionId) || roleOf(agent.name) !== 'agent') continue
+      told.add(agent.sessionId)
+      const sent = await $.session.send({ to: { sessionId: agent.sessionId }, text: successorText(successor) })
+      if (!sent?.isDelivered) await logLine($, 'supervision', `successor: ${agent.name ?? agent.sessionId} not told: ${sent?.reason ?? 'no answer'}`)
+    }
+  }
 }
 
 // The bound on this file's side reads — the name walk, the origin read — the
@@ -1481,7 +1514,8 @@ export function registerPaneTool(on: On<Held>): void {
   })
 }
 
-export function register(on: On<Held>): void {
+// `declarations`: the waits this session's turns declared and its successor's spawn (wait.ts), which the turn's end reads.
+export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
@@ -1632,7 +1666,9 @@ export function register(on: On<Held>): void {
       if (!e.agentId && e.reason !== 'aborted' && e.isAborted !== true) {
         const inFlight = inFlightAtStop
         inFlightAtStop = null
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer'), RELAY_BOUND_MS)
+        const sessionId = await $.session.id()
+        const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -1677,25 +1713,6 @@ export function register(on: On<Held>): void {
       await logLine($, 'supervision', `relay: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($, e, next) => {
-    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
-
-  // The model's own « handed over » to its successor, the predecessor's last word in a
-  // succession: the work is the successor's now, and the session's open questions with it.
-  // The message is sent all the same.
-  on('session.send', {}, async ($, e, next) => {
-    const handedOver = !e.agentId && e.origin?.kind === 'model' && typeof e.text === 'string' && handsOver(e.text)
-    const sent = await next(e)
-    try {
-      // Only a hand-over that was not refused closes the questions: a refused one leaves
-      // the sender in charge of them.
-      if (handedOver && !(isRecord(sent) && sent['isDelivered'] === false)) await handOver($, await $.session.id())
-    } catch (err) {
-      await logLine($, 'supervision', `round: ${messageOf(err)}`)
-    }
-    return sent
   }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -1755,7 +1772,13 @@ export function register(on: On<Held>): void {
         const learnt = learntOf(delivery, Date.now())
         if (learnt) await learnCoordinator($, learnt)
         const successor = successorOf(delivery, Date.now())
-        if (successor) await learnSuccessor($, successor)
+        const taken = successor ? await learnSuccessor($, successor) : null
+        if (taken) {
+          const sessionId = await $.session.id()
+          await tellAgentsSuccessor($, sessionId, taken)
+          // A session that spawned this successor hands it the work and the questions now.
+          if (declarations.handedOver(sessionId)) await handOver($, sessionId, taken)
+        }
       }
     } catch (err) {
       await logLine($, 'supervision', `receive: ${messageOf(err)}`)
@@ -2261,7 +2284,8 @@ export function entersRound(role: string | null): boolean {
 // An agent's turn the host ended in its own words (its limit or spend text, an API error: relay.ts hostStopOf,
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
-export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer'): Promise<void> {
+export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
+  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2286,13 +2310,14 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   const whole = answer
   if (role === 'agent') answer = heldReport(answer)
-  const wait = orchestrating ? parseWait(answer) : parseStatus(answer)
+  const wait = orchestrating ? declaredWait(declared.wait, answer) : parseStatus(answer)
   const before = await readWait($, sessionId)
   const relayed = before?.relayed ?? null
   // The id of the entry a remote coordinator acknowledged, kept while its fingerprint is.
   const relayedId = relayed !== null ? before?.relayed_id ?? null : null
-  // A turn that ends on « handed over »: the successor holds the work, and the questions.
-  if (!wait && role === 'orchestrator' && handsOver(answer)) await handOver($, sessionId)
+  // A session that spawned its successor, once that successor confirmed the takeover: it holds the work, and the questions.
+  const successor = role === 'orchestrator' && declared.handedOver ? await readSuccessor($, sessionId) : null
+  if (successor) await handOver($, sessionId, successor)
   if (!wait && orchestrating) {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), relayed, relayed_id: relayedId, name, pid })
     return
@@ -2385,19 +2410,10 @@ async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' |
   else await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
-// The session's open entries moved to the successor it learnt, or, none learnt, withdrawn by its
-// hand-over, every write first, then the notices in what is left of the bound.
-async function handOver($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string): Promise<void> {
-  const until = Date.now() + RELAY_BOUND_MS
-  const successor = await readSuccessor($, sessionId)
-  const done = await withDeadline(successor
-    ? moveToSuccessor($, sessionId, successor)
-    : withdrawStale($, sessionId, null, 'handed over to its successor').then(async settled => {
-      await withdrawAsked($, sessionId, 'handed over to its successor')
-      return settled
-    }), RELAY_BOUND_MS)
+// The session's open entries moved to the successor that confirmed the takeover, within the bound.
+async function handOver($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, successor: LearntSuccessor): Promise<void> {
+  const done = await withDeadline(moveToSuccessor($, sessionId, successor), RELAY_BOUND_MS)
   if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
-  else await tellSettled($, done, until)
 }
 
 // The held question's entry in the round: that session's open operator question with the same
@@ -2745,13 +2761,14 @@ async function learnCoordinator($: Host<'clock' | 'env' | 'fs' | 'process'>, lea
 // and address. At « takeover confirmed » the predecessor and its successor carry one name, so
 // the receiving session's own record is left out of the candidates, and the process id the
 // reply address carries (`uds:/…/<pid>.sock`) chooses among the several that remain.
-async function learnSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, learnt: LearntSuccessor): Promise<void> {
+async function learnSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, learnt: LearntSuccessor): Promise<LearntSuccessor | null> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  if (roleOf(row?.name ?? null) !== 'orchestrator') return
+  if (roleOf(row?.name ?? null) !== 'orchestrator') return null
   const session = (await registeredSession($, learnt.name, '', { exclude: sessionId, pid: successorPid(learnt) }))?.sessionId ?? null
   await writeAtomic($, `${await storeOf($)}/${successorKey(sessionId)}`, JSON.stringify({ ...learnt, session }) + '\n')
   await logLine($, 'supervision', `round: successor learnt: ${learnt.name}${session ? ` (session ${session})` : ''}`)
+  return { ...learnt, session }
 }
 
 // The process id a successor's reply address carries (`uds:/…/<pid>.sock`), or none.

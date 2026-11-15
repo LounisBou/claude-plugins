@@ -5,6 +5,7 @@
 // in the turn's text, the gate sent once per crossing, nothing from a session that is no
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
+import { DECLARATIONS } from '../wait.ts'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, ciState, readDeliveryFacts, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
@@ -739,8 +740,9 @@ test("an orchestrator's long turn is never held to the agents' limit", async () 
   const chains = mounted()
   const fx = fake({ name: ORCH, role: 'orchestrator' })
   fx.files.set(`${STATE}/coordinator.json`, JSON.stringify({ name: 'Coord: ops' }))
-  const long = `${'o'.repeat(VERDICT_LIMIT * 2)}\n\nwaiting: done`
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'done', blocks: '' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('o'.repeat(VERDICT_LIMIT * 2)))
   const said = fx.sent.map(s => s.text).join('\n') + [...fx.files.values()].join('\n')
   expect(said).toContain('o'.repeat(VERDICT_LIMIT * 2))
 })

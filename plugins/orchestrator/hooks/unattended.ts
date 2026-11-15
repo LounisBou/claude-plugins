@@ -122,7 +122,9 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   if (row?.role !== 'orchestrator' || !row.name) return null
   const state = await stateDir($)
   const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
-  const repos = [...new Set([...(row.repo ? [row.repo] : []), ...own.flatMap(record => record.lines.map(line => line.repo))])]
+  // Only the repositories the session's dispatch record names: the checkout's own repository holds
+  // pull requests of the operator's that no orchestration of his records.
+  const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
   const open: OpenPr[] = []
   const unread: string[] = []
   const listed = new Map<string, number[]>()

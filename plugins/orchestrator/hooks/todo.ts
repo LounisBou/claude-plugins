@@ -8,7 +8,7 @@
 // message, and told so.
 import { updateOver } from '../core/store-io.ts'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoImagesLine, todoItems, todoName, todoPath, isImageList, TODO_CONTRACT, TODO_IMAGES_MAX, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
@@ -96,8 +96,10 @@ async function writeTodos($: Held, name: string, change: (text: string) => { tex
   return made
 }
 
-const shown = (item: TodoItem): string =>
-  `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.rows ? `, rows ${item.rows.join(', ')}` : ''}${item.deferred ? `, put off: ${item.deferred}` : ''}`
+const shown = (item: TodoItem): string => {
+  const images = todoImagesLine(item)
+  return `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.rows ? `, rows ${item.rows.join(', ')}` : ''}${item.deferred ? `, put off: ${item.deferred}` : ''}${images ? `, ${images}` : ''}`
+}
 
 // Whether a session is on another machine: an orchestrator's row sent here, or the coordinator whose
 // address a peer taught this machine. A session with a row on this machine is local whatever else is said.
@@ -118,9 +120,10 @@ async function onAnotherMachine($: Held, to: string): Promise<boolean> {
 }
 
 // The message a recorded request travels as: his words, when he said them, who carried them, the item's number.
-function messageOfRequest(item: TodoItem | null, set: { words: string; said_at: string; from: string }, now: Date): string {
+function messageOfRequest(item: TodoItem | null, set: { words: string; said_at: string; from: string; images?: readonly string[] }, now: Date): string {
   const head = item === null ? 'A request of the operator, for you' : `To-do ${item.id}, recorded in your list`
-  return `${head}, carried by ${set.from} at ${now.toISOString().slice(0, 19)}Z: « ${set.words} » (he said it at ${set.said_at}).`
+  const images = todoImagesLine(set)
+  return `${head}, carried by ${set.from} at ${now.toISOString().slice(0, 19)}Z: « ${set.words} » (he said it at ${set.said_at}).${images ? ` His ${images}.` : ''}`
     + (item === null ? '' : ` Read your list with todo list; close it with todo done ${item.id} and its outcome.`)
 }
 
@@ -130,8 +133,13 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   if (e['said_at'] !== undefined && (typeof e['said_at'] !== 'string' || e['said_at'].trim() === '')) return refuse('said_at is when he said it, as a date.')
   if (e['label'] !== undefined && typeof e['label'] !== 'string') return refuse('label is a string.')
   if (e['to'] !== undefined && (typeof e['to'] !== 'string' || e['to'].trim() === '')) return refuse('to names the session the request is for.')
+  const images = e['images']
+  if (images !== undefined && !isImageList(images)) return refuse(`images lists the absolute paths of the images he gave, at most ${TODO_IMAGES_MAX}.`)
   const from = holderOf(me.name)
-  const set = { words, said_at: typeof e['said_at'] === 'string' ? e['said_at'].trim() : `${now.toISOString().slice(0, 19)}Z`, from, ...(typeof e['label'] === 'string' ? { label: e['label'] } : {}) }
+  const set = {
+    words, said_at: typeof e['said_at'] === 'string' ? e['said_at'].trim() : `${now.toISOString().slice(0, 19)}Z`, from,
+    ...(typeof e['label'] === 'string' ? { label: e['label'] } : {}), ...(images !== undefined && images.length > 0 ? { images } : {}),
+  }
   const to = typeof e['to'] === 'string' ? e['to'].trim() : null
   if (to === null || holderOf(to) === from) {
     const made = await writeTodos($, me.name, text => addTodo(text, set, now))
@@ -247,7 +255,7 @@ export function register(on: On<Held>): void {
         name: TODO_TOOL,
         isDeferred: false,
         description: "Records, as the operator said it, a request of his that will not be done within this turn or that is for another session, and closes it later; it holds this session's `done` while one is open. "
-          + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name), '
+          + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name; images: the absolute paths of the images he gave with it), '
           + '`row` (id, row: a dispatch row it turned into), `done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
           + 'Only for an orchestrator, a coordinator or an auditor.',
         inputSchema: {
@@ -258,6 +266,7 @@ export function register(on: On<Held>): void {
             said_at: { type: 'string' },
             to: { type: 'string' },
             label: { type: 'string' },
+            images: { type: 'array', items: { type: 'string' } },
             id: { type: 'integer' },
             outcome: { type: 'string' },
             row: { type: 'integer' },

@@ -8828,8 +8828,9 @@ printf '{}\n' > "$WORK/benchplug/a/.claude-plugin/plugin.json"
 printf '{}\n' > "$WORK/benchplug/b/.claude-plugin/plugin.json"
 printf '{"enabledPlugins":{"orchestrator@lounisbou":false},"remoteControlAtStartup":true}\n' > "$BENCH/settings.json"
 BID=0badc0de-1111-4222-8333-444455556666
-benchrun() { # the launcher from a plain process: no tmux pane, no host session, the recorder for tmux
-  env -u TMUX -u TMUX_PANE -u ORCHESTRATOR_SELF_TTY -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_TMUX="$HR/tmux" \
+mkdir -p "$WORK/benchconfig"
+benchrun() { # the launcher from a plain process: no tmux pane, no host session, the recorder for tmux, no install record
+  env -u TMUX -u TMUX_PANE -u ORCHESTRATOR_SELF_TTY -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_TMUX="$HR/tmux" CLAUDE_CONFIG_DIR="$WORK/benchconfig" \
     ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     ORCHESTRATOR_NEW_SESSION_ID="$BID" ORCHESTRATOR_SPAWN_TIMEOUT=1 ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_MODE_TIMEOUT=1 "$@" 2>&1; }
 BENCH_OPEN=(bench-open --bench "$BENCH" --dir "$BENCH/clone" --title "Orch: eval x" --plugin-dir "$WORK/benchplug/a" --plugin-dir "$WORK/benchplug/b" --settings "$BENCH/settings.json" --prompt "go" --trust)

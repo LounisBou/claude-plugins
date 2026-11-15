@@ -1,6 +1,6 @@
 // hooks/tests/gauge-core.test.ts
 import { expect, test } from 'claude-code/testing'
-import { tripGate, parseMeasure, measureFilePath, newerInstalled } from '../gauge-core.ts'
+import { tripGate, parseMeasure, measureFilePath, newerInstalled, runtimeChanges, runtimeDiffArgv, generationLived, type Newer } from '../gauge-core.ts'
 import { currentReading, driftAnnouncement, writeMeasure, takeDrift, register as registerGauge } from '../gauge.ts'
 import { logLineOf, disk, emptied, MEASURES } from './fakes.ts'
 import { capture, hooksOn, hostOf, type HostParts } from '../../core/capture.ts'
@@ -389,6 +389,7 @@ const DEPLOYED_ROOT = `/cfg/deploys/lounisbou/${OWN}/plugins/orchestrator`
 const deployState = (...history: string[]): string => JSON.stringify({
   version: 1, repo: 'owner/name', marketplace: 'lounisbou', history: history.map(commit => ({ commit, at: '2026-01-01T00:00:00Z' })), skipped: [], pending: false, plugins: {},
 })
+const DIRS = (installed: string): { ownDir: string; installedDir: string } => ({ ownDir: `/cfg/deploys/lounisbou/${OWN}`, installedDir: `/cfg/deploys/lounisbou/${installed}` })
 const reading = (text: string) => {
   const paths: string[] = []
   return { paths, read: async (path: string) => { paths.push(path); return text } }
@@ -400,14 +401,14 @@ test('a session running the installed commit is told nothing', async () => {
 
 test('a commit installed over the session\'s own is named, read from the state file beside its directory', async () => {
   const file = reading(deployState(NEWER, OWN))
-  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null)).toEqual({ own: OWN, installed: NEWER })
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null)).toEqual({ own: OWN, installed: NEWER, ...DIRS(NEWER) })
   expect(file.paths).toEqual(['/cfg/deploys/lounisbou/installed.json'])
 })
 
 test('a commit already told is not told again, and the next one is', async () => {
   const later = 'c'.repeat(40)
   expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(NEWER, OWN)).read, NEWER)).toBe(null)
-  expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(later, NEWER, OWN)).read, NEWER)).toEqual({ own: OWN, installed: later })
+  expect(await newerInstalled(DEPLOYED_ROOT, reading(deployState(later, NEWER, OWN)).read, NEWER)).toEqual({ own: OWN, installed: later, ...DIRS(later) })
 })
 
 test('a plugin that does not run from a deploy directory reads nothing and is told nothing', async () => {
@@ -426,5 +427,59 @@ test('a newer install is told only once no other has followed it for half an hou
   const at = Date.parse('2026-01-01T00:00:00Z')
   const file = reading(deployState(NEWER, OWN))
   expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, at + 29 * 60_000)).toBe(null)
-  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, at + 30 * 60_000)).toEqual({ own: OWN, installed: NEWER })
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, at + 30 * 60_000)).toEqual({ own: OWN, installed: NEWER, ...DIRS(NEWER) })
+})
+
+// A state file whose entries carry their own install times, newest first.
+const timedState = (...history: Array<[string, string]>): string => JSON.stringify({
+  version: 1, repo: 'owner/name', marketplace: 'lounisbou', history: history.map(([commit, at]) => ({ commit, at })), skipped: [], pending: false, plugins: {},
+})
+
+test('an install more than an hour newer than the session\'s own is told once before the settle, then only after it', async () => {
+  const own = Date.parse('2026-01-01T00:00:00Z')
+  const newer = own + 61 * 60_000
+  const file = reading(timedState([NEWER, new Date(newer).toISOString()], [OWN, new Date(own).toISOString()]))
+  // Five minutes after the newer install: the settle has not passed, the cap has.
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, newer + 5 * 60_000)).toEqual({ own: OWN, installed: NEWER, ...DIRS(NEWER) })
+  // A session already told once waits for the settle.
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, newer + 5 * 60_000, true)).toBe(null)
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, newer + 30 * 60_000, true)).toEqual({ own: OWN, installed: NEWER, ...DIRS(NEWER) })
+  // Fifty-nine minutes apart is under the cap: the settle alone decides.
+  const close = own + 59 * 60_000
+  const near = reading(timedState([NEWER, new Date(close).toISOString()], [OWN, new Date(own).toISOString()]))
+  expect(await newerInstalled(DEPLOYED_ROOT, near.read, null, close + 5 * 60_000)).toBe(null)
+})
+
+const NEWER_DIRS: Newer = { own: OWN, installed: NEWER, ...DIRS(NEWER) }
+const OWN_PLUGINS = `/cfg/deploys/lounisbou/${OWN}/plugins`
+const NEW_PLUGINS = `/cfg/deploys/lounisbou/${NEWER}/plugins`
+
+test('the comparison leaves out the parts of a plugin that never run', () => {
+  expect(runtimeDiffArgv(NEWER_DIRS)).toEqual(['diff', '-rq', '-x', 'tests', '-x', 'docs', '-x', 'ci', '-x', 'evals', '-x', '.claude-plugin', OWN_PLUGINS, NEW_PLUGINS])
+})
+
+test('only a runtime file of a loaded plugin counts as a change', () => {
+  const out = [
+    `Files ${OWN_PLUGINS}/orchestrator/hooks/guards.ts and ${NEW_PLUGINS}/orchestrator/hooks/guards.ts differ`,
+    `Files ${OWN_PLUGINS}/orchestrator/README.md and ${NEW_PLUGINS}/orchestrator/README.md differ`,
+    `Files ${OWN_PLUGINS}/orchestrator/skills/x/evals/a.json and ${NEW_PLUGINS}/orchestrator/skills/x/evals/a.json differ`,
+    `Only in ${NEW_PLUGINS}/github/engine: new.py`,
+    `Only in ${NEW_PLUGINS}/orchestrator: agents`,
+    `Only in ${NEW_PLUGINS}: brand-new`,
+    `Files ${OWN_PLUGINS}/norms/hooks/a.ts and ${NEW_PLUGINS}/norms/hooks/a.ts differ`,
+  ].join('\n')
+  expect(runtimeChanges(out, NEWER_DIRS, new Set(['orchestrator', 'github']))).toEqual(['orchestrator/hooks/guards.ts', 'github/engine/new.py', 'orchestrator/agents'])
+  // Settings unread: every plugin of the session's own commit counts.
+  expect(runtimeChanges(out, NEWER_DIRS, null)).toEqual(['orchestrator/hooks/guards.ts', 'github/engine/new.py', 'orchestrator/agents', 'norms/hooks/a.ts'])
+  expect(runtimeChanges(`Files ${OWN_PLUGINS}/orchestrator/docs/design.md and ${NEW_PLUGINS}/orchestrator/docs/design.md differ`, NEWER_DIRS, null)).toEqual([])
+})
+
+test('an orchestrator\'s generation has lived after two hours or 150,000 tokens', () => {
+  const start = (at: string) => ({ tokens: 1, at, brief: null, brief_bytes: null })
+  const now = Date.parse('2026-01-01T02:00:00Z')
+  expect(generationLived(null, now)).toBe(false)
+  expect(generationLived({ context_tokens: 149_999, start: start('2026-01-01T00:00:01Z') }, now)).toBe(false)
+  expect(generationLived({ context_tokens: 150_000 }, now)).toBe(true)
+  expect(generationLived({ context_tokens: 10, start: start('2026-01-01T00:00:00Z') }, now)).toBe(true)
+  expect(generationLived({ context_tokens: 10 }, now)).toBe(false)
 })
