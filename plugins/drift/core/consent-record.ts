@@ -284,9 +284,20 @@ export function consentRecordOf(fields: {
   return parseConsentRecord({ v: CONSENT_VERSION, subject: fields.subject, entry: fields.entry, question: fields.question, answer, by: fields.by, at: fields.at })
 }
 
-/** Whether a recorded answer grants the consent: the choice « Accorder » and nothing else, case and spacing aside; « Refuser » and any other answer grant none. */
+/*
+ * The grant pressed as its text then its letter in parentheses, as records written before the writer
+ * kept the choice's text alone hold it (« Accorder (A) »). A consent question offers « Accorder » as
+ * choice A (orchestrator's question.ts): under any other letter the answer contradicts itself.
+ */
+const LETTERED_GRANT = new RegExp('^' + contract.grant.toLowerCase() + ' ?\\(a\\)$')
+
+/**
+ * Whether a recorded answer grants the consent: the choice « Accorder » and nothing else, case and
+ * spacing aside, or « Accorder (A) »; « Refuser » and any other answer grant none.
+ */
 export function grants(answer: string): boolean {
-  return spaced(answer).toLowerCase() === contract.grant.toLowerCase()
+  const said = spaced(answer).toLowerCase()
+  return said === contract.grant.toLowerCase() || LETTERED_GRANT.test(said)
 }
 
 /** Whether two subjects are the same: the same kind, repository (as GitHub compares it), pull request and environment. */

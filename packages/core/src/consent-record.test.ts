@@ -206,6 +206,14 @@ describe('the answer that grants', () => {
     for (const answer of [CONSENT_GRANT, ' accorder ', 'ACCORDER']) assert.equal(grants(answer), true, answer)
   })
 
+  it('is « Accorder (A) », the grant pressed as its text then its letter, as records written before the text alone hold it', () => {
+    for (const answer of ['Accorder (A)', ' accorder  (a) ', 'Accorder(A)']) assert.equal(grants(answer), true, answer)
+  })
+
+  it('is not the grant under another letter, a refusal\'s, or with more words', () => {
+    for (const answer of ['Accorder (B)', 'Refuser (A)', 'Accorder (A), mais pas ce soir', 'Accorder (AB)', '(A)']) assert.equal(grants(answer), false, answer)
+  })
+
   it('is not « Refuser », a refusal in words, or an answer that only mentions the grant', () => {
     for (const answer of [CONSENT_REFUSE, 'ne pas passer thing en auto-merge', 'oui, thing passe en auto-merge', 'Accorder, mais pas ce soir', '']) assert.equal(grants(answer), false, answer)
   })

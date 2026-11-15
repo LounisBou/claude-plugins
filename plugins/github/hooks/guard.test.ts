@@ -3349,6 +3349,47 @@ test('a waived record over an « Accorder » carries his answer, dated by the mo
   expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
 })
 
+// A record written before the writer turned a pressed choice into its text: the choice's text then its letter, as relayed.
+const LETTERED_GRANT = {
+  v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, entry: 'q-a1b2c3d4-0a1-legacy',
+  question: 'Dispense d\'E2E pour acme/thing#12 : test machine off, full E2E campaign tomorrow ?',
+  answer: 'Accorder (A)', by: 'coordinator', at: '2026-11-15T07:06:26.873Z',
+}
+
+test('a waived record over an « Accorder (A) » the coordinator recorded is written, his answer carried', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: LETTERED_GRANT }))
+  const out: any = await $.tool.call(waiveCall('Accorder (A)'))
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (A) (coordinator, 2026-11-15T07:06:26.873Z)')
+})
+
+test('the gate reads an « Accorder (A) » the coordinator recorded at a head with no E2E record: Ready', async ($, on) => {
+  const seen = await world($, on, { records: TWO, ...consentWorld({ a: LETTERED_GRANT }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+// A newer answer of the same question in prose, which opens with « Accorder » and goes on: it is the newest answer, and grants nothing.
+const PROSE_AFTER = {
+  ...LETTERED_GRANT, entry: 'q-a1b2c3d4-0a1-prose', at: '2026-11-15T07:12:43.129Z',
+  answer: 'Accorder — his consent already given in the coordinator\'s tab (« Accorder (A) » 07:06Z), and now: « the orders I give in your tab must be enough »',
+}
+
+test('a newer answer in prose after an « Accorder (A) » leaves no grant: the waiver quoting the older one is refused', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: LETTERED_GRANT, b: PROSE_AFTER }))
+  const out: any = await $.tool.call(waiveCall('Accorder (A)'))
+  expect(out.deny).toContain(NOT_RECORDED)
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an « Accorder (B) », the grant under the refusal\'s letter, waives nothing', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: { ...LETTERED_GRANT, answer: 'Accorder (B)' } }))
+  const out: any = await $.tool.call(waiveCall(''))
+  expect(out.deny).toContain(NOT_RECORDED)
+  expect(recordRun(seen)).toBeUndefined()
+})
+
 // ---- the operator's recorded answer, quoted: his own words, from any channel ----
 
 const QUOTED = 'operator, 2026-11-03: ' + CONSENT_WORDS
@@ -3406,6 +3447,12 @@ test('norms required by the plan and waived by his « Accorder »: Ready with no
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(seen.logs[0]).toContain('norms waived by the operator (pane, 2026-11-03T10:00:00Z)')
+})
+
+test('norms waived by an « Accorder (A) » the coordinator recorded: Ready with no norms record', async ($, on) => {
+  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder (A)', { by: 'coordinator' }) }) })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
 })
 
 for (const [label, records] of [
@@ -3540,6 +3587,13 @@ test('auto-deploy-set grants one environment of a repository on the operator\'s 
   expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
   expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toEqual(DEPLOYS)
   expect(((await $.tool.call(bash(PROD_DEPLOY))) as any).deny).toBeUndefined()
+})
+
+test('auto-deploy-set grants on an « Accorder (A) » the coordinator recorded before the writer kept the text alone', async ($, on) => {
+  const seen = await world($, on, deployWorld('Accorder (A)', 'prod', STAGING_ONLY))
+  const set: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
+  expect(set.deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
 })
 
 test('words the operator typed are no consent: with no consent record a list change is refused and writes nothing', async ($, on) => {
