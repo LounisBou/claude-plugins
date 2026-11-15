@@ -102,14 +102,16 @@ what was read there.
 | 21 | partly met | `npm run context`, `ci/scenarios.json`, each pull request's difference in the CI summary (claude-plugins#32); each closed generation's measure is kept from now on (claude-plugins#262) | 10 first-turn measures on the operator's machine, 38,442 to 268,902 tokens, median 80,280, read on 2026-11-14 and not re-read; the host's own load is over 97 % of the start, and ten figures are too few to calibrate |
 | 22 | met | `npm run rules` (claude-plugins#33) | — |
 
-## The finish line — 1.0
+## The end of the program
 
-The program is finished on the day all of this holds:
+The program is finished when every goal of the table above is met and the version that holds them is
+installed where the operator works. No waiting period and no fixed protocol decide it. His words,
+2026-11-15: « 24 heures d'usage sur un projet produit, c'est pas de moi ça. Ça a été inventé par les
+agents et instauré comme une règle […] on peut tester l'objectif et tester tout ça beaucoup plus
+simplement ».
 
-1. Release 3 and release 3.1 are installed on the operator's MacBook and on IznoServer, and the
-   sessions on both are restarted (a running session keeps the version it loaded).
-2. Then 24 hours of the operator's own use on a product project, the nine figures below in
-   their target.
+The figures below are what the weekly report reads on a running orchestration: indicators of where
+the orchestration stands, not conditions of the end.
 
 | # | Figure | Target |
 |---|---|---|
