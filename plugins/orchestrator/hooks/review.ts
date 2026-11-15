@@ -168,7 +168,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: REVIEW_TOOL,
         isDeferred: false,
-        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the row naming the pull request. In place of the verdict, plan sets the proofs the pull request owes.',
+        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the row it names (record and row), else on the row whose label names the pull request. In place of the verdict, plan sets the proofs the pull request owes.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -222,7 +222,7 @@ export function register(on: On<Held>): void {
     const answer = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
     if (answer.isError === true || !('result' in call)) return answer
-    const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}) })
+    const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
     if (target === null) return { result: `${answer.result}\n${counted}` }
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
     // fails is a warning on a success, never an error, so the audit trail keeps the verdict
