@@ -23,7 +23,7 @@ You are the implementer for this phase. You implement; the orchestrator reviews.
 
 ## 3. Scope
 
-Deliverables (from the plan):
+Deliverables (from the plan), one slice you can finish, self-review and gate before your context gate:
 
 {{DELIVERABLES}}
 
