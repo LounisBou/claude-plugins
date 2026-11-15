@@ -14,10 +14,9 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must
 
 1. The Project line's goals; only when it lists open or deferred goals, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1.
 2. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, asking nothing back, and subscribe to its idle notice (`notify_when_idle: true`). Delete no checkout before you know its row.
-3. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing. Before the close, `list` still shows its row on that tty, not `self`. Close with the first line on tabs, the second in a home session (never `close` there); its success line is the proof:
+3. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing. Before the close, `list` still shows its row on that tty, not `self`. Close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof:
    ```
-   {{LAUNCHER}} close --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
-   {{LAUNCHER}} takeover --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
+   {{LAUNCHER}} {{CLOSE_VERB}} --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
    Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell.
 4. Each open question below by its entry, `<id>.json` under the state directory's `round/`: open under this session, leave it; answered or closed, apply its answer; absent, withdrawn or open under another session, ask it again verbatim at the end of this turn.

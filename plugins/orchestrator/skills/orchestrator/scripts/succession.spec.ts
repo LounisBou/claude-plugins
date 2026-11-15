@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { deckOpen, fallOf, fill, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
+import { closeVerb, deckOpen, fallOf, fill, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -37,7 +37,7 @@ function deckOf(orchestrators: object[]): object {
 }
 
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
-function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string> } = {}) {
+function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number> } = {}) {
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs', 'belt')
   mkdirSync(join(state, 'round'), { recursive: true })
@@ -71,7 +71,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`] })
+  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty] })
   return { state, briefs, record, out, err, run, text: () => out.join('') }
 }
 
@@ -136,6 +136,18 @@ test('an orchestrator closed with no handover is taken up from the state alone: 
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
   // The successor reads no reference to take over, and re-reads nothing the print already read live.
   assert.ok(!/references\/succession-successor\.md|pr-status|rev-parse/.test(text))
+})
+
+test('the close printed is the one command that fits the predecessor\'s place: takeover for window 0 of a home session, close for a tab', () => {
+  const home = world({ windows: { '/dev/ttys009': 0 } })
+  assert.equal(home.run('--tty', '/dev/ttys009'), 0)
+  assert.match(home.text(), /iterm-agent\.sh takeover --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
+  assert.ok(!/ close --tty/.test(home.text()))
+  const other = world({ windows: { '/dev/ttys009': 2 } })
+  assert.equal(other.run('--tty', '/dev/ttys009'), 0)
+  assert.match(other.text(), /iterm-agent\.sh close --tty \/dev\/ttys009/)
+  assert.ok(!/ takeover --tty/.test(other.text()))
+  assert.equal(closeVerb('none', () => 0).verb, 'close')
 })
 
 test('two takeovers on one state print the same text', () => {

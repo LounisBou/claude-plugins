@@ -5091,7 +5091,7 @@ SUCCFILL="$WORK/succession-filled.md"
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
 sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' \
-  -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
+  -e 's#\{\{CLOSE_VERB\}\}#close#g' -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
 # Measured as the lint measures: the open-questions field's value is left out, its label counted.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
   "$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)|$([ "$(sed "/^- The operator's open questions/s/:.*\$/:/" "$SUCCFILL" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" -le 9000 ] && echo yes || echo no)"
