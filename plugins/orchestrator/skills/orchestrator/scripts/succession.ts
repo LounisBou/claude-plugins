@@ -39,6 +39,7 @@ import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
+import { setting } from '../../../core/env.ts'
 import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
 import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
@@ -621,7 +622,27 @@ export interface Deps {
   /** The launcher's `list` rows; undefined when it cannot be read. */
   readonly list?: () => readonly ListedRow[] | undefined
   readonly journal?: Journal
+  /** Whether this session's tab becomes its home session when the takeover's turn ends; read by `movesHome` when absent. */
+  readonly movesHome?: boolean
 }
+
+/**
+ * Whether the end of the takeover's turn moves this session into its home session: on macOS, tmux
+ * there, and the session in no tmux pane, a plain tab. The hooks module makes the move, the one
+ * the start command makes at the end of its naming turn.
+ */
+export function movesHome(env: Env, platform: string = process.platform): boolean {
+  if (platform !== 'darwin' || setting(env, 'TMUX') !== undefined) return false
+  try {
+    execFileSync(setting(env, 'ORCHESTRATOR_TMUX') ?? 'tmux', ['-V'], { stdio: 'ignore', timeout: 5000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The sentence step 3 ends on when the turn's end moves this tab into the home session. */
+export const HOME_STEP = ' Its end turns this tab into your home session, as the orchestrator start command does: window 0 of a tmux server of your own resumes this conversation, and every agent you spawn from there is a window of it; the agents already in tabs stay where they are. Nothing to type; still in this tab at your next turn, the move failed and the module\'s log says why.'
 
 /**
  * The window of the tmux pane on a tty, read from the server (`tmux list-panes -a`): an
@@ -701,6 +722,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     PREDECESSOR_TTY: parsed.tty,
     CLOSE_VERB: close.verb,
     CLOSE_WHERE: close.where,
+    HOME_STEP: (deps.movesHome ?? movesHome(env)) ? HOME_STEP : '',
     LIVE_ROWS: list(open.rows.map(row => row.line)),
     LIVE_OWNERS: list(owners),
     LIVE_PULL_REQUESTS: list(open.prs),

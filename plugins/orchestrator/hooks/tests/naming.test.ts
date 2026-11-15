@@ -7,7 +7,7 @@ import type { Reply } from 'claude-code/testing'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type CapturedOn } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit, ToolSpec } from '../../core/host.ts'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT } from '../naming.ts'
 
 type World = Host<Noun>
 
@@ -32,6 +32,9 @@ function mounted() {
   const end = toolHook(`mcp__orchestrator__${END_TOOL}`)
   const bash = toolHook('Bash')
   const send = toolHook('SendMessage')
+  // The second hook on Bash: the one that reads a successor's takeover.
+  const takeover = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'Bash')[1]
+  if (takeover === undefined) throw new Error('no takeover hook on Bash')
   const complete = hookOf(hooks, 'turn.complete')
   const handlers = {
     'session.start': callOf(start),
@@ -39,6 +42,7 @@ function mounted() {
     'tool.call:end': callOf(end),
     'tool.call:Bash': callOf(bash),
     'tool.call:SendMessage': callOf(send),
+    'tool.call:takeover': callOf(takeover),
     'turn.complete': callOf(complete),
   }
   const matchers = {
@@ -366,4 +370,49 @@ test('a coordinator never moves, and neither does a session that asked to end', 
 
 test('the move is the launcher with the session, its name and the resume prompt', () => {
   expect(homeArgv('/r', 'S', 'Orch: x')).toEqual(['/r/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S', '--name', 'Orch: x', '--prompt', 'Your name "Orch: x" is taken. Continue where you left off.'])
+})
+
+// A successor the launcher opened has no rename: the end of the turn that ran its takeover makes
+// the same move, without a name (the launcher reads the session's own on its tty).
+const TAKEOVER_LINE = '/p/skills/orchestrator/scripts/succession.sh takeover /w/dispatch-record.jsonl --mode build --tty /dev/ttys009'
+
+test("a successor's takeover turn moves it into its home session, then ends it there", async () => {
+  const { handlers } = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\n' })
+  await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes).toEqual([{ argv: ['/plugin/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S-1', '--prompt', TAKEN_OVER_TEXT], opts: { timeoutMs: HOME_MOVE_MS } }])
+  expect(fx.order).toEqual(['command:exit'])
+  // The next turn ran no takeover: nothing more moves.
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+})
+
+test('a takeover kept where it is, failed, interrupted or run by a subagent ends nothing', async () => {
+  const kept = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'stay: this session already runs in a home session\n' })
+  await kept.handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+  await kept.handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+  expect(fx.order).toEqual([])
+  for (const [e, answer, done] of [
+    [{ command: TAKEOVER_LINE }, { result: 'succession: no dispatch record', isError: true }, {}],
+    [{ command: TAKEOVER_LINE }, { result: 'printed' }, { isAborted: true }],
+    [{ command: TAKEOVER_LINE, agentId: 'sub' }, { result: 'printed' }, {}],
+    [{ command: 'ls /w' }, { result: '' }, {}],
+  ] as const) {
+    const { handlers } = mounted()
+    const fy = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
+    await handlers['tool.call:takeover'](fy.dollar, e, async () => answer)
+    await handlers['turn.complete'](fy.dollar, done, pass)
+    expect(fy.processes).toEqual([])
+    expect(fy.order).toEqual([])
+  }
+})
+
+test('the takeover is read on the succession script, by either of its names', () => {
+  expect(runsTakeover(TAKEOVER_LINE)).toBe(true)
+  expect(runsTakeover('node /p/scripts/succession.ts takeover rec')).toBe(true)
+  expect(runsTakeover('/p/scripts/succession.sh check rec')).toBe(false)
+  expect(runsTakeover('/p/scripts/iterm-agent.sh takeover --tty /dev/ttys1')).toBe(false)
 })

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, briefOf, closeVerb, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, briefOf, closeVerb, HOME_STEP, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -37,7 +37,7 @@ function deckOf(orchestrators: object[]): object {
 }
 
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
-function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[] } = {}) {
+function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[]; movesHome?: boolean } = {}) {
   const journaled: unknown[] = []
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs', 'belt')
@@ -72,7 +72,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, journal: event => { journaled.push(event) } })
+  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
   return { state, briefs, record, out, err, run, journaled, text: () => out.join('') }
 }
 
@@ -147,6 +147,22 @@ test('the close printed is the one command that fits the predecessor\'s place: t
   assert.match(other.text(), /iterm-agent\.sh close --tty \/dev\/ttys009/)
   assert.ok(!/ takeover --tty/.test(other.text()))
   assert.equal(closeVerb('none', () => 0).verb, 'close')
+})
+
+test('a takeover in a plain tab ends on the move into the home session; one in a home session does not', () => {
+  const plain = world({ movesHome: true })
+  assert.equal(plain.run('--tty', '/dev/ttys009'), 0)
+  assert.ok(plain.text().includes(`END THE TURN.${HOME_STEP}\n`))
+  assert.match(plain.text(), /Its end turns this tab into your home session/)
+  const home = world({ windows: { '/dev/ttys009': 0 }, movesHome: false })
+  assert.equal(home.run('--tty', '/dev/ttys009'), 0)
+  assert.ok(home.text().includes('END THE TURN.\n'))
+  assert.ok(!home.text().includes('home session, as the orchestrator start command does'))
+  // Read from where the session runs: a tmux pane, or any system but macOS, never moves.
+  assert.equal(movesHome({ TMUX: '/tmp/tmux-501/orch-x,1,0' }, 'darwin'), false)
+  assert.equal(movesHome({}, 'linux'), false)
+  assert.equal(movesHome({ ORCHESTRATOR_TMUX: '/nonexistent/tmux' }, 'darwin'), false)
+  assert.equal(movesHome({ ORCHESTRATOR_TMUX: 'true' }, 'darwin'), true)
 })
 
 test('two takeovers on one state print the same text', () => {

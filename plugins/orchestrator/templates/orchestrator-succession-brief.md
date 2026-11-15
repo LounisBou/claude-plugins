@@ -18,7 +18,7 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must
    ```
    Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell.
 2. Each open question below by its entry, `<id>.json` under the state directory's `round/`: open under this session, leave it; answered or closed, apply its answer; absent, withdrawn or open under another session, ask it again verbatim at the end of this turn.
-3. Announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the Project line's `goals met=m/n … open=…`. END THE TURN.
+3. Announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the Project line's `goals met=m/n … open=…`. END THE TURN.{{HOME_STEP}}
 4. Your next turn dispatches every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue. The open rows below are the work, each at level 1.
 
 # Source
