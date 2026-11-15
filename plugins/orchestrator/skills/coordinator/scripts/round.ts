@@ -11,7 +11,7 @@ import { isTemporary } from '../../../core/store-io.ts'
 import { update } from '../../../core/store.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { die, moduleOf, say, stateOf, type Context } from './context.ts'
-import { liveCoordinator } from './record.ts'
+import { recordedCoordinator } from './record.ts'
 
 export { parseEntry } from '../../orchestrator/scripts/lib/round-archive.ts'
 
@@ -310,13 +310,16 @@ export function round(ctx: Context, args: readonly string[]): number {
     else if (arg === '--by-urgency') full = true
     else if (arg === '--decide') decide = true
     else if (arg === '--as') {
-      me = args[++i]
-      if (me === undefined) die('round: --as needs a value')
+      const value = args[++i]
+      if (value === undefined || value.startsWith('--')) die('round: --as needs a value')
+      if (me !== undefined) die('round: --as is given once')
+      me = value.trim()
     } else die(`round: unexpected argument ${arg}`)
   }
   if (me !== undefined && !decide) die('round: --as goes with --decide')
   if (decide && all) die('round: --decide takes no --all')
-  if (decide) return decideRound(ctx, (me ?? '').trim())
+  if (decide && (me === undefined || me === '')) die('round: --decide needs --as "<your exact name and reference>"')
+  if (decide) return decideRound(ctx, me ?? '')
   const state = stateOf(ctx.env)
   const module = moduleOf(ctx.env)
   const dir = join(state, ROUND_DIR)
@@ -353,7 +356,10 @@ function isDir(path: string): boolean {
  * or one line says there are none.
  */
 function decideRound(ctx: Context, me: string): number {
-  const coordinator = liveCoordinator(ctx)
+  // A record naming no pid cannot be judged by the hooks module, which counts it live: so does the
+  // decide, or it would list entries `settle` then refuses.
+  const recorded = recordedCoordinator(ctx)
+  const coordinator = recorded !== undefined && recorded.name !== '' && (recorded.live || recorded.pid === '') ? recorded : undefined
   if (coordinator !== undefined && coordinator.name !== me) {
     ctx.out(`decide: elsewhere | ${coordinator.name} | ${coordinator.tty}`)
     return 0

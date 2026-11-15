@@ -37,6 +37,11 @@ function seed(f: Fixture): void {
   put(f, 'e-answered', entry('e-answered', { status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-10-18T10:02:00.000Z' } }))
   put(f, 'f-withdrawn', entry('f-withdrawn', { status: 'withdrawn', answer: { text: 'moot', by: 'sender', at: '2026-10-18T10:02:00.000Z' } }))
   put(f, 'g-done', entry('g-done', { kind: 'done', question: 'done?' }))
+  // A second question of Orch: a, asked after the others' first ones: grouped with its first.
+  put(f, 'h-late', entry('h-late', { from: 'Orch: a', since: '2026-10-18T10:06:00.000Z' }))
+  // A question asked with `ask` (v 2), as the hooks module writes it.
+  put(f, 'q-v2', { v: 2, id: 'q-v2', sender: { session: 's-v2', name: 'Orch: v', role: 'orchestrator', machine: 'box' }, subject: 'merge order', context: 'ctx', ask: 'Which first?',
+    choices: [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }], status: 'open', at: '2026-10-18T10:07:00.000Z', answer: null })
 }
 
 describe('round --decide', () => {
@@ -44,9 +49,10 @@ describe('round --decide', () => {
     const f = fixture()
     seed(f)
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.equal(f.out[0], 'decide: machine | 4 open')
-    assert.deepEqual(ids(f.out), ['c-urgent', 'b-early', 'a-late', 'd-coord'])
+    assert.equal(f.out[0], 'decide: machine | 6 open')
+    assert.deepEqual(ids(f.out), ['c-urgent', 'b-early', 'a-late', 'h-late', 'd-coord', 'q-v2'])
     assert.ok(f.out.includes('    Ship b-early?'))
+    assert.ok(f.out.includes('    _Question_ : Which first?'))
     assert.ok(!f.out.some(line => line.includes('g-done') || line.includes('e-answered') || line.includes('settled:')))
     assert.equal(existsSync(join(f.state, 'round-listed.json')), false)
   })
@@ -54,8 +60,8 @@ describe('round --decide', () => {
   it('takes a record whose session no longer runs for no coordinator', () => {
     const f = withCoordinator({})
     seed(f)
-    assert.equal(main(f.ctx, ['round', '--decide']), 0)
-    assert.equal(f.out[0], 'decide: machine | 4 open')
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
+    assert.equal(f.out[0], 'decide: machine | 6 open')
   })
 
   it('with a coordinator live elsewhere, says where to run it and lists nothing', () => {
@@ -64,7 +70,7 @@ describe('round --decide', () => {
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
     assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
     f.out.length = 0
-    assert.equal(main(f.ctx, ['round', '--decide']), 0)
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
     assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
   })
 
@@ -79,23 +85,35 @@ describe('round --decide', () => {
     assert.ok(ids(decided).includes('g-done'))
   })
 
+  it('counts a record that names no pid as a coordinator live, as the hooks module does', () => {
+    const f = withCoordinator({})
+    writeFileSync(join(f.state, 'coordinator.json'), JSON.stringify({ name: 'Coord: ops [c0ffee]', tty: '/dev/ttys101' }))
+    seed(f)
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
+    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
+  })
+
   it('says in one line that the round is empty: no entry, only settled ones, or only a closing proposal', () => {
     const none = fixture()
-    assert.equal(main(none.ctx, ['round', '--decide']), 0)
+    assert.equal(main(none.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
     assert.deepEqual(none.out, ['decide: empty | no open question'])
     const settled = fixture()
     put(settled, 'e-answered', entry('e-answered', { status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-10-18T10:02:00.000Z' } }))
     put(settled, 'g-done', entry('g-done', { kind: 'done' }))
-    assert.equal(main(settled.ctx, ['round', '--decide']), 0)
+    assert.equal(main(settled.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
     assert.deepEqual(settled.out, ['decide: empty | no open question'])
   })
 
-  it('refuses an option it does not know, and --as with no value', () => {
+  it('refuses an option it does not know, --as with no value or twice, and --decide with no --as', () => {
     const f = fixture()
     assert.equal(main(f.ctx, ['round', '--decide', '--all']), 1)
     assert.equal(main(f.ctx, ['round', '--decide', '--as']), 1)
     assert.equal(main(f.ctx, ['round', '--as', 'Orch: me']), 1)
-    assert.deepEqual(f.err, ['coordinator: round: --decide takes no --all', 'coordinator: round: --as needs a value', 'coordinator: round: --as goes with --decide'])
+    assert.equal(main(f.ctx, ['round', '--decide']), 1)
+    assert.equal(main(f.ctx, ['round', '--as', '--decide']), 1)
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'a', '--as', 'b']), 1)
+    assert.deepEqual(f.err, ['coordinator: round: --decide takes no --all', 'coordinator: round: --as needs a value', 'coordinator: round: --as goes with --decide',
+      'coordinator: round: --decide needs --as "<your exact name and reference>"', 'coordinator: round: --as needs a value', 'coordinator: round: --as is given once'])
     assert.deepEqual(f.out, [])
   })
 })

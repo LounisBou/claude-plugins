@@ -7,12 +7,14 @@ Run a DECISION ROUND over the open questions of every orchestrator, coordinator 
 the machine: the operator's machine-wide decide, with or without a coordinator.
 
 0. **Where it runs.** `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round
-   --decide --as "<your exact name and reference, from ListAgents>"`; its first line says:
+   --decide --as "<your exact name and reference, from ListAgents>"`. Its first line starting
+   with `decide:` says; a refusal (exit 1) is told to the operator verbatim, and you stop.
    - `decide: coordinator`: you are the live coordinator: steps 1 to 6 hold as written.
-   - `decide: machine | N open`: no coordinator is live, and this session runs the round. Steps
-     2 to 6 hold over the entries it printed, the senders being any orchestrator, coordinator or
-     auditor, N the count of step 2. No question reached you by message; each is answered by step 5's
-     `settle`, `answered-here` only, which wakes its asker.
+   - `decide: machine | N open`: no coordinator is live, and this session runs the round, when it
+     is an `Orch:` session: `settle` refuses any other, which says so in one line and stops.
+     Steps 2 to 6 hold over the entries printed, the senders being any orchestrator, coordinator
+     or auditor, N the count of step 2. No question reached you by message; each is answered by
+     step 5's `settle`, `answered-here` only, which wakes its asker.
    - `decide: elsewhere | <name> | <tty>`: say in one line that the coordinator runs it, in that
      tab, and stop.
    - `decide: empty | …`: say in one line that no question is open, and stop.

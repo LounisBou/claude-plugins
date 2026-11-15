@@ -71,8 +71,12 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
   const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
   if (entry['status'] !== 'open') return { error: `${request.id} is ${String(entry['status'])} already: nothing to settle.` }
   const own = asker.session === me.session
-  const standsIn = !own && !coordinatorLive && me.role === 'orchestrator' && request.outcome === 'answered-here'
-  if (!own && me.role !== 'coordinator' && !standsIn) return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
+  // A replica (`origin`) is its owner's: its answer travels to a coordinator there, never to a stand-in's.
+  const standsIn = !own && !coordinatorLive && me.role === 'orchestrator' && request.outcome === 'answered-here' && entry['origin'] === undefined
+  if (!own && me.role !== 'coordinator' && !standsIn) {
+    const recorded = me.role === 'orchestrator' && request.outcome === 'answered-here' ? ' A coordinator is recorded live (or its record cannot be judged): it is its alone until `coordinator.sh clear` removes a stale record.' : ''
+    return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.${recorded}` }
+  }
   if (!own && request.outcome === 'answered-by-message') return { error: 'an answer that reached you by message settles your own question only; his answer in your tab is answered-here.' }
   const by = request.outcome === 'answered-by-message' ? 'message' : !own ? 'coordinator' : request.outcome === 'withdrawn' ? 'sender' : 'tab'
   const answer = { text: request.text, by, at, settler: me.name, ...(request.author !== null ? { author: request.author } : {}) }
@@ -89,6 +93,8 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     asker,
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
+    // A stand-in's consent is the tab's, which keeps to answersChoice's exact forms: its words are
+    // its session's own, never the coordinator's order.
     consentBy: !answered || request.outcome === 'answered-by-message' ? null : (own || standsIn) && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
     relayed: false,

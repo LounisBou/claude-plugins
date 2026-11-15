@@ -608,7 +608,9 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
-  const coordinatorLive = await coordinatorRuns($)
+  // Read only where it can matter: the machine-wide decide is an orchestrator's. A coordinator that
+  // registers between this read and the lock is not seen: the one race, the width of one `ps`.
+  const coordinatorLive = me.role === 'orchestrator' ? await coordinatorRuns($) : true
   let closed: Awaited<ReturnType<typeof closeRound>>
   try {
     closed = await closeRound($, path, current => {

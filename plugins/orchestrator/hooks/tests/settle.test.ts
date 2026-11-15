@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import { grants } from '../../core/consent-record.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
-import { parseSettle, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
+import { parseSettle, planAsked, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
 import { waitKey } from '../supervision.ts'
 import { entryFingerprint, type RoundEntry } from '../round.ts'
@@ -590,4 +590,22 @@ test('the closing proposal of another session stays the coordinator\'s: another 
   m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed))
   expect((await settle(m.other, request('r-1'), AT)).isError).toBe(true)
   expect(entryOf(m, 'r-1').status).toBe('open')
+})
+
+test('a record that exists and cannot be read counts as a coordinator live; the refusal says a coordinator is recorded', async () => {
+  const m = decideMachine(RUNNING)
+  const id = await asked(m)
+  const read = m.other.fs.read
+  m.other.fs.read = async (p: string) => { if (p === `${MODULE}/coordinator.json`) throw new Error('EACCES'); return read(p) }
+  const refused = await settle(m.other, request(id), AT)
+  expect([refused.isError, refused.result]).toEqual([true, expect.stringContaining('A coordinator is recorded live')])
+  expect(entryOf(m, id).status).toBe('open')
+})
+
+test('a replica of another machine is its owner\'s: no stand-in settles it, whatever the coordinator\'s state', () => {
+  const entry = { id: 'q-r', status: 'open', sender: { session: 's-far', name: 'Orch: far' }, origin: { address: 'peer' }, seq: 1 }
+  const me = { session: 's-other', name: OTHER, role: 'orchestrator' }
+  const refused = planAsked(entry, request('q-r'), me, AT.toISOString(), false, false)
+  expect('error' in refused && refused.error).toContain("only it, or the coordinator, settles it")
+  expect('error' in planAsked({ ...entry, origin: undefined }, request('q-r'), me, AT.toISOString(), false, false)).toBe(false)
 })

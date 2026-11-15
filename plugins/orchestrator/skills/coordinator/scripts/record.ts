@@ -114,19 +114,27 @@ export function clear(ctx: Context, args: readonly string[]): number {
   return 0
 }
 
-/** The coordinator the record names while its session runs: undefined with no record, a stale one or an unreadable one (said on the error stream). */
-export function liveCoordinator(ctx: Context): { readonly name: string; readonly tty: string } | undefined {
+export interface Recorded {
+  readonly name: string
+  readonly tty: string
+  readonly pid: string
+  /** Its session runs, by the launcher's check; false for a record with no name or no tty. */
+  readonly live: boolean
+}
+
+/** The record as it stands, judged and silent: undefined with no record. */
+export function recordedCoordinator(ctx: Context): Recorded | undefined {
   const path = recordPath(ctx.env)
   if (!isFile(path)) return undefined
   const { name, tty, pid } = readRecord(path)
-  if (name !== '' && tty !== '' && alive(ctx, tty, pid)) return { name, tty }
-  say(ctx, `stale record: ${name === '' ? 'an unreadable record' : name} on ${tty === '' ? 'no tty' : tty}`)
-  return undefined
+  return { name, tty, pid, live: name !== '' && tty !== '' && alive(ctx, tty, pid) }
 }
 
 export function lookup(ctx: Context, args: readonly string[]): number {
   if (args.length > 0) die(`lookup: unexpected argument ${args[0]}`)
-  const live = liveCoordinator(ctx)
-  if (live !== undefined) ctx.out(live.name)
+  const recorded = recordedCoordinator(ctx)
+  if (recorded === undefined) return 0
+  if (recorded.live) ctx.out(recorded.name)
+  else say(ctx, `stale record: ${recorded.name === '' ? 'an unreadable record' : recorded.name} on ${recorded.tty === '' ? 'no tty' : recorded.tty}`)
   return 0
 }
