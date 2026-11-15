@@ -70,6 +70,11 @@ test('the open-questions field: its value, and the brief without it', () => {
   assert.deepEqual(openQuestions(["- The operator's open questions", 'q', '# next']), { value: 'q', rest: "- The operator's open questions\n# next\n", line: 1 })
 })
 
+test('the open questions\' value ends at each of the fields that follow it, the answered and withdrawn questions\' too', () => {
+  for (const label of ['Questions the operator answered', 'Questions withdrawn', 'To-do items', 'Project'])
+    assert.deepEqual(openQuestions(["- The operator's open questions: one", '  two', `- ${label}: x`]), { value: ' one\n  two', rest: `- The operator's open questions:\n- ${label}: x\n`, line: 1 })
+})
+
 test('a Live state carries the open questions, filled or none', () => {
   const live = (field: string): string => `# b\n\n## Live state\n\n${field}- Project: p\n`
   assert.deepEqual(texts(live('')), ['1: Live state has no open-questions field: add "The operator\'s open questions", each verbatim, or none'])

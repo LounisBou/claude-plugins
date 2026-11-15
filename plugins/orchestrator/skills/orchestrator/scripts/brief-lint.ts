@@ -23,7 +23,7 @@ import { rows } from './short-commands.ts'
 export const USAGE = 'usage: brief-lint.sh <brief-path> [--expect-created <path>]...'
 export const SUCCESSION_LIMIT = 9000
 const OPEN_QUESTIONS = /^- The operator.s open questions/
-const NEXT_FIELD = /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|To-do items|Project)/
+const NEXT_FIELD = /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|Questions the operator answered|Questions withdrawn|To-do items|Project)/
 
 export interface Finding {
   readonly line: number
