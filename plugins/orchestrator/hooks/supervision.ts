@@ -2340,12 +2340,13 @@ export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
 
-// The session's own name by its walk alone (its host's record, its launch name, its last rename),
-// null when the walk did not finish or found none: the name of a session whose row is not written
-// yet, or was written by a walk that did not finish.
-export async function walkedName($: any, sessionId: string): Promise<string | null> {
-  const walked = await walkWithinBound($, sessionId)
-  return walked.known ? walked.name : null
+// The session's own name by its walk alone (its host's record, its launch name, its last rename):
+// the name of a session whose row is not written yet, or was written by a walk that did not finish.
+// `known` is false when the walk did not finish, the whole of it (the transcript's place included)
+// held to the side-read bound, and a name null with `known` true is a session found unnamed.
+export async function walkedName($: any, sessionId: string): Promise<{ known: boolean; name: string | null }> {
+  const walked = await withDeadline(walkWithinBound($, sessionId), await sideReadBoundMs($))
+  return isDegradedPass(walked) ? { known: false, name: null } : { known: walked.known, name: walked.name }
 }
 
 // The role of the session: the name its row holds, else the name its walk reads.

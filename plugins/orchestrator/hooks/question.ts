@@ -490,7 +490,7 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   if ('error' in parsed) return refuse(parsed.error)
   const me = await whoAmI($)
   if (me === null) {
-    return refuse('Only an orchestrator, a coordinator or an auditor asks with `ask`, once its name is known (after its first turn); an agent asks the session that launched it, by message.')
+    return refuse('Only an orchestrator, a coordinator or an auditor asks with `ask`, once the host names it; an agent asks the session that launched it, by message.')
   }
   const sessionId = await $.session.id()
   const sender = { session: sessionId, name: me.name, role: me.role, machine: await machineOf($) }
@@ -535,7 +535,7 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
  */
 export async function settle($: Held, request: SettleRequest, now: Date = new Date()): Promise<Answer> {
   const who = await whoAmI($)
-  if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once its name is known (after its first turn).')
+  if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once the host names it.')
   const me: Me = { ...who, session: await $.session.id() }
   const path = `${await stateDir($)}/round/${request.id}.json`
   const at = now.toISOString()
