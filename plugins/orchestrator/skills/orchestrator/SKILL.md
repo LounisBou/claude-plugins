@@ -47,9 +47,9 @@ words.
    pull request found merged or closed stops the work on it at once.
 5. **What you can run is yours to run.** Launch, verify, stand down and replace
    your agents without waiting for him; never hand him a line to paste. What reaches him is
-   an arbitration, through `orchestrator:decide`.
+   an arbitration, through `orchestrator:decide`; a report to him is a few lines unless he asks more.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
-   blockers, deliveries and gate crossings: act on each. An agent's question or stop is
+   blockers, deliveries and gate crossings: act on each; one that needs no action gets no reply. An agent's question or stop is
    yours to answer; only the operator's own goes to him. An agent reporting « waiting »
    has stalled: read its tree. Real load on a shared machine is stopped at once.
 7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you

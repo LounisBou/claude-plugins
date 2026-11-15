@@ -11868,6 +11868,23 @@ exit 1|short-commands: node not found: needs node 22.18, 23.6 or later
 exit 1|coordinator: node not found: needs node 22.18, 23.6 or later
 exit 1|" "$nt_none"
 
+# The orchestrator's context filled in about 35 minutes (2026-11-15): its own output and reads were
+# half the window. The texts that drove them say less: a relay needing no action gets no reply, a
+# report to the operator is a few lines, a brief fills its template's fields, a set-aside is a few
+# words, and the successor asks its agents nothing back at the takeover.
+OSKILL="$ROOT/skills/orchestrator/SKILL.md"
+OREF="$ROOT/skills/orchestrator/references"
+check "a relay needing no action gets no reply, a report to the operator is a few lines" "yes|yes" \
+  "$(spells "$OSKILL" 'act on each; one that needs no action gets no reply.')|$(spells "$OSKILL" 'a report to him is a few lines unless he asks more.')"
+check "a brief fills its template's fields, never retypes them" "yes|yes|yes|no|no" \
+  "$(spells "$OREF/brief.md" 'never retyping their fixed text')|$(spells "$OREF/review-round.md" 'filled by its fields, never retyped')|$(spells "$OREF/standing-rules.md" 'the brief templates carry them, never retyped')|$(spells "$OREF/standing-rules.md" 'put in every prompt')|$(spells "$OREF/brief.md" 'Start from `')"
+check "a set-aside is a few words, the index holds the rest" "yes|no" \
+  "$(spells "$OREF/review-verdict.md" 'in a few words with its reason in a few words, which `accepted` requires: the index holds the rest.')|$(spells "$OREF/review-verdict.md" 'each point set aside with its one-line reason, which')"
+check "the review tool's schema asks a set-aside in a few words" "yes" \
+  "$(spells "$ROOT/hooks/review.ts" 'each point set aside in a few words, its reason in a few words')"
+check "the successor tells its agents its address and asks nothing back" "yes|no" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'asking nothing back')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'ask a one-line status')"
+
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
 [ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"
