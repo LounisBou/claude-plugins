@@ -4,10 +4,9 @@
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
 // it: the next turn's start makes it stale, and a stale one is never read.
 //
-// The gate's decisions live in stop-gate.ts and its handler in guards.ts; until that handler
-// takes the declaration as a fact of its own, this module hands it on as the one machine line
-// the declaration spells (waitLine), written last in the message every later reader of the
-// stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
+// The gate's decisions live in stop-gate.ts and its handler in guards.ts, which reads the
+// declaration itself. The turn's end (supervision.ts) still receives it as the one machine line
+// the declaration spells (waitLine), written last in its answer. The model's own line decides nothing.
 import { waitLine, type DeclaredWait } from './stop-gate.ts'
 import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
@@ -76,7 +75,7 @@ export class Declarations {
     this.declared = { wait, turn: this.turn }
   }
 
-  // The session that handed over (it spawned its successor, or sent its « handed over »): not a turn's
+  // The session that handed over (it spawned its successor): not a turn's
   // fact, it holds for the session's later turns.
   handOver(sessionId: string): void {
     this.handed = sessionId
@@ -112,8 +111,8 @@ async function openAsked($: Held): Promise<{ id: string; blocks: string }[]> {
   }
 }
 
-// Mounted before the guards and the supervision: a chain answers in registration order, so the
-// stop gate and the turn's end read the message this module hands on.
+// Mounted before the supervision: a chain answers in registration order, so the turn's end reads
+// the answer this module hands on.
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   on('session.start', {}, async ($, e, next) => {
     try {
@@ -177,15 +176,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: `the wait could not be declared; the module's log says why`, isError: true }
-  })
-
-  on('classic.Stop', {}, async ($, e, next) => {
-    const wait = declarations.current()
-    if (wait === null) return next(e)
-    return next({ ...e, last_assistant_message: withDeclaredWait(String(e.last_assistant_message ?? ''), wait) })
-  }).catch(async ($, e, next) => {
-    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
   })
 
   on('turn.complete', {}, async ($, e, next) => {

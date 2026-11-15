@@ -41,28 +41,21 @@ test('a summary with nothing holding the stop passes', () => {
   expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
 })
 
-test('an orchestrator ending on an operator wait with no question asked with `ask` is refused before anything is read', async () => {
-  const { handlers } = mounted(new Declarations())
-  const { dollar, ran } = fakeDollar({})
-  const report = 'the report\n\nwaiting: operator — blocks: ligne 359, ligne 343'
-  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
-  expect(refused.observed).toBe(ASK_FIRST)
-  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
-  const coord = fakeDollar({ launchName: 'Coord: machine' })
-  const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: report }))
-  expect(passed.answer).toBe(passed.passed)
-  expect(passed.observed).toBeUndefined()
+// Program goal 9: a turn that declared no wait gets the decision of one whose last line says nothing.
+test('a turn with no declare_wait and a `waiting:` line gets the same decision as one without the line', async () => {
+  for (const line of ['waiting: operator — blocks: ligne 359', 'waiting: done', 'waiting: deferred — r-12', 'handed over']) {
+    const outcomes = []
+    for (const message of ['the report', `the report\n\n${line}`]) {
+      const { handlers } = mounted(new Declarations())
+      const { dollar } = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'], round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+      const out = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: message }))
+      outcomes.push({ passed: out.answer === out.passed, observed: out.observed })
+    }
+    expect(outcomes[1]).toEqual(outcomes[0])
+  }
 })
 
 // --- a question asked with `ask` still open in the round --------------------------------------
-
-test('a last line « handed over » passes with a question still open: the successor holds it', async () => {
-  const { handlers } = mounted()
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Takeover confirmed.\nhanded over' }))
-  expect(over.answer).toBe(over.passed)
-  expect(over.observed).toBeUndefined()
-})
 
 test('a round that does not answer in time lets the stop go on', async () => {
   const { handlers } = mounted()
@@ -357,8 +350,8 @@ test('the wake check decides on the declared wait alone: the same line written b
   }
   // A declaration is read as it is, whatever the message says.
   expect(gateWake({ ...none, message: 'waiting: done', declared: { kind: 'operator', blocks: 'the report' } })).toEqual({ blocks: 'the report' })
-  // The predecessor's last word is no wait: it stays read on the line.
-  expect(gateWake({ ...none, message: 'Takeover confirmed.\nhanded over' })).toBeNull()
+  // The predecessor's last word is no wait either.
+  expect(gateWake({ ...none, message: 'Takeover confirmed.\nhanded over' })).toMatchObject(refused)
 })
 
 // --- check 2 -----------------------------------------------------------------------------
@@ -1280,14 +1273,9 @@ test("a declared block is honoured before « stand it down »: the idle agent ma
   expect(outcome.observed).toBeUndefined()
 })
 
-test('the predecessor of a succession may stop: its last line « handed over », or its done line once it handed over', async () => {
+test('the predecessor of a succession may stop on its done once it handed over', async () => {
   const { handlers } = mounted()
   const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
-  // « handed over » as the last line passes whatever is left: the successor holds it.
-  const last = fakeDollar(open)
-  const over = await stop(handlers['classic.Stop'], last.dollar, stopEvent({ last_assistant_message: 'Takeover confirmed.\nhanded over' }))
-  expect(over.answer).toBe(over.passed)
-  expect(over.observed).toBeUndefined()
   // Before the hand-over, a done line is held on the rows still open.
   const before = fakeDollar(open)
   expect((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
@@ -1298,33 +1286,6 @@ test('the predecessor of a succession may stop: its last line « handed over »,
   const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(done.answer).toBe(done.passed)
   expect(done.observed).toBeUndefined()
-})
-
-// The « handed over » the predecessor sends its successor, delivered, is the hand-over too: a spawn this
-// module did not see leaves no other mark, and the done line it ends on was held on what is the successor's.
-const HANDED_OVER_SEND = { origin: { kind: 'model' }, to: 'Orch: belt [b7f1]', text: 'handed over' }
-
-test('a delivered « handed over » message lets the done line pass, as the successor spawn does', async () => {
-  const { handlers } = mounted()
-  const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
-  const before = fakeDollar(open)
-  expect((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
-  await handlers['session.send'](before.dollar, HANDED_OVER_SEND, async () => ({ isDelivered: true }))
-  const after = fakeDollar(open)
-  const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect(done.answer).toBe(done.passed)
-  expect(done.observed).toBeUndefined()
-})
-
-test('a « handed over » that was refused, or any other message, hands nothing over', async () => {
-  const { handlers } = mounted()
-  const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
-  const fx = fakeDollar(open)
-  await handlers['session.send'](fx.dollar, HANDED_OVER_SEND, async () => ({ isDelivered: false, reason: 'nobody by that name' }))
-  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, text: 'takeover confirmed' }, async () => ({ isDelivered: true }))
-  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, origin: { kind: 'user' } }, async () => ({ isDelivered: true }))
-  await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, agentId: 'a-1' }, async () => ({ isDelivered: true }))
-  expect((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
 })
 
 test('a successor spawn that failed hands nothing over', async () => {
@@ -1455,7 +1416,7 @@ test('own watches are the ci-watches whose parents reach the host process', () =
 
 test('the wake decision: handed over, a block before a delivered agent, a watch as a waker', () => {
   const idle = [{ label: 'Agent: a', state: 'idle' as const, tty: '/dev/ttys003' }]
-  expect(checkWake({ agents: [], resident: false, delivered: [], message: '`handed over`.' })).toBeNull()
+  expect(checkWake({ agents: [], resident: false, delivered: [], message: '`handed over`.' })).toEqual({ warn: 'nothing-will-wake', detail: '' })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done', handedOver: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
   expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, MERGED)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
@@ -2128,10 +2089,10 @@ function waitMounted(): Record<string, Function> {
   return handlers
 }
 
-// The stop as the engine chains it: the declared wait's handler first, then the gate.
+// The stop as the gate reads it: the declarations of the wait module beside it, read directly.
 async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
   const gate = mounted(WAITS.get(wait)).handlers['classic.Stop']
-  return observing(dollar, e, async (seen, pass) => wait['classic.Stop'](seen, e, (x: unknown) => gate(seen, x, pass)))
+  return observing(dollar, e, async (seen, pass) => gate(seen, e, pass))
 }
 
 const declare = (wait: Record<string, Function>, dollar: any, input: object) =>
@@ -2192,7 +2153,7 @@ test('with no wait declared, the last line the model wrote decides nothing, and 
   const done = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'All of it shipped.\nwaiting: done', ...NOTHING_RUNS }))
   expect(String(done.observed)).toContain('Nothing will wake you')
   const asked = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the report`, ...NOTHING_RUNS }))
-  expect(String(asked.observed)).toBe(ASK_FIRST)
+  expect(String(asked.observed)).toContain('Nothing will wake you')
 })
 
 test('a declared operator wait releases the stop whatever the last line says', async () => {
@@ -2370,8 +2331,7 @@ test('a re-fired stop whose operator wait holds no question passes untouched, no
   const fx = fakeDollar({})
   const sent: string[] = []
   fx.dollar.session.send = async ({ text }: { to: unknown; text: string }) => { sent.push(text); return { isDelivered: true } }
-  const first = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
-  expect(first.observed).toBe(ASK_FIRST)
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
   const ran = fx.ran.length
   for (let i = 0; i < 3; i++) {
     const refired = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))

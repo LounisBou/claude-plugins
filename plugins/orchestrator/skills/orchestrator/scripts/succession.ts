@@ -58,6 +58,9 @@ export interface Request {
   readonly worktree: string
 }
 
+// A directory inside an installed plugin: a deploy or a host install.
+const PLUGIN_DIR = /\/(deploys\/[^/]+\/[0-9a-f]{40}|plugins\/(cache|marketplaces))(\/|$)/
+
 /** The request the command line makes, or the reason it is refused. */
 export function parseArgs(argv: readonly string[], cwd: string): Request | { readonly error: string } {
   const [command = '', record = '', ...rest] = argv
@@ -72,7 +75,10 @@ export function parseArgs(argv: readonly string[], cwd: string): Request | { rea
   }
   const mode = values['mode'] ?? ''
   if (mode !== 'build' && mode !== 'investigate') return { error: '--mode build|investigate is required: the mode the successor was launched in' }
-  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree: values['worktree'] ?? cwd }
+  const worktree = values['worktree'] ?? cwd
+  // The project is read from the working directory: run from inside the plugin's own copy, it would be the configuration's repository.
+  if (PLUGIN_DIR.test(worktree.replaceAll('\\', '/'))) return { error: `run the takeover from the project's directory, not from the plugin's (${worktree}): call <base dir>/scripts/succession.sh by its path, or pass --worktree <project dir>` }
+  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree }
 }
 
 /** One open question of the round, as the takeover prints it. */

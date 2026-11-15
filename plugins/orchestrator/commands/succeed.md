@@ -18,7 +18,7 @@ Then:
 
 1. `iterm-agent.sh list` — your own row, `self`: its tty goes in the successor's prompt.
 2. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto
-   --successor --prompt 'Load the skill orchestrator:orchestrator with the argument "<your mode>", then run scripts/succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty> in the base directory that skill load printed, and execute what it prints.'`
+   --successor --prompt 'Load the skill orchestrator:orchestrator with the argument "<your mode>", then, from your working directory (do not cd), run <the base directory that skill load printed>/scripts/succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>, and execute what it prints.'`
    — the prompt names no script directory of yours: the successor runs the takeover, and every
    script it prints, from its own copy of the plugin, the version installed when it started, never
    from this session's older one. `<your mode>` is the operator's
