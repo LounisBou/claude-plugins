@@ -44,7 +44,7 @@ it. `/github:doctor` then confirms everything is ready.
   « Allow for this session », which covers that one command on that one
   repository until the session ends; it is never offered for `pr-merge` or
   `comment-delete`, nor where an explicit rule asks.
-- **Writing rules enforced** — before a title, a description or a comment
+- **Writing rules observed** — before a title, a description or a comment
   leaves the machine, the mod checks the mechanical rules of
   `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
   URLs are not prose), no trailer of any kind (`Co-Authored-By`,
@@ -278,9 +278,8 @@ The act is refused before anyone is asked, and a pull request still carrying
 github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts).
 ```
 
-A pull request opened out of draft is refused with `github: <act> refused: open it
-as a draft, then leave draft once ready.`, and a readiness GitHub did not answer
-with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
+A pull request opened out of draft is not gated, only observed (`github.draft.open-out`), and a
+readiness GitHub did not answer is refused with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
 draft always passes, and `gh pr create --draft` and `gh pr ready --undo` put
 `Not Ready` on, as the tool does. A merge or an undraft in the
 shell names its repository, else it is refused with `github: <command> refused: name

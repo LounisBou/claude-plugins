@@ -80,6 +80,8 @@ test('a command name another plugin owns passes through to next', async ($, on) 
 // The code of each refusal event the module journaled in the test running: one per guard it observed and let the call through.
 const JOURNAL = '/github/journal/'
 const journaled: string[] = []
+// Set by a test whose host refuses every write of the journal.
+let journalRefused = false
 // A session whose configuration directory is /cfg, where the journal lies; a test that names its own environment does not call it.
 const cfg = (on: any) => on('env.get', (_$: any, e: any) => ({ value: e.name === 'CLAUDE_CONFIG_DIR' ? '/cfg' : undefined }))
 
@@ -114,6 +116,7 @@ async function stubMod(
 ) {
   const session = freshSession()
   journaled.length = 0
+  journalRefused = false
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: session }))
   on('session.cwd', () => ({ value: '/work' }))
@@ -123,6 +126,7 @@ async function stubMod(
   on('command.register', () => ({ value: undefined }))
   on('fs.write', (_$: any, e: any) => {
     if (String(e.path).includes(JOURNAL)) {
+      if (journalRefused) return { deny: 'EACCES: permission denied' }
       journaled.push(JSON.parse(e.text).source.code)
       return { value: undefined }
     }
@@ -1042,6 +1046,38 @@ test('a journal that cannot be written costs one log line and the call goes as i
   expect(runs.length).toBe(1)
   expect(journaled).toEqual([])
   expect(logs.filter((line) => line.includes('github.writing.rule could not be journaled')).length).toBe(1)
+})
+
+test('a journal write the host refuses costs one log line naming why, and the call goes as it is', async ($, on) => {
+  const runs: any[] = []
+  const logs: string[] = []
+  cfg(on)
+  await stubMod(on, runs, [])
+  journalRefused = true
+  on('ui.log', (_$: any, e: any) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  await startSession($)
+
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.filter((run) => run.command === 'pr-comment').length).toBe(1)
+  expect(journaled).toEqual([])
+  expect(logs.filter((line) => line.includes('github.writing.rule could not be journaled') && line.includes('EACCES')).length).toBe(1)
+})
+
+test('a log that fails too leaves the call going', async ($, on) => {
+  const runs: any[] = []
+  await stubMod(on, runs, [])
+  on('ui.log', () => {
+    throw new Error('no log')
+  })
+  await startSession($)
+
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'Done; thanks' } })
+  expect(out).toEqual({ result: 'ok' })
+  expect(runs.length).toBe(1)
 })
 
 test('a text breaking a rule sent again goes as it is each time, with no question to the person', async ($, on) => {
@@ -2350,6 +2386,10 @@ test('a failed guard lets a write naming the E2E exemption files through (observ
   expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(null)
   expect(bashNetRefusal('echo {} > "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
   expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('find "$CLAUDE_PLUGIN_DATA/e2e-exempt" -delete')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('mv "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json" /tmp')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('cat "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
 })
 
 
@@ -2361,6 +2401,9 @@ test('a failed guard lets a write naming the check plan files through (observed)
 test('a failed guard refuses a deletion in the records, and lets a read or another write through', () => {
   expect(bashNetRefusal('rm ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
   expect(bashNetRefusal('find ~/.claude/pr-records -delete')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('mv -t /tmp ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; rm ~/.claude/pr-records/x')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; mv ~/.claude/pr-records/x /tmp')).toBe(NET_REFUSAL)
   expect(bashNetRefusal('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(null)
   expect(bashNetRefusal('cat ~/.claude/pr-records/o/r/x.json')).toBe(null)
 })

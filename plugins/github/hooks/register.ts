@@ -106,8 +106,8 @@ async function runGh(
  * approvals the file reserves to the person (a pull request out of draft, a
  * merge) are asked whatever the settings allow.
  *
- * Outside auto-merge, leaving draft (a CI undraft aside) is refused, never
- * asked: it is the person's act on GitHub, after their review.
+ * Outside auto-merge, leaving draft (a CI undraft aside) is observed, then asked: it is the
+ * person's act on GitHub, after their review, and the readiness gate refuses one not ready.
  *
  * In a repository in auto-merge no write is put to the person: the reserved
  * approvals lift and an ask with no rule behind it runs. A deny and an ask
@@ -275,7 +275,7 @@ export function reservedToPerson(command: string, autoMerge = false): string | u
   return undefined
 }
 
-// A call that takes a pull request out of draft; opening one out of draft is the act's own observation (readyAct).
+// A call that takes a pull request out of draft; opening one out of draft is observed where the act is read (toolReady, bashReady).
 export function leavesDraft(command: string): boolean {
   return command === 'pr-ready'
 }
@@ -314,11 +314,12 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 export function bashNetRefusal(command: string): string | null {
   try {
     if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
-    if ((command.includes(EXEMPT_DIR + '/') || command.includes(PLAN_DIR + '/')) && deletes(command, namesExemptions)) return NET_REFUSAL
+    if (namesExemptions(command) && deletes(command, namesExemptions)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    if (/pr-records|e2e-exempt|check-plans/.test(command) && deletes(command, () => false)) return NET_REFUSAL
+    const names = (text: string) => /pr-records|e2e-exempt|check-plans/.test(text)
+    if (names(command) && deletes(command, names)) return NET_REFUSAL
     return /\b(gh|git)\b|auto-merge|auto-deploy/.test(command) ? NET_REFUSAL : null
   }
 }
@@ -690,7 +691,7 @@ export async function diagnose($: any, check = false): Promise<string> {
  * draft and merging it need the Ready label, which the gate puts itself when the whole contract holds
  * at the head, CI included, through the tool and through Bash alike, and an act that is not ready
  * is refused. In a repository not in
- * auto-merge, leaving draft is refused on every route, and a merge is refused through Bash: the
+ * auto-merge, leaving draft is observed on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
  */
@@ -1381,11 +1382,8 @@ function engineName(act: Act): string | undefined {
 // The Bash act's refusal, or undefined; what must follow its success goes in after.
 async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>): Promise<string | undefined> {
   if (act.stdin) return STDIN_REFUSAL
-  if (act.kind === 'create') {
-    await observed($, OBSERVED.draftOpen)
-    return undefined
-  }
-  if (act.kind === 'create-draft') {
+  if (act.kind === 'create' || act.kind === 'create-draft') {
+    if (act.kind === 'create') await observed($, OBSERVED.draftOpen)
     after.push(async (result) => {
       const made = createdPr(stdoutOf(result))
       if (made) await labelNotReady($, made.repo, made.pr)
@@ -1411,14 +1409,12 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
   if (act.unnamed) return graphqlRefusal(act.kind)
   if (act.unreadable) return unreadablePrRefusal(act.name)
   if (!act.repo) {
-    // A merge and leaving draft are refused:
-    // the auto-merge split and the gate need the repository.
+    // A merge and leaving draft are refused without the repository:
+    // the auto-merge split and the gate need it.
     return unnamedRepoRefusal(act.name)
   }
   const repo = act.repo
   const listed = (await autoMergeRepos($)).has(repo.toLowerCase())
-  // Leaving draft outside auto-merge is observed once the gate lets it through.
-  let leaving = false
   if (act.kind === 'merge' && !listed) return autoMergeRefusal(repo, act.pr, engineName(act))
   let pr = act.pr
   let lookup = ''
@@ -1431,6 +1427,8 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     }
   }
   const r: Readiness = pr === undefined ? { missing: [], error: lookup } : await readiness($, repo, pr, act.sha)
+  // Leaving draft outside auto-merge is observed once the gate lets it through.
+  let leaving = false
   if (act.kind === 'undraft') {
     // The engine leaves draft for CI only when told to (--for-ci): without it, it puts Ready on.
     if (r.gate && ciUndraft(r.gate) && pr !== undefined && act.forCi !== false) {
@@ -2256,20 +2254,26 @@ export function register(on: any): void {
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
+    const line = String(e.command)
+    // What the call is observed for, journaled just before it runs: a call refused further down leaves no line.
+    const observations: string[] = []
     try {
-      // A command that only reads them passes: the auto-merge list is refused a write, the deploy list any touch,
-      // the records and the exemptions a deletion (irreversible); any other write to them is observed.
-      const line = String(e.command)
+      // A command that only reads them passes: the auto-merge list is refused a write, the deploy list any touch.
+      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return { deny: AUTO_MERGE_REFUSAL }
+      if (await touchesList($, line, AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
+    } catch {
+      // A line the reader cannot read: the ready guard below reads it again and refuses it.
+    }
+    try {
+      // The records and the exemptions are refused a deletion (irreversible); any other write to them is observed.
       const root = await recordsRoot($)
       if (deletesRecords(line, root)) return { deny: RECORDS_REFUSAL }
       const exempt = await touchesExemptions($, line)
       if (exempt && deletes(line, namesExemptions)) return { deny: EXEMPT_REFUSAL }
-      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return { deny: AUTO_MERGE_REFUSAL }
-      if (await touchesList($, line, AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
-      if (writesRecords(line, root)) await observed($, OBSERVED.records)
-      if (exempt) await observed($, OBSERVED.exemption)
+      if (writesRecords(line, root)) observations.push(OBSERVED.records)
+      if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)
     } catch {
-      // A command that is no text names no record either.
+      // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
     const undeployed = await bashDeployRefusal($, String(e.command))
     if (undeployed) return { deny: undeployed }
@@ -2280,7 +2284,7 @@ export function register(on: any): void {
       // A line that cannot be read moves no label it shows.
     }
     for (const labelling of labellings) {
-      if (await movesExemptLabel($, labelling, await labellingRepo($, labelling.repo))) await observed($, OBSERVED.exemptLabel)
+      if (await movesExemptLabel($, labelling, await labellingRepo($, labelling.repo))) observations.push(OBSERVED.exemptLabel)
     }
     const after: Array<(result: any) => Promise<void>> = []
     let current: Act | undefined
@@ -2292,10 +2296,10 @@ export function register(on: any): void {
       }
     } catch (err) {
       // The ready guard failed on its own: its readiness reads as unverified, never as a pass.
-      const refused = guardThrew(current, err)
-      if (refused) return { deny: refused }
+      return { deny: guardThrew(current, err) }
     }
-    await bashLint($, String(e.command))
+    for (const code of observations) await observed($, code)
+    await bashLint($, line)
     const result = await next(e)
     if (!failed(result)) {
       for (const then of after) {

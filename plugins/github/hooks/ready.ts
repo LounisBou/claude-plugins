@@ -734,8 +734,8 @@ export function carriedText(carried: Carried[]): string {
 const tail = (missing: string[], carried: Carried[] = []) =>
   'Missing: ' + missing.join(', ') + (carried.length > 0 ? '; ' + carriedText(carried) : '')
 
-// Why leaving draft is refused outside auto-merge, whatever the route.
-const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
+// Why a GraphQL mutation that may leave draft is refused: the readiness gate needs the pull request named.
+const LEAVE_DRAFT = 'leaving draft meets the readiness gate, which needs the pull request named, and Ready is put'
   + ' by the gate once the pull request is ready'
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[], carried: Carried[] = []): string {
@@ -782,7 +782,7 @@ export function unnamedRepoRefusal(act: string): string {
 export function graphqlRefusal(kind: ActKind): string {
   const named = 'github: gh api graphql refused: the pull request it acts on cannot be read from the command.'
   if (kind !== 'merge') {
-    return named + ' In a repository in auto-merge, run mcp__github__gh pr-ready {"pr": <n>} on <owner/name>; ' + LEAVE_DRAFT + '.'
+    return named + ' Run mcp__github__gh pr-ready {"pr": <n>} on <owner/name>; ' + LEAVE_DRAFT + '.'
   }
   return named + ' Run mcp__github__gh pr-merge {"pr": <n>} on <owner/name>: it checks that the pull request is ready.'
 }
@@ -910,31 +910,68 @@ export function writesRecords(line: string, root?: string): boolean {
 // The programs that delete, bare or by path, and the options and calls that delete inside another
 // program. A deletion is irreversible: a command line that deletes the records, the E2E exemptions or
 // the check plans is refused, where any other write to them is observed.
-const DELETER_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?(?:rm|rmdir|unlink|shred|srm|trash)(?=$|[\s;&|(){}`'"])/
-const DELETE_OPTION = /(?:^|\s)-delete(?=\s|$)/
-const DELETE_CALL = /\b(?:os\.(?:remove|unlink|rmdir)|shutil\.rmtree|rmtree|rmSync|unlinkSync|fs\.rm|File\.delete)\b/
+const DELETER_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?(?:rm|rmdir|unlink|shred|srm|trash)(?=$|[\s;&|(){}`'"$])/
+const DELETE_OPTION = /(?:^|\s)(?:-delete|--delete|--remove-source-files)(?=\s|$)/
+const DELETE_CALL = /\b(?:os\.(?:remove|removedirs|unlink|rmdir|rename|replace)|shutil\.(?:rmtree|move)|rmtree|rmSync|rmdirSync|unlinkSync|renameSync|fs\.(?:rm|rmdir|unlink|rename)|File\.(?:delete|unlink|rename)|FileUtils\.(?:rm|mv|remove)\w*)\b|\.(?:unlink|rmdir)\s*\(/
+const GIT_DELETE = /\bgit\s+(?:clean|rm)\b/
+const MOVE_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?mv(?=$|[\s;&|(){}`'"$])/
 const DELETERS: ReadonlySet<string> = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
+const MAX_NESTING = 4
+
+// Whether the argv of a command that moves (`mv`) takes something `names` recognises out of its place: a source
+// (every operand but the last, or any with -t / --target-directory), or what a pipeline feeds it.
+function movesOut(argv: readonly string[], names: (text: string) => boolean, fed: boolean): boolean {
+  const operands = argv.slice(1)
+  const toDirectory = operands.some((word) => word === '--target-directory' || word.startsWith('--target-directory=') || /^-[A-Za-z]*t$/.test(word))
+  return fed || (toDirectory ? operands.some(names) : operands.slice(0, -1).some(names))
+}
+
+function deletesIn(line: string, names: (text: string) => boolean, depth: number): boolean {
+  if (DELETER_WORD.test(line) || DELETE_OPTION.test(line) || DELETE_CALL.test(line) || GIT_DELETE.test(line)) return true
+  let commands
+  try {
+    commands = readCommands(line)
+  } catch {
+    // A line that cannot be read: a move is judged on its text.
+    return MOVE_WORD.test(line) && names(line)
+  }
+  // The reader gives nothing for a line it cannot close (`$(`): that is no read either.
+  if (commands.length === 0) return line.trim() !== '' && MOVE_WORD.test(line) && names(line)
+  return commands.some(({ argv, wrappers }) => {
+    const program = (argv[0] ?? '').split('/').pop() ?? ''
+    if (argv.some((word) => DELETERS.has(word.split('/').pop() ?? ''))) return true
+    if (program === 'mv') return movesOut(argv, names, wrappers.includes('xargs'))
+    if (argv.slice(1).includes('mv') && argv.some(names)) return true
+    const inner = innerLine(argv)
+    return inner !== undefined && depth < MAX_NESTING && deletesIn(inner, names, depth + 1)
+  })
+}
 
 // Whether a command line that is not only a read deletes: a deleting program anywhere in its text
-// (`bash -c`, `xargs`, `find -exec` and `&&` included), `find -delete`, a deleting call of an
-// interpreter, a word that reads as a deleting program once its quotes are gone, or a `mv` whose
-// source `names` recognises (a move out of a place deletes there; a move into it only writes).
+// (`bash -c`, `xargs`, `find -exec` and `&&` included), `find -delete`, `git clean`, a deleting call of an
+// interpreter, a word that reads as a deleting program once its quotes are gone, or a move out of what
+// `names` recognises (a move out of a place deletes there; a move into it only writes).
 export function deletes(line: string, names: (text: string) => boolean): boolean {
-  if (onlyReads(line)) return false
-  if (DELETER_WORD.test(line) || DELETE_OPTION.test(line) || DELETE_CALL.test(line)) return true
+  let reads = false
   try {
-    return simpleCommands(line).some((argv) => {
-      const program = (argv[0] ?? '').split('/').pop() ?? ''
-      return argv.some((word) => DELETERS.has(word.split('/').pop() ?? '')) || (program === 'mv' && argv.slice(1, -1).some(names))
-    })
+    reads = onlyReads(line) && readCommands(line).length > 0
   } catch {
-    return false
+    // A line that cannot be read is no read.
   }
+  return !reads && deletesIn(line, names, 0)
 }
 
 // Whether a Bash command line deletes in the records: it names them and deletes.
 export function deletesRecords(line: string, root?: string): boolean {
-  return touchesRecords(line, root) && deletes(line, recordsNamer(root))
+  const names = recordsNamer(root)
+  let touches: boolean
+  try {
+    touches = touchesRecords(line, root)
+  } catch {
+    // A line the reader cannot read is judged on its text.
+    touches = names(line)
+  }
+  return touches && deletes(line, names)
 }
 
 // The record kind a caller of mcp__github__record may write, by the plugin whose hook made the

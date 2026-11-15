@@ -396,5 +396,3 @@ function squash(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// The refusal the model reads: each broken rule with its field, then how to
-// go on.

@@ -21,14 +21,24 @@ export const OBSERVED = {
 
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 
-// Pruned once per process, at the first write.
+// The time one observation may take: the call waits for it, so a journal that hangs (a held lock, a stuck write)
+// costs the call this long at most.
+export const OBSERVE_DEADLINE_MS = 3000
+
+// Pruned once per process, at the first write, whatever its outcome: a prune that fails is not retried at every call.
 let pruned = false
+
+// A file that is not there: the only read failure that is no failure (core reads an absent file as empty).
+const ABSENT = /ENOENT|no such file|not found/i
 
 // The journal's I/O over the host's nouns: what core's store-io needs, run by the host.
 function ioOf($: any): JournalIo {
   return {
     write: (path, text) => $.fs.write(path, text),
-    read: (path) => $.fs.read(path).then((text: unknown) => String(text), () => undefined),
+    read: (path) => $.fs.read(path).then((text: unknown) => String(text), (err: any) => {
+      if (ABSENT.test(String(err?.code ?? '') + ' ' + String(err?.message ?? err))) return undefined
+      throw err
+    }),
     run: (argv) => $.process.run(argv, { timeoutMs: 5000 }),
     mtimeMs: (path) => $.fs.stat(path).then((stat: any) => Number(stat.mtimeMs), () => undefined),
     sleep: (ms) => $.clock.sleep(ms),
@@ -49,11 +59,16 @@ export async function observe($: any, config: string | undefined, code: string):
       evidence: [{ type: 'refusal', code }], trust: 'computed',
     })
     if (event === undefined) throw new Error('the event breaks the learning contract')
-    await appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, !pruned)
+    const prune = !pruned
     pruned = true
+    const deadline = new Promise<never>((_, reject) => {
+      // A clock that cannot sleep sets no deadline.
+      Promise.resolve().then(() => $.clock.sleep(OBSERVE_DEADLINE_MS)).then(() => reject(new Error('no answer in ' + OBSERVE_DEADLINE_MS + ' ms')), () => undefined)
+    })
+    await Promise.race([appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, prune), deadline])
   } catch (err: any) {
     try {
-      const sent = $.ui.log('github: the observation ' + code + ' could not be journaled: ' + String(err?.message ?? err).trim())
+      const sent = $.ui.log('github: the observation ' + code + ' could not be journaled or the journal pruned: ' + String(err?.message ?? err).trim())
       if (sent && typeof sent.catch === 'function') sent.catch(() => undefined)
     } catch {
       // Nowhere to say it: the call goes on.

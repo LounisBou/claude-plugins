@@ -311,8 +311,8 @@ Never « external terminal ».
 
 **Ready.** These acts need the pull request ready at its head (core's readiness contract, « Records »
 above), CI included; the gate puts `Ready` just before the act, which runs on that label only: `pr-ready`,
-`pr-merge`, `pr-create` out of draft; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
-`gh pr merge` (not `--disable-auto`), `gh pr create` without `--draft`, `gh api` `PUT`/`POST` on
+`pr-merge`; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
+`gh pr merge` (not `--disable-auto`), `gh api` `PUT`/`POST` on
 `repos/<o>/<r>/pulls/<n>/merge` (path or URL), `gh api graphql` naming `mergePullRequest`,
 `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the engine's same subcommands from Bash.
 A `--match-head-commit` or `pr-merge --sha` off that head is not ready; a `Ready` put by `label-add` or the
@@ -337,8 +337,9 @@ and unasked: `pr-ready --for-ci` (keeps `Not Ready`) or the shell's `gh pr ready
 the pushed branch carrying `Ready` goes back to `Not Ready`, in one line; a push naming no branch or
 repository with certainty leaves it.
 
-**Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository of
-`auto-merge.json`, the ready guard on top. Elsewhere leaving draft meets the ready guard, is observed, then asked; a merge
+**Auto-merge split.** A merge runs only in a repository of `auto-merge.json`, the ready guard on top.
+Elsewhere leaving draft (CI undraft aside) meets the ready guard, is observed, then asked; opening a pull request out of
+draft is observed alone; a merge
 is asked through the tool, refused in the shell. The engine's undraft is a CI one only with `--for-ci`, and
 names `--repo`.
 

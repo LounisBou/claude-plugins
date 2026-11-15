@@ -577,8 +577,16 @@ test('a CI undraft through the tool passes outside auto-merge too, with no quest
   expect(seen.asked).toEqual([])
   expect(seen.runs.find((r) => r.command === 'pr-ready')?.args).toEqual({ pr: 12, 'for-ci': true })
   expect(seen.logs).toEqual(['github: acme/thing#12 out of draft to run CI, still Not Ready'])
+  expect(seen.journal).toEqual([])
 })
 
+
+test('an undraft in auto-merge, or a ready one anywhere but outside it, writes no draft.leave line', async ($, on) => {
+  const seen = await world($, on, { labels: ['Ready'], autoMerge: ['acme/thing'] })
+  const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
+  expect(out).toEqual({ result: 'ok' })
+  expect(seen.journal).toEqual([])
+})
 
 test('an undraft outside auto-merge that is no CI undraft goes through when ready, observed, never asked', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'], answer: 'Allow' })
@@ -603,6 +611,7 @@ test('a Bash CI undraft passes outside auto-merge too, with one line', async ($,
   expect(out.deny).toBeUndefined()
   expect(seen.bash).toEqual(['gh pr ready 12 -R acme/thing'])
   expect(seen.logs).toEqual(['github: acme/thing#12 out of draft to run CI, still Not Ready'])
+  expect(seen.journal).toEqual([])
 })
 
 test('going back to draft is always let through, and puts Not Ready', async ($, on) => {
@@ -962,6 +971,22 @@ test('a Bash draft opened gets Not Ready from the URL gh printed', async ($, on)
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 
+test('a Bash pull request opened out of draft is observed and gets Not Ready from the URL gh printed', async ($, on) => {
+  const seen = await world($, on, { bashResult: { result: { stdout: 'https://github.com/acme/thing/pull/31\n', stderr: '', interrupted: false } } })
+  const out: any = await $.tool.call(bash('gh pr create -t "fix: x" -b "Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'))
+  expect(out.deny).toBeUndefined()
+  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
+})
+
+test('a call a later check refuses leaves no observation: the journal is written just before the command runs', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS })
+  const out: any = await $.tool.call(bash('echo x > ~/.claude/pr-records/o/r/x.json && gh pr merge 12 -R acme/thing'))
+  expect(out.deny).toContain('refused')
+  expect(seen.journal).toEqual([])
+  expect(seen.bash).toEqual([])
+})
+
 test('commands that only look like an act pass with nothing read', async ($, on) => {
   const seen = await world($, on)
   for (const line of ['gh pr merge 12 -R acme/thing --disable-auto', 'git commit -m "run gh pr merge later"', 'gh pr view 12']) {
@@ -1097,6 +1122,7 @@ for (const command of RECORDS_READS) {
     const seen = await world($, on)
     const out: any = await $.tool.call(bash(command))
     expect(out.deny).toBeUndefined()
+    expect(seen.journal).toEqual([])
     expect(seen.bash).toEqual([command])
   })
 }
@@ -1133,6 +1159,13 @@ const RECORDS_DELETIONS = [
   'cd ~/.claude/pr-records/o/r && rm x.json',
   'bash -c "rm ~/.claude/pr-records/o/r/x.json"',
   '/bin/rm ~/.claude/pr-records/o/r/x.json',
+  'rm ~/.claude/pr-records/o/r/x.json $(',
+  'rm${IFS}~/.claude/pr-records/o/r/x.json',
+  'mv -t /tmp ~/.claude/pr-records/o/r/x.json',
+  'find ~/.claude/pr-records -name "*.json" -exec mv {} /tmp \\;',
+  'ls ~/.claude/pr-records/o/r | xargs mv -t /tmp',
+  'python3 -c "from pathlib import Path; Path(\'/home/x/.claude/pr-records/o/r/x.json\').unlink()"',
+  'ls {1..9}{1..9}{1..9}{1..9}; rm ~/.claude/pr-records/o/r/x.json',
   'r""m ~/.claude/pr-records/o/r/x.json',
   'unlink ~/.claude/pr-records/o/r/x.json',
   'mv ~/.claude/pr-records/o/r/x.json /tmp/x.json',
@@ -1739,7 +1772,7 @@ test('auto-merge-set refuses spans that hold the recorded answer only in parts',
 
 // ---- leaving draft is the operator's outside auto-merge ----
 
-const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review'
+const LEAVE_DRAFT = 'leaving draft meets the readiness gate, which needs the pull request named'
 
 
 test('a pr-ready outside auto-merge is observed, then asked as any write no rule allows', async ($, on) => {
@@ -2537,10 +2570,15 @@ test('the exemption files are written through Write, Edit and Bash, each observe
     expect(out.deny, command).toBe(EXEMPT_REFUSAL)
   }
   expect(seen.journal.length).toBe(calls.length)
+  for (const command of ['cat /data/e2e-exempt/acme/thing.json', 'ls /data/check-plans/acme']) {
+    const read: any = await $.tool.call(bash(command))
+    expect(read.deny, command).toBeUndefined()
+  }
+  expect(seen.journal.length).toBe(calls.length)
   const mention: any = await $.tool.call(bash('git commit -m "docs: explain e2e-exempt/ files"'))
   expect(mention.deny).toBeUndefined()
   expect(seen.journal.length).toBe(calls.length)
-  expect(seen.bash).toEqual([calls[2], bash('git commit -m "docs: explain e2e-exempt/ files"')].map((call: any) => call.command))
+  expect(seen.bash).toEqual([calls[2], bash('cat /data/e2e-exempt/acme/thing.json'), bash('ls /data/check-plans/acme'), bash('git commit -m "docs: explain e2e-exempt/ files"')].map((call: any) => call.command))
 })
 
 const noneCall = (detail?: string) =>

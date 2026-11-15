@@ -378,12 +378,16 @@ test('a deletion is a line that is no read and deletes: rm, unlink, find -delete
   for (const line of [
     'rm /d/x', '/bin/rm /d/x', 'r""m /d/x', 'unlink /d/x', 'shred /d/x', 'find /d -delete', 'find /d -exec rm {} +', 'ls /d | xargs rm',
     'cd /d && rm x', 'bash -c "rm /d/x"', 'mv /d/x /tmp/y', 'python3 -c "import os; os.remove(1)"', 'node -e "fs.rmSync(1)"',
+    'rm /d/x $(', 'rm${IFS}/d/x', 'mv -t /tmp /d/x', 'mv --target-directory=/tmp /d/x', 'find /d/x -exec mv {} /tmp \\;', 'ls /d | xargs mv -t /tmp',
+    'python3 -c "from pathlib import Path; Path(1).unlink()"', 'python3 -c "import os; os.rename(1, 2)"', 'ruby -e "FileUtils.rm_rf(1)"',
+    'git clean -fdx /d', 'rsync --remove-source-files /d/x /tmp', 'rsync -a --delete /tmp/e/ /d/', 'sh -c "bash -c \'rm /d/x\'"',
+    'ls {1..9}{1..9}{1..9}{1..9}; mv /d/x /tmp', 'ls {1..9}{1..9}{1..9}{1..9}; rm /d/x',
   ]) {
     expect(deletes(line, names), line).toBe(true)
   }
   for (const line of [
     'ls /d', 'cat /d/x | jq .', 'grep -rn rm /d', 'echo rm', 'echo x > /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x', 'sed -i s/a/b/ /d/x',
-    'git commit -m "docs: form the term"', 'find /d -name x',
+    'git commit -m "docs: form the term"', 'find /d -name x', 'truncate -s0 /d/x', 'cp /dev/null /d/x', ': > /d/x', 'ls {1..9}{1..9}{1..9}{1..9}',
   ]) {
     expect(deletes(line, names), line).toBe(false)
   }
