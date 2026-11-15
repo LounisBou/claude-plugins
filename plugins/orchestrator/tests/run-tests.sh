@@ -5614,7 +5614,7 @@ check "the template reads Instructions, then Source, then Expected result, each 
      [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
 check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
-  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
+  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -vE '\\[(for|superseded): ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
 # A takeover reads what is live, not what is kept: the project's own checkouts, not every project's,
 # and the goals still open, not the met ones.
 check "step 2 reads the goals without their met rows, step 3 the checkouts of the project only" "1|1|0|0" \

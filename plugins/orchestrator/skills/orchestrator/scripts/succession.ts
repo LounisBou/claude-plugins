@@ -291,26 +291,13 @@ export function forgeState(env: Env): (repo: string, pr: number) => string | und
   }
 }
 
-/** The goal rows of `goals.md` as their cells (`| G<n> | status | goal | plan | evidence |`). */
-function goalRows(goals: string): string[][] {
-  return goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
-}
-
-/** Whether `goals.md` holds a goal still `open`: the one case that asks for the goals' table. */
-export function hasOpenGoal(goals: string | undefined): boolean {
-  return goals !== undefined && goalRows(goals).some(cells => cells[2] === 'open')
-}
-
-/**
- * The project sheet from `goals.md`: the objective, the spec it names and the goals as one line,
- * `goals met=m/n open=none`, or `open=` the open ones with their plan.
- */
+/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n open=none`, or `open=` the open ones with their plan. */
 export function projectSheet(goals: string | undefined, installed: string): string {
   const parts: string[] = []
   if (goals === undefined) parts.push('no goals.md beside the record')
   else {
     const value = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals)?.[1]?.trim() ?? ''
-    const rows = goalRows(goals)
+    const rows = goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
     const open = rows.filter(cells => cells[2] === 'open')
     parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`)
     parts.push(`goals met=${rows.filter(cells => cells[2] === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(cells => `${cells[1]} (plan: ${cells[4] || 'none'})`).join(', ')}`)
@@ -394,18 +381,13 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)
-  const goals = readText(goalsFileOf(parsed.record))
-  const liveRulings = existsSync(rulingsFile) ? readAtTakeover(readText(rulingsFile) ?? '').trim() : ''
   const text = fill(template, {
     PROJECT: project,
     MODE: parsed.mode,
     PREDECESSOR_NAME_PATTERN: name,
     AGENT_NAME_PATTERN: 'Agent: <subject>',
     RULINGS_FILE: existsSync(rulingsFile) ? rulingsFile : 'none',
-    LIVE_RULINGS: liveRulings === '' ? 'none' : liveRulings,
-    GOALS_READ: hasOpenGoal(goals)
-      ? `a goal is open: \`dispatch-record.sh goals ${parsed.record} status | grep -v '| met |'\` for its text`
-      : 'no goal is open: the Project line below is the goals line, read nothing more',
+    SCRIPTS: here,
     DISPATCH_RECORD: parsed.record,
     LAUNCHER: join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh'),
     PREDECESSOR_TTY: parsed.tty,
@@ -415,10 +397,11 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     LIVE_AGENTS: list(open.agents),
     LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
     LIVE_TODO: list(stray),
-    PROJECT_SHEET: projectSheet(goals, installedLine()),
+    PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
   io.out(text.endsWith('\n') ? text : `${text}\n`)
-    io.err(`takeover: chars=${text.length} rulings_read=${liveRulings.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=rulings:${rulings.moved},round:${round}\n`)
+  const read = existsSync(rulingsFile) ? readAtTakeover(readText(rulingsFile) ?? '').length : 0
+  io.err(`takeover: chars=${text.length} rulings_read=${read} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=rulings:${rulings.moved},round:${round}\n`)
   return 0
 }
 

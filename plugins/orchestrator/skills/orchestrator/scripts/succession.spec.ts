@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { deckOpen, fallOf, fill, hasOpenGoal, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
+import { deckOpen, fallOf, fill, main, notInstalled, ownersOf, parseArgs, projectOf, projectSheet, roundOpen, TEMPLATE, todoStray, type Artifacts } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -70,8 +70,9 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   const text = w.text()
   assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\nMode: build\n'))
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
-  assert.ok(text.includes(`goals: a goal is open: \`dispatch-record.sh goals ${w.record} status | grep -v '| met |'\` for its text`))
-  assert.ok(!text.includes("grep -v '\\[for: '"), 'the rulings are printed, not left to a grep')
+  assert.ok(text.includes('with `open=none` it is the goals line, nothing more; else, in'))
+  assert.ok(text.includes(`dispatch-record.sh goals ${w.record} status | grep -v '| met |'`))
+  assert.ok(text.includes(`grep -vE '\\[(for|superseded): ' ${join(w.briefs, 'rulings.md')}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
   assert.ok(text.includes('`workspace.sh list belt`'))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
@@ -117,36 +118,6 @@ test('takeover archives the round\'s entries settled over a day ago, and counts 
   assert.ok(existsSync(join(w.state, 'round', 'archive', 'q-answered.json')))
   assert.ok(existsSync(join(w.state, 'round', 'archive', 'withdrawn', 'q-withdrawn.json')))
   assert.ok(existsSync(join(w.state, 'round', 'q-open.json')))
-})
-
-test('the live rulings are printed: the standing and the unmarked ones, not a ruling carried out, for an item or superseded', () => {
-  const w = world()
-  writeFileSync(join(w.briefs, 'rulings.md'), [
-    '- 2026-11-14T09:00:00Z « Keep it short. » — every brief. [standing]',
-    '- 2026-11-14T09:10:00Z « Say it plain. » — every brief.',
-    '- 2026-11-14T09:30:00Z « Merge it. » — row 1. [done: acme/app#11]',
-    '- 2026-11-14T09:40:00Z « The docs first. » — row 4. [for: row 4]',
-    '- 2026-11-14T09:50:00Z « The schema last. » — row 1. [for: row 1]',
-    '- 2026-11-14T09:55:00Z « Old way. » — x. [superseded: 2026-12-01T00:00:00Z]', '',
-  ].join('\n'))
-  assert.equal(w.run(), 0)
-  const live = w.text().split('## Live rulings\n\n')[1]?.split('\n\n## ')[0] ?? ''
-  assert.ok(live.includes('Keep it short.') && live.includes('Say it plain.'))
-  for (const gone of ['Merge it.', 'The docs first.', 'The schema last.', 'Old way.']) assert.ok(!live.includes(gone), gone)
-  // The superseded one stays in the file (no ruling opens on its date), only unprinted.
-  assert.ok(readFileSync(join(w.briefs, 'rulings.md'), 'utf8').includes('Old way.'))
-  assert.match(w.err.join(''), new RegExp(`rulings_read=${live.length} `))
-})
-
-test('no goal is open: the takeover tells to read nothing more, the Project line being the goals line; an open goal asks for the table', () => {
-  const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | ruled-out | b | p2 | |\n' })
-  assert.equal(w.run(), 0)
-  assert.ok(w.text().includes('goals: no goal is open: the Project line below is the goals line, read nothing more.'))
-  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/2 open=none\n/)
-  assert.ok(!w.text().includes('dispatch-record.sh goals'))
-  assert.equal(hasOpenGoal('| G1 | met | a | p | |\n'), false)
-  assert.equal(hasOpenGoal('| G1 | open | a | p | |\n'), true)
-  assert.equal(hasOpenGoal(undefined), false)
 })
 
 test('takeover says a supersession it keeps', () => {
