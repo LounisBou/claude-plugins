@@ -6,7 +6,8 @@
 // the nouns it holds (`Host<'env' | 'fs'>`), so a test's fake carries only those.
 
 export type ProcessRunInit = { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }
-export type ProcessRunResult = { exitCode: number; stdout: string; stderr: string }
+// `isStdoutTruncated`: the output was cut at the host's limit.
+export type ProcessRunResult = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated?: boolean }
 
 export type FsEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; isLink: boolean; mtimeMs?: number }
 
@@ -99,7 +100,7 @@ export type Events = {
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
   'ui.close': { readonly id: string }
   // A surface to draw: the pane `requestId` names, its props as the host gives them.
-  'ui.render': { readonly requestId?: string; readonly props?: Readonly<Record<string, unknown>> }
+  'ui.render': { readonly requestId?: string; readonly props?: { readonly bodyColumns?: number } }
 }
 
 // What `next` carries into a `.catch` handler: why the hook failed, and whether the call beneath already ran.
@@ -108,7 +109,10 @@ export type Caught = { readonly error?: { readonly kind?: string; readonly messa
 // What `next` reads of the hook's bound.
 export type Budget = { readonly budget?: { readonly remainingMs: number } }
 
-export type Next<E> = ((e: E) => Promise<unknown>) & Budget
+// What `next` says of who raised the event: the plugin whose call it is, the engine's own when absent.
+export type Origin = { readonly origin?: { readonly plugin?: string } }
+
+export type Next<E> = ((e: E) => Promise<unknown>) & Budget & Origin
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
