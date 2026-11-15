@@ -21,7 +21,8 @@ strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 # config_with FLAG=VAL ... -> path to a settings file
 config_with() {
-  local f="$WORK/config.$RANDOM.txt"
+  local f
+  f=$(mktemp "$WORK/config.XXXXXX") || { echo "config_with: mktemp failed" >&2; exit 1; }
   printf '%s\n' "$@" > "$f"
   printf '%s' "$f"
 }
@@ -40,6 +41,30 @@ check() {
     fail=$((fail + 1))
   fi
 }
+
+# Both helpers hand out a path that is theirs alone. A name drawn from $RANDOM can repeat across
+# two calls, as bash 3.2 does not reseed it in a subshell and bash 5 reseeds it at random. The
+# later file then overwrites the earlier one, silently turning another case's settings into its
+# own. Here the draw is forced equal, outside any command substitution, and each path must still
+# exist and keep the content written to it.
+check_distinct() {
+  local name="$1" first="$2" second="$3" want_first="$4" want_second="$5"
+  if [ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ] &&
+     [ "$(cat "$first" 2>/dev/null)" = "$want_first" ] &&
+     [ "$(cat "$second" 2>/dev/null)" = "$want_second" ]; then
+    printf '  ok   %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n       first:  %s\n       second: %s\n' "$name" "$first" "$second"
+    fail=$((fail + 1))
+  fi
+}
+
+echo "== helpers: no two files share a name =="
+
+RANDOM=7; config_with SHOW_USAGE=1 > "$WORK/config.first.path"
+RANDOM=7; config_with SHOW_USAGE=0 > "$WORK/config.second.path"
+check_distinct "config_with hands out a file of its own when the random draw repeats" \
+  "$(cat "$WORK/config.first.path")" "$(cat "$WORK/config.second.path")" "SHOW_USAGE=1" "SHOW_USAGE=0"
 
 NOW=$(date +%s)
 IN_2H=$((NOW + 8010))     # 2h13m30: 30 s of slack keeps the render at "2h13"
@@ -353,8 +378,7 @@ printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":
   | STATUSBAR_CONFIG="$INJECT" bash "$SCRIPT" >/dev/null
 if [ ! -e "$PWNED" ]; then printf '  ok   a settings line that is code is never run\n'; pass=$((pass + 1))
 else printf '  FAIL a settings line that is code is never run\n'; fail=$((fail + 1)); fi
-# Two settings files under their own names: bash 3.2 does not reseed $RANDOM in a subshell,
-# so config_with called inside a command substitution can write over the other one.
+# Two settings files under their own names.
 printf '%s\n' SHOW_DIRECTORY=0 SHOW_USAGE=yes SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1 > "$WORK/malformed.txt"
 printf '%s\n' SHOW_DIRECTORY=0 SHOW_USAGE=1 SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1 > "$WORK/defaulted.txt"
 QUOTA="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}"
@@ -422,13 +446,18 @@ UNINSTALL="$HERE/../uninstall.sh"
 # fresh_config [settings-json] -> path to an isolated CLAUDE_CONFIG_DIR,
 # pre-seeded with $1 as settings.json when given.
 fresh_config() {
-  local dir="$WORK/cfg.$RANDOM"
-  mkdir -p "$dir"
+  local dir
+  dir=$(mktemp -d "$WORK/cfg.XXXXXX") || { echo "fresh_config: mktemp failed" >&2; exit 1; }
   [ -n "${1:-}" ] && printf '%s' "$1" > "$dir/settings.json"
   printf '%s' "$dir"
 }
 
 dest_for() { printf '%s/statusbar/statusline.sh' "$1"; }
+
+RANDOM=7; fresh_config '{"n":1}' > "$WORK/cfg.first.path"
+RANDOM=7; fresh_config '{"n":2}' > "$WORK/cfg.second.path"
+check_distinct "fresh_config hands out a directory of its own when the random draw repeats" \
+  "$(cat "$WORK/cfg.first.path")/settings.json" "$(cat "$WORK/cfg.second.path")/settings.json" '{"n":1}' '{"n":2}'
 
 # check_json <name> <config-dir> <jq filter> <expected>
 check_json() {
