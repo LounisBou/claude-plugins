@@ -100,6 +100,54 @@ describe('consent records', () => {
     assert.equal(consentAnswer('Accorder, merci', choices, { subject: { kind: 'auto-merge' as const, repo: 'Acme/App' }, question }), 'Accorder')
   })
 
+  it('keeps whole the answer of an exemption that scopes it with a label or a path, and records nothing for a word that sets a limit or widens it', () => {
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'Acme/App' }
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    const given = (answer: string) => consentAnswer(answer, choices, { subject: exemption, question: 'Exempt acme/app from E2E?' })
+    for (const answer of [
+      'Accorder la dispense de app pour les PR avec le label no-e2e', 'Accorder la dispense de app pour les PR avec le label no-e2e, merci.', 'Accorder la dispense de app (paths docs/)',
+      'Accorder la dispense de acme/app pour les PR avec les labels no-e2e, docs-only', 'Accorder la dispense de app pour les paths docs/ ou src/**/*.md', 'Accorder la dispense de app, labels no-e2e et paths docs/',
+      'Accorder la dispense de app pour les PR avec le label "no-e2e".', 'Accorder la dispense de app, label no-e2e ou label wip',
+    ]) assert.equal(given(answer), answer, answer)
+    for (const answer of [
+      'Accorder la dispense de app sauf pour docs/', 'Accorder la dispense de app sans le label no-e2e', "Accorder la dispense de app avec le label no-e2e jusqu'à demain",
+      'Accorder la dispense de app avec le label no-e2e seulement demain', 'Accorder la dispense de app avec le label no-e2e, demain', 'Accorder la dispense de app sur docs/',
+      'Accorder la dispense de app avec le label #8', 'Accorder la dispense de app avec le label no-e2e ?', 'Accorder la dispense de app avec le label no-e2e; refuse le reste',
+      'Accorder la dispense de app uniquement le e2e', 'Accorder la dispense de app pour les PR avec le label no-e2e ou docs', 'Accorder la dispense de app pour les PR avec le label no-e2e et acme/other#3',
+    ]) assert.equal(given(answer), '', answer)
+  })
+
+  it('keeps whole an exemption\'s grant that words the exemption as github reads it', () => {
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'Acme/App' }
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const answer of [
+      "Accorder l'exemption de app", 'Accorder la dérogation E2E sur app', 'Accorder exempt app', "Accorder l'exonération de app", "Accorder, app exonérée", 'Accorder la derogation de app',
+      'Accorder, waive E2E on acme/app', 'Accorder la dispense de app',
+    ]) assert.equal(consentAnswer(answer, choices, { subject: exemption }), answer, answer)
+    for (const answer of ["Accorder l'exemption de app et jusqu'à lundi", 'Accorder la dérogation E2E sur app seulement', 'Accorder exempt app sauf docs/']) {
+      assert.equal(consentAnswer(answer, choices, { subject: exemption }), '', answer)
+    }
+  })
+
+  it('reads the words of an exemption only for an exemption: no other kind takes a scope or its exemption words', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const subject of [{ kind: 'e2e-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'norms-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'auto-merge' as const, repo: 'Acme/App' }, { kind: 'auto-deploy' as const, repo: 'Acme/App', env: 'prod' as const }]) {
+      for (const answer of ['Accorder la dispense de app pour les PR avec le label no-e2e', "Accorder l'exemption de app", 'Accorder la dérogation E2E sur app']) {
+        assert.equal(consentAnswer(answer, choices, { subject }), '', `${subject.kind}: ${answer}`)
+      }
+    }
+  })
+
+  it('records « Refuser » for an exemption refused in words that name the repository, the exemption and its rules: github reads no refusal as a grant', () => {
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'Acme/App' }
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const answer of ['Refuser la dispense de app', 'Refuser la dispense de app pour les PR avec le label no-e2e', "Refuser l'exemption de acme/app (paths docs/)"]) {
+      assert.equal(consentAnswer(answer, choices, { subject: exemption, question: 'Exempt acme/app from E2E?' }), 'Refuser', answer)
+      const record = consentRecordOf({ subject: exemption, entry: 'q-a', question: 'Exempt acme/app from E2E?', answer, choices, by: 'coordinator', at: '2026-11-15T10:00:00Z' })
+      assert.equal(record?.answer, 'Refuser', answer)
+    }
+  })
+
   it('names another pull request or repository in the words, not the subject\'s own', () => {
     for (const typed of ['pour acme/other#32', 'acme/other', 'acme/app#8', '#8', 'pour #70']) assert.equal(namesOtherSubject(typed, SUBJECT), true, typed)
     for (const typed of ['pour acme/app#7', 'Acme/App', '#7', 'merci', "jusqu'au 16/11/2026"]) assert.equal(namesOtherSubject(typed, SUBJECT), false, typed)

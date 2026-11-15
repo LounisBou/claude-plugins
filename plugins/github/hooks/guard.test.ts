@@ -2575,6 +2575,45 @@ test('the record core writes from the operator\'s sentence exempts a repository 
   expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until })
 })
 
+// The record core writes (consentRecordOf, as the orchestrator's settle calls it) from the operator's words, whatever they word the exemption and its rules with, read by the record tool.
+const recordedFrom = (answer: string, repo = 'acme/thing') => consentRecordOf({
+  subject: { kind: 'e2e-exemption', repo }, entry: 'q-a', question: 'Exempt ' + repo + ' from E2E?', answer,
+  choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], by: 'coordinator', at: '2026-11-03T10:00:00Z',
+})
+
+for (const [words, rules, result] of [
+  ['Accorder la dispense de thing pour les PR avec le label no-e2e', { labels: ['no-e2e'] }, 'its pull requests carrying no-e2e'],
+  ['Accorder la dispense de thing (paths docs/)', { paths: ['docs/'] }, 'its pull requests whose files all match docs/'],
+  ['Accorder la dispense de acme/thing pour les PR avec le label no-e2e et paths docs/', { labels: ['no-e2e'], paths: ['docs/'] }, 'its pull requests carrying no-e2e or whose files all match docs/'],
+  ["Accorder l'exemption de thing", {}, 'all its pull requests'],
+  ['Accorder la dérogation E2E sur thing', {}, 'all its pull requests'],
+  ['Accorder exempt thing', {}, 'all its pull requests'],
+] as const) {
+  test('the record core writes from « ' + words + ' » exempts the repository, each rule as the operator gave it', async ($, on) => {
+    mock.clock(on, { now: RECEIVED })
+    const record = recordedFrom(words)
+    expect(record?.answer).toBe(words)
+    const seen = await world($, on, consentWorld({ a: record }, '/cfg/consents/acme/thing'))
+    const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', rules))
+    expect(out.deny).toBeUndefined()
+    expect(out.result).toBe('github: acme/thing exempt from E2E for ' + result)
+    expect(JSON.parse(seen.files['/data/e2e-exempt/acme/thing.json'])).toMatchObject({ repo: 'acme/thing', exempt: true, ...rules })
+  })
+}
+
+// A refusal that names the repository and the exemption is read by github as a grant when it is quoted whole: core records « Refuser » alone.
+for (const words of ['Refuser la dispense de thing', 'Refuser la dispense de thing pour les PR avec le label no-e2e']) {
+  test('the record core writes from « ' + words + ' » is the refusal alone, which exempts nothing', async ($, on) => {
+    mock.clock(on, { now: RECEIVED })
+    const record = recordedFrom(words)
+    expect(record?.answer).toBe(CONSENT_REFUSE)
+    const seen = await world($, on, consentWorld({ a: record }, '/cfg/consents/acme/thing'))
+    const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', words.includes('label') ? { labels: ['no-e2e'] } : {}))
+    expect(out.deny).toContain('an E2E exemption quotes the operator')
+    expect(seen.files['/data/e2e-exempt/acme/thing.json']).toBeUndefined()
+  })
+}
+
 test('an expiry that is past, unreadable or given to a revocation is refused', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
   const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + BEHIND + ', tomorrow, 2026-02-31T00:00:00Z?'))

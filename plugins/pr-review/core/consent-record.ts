@@ -178,6 +178,24 @@ export function answersChoice<C extends { letter: string; text: string }>(typed:
 /** The words a plain confirmation may add after its choice: anything else is a limit, a condition or a question. */
 const CONFIRMATION = new Set(['merci', 'thanks', 'thank', 'you', 'ok', 'okay', 'go', 'oui', 'yes', 'svp', 'please', 'et', 'and', 'then', 'puis', 'fusionne', 'fusionner', 'fusionnez', 'merge', 'vas', 'y', 'allez', 'bon', 'bien', 'parfait', 'super', 'pour', 'for', 'la', 'le', 'les', 'de', 'dispense', 'waiver', 'pr', 'prs'])
 
+/**
+ * The words an exemption's grant may add besides CONFIRMATION, all it needs to be read as one by github
+ * (its EXEMPTING words, « E2E », the plain joining words): none of them sets a limit or a condition.
+ */
+const EXEMPTION_WORDS = new Set([
+  'exempt', 'exempts', 'exempted', 'exemption', 'exemptions', 'exempter', 'exempté', 'exemptée', 'exemptés', 'exemptées',
+  'exonère', 'exonérer', 'exonération', 'exonérations', 'exonéré', 'exonérée', 'exonérés', 'exonérées', 'exonérons',
+  'exonere', 'exonerer', 'exoneration', 'dérogation', 'dérogations', 'derogation', 'derogations',
+  'waive', 'waived', 'waivers', 'dispenses', 'dispenser', 'dispensé', 'dispensée', 'dispensés', 'dispensées',
+  'e2e', 'sur', 'on', 'from', 'du', 'des', 'd', 'l', 'the', 'to', 'avec', 'with',
+])
+
+// The words that open a rule of an exemption: what follows is a label or a glob as the operator wrote it.
+const RULE_OPENERS = new Set(['label', 'labels', 'étiquette', 'étiquettes', 'etiquette', 'etiquettes', 'path', 'paths', 'chemin', 'chemins', 'fichier', 'fichiers', 'file', 'files', 'glob', 'globs'])
+
+// The articles that may stand between a rule's opener and the rule.
+const RULE_ARTICLES = new Set(['le', 'la', 'les', 'l', 'the', 'un', 'une'])
+
 // The subject's own names in an answer, which it may repeat: `owner/name#7`, `owner/name`, `name`, `#7`.
 function withoutOwnSubject(said: string, subject: ConsentSubject): string {
   const repo = subject.repo.toLowerCase()
@@ -246,7 +264,10 @@ export function opensChoice(typed: string, choices: readonly { letter: string; t
  * question mark or a semicolon is a limit, a condition or a question the record cannot hold, but
  * a limit that is the question's own (an instant it states, worded in Paris time or UTC) is no
  * limit the record lacks, so
- * the answer answers nothing and the asker asks again with the limit in the question. Undefined
+ * the answer answers nothing and the asker asks again with the limit in the question. An E2E
+ * exemption's grant takes, besides, the words that name the exemption (EXEMPTION_WORDS, those github
+ * reads) and the rules that scope it (« avec le label no-e2e », « paths docs/ »): a scope only
+ * narrows, any other word stays a limit. Undefined
  * also when two choices open it alike. It words an answer the operator himself gave, in the
  * coordinator's tab or its pane, where no exact form is asked: the record then holds that
  * choice's text, which is what grants. The words typed in any other session's tab stay
@@ -260,11 +281,62 @@ export function leadingChoice<C extends { letter: string; text: string }>(typed:
   const text = spaced(first.text).toLowerCase()
   if (candidates[1] !== undefined && spaced(candidates[1].text).toLowerCase() === text) return undefined
   if (!grants(first.text)) return first
+  const exemption = subject.kind === 'e2e-exemption'
   // Only an exemption carries a limit of its own (`until`, which expires it): no other kind's record expires, so a limit there is never the question's.
-  const rest = withoutOwnSubject(subject.kind === 'e2e-exemption' ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject)
+  const rest = withoutOwnSubject(exemption ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject)
   if (/[?;]/.test(rest)) return undefined
-  const words = rest.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []
-  return words.every(word => CONFIRMATION.has(word)) ? first : undefined
+  return (exemption ? onlyExemptionWords(rest) : onlyConfirmation(rest)) ? first : undefined
+}
+
+// Whether the words are nothing but confirmation (an `extra` set adds its words to CONFIRMATION's).
+function onlyConfirmation(rest: string, extra?: ReadonlySet<string>): boolean {
+  return (rest.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []).every(word => CONFIRMATION.has(word) || extra?.has(word) === true)
+}
+
+// A rule as the operator wrote it (a label or a glob): one word, no other pull request in it.
+const isRuleWord = (word: string): boolean => !/[#?;]/.test(word)
+
+// A further rule of a list, with no opener of its own, must be shaped as one: a path, a glob or a label with a separator or a digit.
+const isRuleShaped = (word: string): boolean => /[/*._\-\d]/.test(word)
+
+/**
+ * Whether what follows an exemption's « Accorder » only confirms it, names it (EXEMPTION_WORDS) or
+ * scopes it: a rule is the word after « label » or « paths » (« avec le label no-e2e », « (paths
+ * docs/) »), and a list goes on after a comma or « ou » with a rule shaped as one or an opener of
+ * its own. A scope only narrows what the operator grants; any other word is a limit, a condition or
+ * a question (« sauf », « seulement », « jusqu'à demain »), which the record cannot hold.
+ */
+function onlyExemptionWords(rest: string): boolean {
+  let slot: 'first' | 'next' | undefined
+  let ruled = false
+  for (const token of rest.match(/[^\s,()!:]+|,/g) ?? []) {
+    if (token === ',') {
+      if (ruled) slot = 'next'
+      continue
+    }
+    const word = token.replace(/^["'`«»“”]+|["'`«»“”.]+$/g, '')
+    if (word === '' || /^[-—]+$/.test(word)) continue
+    if (RULE_OPENERS.has(word)) {
+      slot = 'first'
+      ruled = false
+      continue
+    }
+    if (ruled && ['ou', 'or', 'et', 'and'].includes(word)) {
+      slot = 'next'
+      continue
+    }
+    if (slot === 'first' && RULE_ARTICLES.has(word)) continue
+    if (slot === 'first' || (slot === 'next' && isRuleShaped(word))) {
+      if (!isRuleWord(word)) return false
+      ruled = true
+      slot = undefined
+      continue
+    }
+    ruled = false
+    slot = undefined
+    if (!onlyConfirmation(word, EXEMPTION_WORDS)) return false
+  }
+  return true
 }
 
 /**
