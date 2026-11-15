@@ -198,9 +198,9 @@ describe('outcome evals: deciding the orchestration is over', () => {
     assert.equal(run.orchestration?.askedOperator, '**Question 1 of 1**')
   })
 
-  it('keeps waiting through turns that wait on a tool or declare nothing', async () => {
+  it('keeps waiting through turns that declare a deferred wait or nothing', async () => {
     const quiet = jsonl([prompt(), said('Spawned.')])
-    const watching = ended('tool', 'a monitor')
+    const watching = ended('deferred', 'a monitor')
     let last = 0
     const run = await agent(fakeLauncher(), poll => (last = poll, poll < 3 ? quiet : poll < 6 ? watching : ended('done'))).run(input())
     assert.equal(run.error, null)
@@ -274,7 +274,7 @@ describe('outcome evals: deciding the orchestration is over', () => {
     assert.ok(last >= STARTUP_MS / 60_000 - 2 && last <= STARTUP_MS / 60_000 + 1, `ended at poll ${last}`)
     assert.ok(launcher.closed.length >= 1)
     // one that declared a wait, or opened an agent, has started
-    const waiting = await agent(fakeLauncher(), poll => (poll < 20 ? ended('tool', 'a monitor') : ended('done')), minutes()).run(input())
+    const waiting = await agent(fakeLauncher(), poll => (poll < 20 ? ended('deferred', 'a monitor') : ended('done')), minutes()).run(input())
     assert.equal(waiting.orchestration?.notGraded, undefined)
     const spawned = fakeLauncher({ panes: () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }] })
     const working = await agent(spawned, poll => (poll < 20 ? jsonl([prompt(), said('Working.')]) : ended('done')), minutes()).run(input())

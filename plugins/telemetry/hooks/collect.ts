@@ -3,6 +3,7 @@
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { currentSessionName, parseSessionName } from '../core/names.ts'
+import { WAIT_TOOL } from '../core/orchestration.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -501,7 +502,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     target: target !== undefined && Object.keys(target).length > 0 ? target : undefined,
   })]
   if (tool === 'AskUserQuestion') events.push(makeEvent('question', at, session, { agent, ...questionOf(e, result), wait_ms: durationMs }))
-  if (mcp?.server === 'orchestrator' && mcp.name === 'declare_wait' && text(e['kind']) === 'operator') {
+  if (mcp?.server === 'orchestrator' && mcp.name === WAIT_TOOL && text(e['kind']) === 'operator') {
     events.push(makeEvent('question', at, session, { agent, source: 'round', kind: text(e['kind']), urgent: bool(e['urgent']) }))
   }
   if (bash !== undefined && outcome === 'ok') {

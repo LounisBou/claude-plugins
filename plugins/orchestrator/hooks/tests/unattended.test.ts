@@ -6,7 +6,8 @@
 import { expect, test } from 'claude-code/testing'
 import { forgeArgv, parseOpenPrs, readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
 import { readOr, safe } from '../unattended.ts'
-import { register as registerWait, Declarations, WAIT_TOOL } from '../wait.ts'
+import { register as registerWait, Declarations } from '../wait.ts'
+import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/unattended-home'

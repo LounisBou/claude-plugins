@@ -13,7 +13,7 @@ import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-g
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
-import { readOr, safe } from './unattended.ts'
+import { readOr, registered } from './unattended.ts'
 
 // The nouns a write holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -91,7 +91,7 @@ export async function ownRecords($: Host<'fs'>, state: string, id: string, name:
   const own = orchestrationOf(name)
   if (own === null) return []
   const found: string[] = []
-  for (const path of (await readOr($, `${state}/records/${safe(id)}`)).split('\n').map(line => line.trim()).filter(Boolean)) {
+  for (const path of await registered($, state, id)) {
     if (ownerOf(await readOr($, `${path}.owner`)) === own && await $.fs.exists(path).catch(() => false)) found.push(path)
   }
   return found

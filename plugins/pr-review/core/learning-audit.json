@@ -36,9 +36,9 @@
   ],
   "waits": [
     "operator",
-    "tool",
     "done",
-    "deferred"
+    "deferred",
+    "tool"
   ],
   "wait_on": [
     "operator",

@@ -5,7 +5,9 @@
 // reader never parses the module's internals. Written whole and renamed into place by the
 // supervision (supervision.ts, writeDeck) on every change the pane would show, and at least
 // once per DECK_REFRESH_MS so a reader can tell a live file from a frozen one. Pure on
-// purpose, like round.ts: the handler holds the $ and passes its reads in here.
+// purpose, like round.ts: the handler holds the $ and passes its reads in here. The format and
+// its parser are core's (core/deck.ts), read there by every reader.
+import { DECK_VERSION, type Deck, type DeckAgent, type DeckContext, type DeckOrchestrator, type DeckPeriod, type DeckSession, type DeckSleeping, type DeckUsage } from '../core/deck.ts'
 import { tripGate } from './gauge-core.ts'
 import { chainOwnerTty } from './relay.ts'
 import type { RemoteRow } from './remote-row.ts'
@@ -13,56 +15,11 @@ import type { RoundEntry } from './round.ts'
 import type { SessionRow } from './supervision.ts'
 import { periodStarts, USAGE_TIMEZONE } from './usage.ts'
 
-export const DECK_VERSION = 3
-
-// The file's name under the state directory.
-export const DECK_FILE = 'deck.json'
+export { DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from '../core/deck.ts'
 
 // A file unchanged but for its stamp is written again after this long: the reader's
 // freshness proof. Shorter than its own stale bound (D3vDeck greys the keys past 3 minutes).
 export const DECK_REFRESH_MS = 60 * 1000
-
-export type DeckContext = { percent: number; tokens: number; window: number; past_gate: boolean }
-export type DeckWait = { kind: 'operator' | 'done'; blocks: string | null; since: string | null; urgent: boolean }
-// Token counts and their cost at API list prices in US dollars (usage.ts): an equivalent,
-// since the machine runs on a subscription. cost_usd is null when a message of the period
-// ran on a model routing/prices.json has no price for.
-export type DeckTokens = { input: number; output: number; cache_read: number; cache_write: number }
-export type DeckPeriod = { from: string; tokens: DeckTokens; cost_usd: number | null }   // from: the period's start, ISO UTC
-export type DeckUsage = { day: DeckPeriod; week: DeckPeriod; at: string }                // at: when the sums were read, ISO UTC
-export type DeckSession = {
-  key: string                   // the store key, stable for the session's life
-  name: string
-  tty: string | null            // null for a remote session: no tab here to focus
-  tmux: string | null           // `<session>:@N.%N`, the window of a session in a home session: null elsewhere
-  repo: string | null
-  context: DeckContext
-  waiting: DeckWait | null
-  updated_at: string
-  usage: DeckUsage | null       // null for a remote session, or a local one whose transcript is not found
-}
-export type DeckAgent = DeckSession
-export type DeckOrchestrator = DeckSession & {
-  machine: string | null        // null when local
-  prs: string[]
-  agents: DeckAgent[]
-}
-export type DeckSleeping = { name: string; since: string | null; dir: string | null; prs: string[] }
-export type DeckRound = { open: number; urgent: number; oldest_since: string | null }
-export type Deck = {
-  version: number
-  generated_at: string
-  machine: string
-  coordinator: DeckSession | null
-  orchestrators: DeckOrchestrator[]
-  // Agents whose orchestrator no chain names here (launched by hand, or theirs gone).
-  unattached_agents: DeckAgent[]
-  sleeping: DeckSleeping[]
-  round: DeckRound
-  // Every listed session's usage summed, the remote ones excepted.
-  usage_totals: DeckUsage
-  usage_basis: { currency: 'USD'; prices: 'api-list-equivalent'; timezone: 'Europe/Paris' }
-}
 
 export type DeckInput = {
   machine: string

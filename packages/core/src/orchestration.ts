@@ -9,6 +9,14 @@ export const MODULE_DIR = 'claude-orchestrator'
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'
 export const MEASURE_VERSION = 1
+/** The registry of dispatch records (`<session>`, one record path a line) and the round's entries, beside it. */
+export const RECORDS_DIR = 'records'
+export const ROUND_DIR = 'round'
+
+/** The tool by which a turn declares what will wake it, and the kinds it takes. */
+export const WAIT_TOOL = 'declare_wait'
+export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const
+export type WaitKind = (typeof WAIT_KINDS)[number]
 
 /** The context gate's defaults: a percentage of the window, and a number of tokens. */
 export const GATE_PERCENT = 80
