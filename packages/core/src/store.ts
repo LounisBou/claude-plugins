@@ -1,7 +1,7 @@
 // Every write of shared state: whole files replaced in one rename, and read-modify-write under a
 // lock, so two sessions never lose each other's update and no reader sees half a file.
 import { randomBytes } from 'node:crypto'
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { lockOf, STALE_MS, temporaryOf } from './store-io.ts'
 
@@ -77,6 +77,77 @@ export function update(path: string, change: (current: string | undefined) => st
     writeAtomic(path, next)
     return next
   }, options)
+}
+
+/**
+ * Creates `path` holding `content` only when nothing is there: of two first writers, one stands.
+ * The content is written beside it first and linked into place, so the file is never seen empty.
+ */
+export function createOnly(path: string, content: string, mode = 0o644): boolean {
+  const temporary = temporaryOf(path, `${process.pid}-${randomBytes(4).toString('hex')}`)
+  try {
+    const fd = openSync(temporary, 'wx', mode)
+    try {
+      writeSync(fd, content)
+    } finally {
+      closeSync(fd)
+    }
+    linkSync(temporary, path)
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+/** An owner file's owner after a claim, and whether this claim made it. */
+export interface Claim {
+  readonly owner: string
+  readonly claimed: boolean
+}
+
+/**
+ * Claims the owner file `path` for `me` when it names no owner yet: created only when absent, so of
+ * two first claims one stands and the other reads the winner back; written over when it exists
+ * empty. `form` reads the file's first line as an owner's name. Answers the owner the file names
+ * afterwards. A claim that cannot be written leaves the file as it was.
+ */
+export function claimOwner(path: string, me: string, form: (line: string) => string = line => line.trim()): Claim {
+  const before = form(firstLineOf(path))
+  if (before !== '' || me === '') return { owner: before, claimed: false }
+  let claimed = createOnly(path, `${me}\n`)
+  if (!claimed && !nonEmpty(path)) {
+    try {
+      writeAtomic(path, `${me}\n`, 0o644)
+      claimed = true
+    } catch {
+      // Unclaimed: the owner read back decides.
+    }
+  }
+  return { owner: form(firstLineOf(path)), claimed }
+}
+
+/** Gives a claim back: removes the owner file `path` while it still names `me`. */
+export function releaseOwner(path: string, me: string, form: (line: string) => string = line => line.trim()): void {
+  if (form(firstLineOf(path)) === me) rmSync(path, { force: true })
+}
+
+/** The first line of `path`, '' when it is absent or cannot be read. */
+export function firstLineOf(path: string): string {
+  try {
+    return (readText(path) ?? '').split('\n')[0] ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function nonEmpty(path: string): boolean {
+  try {
+    return statSync(path).size > 0
+  } catch {
+    return false
+  }
 }
 
 function isStale(lock: string, now: number, staleMs: number): boolean {

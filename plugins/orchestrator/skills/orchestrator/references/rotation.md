@@ -14,6 +14,10 @@ It fills branch, head, the commits landed since the base, what is uncommitted, t
 
 **Execute the rotation yourself where the platform allows** (macOS + iTerm2): run the `rotate` line `brief.sh rotation` printed, `rotate --old-tty <tty> --dir <checkout> --title "<title>" --brief <path> --orchestrator "<name [ref]>" --right-of self`, its lines the proof, after the agent stood down (« Safety order for a live rotation » of `orchestrator:iterm-agents`). Without such tooling, stop and say why.
 
+## An agent the host stopped
+
+`[module] <agent> stopped: …` (the host's limit text, or an API error) means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on its own tier (never a lower one), its resume brief written by you from the branch, the pull request and the dispatch record, since it cannot write one. An API error that leaves its tab answering: send it one prompt to resume first.
+
 ## Your own context (the orchestrator is not exempt)
 
 - SKILL.md's principles: 10 stay compaction-ready, 4 refresh the state from the artifacts, 7 measure your own context.

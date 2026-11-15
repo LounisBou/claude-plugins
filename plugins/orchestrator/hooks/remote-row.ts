@@ -8,7 +8,7 @@
 // crossing a band — plus one refresh per bound so the age stays honest. Pure on purpose:
 // the handlers hold the $ (supervision.ts) and pass their reads in here.
 import { roleOf } from './session-name.ts'
-import { watchNumberOf } from './stop-gate.ts'
+import { watchNumberOf } from '../core/orchestration.ts'
 import type { SessionRow } from './supervision.ts'
 import { confirmsTakeover, type HeldQuestion, type WaitKind } from './relay.ts'
 
