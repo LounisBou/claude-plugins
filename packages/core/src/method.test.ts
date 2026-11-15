@@ -116,22 +116,6 @@ const DECIDE = [
   'You decide: A, B or C?',
 ].join('\n')
 
-const SHAPED = [
-  'Decision noted: B.',
-  '',
-  '**Question 5 sur 6**',
-  '_Sujet_ : the numbering',
-  '_Contexte_ : the pane shows « 1 sur 1 ».',
-  'Two numbers for one question.',
-  '_Question_ : which one?',
-  '_Propositions_ :',
-  '- **A** : the sender\'s',
-  '- **B** : the pane\'s',
-  '_Recommandation de l\'orchestrateur_ : A — one numbering',
-  '',
-  'You decide: A or B?',
-].join('\n')
-
 const TWO_QUESTIONS = [
   '**Question 3 sur 4**',
   '_Sujet_ : version',

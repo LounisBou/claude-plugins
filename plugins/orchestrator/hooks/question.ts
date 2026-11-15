@@ -334,7 +334,7 @@ export async function settleClaimed($: Held, kept: readonly string[], now: Date 
     const { claimed: _claimed, ...rest } = entry
     return { ...rest, seq: entry.seq + 1 }
   })
-  const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed
+  const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
   for (const id of await openAskedIds($, takes)) {
     let refused = false
     const done = await closeOwnAsked($, id, takes, at, entry => {
@@ -358,9 +358,9 @@ async function openAskedIds($: Host<'env' | 'fs'>, takes: (entry: Asked) => bool
 // left as it is unless still open and selected by `takes`. A write that fails is one log line, so
 // the others still close. Answers the object closed, or null.
 async function closeOwnAsked($: Held, id: string, takes: (entry: Asked) => boolean, at: string, plan: (entry: Fields) => Plan): Promise<Asked | null> {
-  // Its asker closes it: nothing is sent, so the closer's name is never read.
-  const me: Me = { session: await $.session.id(), name: '', role: '' }
   try {
+    // Its asker closes it: nothing is sent, so the closer's name is never read.
+    const me: Me = { session: await $.session.id(), name: '', role: '' }
     const closed = await closeRound($, `${await stateDir($)}/round/${id}.json`, current => {
       const fresh = current === undefined ? null : parseAsked(current)
       return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh as unknown as Fields)
