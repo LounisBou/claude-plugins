@@ -498,7 +498,7 @@ test('in auto-merge a ready merge runs with no question, the gate putting Ready 
 // that misses only records absent at its head is merged without the label, observed.
 const MERGE_ACTS = [
   ['tool', gh('pr-merge', { pr: 12 })],
-  ['Bash', bash('gh pr merge 12 -R acme/thing --squash')],
+  ['Bash', bash('gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD)],
 ] as const
 
 for (const [route, call] of MERGE_ACTS) {
@@ -538,6 +538,34 @@ test('a merge pinned to a head that moved is refused', async ($, on) => {
   await world($, on, { autoMerge: ['acme/thing'] })
   const out = await $.tool.call(gh('pr-merge', { pr: 12, sha: MOVED }))
   expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
+})
+
+// A push between the gate's read and the merge must not merge a head nobody checked.
+test('a tool merge with no sha is pinned to the head the gate checked', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out.deny).toBeUndefined()
+  expect(seen.runs.find((r) => r.command === 'pr-merge')?.args?.['sha']).toBe(HEAD)
+})
+
+for (const [command, flag] of [
+  ['gh pr merge 12 -R acme/thing --squash', '--match-head-commit '],
+  ['python3 /plugins/github/engine/gh.py pr-merge 12 --repo acme/thing', '--sha '],
+  ['gh api -X PUT repos/acme/thing/pulls/12/merge', '-f sha='],
+] as const) {
+  test('a ready Bash merge pinning no head is refused with the flag that pins the gated one: ' + flag.trim(), async ($, on) => {
+    const seen = await world($, on, { autoMerge: ['acme/thing'] })
+    const out = await $.tool.call(bash(command))
+    expect(out.deny).toContain('refused on acme/thing#12: pin the head the gate checked, ' + flag + HEAD + '.')
+    expect(seen.bash).toEqual([])
+  })
+}
+
+test('a Bash merge through gh api pinned to a head that moved is refused', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(bash('gh api -X PUT repos/acme/thing/pulls/12/merge -f sha=' + MOVED))
+  expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
+  expect(seen.bash).toEqual([])
 })
 
 

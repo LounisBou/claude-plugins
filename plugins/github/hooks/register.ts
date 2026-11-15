@@ -20,7 +20,7 @@ import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, pla
 import { bashTexts, normalise } from './guards.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
-  acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
+  acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
@@ -1489,10 +1489,12 @@ function toolReady($: Mod, e: GhCall, act: Act) {
   }
   const gated = act.kind === 'merge' || act.kind === 'undraft'
   // The gate's refusal of the act, or undefined once it lets it through, observed when a record is absent.
+  // A merge the gate lets through is pinned to the head it checked: GitHub refuses it if that head moved.
   const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
     const passage: Passage = { noRecord: false }
     const held = await gateHeld($, act.name, repo, pr, r, passage)
     if (!held && passage.noRecord) await observed($, OBSERVED.noRecord)
+    if (!held && act.kind === 'merge' && r.gate && typeof e.args['sha'] !== 'string') e.args = { ...e.args, sha: r.gate.head }
     return held?.refusal
   }
   return {
@@ -1597,6 +1599,7 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
   const passage: Passage = { noRecord: false }
   const held = (await gateHeld($, act.name, repo, pr, r, passage))?.refusal
+  if (!held && act.kind === 'merge' && !act.sha && r.gate) return unpinnedMergeRefusal(act.name, repo, pr, r.gate.head)
   if (!held && passage.noRecord) observations.push(OBSERVED.noRecord)
   if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
