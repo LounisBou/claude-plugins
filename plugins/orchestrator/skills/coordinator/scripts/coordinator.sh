@@ -174,8 +174,8 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # coordinator.ts's, run by node as the plugin's other TypeScript is: same command line, output and exit codes.
 case "${1:-}" in
     register|clear|lookup|sleep|sleeping|wake-done|drop|round-archive)
-        command -v node >/dev/null 2>&1 || { echo "coordinator: node is required" >&2; exit 1; }
-        exec node --experimental-strip-types --no-warnings "$here/coordinator.ts" "$@" ;;
+        . "$here/../../orchestrator/scripts/node-ts.sh" || exit 1
+        node_ts_exec coordinator "$here/coordinator.ts" "$@" ;;
 esac
 
 die() { echo "coordinator: $*" >&2; exit 1; }

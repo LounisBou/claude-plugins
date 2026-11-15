@@ -127,4 +127,5 @@
 #
 # The subcommands themselves are dispatch-record.ts, beside this launcher; this header documents both.
 
-exec node --no-warnings "$(dirname "$0")/dispatch-record.ts" "$@"
+. "$(dirname "$0")/node-ts.sh"
+node_ts_exec dispatch-record "$(dirname "$0")/dispatch-record.ts" "$@"

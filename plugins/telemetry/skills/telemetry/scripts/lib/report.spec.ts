@@ -18,6 +18,8 @@ interface Files {
   measure?: Record<string, unknown>
   archive?: Record<string, unknown>[]
   record?: string[]
+  /** Learning journal files, by `<plugin>/journal/<name>.json`. */
+  journals?: Record<string, unknown>
 }
 
 function scratch(files: Files, work: (config: string, dir: string) => void): void {
@@ -35,6 +37,7 @@ function scratch(files: Files, work: (config: string, dir: string) => void): voi
     ;(files.round ?? []).forEach((r, i) => put(join(module, 'round', `${i}.json`), JSON.stringify(r)))
     ;(files.archive ?? []).forEach((r, i) => put(join(module, 'round', 'archive', `${i}.json`), JSON.stringify(r)))
     for (const [id, m] of Object.entries(files.measure ?? {})) put(join(module, 'measure', `${id}.json`), JSON.stringify(m))
+    for (const [name, body] of Object.entries(files.journals ?? {})) put(join(config, `${name}.json`), typeof body === 'string' ? body : JSON.stringify(body))
     if (files.record !== undefined) {
       put(join(dir, 'record.jsonl'), `${files.record.join('\n')}\n`)
       put(join(module, 'records', S(1)), `${join(dir, 'record.jsonl')}\n${join(dir, 'gone.jsonl')}\n`)
@@ -481,6 +484,104 @@ test('what happened before or after the week is read for the cost baseline only:
     assert.equal(find(out, '5 '), '5 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
     assert.equal(find(out, '  acme/tool#7 '), '  acme/tool#7    30 min  $2.00')
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
+  })
+})
+
+/** A learning journal event of version 1, shaped as the contract writes it; `random` makes its name distinct. */
+const journaled = (at: string, plugin: string, code: string, random: string, kind = 'refusal'): [string, Record<string, unknown>] => {
+  const id = `${at.replace(/[-:]/g, '')}-${random}`
+  return [`${plugin}/journal/${id}`, { v: 1, id, at, kind, source: { plugin, code }, subject: { repo: null, pr: null, head: null }, context: { role: null, mode: null, paths: [], languages: [], session: null }, evidence: [], trust: 'computed' }]
+}
+
+test('refusals by guard source: the week\'s refusals of the learning journals, per plugin and guard code, most first, never one total', () => {
+  const journals = Object.fromEntries([
+    journaled('2026-11-09T10:00:00Z', 'github', 'github.ready.missing-review', '00000001'),
+    // The evening of the 7th UTC is the 8th in Paris: the week's first day.
+    journaled('2026-11-07T23:30:00Z', 'acme', 'acme.guard.alpha', '0000000a'),
+    journaled('2026-11-12T09:00:00Z', 'acme', 'acme.guard.beta', '0000000b'),
+    journaled('2026-11-10T10:00:00Z', 'github', 'github.ready.missing-review', '00000002'),
+    journaled('2026-11-10T11:00:00Z', 'orchestrator', 'orchestrator.stop.declared-wait', '00000003'),
+    journaled('2026-11-11T11:00:00Z', 'github', 'github.ready.missing-e2e', '00000004'),
+    journaled('2026-11-11T12:00:00Z', 'github', 'github.ready.missing-e2e', '00000005'),
+    journaled('2026-11-11T13:00:00Z', 'github', 'github.ready.missing-e2e', '00000006'),
+    // Out of the week or not a refusal: the evening of the 14th UTC is the 15th in Paris, the 7th is before the week, a finding is no refusal.
+    journaled('2026-11-14T23:30:00Z', 'github', 'github.ready.missing-review', '00000007'),
+    journaled('2026-11-07T10:00:00Z', 'github', 'github.ready.missing-review', '00000008'),
+    journaled('2026-11-10T10:00:00Z', 'norms', 'norms.check.open-finding', '00000009', 'finding'),
+  ])
+  const events = [
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(1), { outcome: 'refused', decided_by: 'plugin:github' }),
+    ev('2026-11-10T10:00:00Z', 'tool_call', S(2), { outcome: 'refused', decided_by: 'plugin:acme-tool' }),
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { refusals: { 'plugin:acme-bot': 2, user: 1, 'plugin:acme-none': 0 } }),
+  ]
+  scratch({ journals, events }, config => {
+    writeFileSync(join(config, 'github', 'journal', 'folded.json'), '[]')
+    writeFileSync(join(config, 'github', 'journal', 'torn.json'), '{')
+    const out = lines(config)
+    const at = out.indexOf('refusals by guard source (the learning journals: plugin and guard code)')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 6).map(l => l.trim().split(/\s+/)), [
+      ['github', 'github.ready.missing-e2e', '3'],
+      ['github', 'github.ready.missing-review', '2'],
+      // Equal counts sort by plugin then code.
+      ['acme', 'acme.guard.alpha', '1'],
+      ['acme', 'acme.guard.beta', '1'],
+      ['orchestrator', 'orchestrator.stop.declared-wait', '1'],
+    ])
+    // The coverage: what the table counts against the role table's total, and the plugins that refused with no journal (a decider that refused nothing is not one).
+    assert.equal(out[at + 6], '  coverage: this table counts 8 refusals, the role table 5; no journal for acme-bot, acme-tool')
+    assert.match(out[0] ?? '', / \(1 unreadable event lines or files left out\)$/)
+  })
+  // A journal directory with nothing but its fold file or an audit event, and a journal that is a file: nothing counted, nothing unreadable but the file.
+  const [auditName, auditBody] = journaled('2026-11-10T10:00:00Z', 'norms', 'norms.step.review', '0000000c')
+  const [invalidName, invalidBody] = journaled('2026-11-10T10:00:00Z', 'norms', 'norms.guard.invalid', '0000000d')
+  const quiet = { 'github/journal/folded': [], [auditName]: { ...auditBody, v: 2, kind: 'link', fact: { record: null, row: null, session: null, goal: null, prs: [] } }, [invalidName]: { ...invalidBody, stray: true } }
+  scratch({ journals: quiet }, config => {
+    mkdirSync(join(config, 'orchestrator'), { recursive: true })
+    writeFileSync(join(config, 'orchestrator', 'journal'), 'x')
+    const out = lines(config)
+    assert.ok(out.includes('  none in the journals for the week'))
+    assert.ok(out.includes('  coverage: this table counts 0 refusals, the role table 0; no journal for any plugin that refused'))
+    // The invalid event and the journal that is a file are counted, the fold file and the audit event are not.
+    assert.match(out[0] ?? '', / \(2 unreadable event lines or files left out\)$/)
+  })
+  scratch({}, config => {
+    const out = lines(config)
+    assert.ok(out.includes('  none in the journals for the week'))
+    assert.deepEqual(out.slice(out.indexOf('role          refusals  of them by a plugin') + 1, out.indexOf('role          refusals  of them by a plugin') + 6).map(l => l.trim().split(/\s+/)), [['orchestrator', '0', '0'], ['coordinator', '0', '0'], ['auditor', '0', '0'], ['agent', '0', '0'], ['other', '0', '0']])
+  })
+})
+
+test('refusals by role: the five roles, each with its refusals and those of a plugin, a role the report does not name counted as other', () => {
+  const refused = (ts: string, session: string, role: string | undefined, decider: string): Record<string, unknown> => ev(ts, 'tool_call', session, { outcome: 'refused', decided_by: decider, ...(role === undefined ? {} : { role }) })
+  const events = [
+    refused('2026-11-10T10:00:00Z', S(1), 'orchestrator', 'plugin:github'),
+    refused('2026-11-10T10:01:00Z', S(1), 'orchestrator', 'user'),
+    refused('2026-11-11T10:00:00Z', S(2), 'agent', 'hook'),
+    // A session with no live call counts its summary's refusals, under its role.
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { role: 'auditor', refusals: { 'plugin:github': 2, user: 3 } }),
+    refused('2026-11-12T10:00:00Z', S(4), 'reviewer', 'plugin:norms'),
+    refused('2026-11-12T10:00:00Z', S(5), undefined, 'auto_mode'),
+    // A session with live calls and a summary counts its live calls only.
+    refused('2026-11-13T10:00:00Z', S(7), 'coordinator', 'plugin:github'),
+    ev('2026-11-13T12:00:00Z', 'session_summary', S(7), { role: 'coordinator', refusals: { 'plugin:github': 4 } }),
+    // Outside the week, in Paris days: the 7th at 23:30 UTC is the 8th (inside), the 14th at 23:30 UTC is the 15th (outside), and a summary of the 1st.
+    refused('2026-11-07T23:30:00Z', S(8), 'agent', 'hook'),
+    refused('2026-11-14T23:30:00Z', S(9), 'agent', 'hook'),
+    refused('2026-11-01T10:00:00Z', S(6), 'coordinator', 'hook'),
+    ev('2026-11-01T12:00:00Z', 'session_summary', S(10), { role: 'auditor', refusals: { 'plugin:github': 6 } }),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    const at = out.indexOf('role          refusals  of them by a plugin')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 6).map(l => l.trim().split(/\s+/)), [
+      ['orchestrator', '2', '1'],
+      ['coordinator', '1', '1'],
+      ['auditor', '5', '2'],
+      ['agent', '2', '2'],
+      ['other', '2', '1'],
+    ])
   })
 })
 

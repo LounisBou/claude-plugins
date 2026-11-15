@@ -136,10 +136,54 @@ one it loaded. `--rollback` points back at the commit installed before; `--statu
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
 Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
 `deploy.ts --status` fails is refused before `current` moves), its output and errors kept in a
-log, which every run writes to, no-op runs included:
+log, which every run writes to, no-op runs included. The script is the one deploy mechanism and
+the scheduler only calls it: on Linux, cron:
 
 ```
 */5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >>~/.claude/deploys/lounisbou/deploy.log 2>&1
+```
+
+On macOS, a LaunchAgent runs the same command, in `~/Library/LaunchAgents/<label>.plist`, `<label>`
+being the `Label` below (launchd expands no `~` and gives a job a minimal `PATH`, so both are
+written out; replace every `<…>` placeholder), loaded with
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`. The marketplace update,
+the plugin updates and the choice of the commit are all `deploy.ts`'s own steps. `npm run deploy`
+runs by hand first: it creates the `deploys/lounisbou/` directory the log goes in, which launchd
+does not create, whatever it finds, and `current` only once it has installed a green commit of
+`main` (with none yet it says so and leaves no `current`, so the agent has nothing to run until a
+later run installs one).
+
+`deploy.ts` runs no plugin's `install.sh`, which sets up what the host's plugin update does not
+(the orchestrator's state directory and short commands, the status bar's copy of its script in the
+config directory). A machine that has run one keeps it current by running it again after each
+deploy: the `install.sh` of the installed tree, `bash ~/.claude/deploys/lounisbou/current/plugins/<name>/install.sh`
+for `orchestrator` and `statusbar`, idempotent, as its own job on the same period (a second
+LaunchAgent or cron line) or by hand. The agent below is `deploy.ts` alone:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.claude-plugins-autodeploy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string><path of node></string>
+    <string>--experimental-strip-types</string>
+    <string>--no-warnings</string>
+    <string><home>/.claude/deploys/lounisbou/current/scripts/deploy.ts</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string><home></string>
+    <key>PATH</key><string><dir of node>:<dir of gh>:<dir of claude>:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string><home>/.claude/deploys/lounisbou/deploy.log</string>
+  <key>StandardErrorPath</key><string><home>/.claude/deploys/lounisbou/deploy.log</string>
+</dict>
+</plist>
 ```
 
 The last failure is also kept in `installed.json` until a run succeeds, and `--status` prints it.
