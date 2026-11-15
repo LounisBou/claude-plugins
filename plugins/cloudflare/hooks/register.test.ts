@@ -1,19 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine, NounEvents, TestOn } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED } from './register.js'
-import { fieldsOf, type Events, type ProcessRunResult, type ToolSpec } from '../core/host.ts'
+import { dialogOf, fieldsOf, type ProcessRunResult, type ToolSpec } from '../core/host.ts'
 
 // A run of the engine: its argv, and the request it reads on stdin.
 type CfRun = { readonly argv: readonly string[] } & Readonly<Record<string, unknown>>
 type Verdict = { decision: string; reason?: string; rule?: unknown }
 
-const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [])
-
-// The first question of a dialog the module raises, and its options' labels.
-function firstQuestion(e: Events['tool.call']): { question: string; labels: string[] } {
-  const first = fieldsOf(listOf(e['questions'])[0])
-  return { question: String(first?.['question'] ?? ''), labels: listOf(first?.['options']).map(o => String(fieldsOf(o)?.['label'] ?? '')) }
-}
 
 test('session.start registers the cf tool with the command enum', async ($, on) => {
   const registered: ToolSpec[] = []
@@ -59,7 +52,7 @@ async function stubMod(
 // nobody can answer (a -p run).
 function stubAsk(on: TestOn, asked: string[], answer: string | undefined) {
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     if (answer === undefined) return { deny: 'no one to ask' }
     return { result: { questions: e['questions'], answers: { [question]: answer } } }
@@ -399,7 +392,7 @@ test('a publish grant covers later publishes on that account only', async ($, on
   await stubMod(on, runs, undefined, { decision: 'ask' })
   let first = true
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     const answer = first ? 'Allow for this session' : 'Deny'
     first = false
@@ -417,11 +410,11 @@ test('a publish grant covers later publishes on that account only', async ($, on
 
 test('a publish grant does not cover unpublish', async ($, on) => {
   const runs: CfRun[] = []
-  const options: string[][] = []
+  const options: (readonly string[])[] = []
   await stubMod(on, runs, undefined, { decision: 'ask' })
   let first = true
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const q = firstQuestion(e)
+    const q = dialogOf(e)
     options.push(q.labels)
     const answer = first ? 'Allow for this session' : 'Deny'
     first = false
@@ -439,10 +432,10 @@ test('a publish grant does not cover unpublish', async ($, on) => {
 test('unpublish is asked every time, Allow and Deny only, its host shown', async ($, on) => {
   const runs: CfRun[] = []
   const asked: string[] = []
-  const options: string[][] = []
+  const options: (readonly string[])[] = []
   await stubMod(on, runs, undefined, { decision: 'ask' })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const q = firstQuestion(e)
+    const q = dialogOf(e)
     asked.push(q.question)
     options.push(q.labels)
     return { result: { questions: e['questions'], answers: { [q.question]: 'Allow' } } }
@@ -506,7 +499,7 @@ test('a grant covers neither another command nor another account', async ($, on)
   await stubMod(on, runs, undefined, { decision: 'ask' })
   let first = true
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     const answer = first ? 'Allow for this session' : 'Deny'
     first = false
@@ -527,7 +520,7 @@ test('a grant on one zone never covers another', async ($, on) => {
   const asked: string[] = []
   await stubMod(on, runs, undefined, { decision: 'ask' })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     const answer = asked.length === 1 ? 'Allow for this session' : 'Deny'
     return { result: { questions: e['questions'], answers: { [question]: answer } } }
@@ -544,10 +537,10 @@ test('a grant on one zone never covers another', async ($, on) => {
 
 test('the writes that are never granted are offered Allow and Deny only', async ($, on) => {
   const runs: CfRun[] = []
-  const options: string[][] = []
+  const options: (readonly string[])[] = []
   await stubMod(on, runs, undefined, { decision: 'ask' })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const q = firstQuestion(e)
+    const q = dialogOf(e)
     options.push(q.labels)
     return { result: { questions: e['questions'], answers: { [q.question]: 'Allow' } } }
   })
@@ -561,10 +554,10 @@ test('the writes that are never granted are offered Allow and Deny only', async 
 })
 
 test('an explicit ask rule is never answered by a grant', async ($, on) => {
-  const options: string[][] = []
+  const options: (readonly string[])[] = []
   await stubMod(on, [], undefined, { decision: 'ask', rule: 'mcp__cloudflare__cf' })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const q = firstQuestion(e)
+    const q = dialogOf(e)
     options.push(q.labels)
     return { result: { questions: e['questions'], answers: { [q.question]: 'Allow' } } }
   })
@@ -580,7 +573,7 @@ test('a grant is not given by plain Allow, nor by text typed under Other', async
   await stubMod(on, runs, undefined, { decision: 'ask' })
   const answers = ['Allow', 'yes, allow it for the whole session', 'Deny']
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     return { result: { questions: e['questions'], answers: { [question]: answers[asked.length - 1] } } }
   })
@@ -605,7 +598,7 @@ test('a grant holds for its session only, and never past a deny', async ($, on) 
     return { value: { exitCode: 0, stdout: 'ok', stderr: '' } }
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const question = firstQuestion(e).question
+    const question = dialogOf(e).question
     asked.push(question)
     return { result: { questions: e['questions'], answers: { [question]: asked.length === 1 ? 'Allow for this session' : 'Deny' } } }
   })
@@ -624,14 +617,14 @@ test('a grant holds for its session only, and never past a deny', async ($, on) 
 })
 
 test('without a session id no grant is offered', async ($, on) => {
-  const options: string[][] = []
+  const options: (readonly string[])[] = []
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ deny: 'no session' }))
   on('tool.check', (_$, e) => (e.tool === 'AskUserQuestion' ? { decision: 'allow' } : { decision: 'ask' }))
   on('tool.register', () => ({ value: undefined }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: 'ok', stderr: '' } }))
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-    const q = firstQuestion(e)
+    const q = dialogOf(e)
     options.push(q.labels)
     return { result: { questions: e['questions'], answers: { [q.question]: 'Allow' } } }
   })
