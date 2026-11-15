@@ -29,7 +29,7 @@ Read the spec, the plan, the repository's own instructions (its quality gate, it
 
 ## Communication and delivery
 
-- The orchestrator's messages carry its name alone: check the reference in `ListAgents`. When it hands over, it sends you its successor's name and reference first; from then on that session is your orchestrator.
+- The orchestrator's messages carry its name alone: check the reference in `ListAgents`. When it hands over, it first sends you its successor's exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.
 - Report on start and on each push, 3 lines at most. A question, a blocker (with a proposed resolution) or the final report ends your turn on one line, `status: question|blocked|done — <one line>`; the hooks module relays it.
 - Draft pull request on `{{BASE}}`, opened with the github tool's `pr-create --draft`, never `Ready`: that is the github ready gate's; its title and description follow the rules that tool shows, with the self-review section. Figures once, on the final head. You never watch its checks.
 - The final report goes to {{REPORT_PATH}}: suite exit code and counts, the E2E line, the image lines, deviations, doubts. Your turn ends on `<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: {{REPORT_PATH}}`, then the status line. You stay until the merge, correcting only the findings the orchestrator sends.
