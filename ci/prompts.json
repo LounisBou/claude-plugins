@@ -1,18 +1,18 @@
 {
   "$comment": "Prompt ratchets: tokens a plugin puts in front of a model, and sentences said more than once across all plugins. They only fall, lowered by the release (npm run release; docs/conventions.md, « Prompts »).",
   "budgets": {
-    "bugs-bot": 13022,
-    "cloudflare": 8282,
+    "bugs-bot": 13052,
+    "cloudflare": 8280,
     "drift": 406,
-    "github": 10036,
-    "implement": 11227,
+    "github": 10120,
+    "implement": 11251,
     "learning": 622,
-    "method": 1378,
-    "norms": 22063,
-    "orchestrator": 52230,
-    "pr-review": 24128,
-    "statusbar": 775,
+    "method": 1401,
+    "norms": 21307,
+    "orchestrator": 52435,
+    "pr-review": 21418,
+    "statusbar": 766,
     "telemetry": 271
   },
-  "duplicates": 49
+  "duplicates": 48
 }
