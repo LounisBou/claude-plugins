@@ -212,7 +212,7 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
         if (line !== null) written.push(line)
-        if (argv[0] === 'python3' && String(argv[1]).endsWith('/skills/orchestrator/scripts/goals.py') && argv[2] === 'line') {
+        if (argv[0] === 'bash' && String(argv[1]).endsWith('/skills/orchestrator/scripts/goals.sh') && argv[2] === 'line') {
           return { exitCode: 0, stdout: 'goals met=3/5 ruled_out=1 open=G3 unplanned=none\n', stderr: '' }
         }
         // ps -A -o pid=: every pid this fixture holds alive, pid 1 among them.

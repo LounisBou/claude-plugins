@@ -261,9 +261,19 @@ names no consumer.
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, `fail` otherwise, at the head at the call. Refused unless `/norms:check` computed its scope in this session; a commit after the check may only touch the files the check read. No record on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
 | github `mcp__github__light_ci` | tests | « Light CI » below |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, result: pass\|fail\|waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; `not-applicable` needs its reason and files with no runtime (below) |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, run\|ran, detail?, dir?}` or `{pr, repo?, result: waived\|not-applicable, detail, dir?}`, producer `session-e2e`, checked as « Guards » below says; a pass or a fail is computed from the run, or written as stated with neither (below); `not-applicable` needs its reason and files with no runtime (below) |
 
-A review record is refused from the session that pushed the head it reviews.
+A review record is refused from the session that pushed the head it reviews. A push this module sees keeps its head in
+`${CLAUDE_CONFIG_DIR:-~/.claude}/pushed-heads/<sha>`, one line per session that pushed it, so the refusal holds in
+any later process of that session and is read by every session of the machine (pruned with the records). A session
+runs and writes its records on one machine: the file covers every head it can review.
+
+**E2E computed from its run.** `pass` and `fail` are computed from a run: `run` (an argv, no shell) is run by the
+tool in the checkout at the head, after the head and clean checks, only when Bash would run that command line
+without asking, within 570 s, the checkout still at the head afterwards; `ran` names a command line this session ran
+in Bash to its end (not in the background) in that checkout (its directory, or a leading `cd <absolute path> &&`)
+since its `HEAD` last moved (its reflog). Exit 0 is `pass`, anything else `fail`; the detail names the command, the
+head and the exit, then the session's `detail`. A `pass` or `fail` with neither (a run made on another machine) is written as given, its detail opening `stated, not computed: `, and observed (`github.record.e2e-stated`), never refused. `waived` and `not-applicable` take no run.
 
 Not producers: `start-review` (the operator submits it), `process-comments` (answers to comments), a human `APPROVED` review on GitHub.
 
@@ -369,7 +379,7 @@ the exemptions or the plans (`rm`, `unlink`, `find -delete`, a `mv` out of them)
 (`github.exempt-label.move`), opening out of draft (`github.draft.open-out`), leaving draft outside auto-merge
 (`github.draft.leave`) and a text that breaks a writing rule (`github.writing.rule`): README « Observed guards ».
 
-`mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through `record.py` when
+`mcp__github__record {pr, repo?, result?, run?, ran?, detail, kind?, dir?}` writes one record through `record.py` when
 the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate` reads and its tracked files are
 clean, else names both shas. A session writes `e2e` only. `waived` (E2E or norms) and `exempt` rest on his
 words quoted in `detail` with their date, from any channel: « « <his words> », 2026-11-15T08:50Z ». The

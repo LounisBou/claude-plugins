@@ -316,13 +316,13 @@ async function readSleeping($: Held): Promise<string> {
   return sleepingText(parseSleeping(String(read)), path)
 }
 
-// The goals line of one goals.md, goals.py's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
+// The goals line of one goals.md, goals.sh's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
 // or null when there is no file, or its reading failed or ran out of time.
 async function goalsLine($: Held, goalsFile: string, bound: number): Promise<string | null> {
   const exists = await withDeadline(() => Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)
   if (exists !== true) return null
   const done = await withDeadline(
-    () => $.process.run(['python3', `${$.plugin.root}/skills/orchestrator/scripts/goals.py`, 'line', goalsFile], { timeoutMs: bound }),
+    () => $.process.run(['bash', `${$.plugin.root}/skills/orchestrator/scripts/goals.sh`, 'line', goalsFile], { timeoutMs: bound }),
     bound,
   ).catch(() => null)
   if (!done || isDegradedPass(done) || done.exitCode !== 0) {

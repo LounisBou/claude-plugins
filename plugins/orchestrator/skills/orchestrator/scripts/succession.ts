@@ -37,6 +37,7 @@ import { openLine, orchForm, parseRecord, sessionOrchestration, stateRoot, type 
 import { parseSessionName } from '../../../core/names.ts'
 import { ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
+import { GoalsFault, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
@@ -57,6 +58,9 @@ export interface Request {
   readonly worktree: string
 }
 
+// A directory inside an installed plugin: a deploy or a host install.
+const PLUGIN_DIR = /\/(deploys\/[^/]+\/[0-9a-f]{40}|plugins\/(cache|marketplaces))(\/|$)/
+
 /** The request the command line makes, or the reason it is refused. */
 export function parseArgs(argv: readonly string[], cwd: string): Request | { readonly error: string } {
   const [command = '', record = '', ...rest] = argv
@@ -71,7 +75,10 @@ export function parseArgs(argv: readonly string[], cwd: string): Request | { rea
   }
   const mode = values['mode'] ?? ''
   if (mode !== 'build' && mode !== 'investigate') return { error: '--mode build|investigate is required: the mode the successor was launched in' }
-  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree: values['worktree'] ?? cwd }
+  const worktree = values['worktree'] ?? cwd
+  // The project is read from the working directory: run from inside the plugin's own copy, it would be the configuration's repository.
+  if (PLUGIN_DIR.test(worktree.replaceAll('\\', '/'))) return { error: `run the takeover from the project's directory, not from the plugin's (${worktree}): call <base dir>/scripts/succession.sh by its path, or pass --worktree <project dir>` }
+  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree }
 }
 
 /** One open question of the round, as the takeover prints it. */
@@ -442,12 +449,16 @@ export function projectSheet(goals: string | undefined, installed: string): stri
   const parts: string[] = []
   if (goals === undefined) parts.push('no goals.md beside the record')
   else {
-    const value = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals)?.[1]?.trim() ?? ''
-    const rows = goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
-    const open = rows.filter(cells => cells[2] === 'open')
-    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`)
-    const deferred = rows.filter(cells => cells[2] === 'deferred').map(cells => cells[1])
-    parts.push(`goals met=${rows.filter(cells => cells[2] === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(cells => `${cells[1]} (plan: ${cells[4] || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
+    try {
+      const { head, rows } = parseGoals(goals, 'goals.md')
+      const open = rows.filter(row => row.status === 'open')
+      const deferred = rows.filter(row => row.status === 'deferred').map(row => row.id)
+      parts.push(`objective ${head.aim || 'none'}`, `spec ${head.spec || 'none'}`)
+      parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(row => `${row.id} (plan: ${row.plan || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
+    } catch (error) {
+      if (!(error instanceof GoalsFault)) throw error
+      parts.push(`goals unread: ${error.message}`)
+    }
   }
   if (installed !== '') parts.push(`installed: ${installed}`)
   return parts.join('; ')

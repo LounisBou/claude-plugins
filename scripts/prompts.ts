@@ -4,6 +4,7 @@
 //
 //   npm run prompts              check against ci/prompts.json
 //   npm run prompts -- --json    the same as one JSON object on stdout (what the weekly report reads)
+//   npm run prompts -- --balance also print the prompt tokens gained or lost since the last release
 //   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured (the release runs it)
 //   npm run prompts -- --base <ref>   also refuse a ceiling lowered since <ref>, unless a commit since is the release
 import { execFileSync } from 'node:child_process'
@@ -120,6 +121,56 @@ export function parseCeilings(raw: unknown): { readonly ceilings: Ceilings; read
   return { ceilings: { budgets, duplicates: raw['duplicates'] }, authored: raw }
 }
 
+export interface Balance {
+  readonly since: string
+  readonly released: number
+  readonly now: number
+}
+
+/** The prompt files of `plugins/` at `ref`: paths from `git ls-tree`, texts in one `git cat-file --batch`. */
+function promptFilesAt(root: string, ref: string): PromptFile[] {
+  const git = (args: readonly string[], input = ''): Buffer => execFileSync('git', args, { cwd: root, input, maxBuffer: 1 << 28, stdio: ['pipe', 'pipe', 'pipe'] })
+  const paths = git(['ls-tree', '-r', '--name-only', ref, '--', PLUGINS_DIR]).toString('utf8').split('\n').filter(path => {
+    const rest = path.split('/').slice(2).join('/')
+    return rest !== '' && isPromptPath(rest)
+  })
+  if (paths.length === 0) return []
+  const out = git(['cat-file', '--batch'], paths.map(path => `${ref}:${path}\n`).join(''))
+  const files: PromptFile[] = []
+  let at = 0
+  for (const path of paths) {
+    const end = out.indexOf(0x0a, at)
+    const size = Number(out.subarray(at, end).toString('utf8').split(' ')[2])
+    files.push({ plugin: path.split('/')[1] ?? '', path, text: out.subarray(end + 1, end + 1 + size).toString('utf8') })
+    at = end + 1 + size + 1
+  }
+  return files
+}
+
+/**
+ * The tokens the plugins' prompt files weigh now against the last release (the last commit whose
+ * subject starts `chore(release):`), in the estimate the budgets use: program figure 8, read as
+ * what a session loads. Undefined outside a git history holding a release.
+ */
+export function balance(root: string): Balance | undefined {
+  let since: string
+  try {
+    since = execFileSync('git', ['log', '-1', '--format=%H', '--grep=^chore(release):', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch {
+    return undefined
+  }
+  if (since === '') return undefined
+  const sum = (files: readonly PromptFile[]): number => files.reduce((total, file) => total + estimateTokens(file.text), 0)
+  return { since: since.slice(0, 8), released: sum(promptFilesAt(root, since)), now: sum(promptFiles(root)) }
+}
+
+/** The balance as one line, a warning when the prompts weigh more than at the last release. */
+export function balanceLine(figures: Balance): string {
+  const difference = figures.now - figures.released
+  const signed = difference > 0 ? `+${difference}` : `${difference}`
+  return `${difference > 0 ? 'warning: ' : ''}balance since the last release (${figures.since}): ${signed} prompt tokens (${figures.released} -> ${figures.now})`
+}
+
 function promptFiles(root: string): PromptFile[] {
   const files: PromptFile[] = []
   for (const { dir } of readPlugins(root)) {
@@ -147,10 +198,15 @@ export function run(root: string, args: readonly string[], io: Io): number {
   }
   if (args.includes('--json')) {
     const budgets = Object.fromEntries(Object.entries(measured.tokens).map(([plugin, tokens]) => [plugin, { tokens, budget: ceilings.budgets[plugin] ?? null }]))
-    io.out(JSON.stringify({ budgets, duplicates: { count: measured.duplicates.length, ceiling: ceilings.duplicates }, faults }))
+    const figures = balance(root)
+    io.out(JSON.stringify({ budgets, duplicates: { count: measured.duplicates.length, ceiling: ceilings.duplicates }, faults, balance: figures === undefined ? null : { ...figures, line: balanceLine(figures) } }))
   } else {
     for (const fault of faults) io.err(fault)
     for (const { sentence, paths } of measured.duplicates) io.out(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
+    if (args.includes('--balance')) {
+      const figures = balance(root)
+      io.out(figures === undefined ? 'balance: no release in this history' : balanceLine(figures))
+    }
   }
   if (faults.length > 0) return 1
   if (lower) {

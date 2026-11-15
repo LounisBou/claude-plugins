@@ -4356,13 +4356,13 @@ rm -rf "$SWEEP"
 
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
-# the draft flag in its own definition. `draft_guard.py` reads the run behind the check's link,
+# the draft flag in its own definition. `draft-guard.sh` reads the run behind the check's link,
 # the workflow file at the run's head and, for a local reusable workflow, the called file. A fake
 # `gh` answers from files: `api` from DGA (the run, the contents), `pr view` and `pr checks` from
 # the files of DG. The fixtures are shared with the cases of ci-watch and of the stop gate below.
 DG="$WORK/draft-guard"; DGA="$DG/api"; DGB="$DG/bin"; DGS="$DG/state"
 mkdir -p "$DGA" "$DGB" "$DGS"
-DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft_guard.py"
+DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft-guard.sh"
 dg_key() { printf '%s' "$1" | tr '/?=@' '____'; }
 dg_run() {  # <run id> <workflow path> <head sha>
   printf '{"path": "%s", "head_sha": "%s"}\n' "$2" "$3" > "$DGA/$(dg_key "repos/acme/thing/actions/runs/$1")"
@@ -4435,10 +4435,9 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$DGB/gh"
-check "draft_guard.py exists" "yes" "$([ -f "$DGSCRIPT" ] && echo yes || echo no)"
 # dg_raw: the command's stdout, its exit code; dg <draft: true|false> <checks, a JSON array>: the
 # names it printed joined by `, `, then the exit code.
-dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
+dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
 dg() {
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4496,22 +4495,6 @@ printf '[%s]\n' "$C_WIP" > "$DG/checks"
 dg_out=$(dg_raw); dg_rc=$?
 check "gh failing (the draft flag unread): exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
-dg_reset
-check "guards() runs on an injected gh and answers the names of the guards" "wip-check / wip-check" \
-  "$(DGA="$DGA" DGCHECKS="[$C_WIP, $C_TESTS]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
-import json, os, sys
-import draft_guard
-
-def gh(argv):
-    if argv[0] != "api":
-        raise RuntimeError("only api is stubbed")
-    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
-    with open(path) as fh:
-        return fh.read()
-
-print(", ".join(sorted(draft_guard.guards("acme/thing", json.loads(os.environ["DGCHECKS"]), sys.argv[1], gh))))
-PYEOF
-)"
 
 # A trailing comment is no part of the definition; a draft test written only in one is no guard.
 IFS= read -r -d '' WF_TRAIL <<'EOF'
@@ -4620,7 +4603,7 @@ C_BUILD_N=$(dg_pass build 570 9101); C_LINT_N=$(dg_pass lint 570 9102); C_DEPLOY
 C_DOCS_N=$(dg_pass docs 570 9104)
 C_EXT_P='{"name": "secrets", "bucket": "pass", "link": "https://ci.example.com/scan/4"}'
 C_NOREAD_P=$(dg_pass build 558 9105)
-dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
+dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
 dg_dep() {  # <draft: true|false> <checks, a JSON array>: the names printed joined by `, `, then the exit code
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4650,23 +4633,6 @@ printf '[%s]\n' "$C_BUILD_N" > "$DG/checks"
 dg_out=$(dg_dep_raw); dg_rc=$?
 check "--dependents with gh failing: exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
-dg_reset
-check "dependents() runs on an injected gh and answers the names behind the guards" "build, deploy, lint" \
-  "$(DGA="$DGA" DGCHECKS="[$C_WIP_N, $C_BUILD_N, $C_LINT_N, $C_DEPLOY_N, $C_DOCS_N, $C_EXT_P]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
-import json, os, sys
-import draft_guard
-
-def gh(argv):
-    if argv[0] != "api":
-        raise RuntimeError("only api is stubbed")
-    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
-    with open(path) as fh:
-        return fh.read()
-
-checks = json.loads(os.environ["DGCHECKS"])
-print(", ".join(sorted(draft_guard.dependents("acme/thing", checks, ["wip-check / wip-check"], sys.argv[1], gh))))
-PYEOF
-)"
 
 echo "== ci-watch =="
 # The one way to wait on CI: a script an orchestrator starts in the background, that exits on
@@ -4970,10 +4936,10 @@ check "an unknown argument: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" 7 --bogus | se
 
 # A draft pull request: a red whose every failing check is a draft guard is no red. The watch
 # runs without --fail-fast (it would stop on the guard before the real checks finish), then the
-# failing names are classified by draft_guard.py; a pull request that is no draft keeps its path.
+# failing names are classified by draft-guard.sh; a pull request that is no draft keeps its path.
 # The view file's `draft` token is what `gh pr view --json isDraft` answers from.
 CWD="OPEN $HA draft"
-# On a draft, green needs a passed check whose job needs the guard (`draft_guard.py --dependents`),
+# On a draft, green needs a passed check whose job needs the guard (`draft-guard.sh --dependents`),
 # so the passed checks of these cases (build, lint) are jobs behind the guard of run 570.
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
 check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
