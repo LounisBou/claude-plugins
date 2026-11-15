@@ -49,7 +49,7 @@ test('it runs the seven steps and spawns the resident agent right of the launche
   expect(verbs(runs)).toEqual(['plugin-path', 'agent-prompt', 'spawn', 'list', 'verify'])
   expect(runs[1]?.argv.slice(2)).toEqual(['agent-prompt', '--launcher', 'Orch: demo [a1b2c3]'])
   expect(runs[2]?.argv).toEqual([SCRIPT, 'spawn', '--dir', '/repo', '--title', 'Bugs : demo', '--prompt-file',
-    '/home/op/.bugs-bot/demo/agent/startup-prompt.txt', '--right-of', 'self', '--resident'])
+    '/home/op/.bugs-bot/demo/agent/startup-prompt.txt', '--right-of', 'self', '--resident', '--keep-tool', 'mcp__bugs-bot'])
   expect(runs[2]?.timeoutMs).toBeGreaterThanOrEqual(60_000)
   expect(out.text).toContain('Spawned « Bugs : demo » on /dev/ttys009, launched by Orch: demo [a1b2c3].')
   expect(out.text).toContain('It sits right of this session.')
