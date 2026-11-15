@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords,
-  recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
+  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove,
   type Gate, type RecordFile,
 } from './ready.ts'
 import { acceptanceDetail, producersOf } from '../core/pr-record.ts'
@@ -385,7 +385,6 @@ test('each producer plugin writes only its own kind, every other caller E2E', ()
 test('the records refusals name only the producers the record contract declares', () => {
   for (const kind of ['review', 'norms']) {
     for (const producer of producersOf(kind)) {
-      expect(RECORDS_REFUSAL).not.toContain(producer.plugin)
       expect(kindRefusal(kind, 'engine', 'e2e')).toContain(producer.plugin + ', ' + producer.tool)
     }
   }
@@ -396,19 +395,10 @@ test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
     + ' What Ready needs is core\'s readiness contract (core/readiness.ts).')
-  expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
+  expect(autoMergeRefusal('o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
     + ' the pull request is ready, then asks them in the conversation.')
-})
-
-test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
-  expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
-    'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
-    + ' and Ready is put by the gate once the pull request is ready (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
-  expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
-  expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
-  expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
 })
 
 test('the gate moves the label: Ready when the three hold, Not Ready back when Ready no longer holds', () => {

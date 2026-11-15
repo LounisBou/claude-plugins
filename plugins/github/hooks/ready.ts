@@ -768,10 +768,6 @@ export function unverifiedRefusal(repo: string | undefined, pr: number | string 
   return 'github: readiness of ' + repo + '#' + (pr ?? '?') + ' unverified: ' + error
 }
 
-export function draftRefusal(act: string): string {
-  return 'github: ' + act + ' refused: open it as a draft, then leave draft once ready.'
-}
-
 export function unreadablePrRefusal(act: string): string {
   return 'github: ' + act + ' refused: the pull request number cannot be read from the command.'
     + ' Write it as a number, or run the tool\'s mcp__github__gh call with {"pr": <n>}.'
@@ -800,16 +796,8 @@ export function opaqueGraphqlRefusal(): string {
 export const STDIN_REFUSAL = 'github: gh.py --stdin-json refused from Bash: its request cannot be read from the command.'
   + ' Run the mcp__github__gh call, or gh.py with its subcommand and arguments.'
 
-// Leaving draft, or opening out of draft, in a repository not in auto-merge: never asked, refused.
-export function leaveDraftRefusal(act: string, repo: string, pr?: number): string {
-  return 'github: ' + act + ' refused on ' + repo + ': ' + LEAVE_DRAFT + ' (pr-readiness {"pr": ' + (pr ?? '<n>')
-    + ', "state": "ready"} reads them now).'
-}
-
-// name: the command as the refusal names it, by default the gh command of that kind.
-export function autoMergeRefusal(kind: ActKind, repo: string, pr?: number, name?: string): string {
-  if (kind === 'create') return leaveDraftRefusal(name ?? 'gh pr create', repo)
-  if (kind !== 'merge') return leaveDraftRefusal(name ?? 'gh pr ready', repo, pr)
+// name: the command as the refusal names it, by default the gh command.
+export function autoMergeRefusal(repo: string, pr?: number, name?: string): string {
   return 'github: ' + (name ?? 'gh pr merge') + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge'
     + ' needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": ' + (pr ?? '<n>') + '} on '
     + repo + ': it checks that the pull request is ready, then asks them in the conversation.'
@@ -865,9 +853,6 @@ export function gateMovedLine(repo: string, pr: number, read: string, now: strin
 export function gateUnwrittenLine(repo: string, pr: number, error: string): string {
   return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
 }
-
-export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'
-  + ' never by hand.'
 
 // A path into the records, or to their directory itself: a message or a body
 // that only names the word is no path.
