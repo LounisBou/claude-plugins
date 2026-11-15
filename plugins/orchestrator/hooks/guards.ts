@@ -41,7 +41,7 @@ import { readAsked } from './question.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { handsOver, unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
-import { namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
+import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
 import {
@@ -391,11 +391,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 
   // The tier map's guard: a session of the orchestration (one whose name gives it a role)
-  // observes a write of the operator's map — a Write, Edit or MultiEdit on it, or a Bash line
-  // that writes it, goes through with one escape in the journal — unless the last prompt he typed
-  // in this session names the map or a tier: then the binding is his word on the point. Mounted before the
+  // that writes the operator's map is observed when it is a Write, Edit or MultiEdit on it (the
+  // call goes through with one escape in the journal), and refused when it is a Bash line that
+  // overwrites it (a redirection, `tee`, `sed -i`, `mv`, `cp`, `install`, `ln`): that destroys his
+  // bindings with no backup, the deletion class. Unless the last prompt he typed in this session
+  // names the map or a tier: then the binding is his word on the point. Mounted before the
   // kill guard, so a Bash call reaches it first; the session's role is read only for a call
-  // that writes the map. Never `ask`, never a refusal: only the irreversible is refused.
+  // that writes the map. Never `ask`.
   on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($: any, e: any, next: (e: any) => any) => {
     const maps = mapPaths(await stateDir($), await configDir($))
     const writes = e.tool === 'Bash'
@@ -406,6 +408,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (lastTyped && lastTyped.sessionId === sessionId && namesTheMap(lastTyped.text)) return next(e)
     const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
     if (!roleOf(name)) return next(e)                // the operator's own sessions: untouched
+    // A Bash overwrite destroys the bindings: refused. A file tool's write is observed.
+    if (e.tool === 'Bash') {
+      await logLine($, 'guards', 'models guard: a Bash write of the tier map denied')
+      return { deny: MODELS_DENY }
+    }
     // Observed, not refused: the write goes through, and the journal holds the escape.
     await logLine($, 'guards', `models guard: a write of the tier map let through (${e.tool})`)
     await observed($, MAP_WRITE_CODE)

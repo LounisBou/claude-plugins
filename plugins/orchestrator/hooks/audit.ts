@@ -10,6 +10,7 @@
 import { answerText, githubEvents, refusalEvent, reviewEvents, waitEvents, type WaitSeen } from './audit-events.ts'
 import { guardFallback, killDecision } from './guards.ts'
 import { messageOf, type On } from './host.ts'
+import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
 export { STOP_GATE_CODE } from './observe.ts'
@@ -24,6 +25,7 @@ const UNREAD_MARK_PREFIX = (guardFallback(undefined, 'pkill x', '\u0000')?.deny 
 const REFUSALS: readonly (readonly [string, (deny: string) => boolean])[] = [
   ['orchestrator.kill.pattern', deny => KILL_PREFIX !== '' && deny.startsWith(KILL_PREFIX)],
   ['orchestrator.kill.unread-mark', deny => UNREAD_MARK_PREFIX !== '' && deny.startsWith(UNREAD_MARK_PREFIX)],
+  ['orchestrator.models.map-write', deny => deny === MODELS_DENY],
 ]
 
 /** The stable code of a refusal this module's guards answered with, or null for one they did not. */
