@@ -106,6 +106,17 @@ test('start-review: a review submitted with an event other than COMMENT is refus
   }
 })
 
+test('process-comments refuses a review submitted with an event other than COMMENT too, post now or not', () => {
+  for (const event of ['APPROVE', 'REQUEST_CHANGES']) {
+    const v = decide('process-comments', gh('review-submit', { pr: 1, event }), 'post now')
+    expect(v?.code).toBe('pr-review.review-event.not-comment')
+    expect(refused(v)).toContain('process-comments: a review is never submitted')
+    expect(noted(v)).toBeNull()
+  }
+  expect(decide('process-comments', gh('review-submit', { pr: 1, event: 'COMMENT' }), 'post now')).toBeNull()
+  expect(noted(decide('process-comments', gh('review-submit', { pr: 1, event: 'COMMENT' }), '1'))).toBe('pr-review.reply.ungranted')
+})
+
 test('start-review: replies, resolutions and comment edits without post now are noted; a deleted comment is refused', () => {
   for (const command of ['thread-reply', 'thread-resolve', 'comment-resolve', 'comment-edit']) {
     const v = decide('start-review', gh(command, { thread_id: 'T' }), 'yes')
@@ -134,7 +145,10 @@ test('a push that rewrites nothing is noted; a forced or deleting push asks the 
       expect(pushQuestion(skill, bash(plain))).toBeNull()
       expect(noted(decide(skill, bash(plain), 'push'))).toBe('pr-review.push.ungranted')
     }
-    for (const forced of ['git push -f', 'git push --force origin main', 'git push --force-with-lease', 'git push origin +main', 'git push origin :old', 'git push --delete origin old', 'git push --mirror', 'git push -fu origin x', 'git push origin $BRANCH', 'git status; git push --force', 'eval "git push -f"', 'git push origin $(echo +main)', 'git push `echo --force` origin main', 'echo --force | xargs git push origin main', 'git -c remote.origin.push=+HEAD push origin', 'sh -c "sh -c \'git push -f\'"', 'git push origin foo:', 'bash -c "git push origin $(echo -f)"']) {
+    for (const forced of ['git push -f', 'git push --force origin main', 'git push --force-with-lease', 'git push origin +main', 'git push origin :old', 'git push --delete origin old', 'git push --mirror', 'git push -fu origin x', 'git push origin $BRANCH', 'git status; git push --force', 'eval "git push -f"', 'git push origin $(echo +main)', 'git push `echo --force` origin main', 'echo --force | xargs git push origin main', 'git -c remote.origin.push=+HEAD push origin', 'sh -c "sh -c \'git push -f\'"', 'git push origin foo:', 'bash -c "git push origin $(echo -f)"',
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=+HEAD git push', 'GIT_CONFIG_PARAMETERS="\'remote.origin.push=+HEAD\'" git push origin',
+      'env GIT_CONFIG_COUNT=1 git push', '/usr/bin/env git push', 'env git push origin main', 'export GIT_CONFIG_COUNT=1; git push', 'FOO=1 git push', 'bash -c "GIT_CONFIG_COUNT=1 git push"',
+      'git push origin a; git push -f', 'git push origin a && git push origin $(echo b)']) {
       expect(pushQuestion(skill, bash(forced))).toContain('forced push now?')
       expect(decide(skill, bash(forced), 'push')).toBeNull()
     }
@@ -143,6 +157,22 @@ test('a push that rewrites nothing is noted; a forced or deleting push asks the 
   }
   expect(pushQuestion('auto-fix-loop', bash('git push -f'))).toBeNull()
   expect(pushQuestion(null, bash('git push -f'))).toBeNull()
+})
+
+test('the resolver route stays refused while the github tool is listed when its request names an irreversible command', () => {
+  const route = (request: string) => bash(`GH_ROOT=$(python3 "/p/scripts/resolve_github.py") || exit 1\npython3 "$GH_ROOT/engine/gh.py" --stdin-json <<'REQ'\n${request}\nREQ`)
+  for (const request of ['{"command": "comment-delete", "args": {"node_id": "C"}}', '{"command": "pr-merge", "args": {"pr": 3}}',
+    '{"command": "review-submit", "args": {"pr": 3, "event": "APPROVE"}}', '{"command":"review-submit","args":{"event":"REQUEST_CHANGES"}}', '{"command": "review-submit", "args": {"event": "approve"}}']) {
+    for (const skill of ['start-review', 'process-comments'] as const) {
+      const v = decide(skill, route(request), 'post now', true)
+      expect(v?.code).toBe('pr-review.resolver-route.irreversible')
+      expect(refused(v)).toContain('cannot be taken back')
+      expect(decide(skill, route(request), 'post now', false)).toBeNull()
+    }
+  }
+  for (const request of ['{"command": "pr-get", "args": {"pr": 3}}', '{"command": "review-submit", "args": {"pr": 3, "event": "COMMENT"}}', '{"command": "thread-reply", "args": {}}']) {
+    expect(noted(decide('start-review', route(request), '', true))).toBe('pr-review.resolver-route.listed')
+  }
 })
 
 test('the resolver route is noted only while the github tool is listed', () => {

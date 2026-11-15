@@ -4,7 +4,7 @@
 // walkthrough refuses without them. No $ here, so the guards and their .catch
 // nets decide the same way, and the tests read the rules without an engine.
 
-import { gitSubcommand, innerLine, readCommands } from '../core/shell.ts'
+import { gitSubcommand, innerLine, readCommands, unwrapPath } from '../core/shell.ts'
 
 export type Skill = 'start-review' | 'process-comments' | 'auto-fix-loop'
 
@@ -145,12 +145,12 @@ function ghDecision(skill: Skill, e: Call, prompt: string): Verdict | null {
   const command = String(e['command'] ?? '')
   const args = (e['args'] && typeof e['args'] === 'object' ? e['args'] : {}) as Record<string, unknown>
   if (GH_READS.has(command)) return null
+  if (command === 'review-submit' && args['event'] !== undefined && String(args['event']) !== 'COMMENT') {
+    // A verdict submitted under the user's name is dismissed on GitHub, never withdrawn: refused in every skill.
+    return { code: 'pr-review.review-event.not-comment', irreversible: true, reason: `pr-review ${skill}: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}` }
+  }
   if (skill === 'start-review') {
     if (command === 'review-pending-create' || command === 'review-pending-add') return null
-    if (command === 'review-submit' && args['event'] !== undefined && String(args['event']) !== 'COMMENT') {
-      // A verdict submitted under the user's name is dismissed on GitHub, never withdrawn.
-      return { code: 'pr-review.review-event.not-comment', irreversible: true, reason: `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}` }
-    }
     if (GH_PUBLISH.has(command)) {
       return grantsPublish(prompt) ? null
         : observe('pr-review.publish.ungranted', `pr-review start-review: ${command} publishes on the PR, and only the user's "post now" publishes. ${ASK}`)
@@ -186,10 +186,26 @@ export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = 
     const command = String(e['command'] ?? '')
     if (isPlainPush(command)) return observe('pr-review.push.ungranted', `pr-review ${skill}: ${PUSH_REFUSAL}`)
     if (ghListed && /resolve_github\.py/.test(command)) {
+      if (namesIrreversible(command)) {
+        return { code: 'pr-review.resolver-route.irreversible', irreversible: true, reason: `pr-review ${skill}: ${GH_TOOL} is listed in this session, and the Bash route names a command that cannot be taken back (a deleted comment, a merge, a review submitted with a verdict); it goes through ${GH_TOOL}, where the permission check applies.` }
+      }
       return observe('pr-review.resolver-route.listed', `pr-review ${skill}: ${GH_TOOL} is listed in this session, so GitHub calls go through it, where the permission check applies; the Bash route is for sessions without it.`)
     }
   }
   return null
+}
+
+// The commands the engine runs that cannot be taken back, as the Bash route writes them in its request.
+const IRREVERSIBLE_COMMAND = /\b(comment-delete|pr-merge)\b/
+const VERDICT = /\b(APPROVE|REQUEST_CHANGES)\b/
+const EVENT = /event["']?\s*[:=]\s*["']?([A-Za-z_]+)/g
+
+// Whether a Bash line of the resolver route names an irreversible command: a deletion, a merge, or a
+// review submitted with an event other than COMMENT. Any doubt reads as irreversible.
+function namesIrreversible(command: string): boolean {
+  if (IRREVERSIBLE_COMMAND.test(command)) return true
+  if (!/\breview-submit\b/.test(command)) return false
+  return VERDICT.test(command) || [...command.matchAll(EVENT)].some((m) => m[1] !== 'COMMENT')
 }
 
 export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows it when asked; pushing is the user\'s.'
@@ -198,8 +214,12 @@ export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows
 const PLAIN_PUSH_FLAGS = new Set(['-u', '--set-upstream', '--tags', '--follow-tags', '--no-verify', '-v', '--verbose', '-q', '--quiet', '-n', '--dry-run'])
 // A remote, a branch or a `local:remote` refspec: a word that neither forces (`+`) nor deletes (`:remote`, `local:`).
 const PLAIN_PUSH_WORD = /^[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*(:[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*)?$/
-// The wrappers that feed a command words the line does not show.
-const FEEDING = /^(.*\/)?(xargs|parallel)$/
+// The wrappers that feed a command words the line does not show, or set its environment (`env`).
+const FEEDING = /^(.*\/)?(xargs|parallel|env)$/
+// A word of the line that sets a variable, whatever follows it: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push
+// GIT_CONFIG_VALUE_0=+HEAD git push` forces a push the line does not show, and so does `export` or `env`. The reader
+// drops the assignment before the command, so the line is read as text; a quote or a bracket may open the word.
+const ASSIGNMENT = /(^|[\s;&|('"`])[A-Za-z_][A-Za-z0-9_]*=/
 
 // Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push,
 // and so does a configuration given on the line (`git -c remote.origin.push=+HEAD push`).
@@ -212,16 +232,24 @@ function isPlainArgv(argv: readonly string[], at: number): boolean {
  * Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
  * core's shell reader: each command of a list or a pipe, wrappers and assignments skipped, `eval`
  * and `sh -c` read again at any depth. A push whose words the line does not show (a command
- * substitution among them, a wrapper such as xargs that feeds it) is not plain.
+ * substitution among them, a wrapper such as xargs that feeds it) is not plain, and neither is any
+ * push of a line that sets a variable or runs `env`: the environment can carry the force
+ * (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`).
  */
 function pushes(command: string): boolean[] {
+  const plainEnv = !ASSIGNMENT.test(command)
+  return readPushes(command).map((plain) => plain && plainEnv)
+}
+
+function readPushes(command: string): boolean[] {
   return readCommands(command).flatMap((cmd): boolean[] => {
     const shown = cmd.substitutions.length === 0
     const inner = innerLine(cmd.argv)
-    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown)
-    const at = gitSubcommand(cmd.argv)?.at
-    if (at === undefined || cmd.argv[at] !== 'push') return []
-    return [shown && !cmd.wrappers.some((wrapper) => FEEDING.test(wrapper)) && isPlainArgv(cmd.argv, at)]
+    if (inner !== undefined) return readPushes(inner).map((plain) => plain && shown)
+    const { argv, wrappers } = unwrapPath(cmd.argv)
+    const at = gitSubcommand(argv)?.at
+    if (at === undefined || argv[at] !== 'push') return []
+    return [shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => FEEDING.test(wrapper)) && isPlainArgv(argv, at)]
   })
 }
 

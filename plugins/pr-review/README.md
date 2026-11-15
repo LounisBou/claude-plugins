@@ -103,8 +103,10 @@ and every skill keeps its own route.
   process-comments for `1` or `4`, and `git push` for `push`. A call made without the
   word goes through, and the journal (`<config>/pr-review/journal/`) keeps one `escape`
   line under the rule's code. Only the irreversible stays refused: a forced or
-  deleting push, until the user allows it when asked, a deleted comment, and a review
-  submitted with an event other than `COMMENT`. The walkthrough's own files under
+  deleting push (a push whose line sets a variable or runs `env` counts as forced), until
+  the user allows it when asked, a deleted comment, and a review submitted with an event
+  other than `COMMENT`, in either skill, and also through the Bash route while the github
+  tool is listed. The walkthrough's own files under
   `/tmp/claude-pr-review-*` are never noted.
 - **Never a trap.** `end review` typed by the user, an interrupted turn (Esc), a
   `/clear` and the skill's own closing line each end those rules at once.
