@@ -103,10 +103,10 @@ test('no open finding records a pass with its detail', async () => {
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  const out = await m.done($, { open: 0, fixed: 3, passed: 2 })
+  const out = await m.done($, { open: 0, fixed: 0, passed: 5 })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls)).toEqual([
-    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '3 fixed, 2 passed, 0 open', dir: '/repo' },
+    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '0 fixed, 5 passed, 0 open', dir: '/repo' },
   ])
 })
 
@@ -133,10 +133,10 @@ test('open findings record a fail', async () => {
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  const out = await m.done($, { open: 2, fixed: 1, passed: 0 })
+  const out = await m.done($, { open: 2, fixed: 0, passed: 1 })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls)[0].result).toBe('fail')
-  expect(recordCalls(calls)[0].detail).toBe('1 fixed, 0 passed, 2 open')
+  expect(recordCalls(calls)[0].detail).toBe('0 fixed, 1 passed, 2 open')
 })
 
 test('findings set aside with their reason leave nothing open: a pass that keeps the reason', async () => {
@@ -145,10 +145,10 @@ test('findings set aside with their reason leave nothing open: a pass that keeps
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  const out = await m.done($, { open: 0, fixed: 1, passed: 0, setAside: 2, reason: 'a rule\nthe codebase  widely violates' })
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1, setAside: 2, reason: 'a rule\nthe codebase  widely violates' })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls)[0].result).toBe('pass')
-  expect(recordCalls(calls)[0].detail).toBe('1 fixed, 0 passed, 2 set aside (a rule the codebase widely violates), 0 open')
+  expect(recordCalls(calls)[0].detail).toBe('0 fixed, 1 passed, 2 set aside (a rule the codebase widely violates), 0 open')
 })
 
 test('findings set aside without a reason are refused, and a finding left open still fails', async () => {
@@ -273,7 +273,18 @@ test('the head is read at the call: a commit made after the scope does not refus
   const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
   expect(argvs.filter(a => a === 'git rev-parse HEAD').length).toBe(afterScope + 1)
   expect(out.result).toBe('record: ' + WRITTEN)
-  expect(recordCalls(calls).length).toBe(1)
+  // The finding said fixed has its commit: it counts as fixed.
+  expect(recordCalls(calls).map(c => [c.result, c.detail])).toEqual([['pass', '1 fixed, 0 passed, 0 open']])
+})
+
+test('a finding said fixed with no commit since the check is open: the record fails and says so', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.done($, { open: 0, fixed: 2, passed: 1 })
+  expect(recordCalls(calls).map(c => [c.result, c.detail])).toEqual([['fail', '0 fixed, 1 passed, 2 open (2 said fixed with no commit since the check)']])
 })
 
 test('a commit after the scope that touches a file the check did not read refuses the record', async () => {
@@ -374,9 +385,9 @@ test('auto false or absent leaves the interactive record unchanged', async () =>
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  await m.done($, { open: 0, fixed: 1, passed: 2, auto: false })
-  await m.done($, { open: 0, fixed: 1, passed: 2 })
-  expect(recordCalls(calls).map(c => c.detail)).toEqual(['1 fixed, 2 passed, 0 open', '1 fixed, 2 passed, 0 open'])
+  await m.done($, { open: 0, fixed: 0, passed: 3, auto: false })
+  await m.done($, { open: 0, fixed: 0, passed: 3 })
+  expect(recordCalls(calls).map(c => c.detail)).toEqual(['0 fixed, 3 passed, 0 open', '0 fixed, 3 passed, 0 open'])
 })
 
 const skillHook = (hooks: any[]) => {
@@ -700,8 +711,8 @@ test('in a session the orchestrator spawned, the answer ends on the verdict line
   const { $ } = setup({}, {}, [], { ORCHESTRATOR_SPAWNED: '1' })
   const m = mounted()
   await m.scope($)
-  const passing = await m.done($, { open: 0, fixed: 3, passed: 2 })
-  expect(passing.result).toBe(`record: ${WRITTEN}\nRepo#12 ${HEAD.slice(0, 7)} — norms pass: 3 fixed, 2 passed, 0 open — blocking: none — report: ${WRITTEN}`)
+  const passing = await m.done($, { open: 0, fixed: 0, passed: 5 })
+  expect(passing.result).toBe(`record: ${WRITTEN}\nRepo#12 ${HEAD.slice(0, 7)} — norms pass: 0 fixed, 5 passed, 0 open — blocking: none — report: ${WRITTEN}`)
   const failing = await m.done($, { open: 2, fixed: 0, passed: 0 })
   expect(String(failing.result).split('\n').at(-1)).toBe(`Repo#12 ${HEAD.slice(0, 7)} — norms fail: 0 fixed, 0 passed, 2 open — blocking: 2 open finding(s), in the check's report — report: ${WRITTEN}`)
 })
@@ -711,7 +722,7 @@ test('outside a session the orchestrator spawned, the answer is the record line 
   const { $ } = setup({}, {}, [], { ORCHESTRATOR_SPAWNED: '' })
   const m = mounted()
   await m.scope($)
-  expect((await m.done($, { open: 0, fixed: 3, passed: 2 })).result).toBe('record: ' + WRITTEN)
+  expect((await m.done($, { open: 0, fixed: 0, passed: 5 })).result).toBe('record: ' + WRITTEN)
 })
 
 // The pass is computed from the findings the agents reported.
@@ -746,9 +757,9 @@ test('the figures that account for every finding record the pass or the fail the
   await m.scope($)
   await m.agent($, NAMING, reply([finding('error', 1), finding('error', 2)]))
   await m.agent($, SCOPE_AGENT, reply([finding('warning', 3)]))
-  await m.raw($, { open: 0, fixed: 2, passed: 1 })
-  await m.raw($, { open: 1, fixed: 1, passed: 1 })
-  await m.raw($, { open: 0, fixed: 1, passed: 1, setAside: 1, reason: 'not critical' })
+  await m.raw($, { open: 0, fixed: 0, passed: 3 })
+  await m.raw($, { open: 1, fixed: 0, passed: 2 })
+  await m.raw($, { open: 0, fixed: 0, passed: 2, setAside: 1, reason: 'not critical' })
   expect(recordCalls(calls).map(c => c.result)).toEqual(['pass', 'fail', 'pass'])
 })
 
@@ -841,22 +852,25 @@ test('the end of the session forgets the reports', async () => {
   expect((await m.raw($, { open: 0, fixed: 0, passed: 0 })).result).toContain('no norms agent has reported')
 })
 
-test('an automatic check passes only WARNING and INFO findings: an ERROR is open, fixed or set aside', async () => {
+test('an automatic check\'s figures are the findings\' own: the ones the model gives are not read', async () => {
   resetCache()
   const calls: any[] = []
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  await m.agent($, NAMING, reply([finding('error', 1), finding('info', 2)]))
-  const refused = await m.raw($, { open: 0, fixed: 0, passed: 2, auto: true })
-  expect(refused.isError).toBe(true)
-  expect(refused.result).toBe('norms: an automatic check passes only WARNING and INFO findings: 1 reported, 2 passed')
-  expect(recordCalls(calls)).toEqual([])
-  await m.raw($, { open: 1, fixed: 0, passed: 1, auto: true })
-  expect(recordCalls(calls).map(c => c.result)).toEqual(['fail'])
+  await m.agent($, NAMING, reply([finding('error', 1), finding('info', 2), finding('warning', 3)]))
+  // Nothing open, the ERROR said passed, then said fixed, then figures that add up to nothing.
+  await m.raw($, { open: 0, fixed: 0, passed: 3, auto: true })
+  await m.raw($, { open: 0, fixed: 1, passed: 2, auto: true })
+  await m.raw($, { open: 0, fixed: 0, passed: 0, auto: true })
+  expect(recordCalls(calls).map(c => [c.result, c.detail])).toEqual(Array.from({ length: 3 }, () => ['fail', '0 fixed, 2 passed (non-blocking, automatic), 1 open']))
+  // An ERROR the brief sets aside, with its reason, is not open; no more is set aside than there are ERRORs.
+  await m.raw($, { open: 0, fixed: 0, passed: 2, setAside: 4, reason: 'not critical', auto: true })
+  expect(recordCalls(calls).at(-1).detail).toBe('0 fixed, 2 passed (non-blocking, automatic), 1 set aside (not critical), 0 open')
+  expect(recordCalls(calls).at(-1).result).toBe('pass')
   // An interactive walkthrough lets the user pass an ERROR: the choice is theirs.
-  await m.raw($, { open: 0, fixed: 0, passed: 2 })
-  expect(recordCalls(calls).map(c => c.result)).toEqual(['fail', 'pass'])
+  await m.raw($, { open: 0, fixed: 0, passed: 3 })
+  expect(recordCalls(calls).at(-1).result).toBe('pass')
 })
 
 test('the agents\' prompts end with the request for the findings block', async () => {

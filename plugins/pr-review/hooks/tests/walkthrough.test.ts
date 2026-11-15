@@ -122,7 +122,13 @@ test('process-comments: a plain git push goes through and is noted; a forced pus
   await $.tool.call({ tool: 'Bash', command: 'git push --force origin HEAD' } as any)
   expect(ran).toEqual(['Bash', 'Bash'])
   expect(asked.length).toBe(2)
-  expect(journal().length).toBe(1)
+  // Each answer of theirs is kept, in their trust, and nothing of the command.
+  expect(journal().map((e) => [e.kind, e.trust, e.source.code])).toEqual([
+    ['escape', 'computed', 'pr-review.push.ungranted'],
+    ['answer', 'operator', 'pr-review.answer.push.refused'],
+    ['answer', 'operator', 'pr-review.answer.push.granted'],
+  ])
+  expect(JSON.stringify(journal())).not.toMatch(/force|origin HEAD/)
 })
 
 test('each other rule lets its call through and leaves exactly one line under its code', async ($, on) => {

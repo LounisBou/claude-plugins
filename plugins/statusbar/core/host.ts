@@ -47,7 +47,9 @@ type Nouns = {
     model(): Promise<string>
     usage(): Promise<{ context: SessionContextUsage }>
     send(args: { to: string | { sessionId: string }; text: string }): Promise<SessionSendResult>
+    root(): Promise<string>
   }
+  state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   ui: {
     toast(text: string): void
     invalidate(event: 'ui.render'): void
@@ -60,11 +62,15 @@ type Nouns = {
     register(tool: ToolSpec): Promise<unknown>
     call(input: { tool: string } & Record<string, unknown>): Promise<unknown>
     check(input: { tool: string; input: unknown }): Promise<ToolCheckResult>
+    list(): Promise<ReadonlyArray<{ readonly name: string }>>
   }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
 }
+
+// A key of the host's `$.state`: the plugin that owns it and its name.
+export type StateRef = { plugin: string; key: string }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
 
@@ -100,6 +106,10 @@ export type Events = {
   // A call of a tool: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
   'ui.close': { readonly id: string }
+  // A skill's text as it loads: its name, and the text the handler may rewrite.
+  'skill.prompt': { readonly skill?: string; readonly text?: string; readonly args?: string }
+  // A subagent about to start: its type and the prompt it is handed.
+  'agent.spawn': { readonly subagent_type?: string; readonly prompt?: string; readonly [field: string]: unknown }
   // A surface to draw: the pane `requestId` names, its props as the host gives them.
   'ui.render': { readonly requestId?: string; readonly props?: { readonly bodyColumns?: number } }
 }
@@ -117,10 +127,10 @@ export type Next<E> = ((e: E) => Promise<unknown>) & Budget & Origin
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
-// A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several).
+// A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several, a pattern).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[]>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
+  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | RegExp | readonly string[]>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
@@ -133,4 +143,35 @@ export function reasonOf(err: unknown): string {
 // `undefined` for a value that carries none.
 export function messageOf(err: unknown): string {
   return String(typeof err === 'object' && err !== null && 'message' in err ? err.message : undefined)
+}
+
+// An event's input as a module that validates each field reads it: a record of unknown fields.
+export type Input = Readonly<Record<string, unknown>>
+
+// A record's fields, or undefined for anything that is not one.
+export function fieldsOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+// What a tool or a hook beneath answered, as far as a module reads it.
+export interface Answer {
+  // The refusal, when the call was refused.
+  readonly deny: string | undefined
+  readonly isError: boolean
+  // The answer's `result`, as it came: a text, content parts, or a tool's own record.
+  readonly result: unknown
+  // The answer's `result`, else its `text`, as trimmed text.
+  readonly text: string
+}
+
+// The answer `raw` holds; anything that is no record answers nothing.
+export function answerOf(raw: unknown): Answer {
+  const fields = fieldsOf(raw) ?? {}
+  const deny = fields['deny']
+  return {
+    deny: deny === undefined || deny === null || deny === false || deny === '' ? undefined : String(deny).trim(),
+    isError: Boolean(fields['isError']),
+    result: fields['result'],
+    text: String(fields['result'] ?? fields['text'] ?? '').trim(),
+  }
 }

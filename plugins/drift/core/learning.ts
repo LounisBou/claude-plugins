@@ -13,6 +13,7 @@
 // design's question 9: 30 days, 90 days, 6,000 events; what a journal drops is folded into one count
 // per signature and week (`foldWeekly`).
 
+import { consentAnswer, givenAnswer, grants } from './consent-record.ts'
 import { WAIT_KINDS } from './orchestration.ts'
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
@@ -894,6 +895,96 @@ export function learningEvent(input: EventInput & { readonly kind: LearningKind 
 /** An audit event from what its writer knows, or undefined when a field breaks the contract. */
 export function auditEvent<K extends AuditKind>(input: EventInput & { readonly kind: K; readonly fact: Facts[K] }): AuditEvent | undefined {
   return parseAuditEvent({ v: AUDIT_VERSION, kind: input.kind, ...envelopeFrom(input), fact: input.fact })
+}
+
+/**
+ * The subject a writer names, from what it read: the repository in lower case (the forge compares
+ * names so, and one pull request must read the same from every writer), the pull request and the
+ * head, each kept when it fits the contract and null otherwise, so a field the writer could not read
+ * never costs the event.
+ */
+export function subjectOf(raw: { readonly repo?: unknown; readonly pr?: unknown; readonly head?: unknown }): LearningEvent['subject'] {
+  const repo = typeof raw.repo === 'string' ? raw.repo.trim().toLowerCase() : null
+  const head = typeof raw.head === 'string' ? raw.head.trim().toLowerCase() : null
+  return { repo: isRepo(repo) ? repo : null, pr: isLine(raw.pr) ? raw.pr : null, head: matches(PATTERNS.head, head) ? head : null }
+}
+
+/**
+ * A file as a finding names it, as a path of the repository: a trailing line number and a leading
+ * `./` dropped, the checkout's own directory (`root`) cut from an absolute path; undefined for what
+ * is still no path of the contract.
+ */
+export function repoPath(file: string, root?: string): string | undefined {
+  const top = root === undefined ? '' : `${root.replace(/\/+$/, '')}/`
+  const named = file.trim().replace(/:\d+(?:[-:]\d+)?$/, '')
+  const path = (top !== '/' && top !== '' && named.startsWith(top) ? named.slice(top.length) : named).replace(/^(?:\.\/)+/, '')
+  return isPath(path) ? path : undefined
+}
+
+/** What a writer knows of any event: its time and random part, its plugin, and the subject and context it read. */
+export type Known = Pick<EventInput, 'at' | 'random' | 'subject' | 'context'> & { readonly plugin: string }
+
+/**
+ * A finding an agent reported, as a version 1 event: the code that names what found it, the file as
+ * its one path, and, for a severity of the contract, the pointer a signature reads. A file that is no
+ * path of the contract is left out rather than losing the finding. The finding's summary never
+ * enters: the event holds where and how severe, not what was said.
+ */
+export function findingEvent(input: Known & { readonly code: string; readonly severity: string; readonly file: string; readonly root?: string }): LearningEvent | undefined {
+  const file = repoPath(input.file, input.root)
+  const severity = isOneOf(contract.severities, input.severity) ? input.severity : undefined
+  return learningEvent({
+    at: input.at, random: input.random, kind: 'finding', trust: 'review',
+    source: { plugin: input.plugin, code: input.code },
+    ...(input.subject ? { subject: input.subject } : {}),
+    context: { ...input.context, paths: file === undefined ? [] : [file] },
+    evidence: file !== undefined && severity !== undefined ? [{ type: 'finding', severity, file }] : [],
+  })
+}
+
+/**
+ * How the operator answered a structured question, as code reads it: a grant asked by name (a
+ * consent's kind, a push) and whether he gave it; or the letter he chose among the choices, null for
+ * words of his own, beside the letter that was recommended.
+ */
+export type AnswerGiven =
+  | { readonly asked: string; readonly granted: boolean }
+  | { readonly letter: string | null; readonly recommended: string | null }
+
+/**
+ * What an answer to a question of the round gives: for a question that asks a consent, its kind and
+ * whether the answer grants it (consent-record.ts reads the answer); for any other, the choice its
+ * opening letter names.
+ */
+export function answerGiven(
+  answer: string,
+  asked: { readonly consent?: { readonly kind: string } | null; readonly choices?: readonly { readonly letter: string; readonly text: string }[]; readonly recommended?: string | null },
+): AnswerGiven {
+  const choices = asked.choices ?? []
+  if (asked.consent) return { asked: asked.consent.kind, granted: grants(consentAnswer(answer, choices)) }
+  return { letter: givenAnswer(answer, choices).letter, recommended: asked.recommended ?? null }
+}
+
+/** The code of an answer: the grant asked and its outcome, or how the choice stands to the recommendation. */
+function answerCode(plugin: string, given: AnswerGiven): string {
+  if ('asked' in given) return `${plugin}.answer.${given.asked}.${given.granted ? 'granted' : 'refused'}`
+  if (given.letter === null) return `${plugin}.answer.own-words`
+  return `${plugin}.answer.${given.recommended !== null && given.letter.toUpperCase() === given.recommended.toUpperCase() ? 'recommended' : 'other'}`
+}
+
+/**
+ * The operator's answer to a structured question, as a version 1 event of his trust: what was asked
+ * and how he answered as its code, never his words; `ruling` points at the file that keeps them (a
+ * path under the configuration directory), left out when it is no path of the contract.
+ */
+export function answerEvent(input: Known & { readonly given: AnswerGiven; readonly ruling?: string | null }): LearningEvent | undefined {
+  return learningEvent({
+    at: input.at, random: input.random, kind: 'answer', trust: 'operator',
+    source: { plugin: input.plugin, code: answerCode(input.plugin, input.given) },
+    ...(input.subject ? { subject: input.subject } : {}),
+    ...(input.context ? { context: input.context } : {}),
+    evidence: isPath(input.ruling) ? [{ type: 'ruling', path: input.ruling, line: 1 }] : [],
+  })
 }
 
 /** The file an event is written to in its journal: its identifier, so names sort by time. */
