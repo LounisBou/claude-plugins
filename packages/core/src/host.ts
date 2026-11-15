@@ -193,6 +193,18 @@ export function fieldsOf(value: unknown): Readonly<Record<string, unknown>> | un
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
+// A list's items, or none for anything that is not a list.
+export function listOf(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+// The dialog a `$.ui.ask` raises, as the AskUserQuestion call carries it: its first question and
+// that question's option labels.
+export function dialogOf(input: Readonly<Record<string, unknown>>): { readonly question: string; readonly labels: readonly string[] } {
+  const first = fieldsOf(listOf(input['questions'])[0])
+  return { question: String(first?.['question'] ?? ''), labels: listOf(first?.['options']).map(option => String(fieldsOf(option)?.['label'] ?? '')) }
+}
+
 // What a tool or a hook beneath answered, as far as a module reads it.
 export interface Answer {
   // The refusal, when the call was refused.

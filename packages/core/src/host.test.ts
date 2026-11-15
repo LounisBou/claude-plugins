@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answerOf, fieldsOf, messageOf, reasonOf } from './host.ts'
+import { answerOf, dialogOf, fieldsOf, listOf, messageOf, reasonOf } from './host.ts'
 
 test('a rejection reads as its message, else as the value itself', () => {
   assert.equal(reasonOf(new Error('no such file')), 'no such file')
@@ -27,4 +27,17 @@ test('a tool\'s answer reads as its refusal, its error flag, its result and its 
   assert.equal(answerOf({ deny: ' not allowed ' }).deny, 'not allowed')
   for (const deny of [undefined, null, false, '']) assert.equal(answerOf({ deny }).deny, undefined)
   assert.deepEqual(answerOf('no record'), { deny: undefined, isError: false, result: undefined, text: '' })
+})
+
+test('a list reads as its items, anything else as none', () => {
+  assert.deepEqual(listOf(['a', 1]), ['a', 1])
+  assert.deepEqual(listOf('a'), [])
+  assert.deepEqual(listOf(undefined), [])
+})
+
+test('a dialog reads as its first question and that question\'s labels', () => {
+  const questions = [{ question: 'Run it?', options: [{ label: 'Allow' }, { label: 'Deny' }] }, { question: 'second' }]
+  assert.deepEqual(dialogOf({ questions }), { question: 'Run it?', labels: ['Allow', 'Deny'] })
+  assert.deepEqual(dialogOf({ questions: 'none' }), { question: '', labels: [] })
+  assert.deepEqual(dialogOf({ questions: [{ question: 'q', options: [{}, 'x'] }] }), { question: 'q', labels: ['', ''] })
 })
