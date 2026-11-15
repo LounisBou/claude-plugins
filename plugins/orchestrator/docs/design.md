@@ -73,6 +73,7 @@ skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interprete
 skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
 skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
+skills/orchestrator/scripts/review-brief.sh, skills/orchestrator/scripts/review-brief.ts, skills/orchestrator/scripts/review-brief.spec.ts  a review round's brief filled from its fields: the template's text is never retyped, a field it gained and the command does not fill is refused
 skills/orchestrator/scripts/ci-watch.sh      the one wait on a pull request's checks, in the background, ending in one line and a code
 skills/orchestrator/scripts/draft_guard.py     which failing checks of a draft pull request are draft guards, read from the job's own definition
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
@@ -495,6 +496,7 @@ Every project-specific fact is removed; the skill states the rule and leaves the
 |---|---|---|
 | `skills/iterm-agents/scripts/iterm-agent.sh`, `iterm_agent.py` | lists, spawns, verifies, reads, closes, moves and rotates tabs through the app's API and the windows of a home session through tmux; resolves a tier | sections 14, 19 to 22, 24 to 27, 29, 31, 34, 38, 39, 42 to 46, 48, 49, 51, 52, 57, 66; its commands: `skills/iterm-agents/references/commands.md` |
 | `skills/orchestrator/scripts/brief-lint.sh` | lints a brief before it is dispatched, warning on its findings | sections 11, 12 |
+| `skills/orchestrator/scripts/review-brief.sh` | a review round's brief filled from its fields (`templates/agent-review-brief.md`), written to the path given | section 37 |
 | `skills/orchestrator/scripts/ci-watch.sh` | the one wait on a pull request's checks, in the background, ending in one line and a code | section 62 |
 | `skills/orchestrator/scripts/draft_guard.py` | which failing checks of a draft pull request are draft guards: the job that produced the check tests the draft flag, read in the workflow file at the run's head and kept by head | section 62, `ci-watch.sh` |
 | `skills/orchestrator/scripts/dispatch-record.sh` | one row per dispatch; the routing signals; the readiness gate | sections 13, 55, 58 |
