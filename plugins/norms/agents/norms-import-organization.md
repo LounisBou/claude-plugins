@@ -1,15 +1,6 @@
 ---
 name: norms-import-organization
-description: |
-  Use this agent to validate import organization using evidence-based checking.
-  Detects unused and duplicate imports (always). Checks grouping/ordering only when
-  evidence exists from CONTRIBUTING.md or consistent codebase conventions.
-
-  <example>
-  Context: Developer added new source files with imports.
-  user: "Check if imports are organized correctly"
-  assistant: "I'll use the norms-import-organization agent to validate import organization."
-  </example>
+description: "Checks import organization: unused and duplicate imports, grouping and order where the project sets one."
 model: haiku
 tools: Read, Grep, Glob, Bash
 color: purple

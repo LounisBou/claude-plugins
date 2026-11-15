@@ -1,14 +1,6 @@
 ---
 name: norms-magic-values
-description: |
-  Use this agent to detect hardcoded values that violate project conventions. Evidence-based: only flags values
-  when CONTRIBUTING.md rules or codebase patterns prove the project extracts them. No evidence = no finding.
-
-  <example>
-  Context: Developer added code with hardcoded values.
-  user: "Check for magic values in my code"
-  assistant: "I'll use the norms-magic-values agent to detect hardcoded values."
-  </example>
+description: "Flags hardcoded magic values, only where project norms or code patterns show such values are extracted."
 model: haiku
 tools: Read, Grep, Glob, Bash
 color: cyan

@@ -1,15 +1,6 @@
 ---
 name: norms-documentation
-description: |
-  Use this agent to detect missing documentation based on project evidence. Evidence-based: only flags
-  missing comments when CONTRIBUTING.md rules or codebase patterns prove the project documents similar constructs.
-  No evidence = no finding.
-
-  <example>
-  Context: Developer added complex algorithm code.
-  user: "Should I add comments to my new code?"
-  assistant: "I'll use the norms-documentation agent to check if project conventions require comments here."
-  </example>
+description: "Flags missing documentation, only where project norms or code patterns show similar code is documented."
 model: sonnet
 tools: Read, Grep, Glob, Bash
 color: green

@@ -1,14 +1,6 @@
 ---
 name: norms-pattern-conformity
-description: |
-  Use this agent to verify that new or modified code follows the same patterns as existing code in the project.
-  Checks structural patterns, function shapes, dependency injection style, error handling approach, and architectural conventions by comparing against reference files of the same type.
-
-  <example>
-  Context: Developer added a new service file.
-  user: "Check if my new UserService follows project patterns"
-  assistant: "I'll use the norms-pattern-conformity agent to compare against existing services."
-  </example>
+description: "Checks that new or modified code follows the patterns of existing code of the same type."
 model: sonnet
 tools: Read, Grep, Glob, Bash
 color: blue
