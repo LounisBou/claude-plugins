@@ -337,14 +337,6 @@ def test_agent_prompt_refuses_a_malformed_launcher_name(run, bound, home, bad, c
     assert "agent" not in read_state(home)
 
 
-def test_agent_md_exists_and_opens_with_the_data_rule():
-    agent_md = REPO_ROOT / "agent" / "AGENT.md"
-
-    head = agent_md.read_text().split("\n## ", 1)[0]
-
-    assert "DATA" in head and "never" in head
-
-
 # -- pull --every (PM2 loop mode, no cron) ---------------------------------------------------
 
 

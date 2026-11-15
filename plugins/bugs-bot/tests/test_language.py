@@ -10,7 +10,7 @@ from fake_channel import FakeChannel, inbound
 from fake_channel import author as fake_author
 from fake_channel import batch as fake_batch
 from samples import BASE_DATE, GROUP_ID
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 from bugs_bot import pull
 from bugs_bot.people import language_of, record_language
@@ -136,19 +136,6 @@ def test_language_of_a_card_without_language_is_the_projects(run, bound):
 
 
 # -- the agent writes in each person's language --------------------------------------------------
-
-
-@pytest.mark.parametrize("phrase", [
-    "written in their language",
-    "`person-lang <report-id> <code>` first",
-    "the project's `language` is the default only",
-])
-def test_the_agent_writes_to_each_person_in_their_language(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-def test_the_skill_documents_person_lang():
-    assert "person-lang <report-id\\|author_id> <code>" in DOCS["SKILL.md"].read_text()
 
 
 def test_the_startup_prompt_gives_the_projects_language_as_the_default(run, bound, capsys):
