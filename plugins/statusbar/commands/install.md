@@ -1,6 +1,7 @@
 ---
 description: Install or update the two-line status bar
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Install the status line shipped by this plugin.

@@ -1,6 +1,7 @@
 ---
 description: Remove the status bar from settings.json and delete the installed script
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/uninstall.sh:*)
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/uninstall.sh` and report its output.
