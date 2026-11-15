@@ -47,8 +47,8 @@ export type Asker = { session: string; name: string; remote: boolean }
 export type Plan = {
   entry: Fields
   asker: Asker
-  /** v2: the answer sent to its asker now, or to its owner's machine from a replica; relay: the pending delivery handed to the supervision. */
-  deliver: 'now' | 'pending' | 'remote' | null
+  /** The answer sent to its asker now, or to its owner's machine from a replica. */
+  deliver: 'now' | 'remote' | null
   consentBy: Answerer | null
   /** The relay's entry: its fingerprint forgotten, and the coordinator told when the module closed it. */
   relayed: boolean
@@ -87,9 +87,9 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
   }
 }
 
-// The close of an entry the relay wrote, as the two commands it replaces closed one: its sender
-// settles its own open entry (closed when the coordinator here was shown it, which is then told);
-// the coordinator closes any entry not closed yet, an open one's answer left pending for delivery.
+// The close of an entry the relay wrote, a closing proposal: its sender settles its own open entry
+// (closed when the coordinator here was shown it, which is then told); the coordinator closes any
+// entry not closed yet, and no answer goes back to its sender.
 export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: string, shown: boolean): Plan | { error: string } {
   const origin = fields(entry['origin'])
   const asker: Asker = { session: String(entry['session'] ?? ''), name: String(entry['from'] ?? ''), remote: origin !== null }
@@ -114,13 +114,10 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
   const answer = request.outcome === 'withdrawn'
     ? { text: `withdrawn: settled meanwhile — ${request.text}`, by: 'coordinator', at, evidence: request.text }
     : { text: request.text, by: 'coordinator', at }
-  // An open question's sender waits on the answer: its delivery is left pending, stamped as the answer.
-  const waits = open && entry['kind'] === 'operator'
-  const delivery = waits ? { delivery: { state: 'pending', at, attempts: 0, ...(asker.remote ? {} : { answerAt: at }) } } : {}
   return {
-    entry: { ...entry, status: 'closed', answer, ...delivery },
+    entry: { ...entry, status: 'closed', answer },
     asker,
-    deliver: waits ? 'pending' : null,
+    deliver: null,
     consentBy: request.outcome === 'answered-here' ? 'coordinator' : null,
     relayed: true,
     told: false,

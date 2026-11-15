@@ -26,18 +26,17 @@ import {
   type ReadRecord, type HostNames,
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf } from './stop-gate.ts'
-import { entryQuestions, questionBody, questionShape, type Choice } from '../core/method.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, withLetteredChoices, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, plainText, textSpans, prPieces, repositoryOwners, numberLabel, isDue, dueText, toldText, droppedBy, PANE_CLOSED, type SenderState, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, toldText, type RoundAnswer, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -45,8 +44,8 @@ import {
 } from './remote-row.ts'
 import {
   askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
-  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
-  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
+  parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -199,9 +198,9 @@ const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 // again by each reading.
 const ROUND_WAKE_MS = 30000
 
-// An answer sent to a sender on another machine and not acknowledged is sent again by that same
-// reading once its last send is this old, ANSWER_SENDS sends at most, then failed. A question asked
-// with `ask` keeps them, both ways (remote-asked.ts).
+// The answer to a question asked with `ask` sent to another machine and not acknowledged is sent
+// again by that same reading once its last send is this old, ANSWER_SENDS sends at most, then
+// failed, both ways (remote-asked.ts).
 export const ANSWER_RESEND_MS = 30000
 export const ANSWER_SENDS = 3
 
@@ -242,7 +241,6 @@ const WORDS = {
   noOrchestrator: 'no live orchestrator',
   status: 'Status',
   blocks: 'Blocks',
-  waitsInTab: 'Waits in its tab',
   other: 'Other answer',
   otherBelow: 'Other answer: type it below',
   otherInSession: 'Other answer: in the session',
@@ -250,21 +248,10 @@ const WORDS = {
   send: 'send',
   choose: 'Choose',
   recommended: 'recommended',
-  choices: 'Choices',
-  next: 'next',
   notDelivered: 'not delivered',
   delivering: 'being delivered',
 } as const
 const OTHER_LABEL = WORDS.other
-
-// The question card's geometry, in cells, counted as drawn (the row count follows it): the border
-// on each side, the padding inside it, the indent of a field's value under its label, and the
-// column of a choice's letter badge, its text hanging after it.
-const CARD_BORDER = 1
-const CARD_PADDING_X = 2
-const CARD_PADDING_TOP = 1
-const FIELD_INDENT = 2
-const BADGE_COLUMN = 5
 
 // How many rows tall the « Other answer » field is drawn, label included. The host's field
 // holds lines (a newline starts one) and cuts a line wider than its room with an ellipsis, never
@@ -707,27 +694,6 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
     .sort((a, b) => b.urgency - a.urgency)
 }
 
-// The round's first open question as a coordinator's pane draws it, above the orchestrator
-// rows: a header naming its sender and the sender's own numbering (« Orch: x — Question 5 of
-// 6 »; the name alone when the sender gave none: the pane adds no numbering of its own, the
-// section's title counts the questions), then one line per lettered choice, the recommended one
-// marked and drawn bold. A question without lettered choices is its header alone: the pane draws
-// its text and the « other answer » option under it. A done proposal is no question. Nothing
-// open: no line.
-export type RoundLine = { letter: string | null; text: string; bold: boolean }
-export function roundLines(entries: readonly RoundEntry[]): RoundLine[] {
-  const questions = paneQuestions(entries)
-  if (questions.length === 0) return []
-  const first = questions[0]
-  const number = questionShape(first.question, first.choices)?.number ?? null
-  const header = { letter: null, text: number === null ? first.from : `${first.from} — ${number}`, bold: false }
-  if (first.choices.length === 0) return [header]
-  return [header, ...first.choices.map(choice => {
-    const recommended = choice.letter === first.recommendation
-    return { letter: choice.letter, text: `${choice.text}${recommended ? '  (recommended)' : ''}`, bold: recommended }
-  })]
-}
-
 // One agent of this orchestrator as the pane reads it: the host's own record of
 // the session on the agent's tty — its name, its status — and the store's row
 // of that session for the figures, null while no measure has written one.
@@ -836,10 +802,8 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 
 // The pane as the module remembers it: what it was opened to list, and its clock, started by
 // the open and cancelled by any close. A coordinator's pane also keeps the questions whose
-// « other answer » was pressed (their ids: the hint is drawn under them), the failed deliveries
-// to a sender on this machine a render found that sender gone for, never said again in this
-// module's life (each by its entry's id and its answer's stamp: the failure itself is in the
-// entry's file), the entries whose answer is in flight, so a second press on one does nothing,
+// « other answer » was pressed (their ids: the hint is drawn under them), the questions whose
+// answer is in flight, so a second press on one does nothing,
 // the entry whose « Other answer » was picked, its text field drawn until the ring leaves it, and
 // the text typed in each field, which the pane draws again whole under it.
 export type PaneMemory = {
@@ -847,7 +811,6 @@ export type PaneMemory = {
   ticker: { cancel(): void } | null
   other: Set<string>
   writing: string | null
-  forgotten: Set<string>
   answering: Set<string>
   typed?: Map<string, string>
   // The content last drawn, as the module counts its rows, and the tree's height as the
@@ -1091,9 +1054,9 @@ function stopWake(wake: WakeMemory): void {
   wake.timer = null
 }
 
-// One reading: the questions just due, the answers the coordinator's `settle` left to deliver, then the answers
-// to send again to another machine. A failure of any is one log line, and the next reading still
-// comes. A timer no longer the one armed reads nothing.
+// One reading: the questions just due, then the answers to send again to another machine. A
+// failure of either is one log line, and the next reading still comes. A timer no longer the one
+// armed reads nothing.
 async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
   if (wake.timer !== timer) return
   wake.timer = null
@@ -1102,9 +1065,7 @@ async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: nu
   } catch (err) {
     await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
   }
-  await deliverInTurn($)
   try {
-    await resendAnswers($)
     await resendReplies($)
   } catch (err) {
     await logLine($, 'supervision', `round resend: ${(err as Error).message}`)
@@ -1120,47 +1081,6 @@ async function clockNow($: any): Promise<number> {
     return Number.isFinite(now) ? now : Date.now()
   } catch {
     return Date.now()
-  }
-}
-
-// What the coordinator's pane took in and left out, module memory the render and the round's
-// wake share, so each line below is written once in the module's life: the open operator entries a
-// render showed (`shown`), each entry left out with its reason (`left`, `<id> <reason>`), the
-// entries the wake found never shown (`unseen`), and when the last render ran (`lastRender`, ISO).
-// The 2026-11-04 case: a question in neither the pane nor the coordinator's tab, and no line
-// saying which step lost it.
-export type PaneTrace = { shown: Set<string>; left: Set<string>; unseen: Set<string>; lastRender: string | null }
-let trace: PaneTrace = { shown: new Set(), left: new Set(), unseen: new Set(), lastRender: null }
-
-// Why an open entry of this machine is not drawn: the session it names, its row's drop reason
-// this read gave, or no row at all.
-function leftOutReason(entry: RoundEntry, dropped: ReadonlyMap<string, string>, remote: Record<string, SessionRow>): string {
-  if (entry.origin) {
-    const known = remote[remoteKey(entry.from)]
-    return known ? `its sender's remote row is on ${known.machine ?? 'another machine'}, not ${entry.origin.machine}` : `no live remote row for ${entry.from} on ${entry.origin.machine}`
-  }
-  if (entry.session === '') return 'names no session'
-  const reason = dropped.get(sessionKey(entry.session))
-  return reason ? `its sender's row ${entry.session} was dropped: ${reason}` : `no row for its sender ${entry.session}`
-}
-
-// One render's trace: each open operator entry it took in, logged once at its first drawing, and
-// each one it left out, logged once per reason. `taken` is the render's own list: a question in
-// its card or its count, a wait that asks nothing on its sender's row.
-async function traceRender($: any, read: readonly RoundEntry[], taken: ReadonlySet<string>, reasonOf: (entry: RoundEntry) => string): Promise<void> {
-  for (const entry of read) {
-    if (entry.status !== 'open' || entry.kind !== 'operator') continue
-    if (taken.has(entry.id)) {
-      if (trace.shown.has(entry.id)) continue
-      trace.shown.add(entry.id)
-      await logLine($, 'supervision', `pane: shown ${entry.id}`)
-      continue
-    }
-    const reason = reasonOf(entry)
-    const key = `${entry.id} ${reason}`
-    if (trace.left.has(key)) continue
-    trace.left.add(key)
-    await logLine($, 'supervision', `pane: ${entry.id} not drawn: ${reason}`)
   }
 }
 
@@ -1245,7 +1165,6 @@ async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Pro
 // the host took it: a submit that fails or is dropped is tried again at the next reading. The
 // ids kept are those the round still holds, so the list never outgrows it.
 async function wakeForDue($: any): Promise<void> {
-  await reconcileRound($)
   const store = await readStore($)
   const local = store.rows
   const relayed = (await readRound($)).map(found => found.entry)
@@ -1257,7 +1176,6 @@ async function wakeForDue($: any): Promise<void> {
   const paneOpen = await paneIsOpen($)
   const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
-  if (paneOpen) await traceUnseen($, relayed, now)
   await tellNew($, read, present)
   const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
@@ -1302,20 +1220,6 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
     }
   } catch (err) {
     await logLine($, 'supervision', `round told: ${(err as Error).message}`)
-  }
-}
-
-// With the pane open, each open operator entry ROUND_WAKE_MS old that no render of this module
-// showed is one line, once: the render was not raised, or did not take it in, and the line gives
-// the last render's time to tell which. With the pane closed the question is due in the tab and
-// no render is owed. An entry's age is from when the module wrote it, else from its wait's start.
-async function traceUnseen($: any, read: readonly RoundEntry[], now: number): Promise<void> {
-  for (const entry of read) {
-    if (entry.status !== 'open' || entry.kind !== 'operator' || trace.shown.has(entry.id) || trace.unseen.has(entry.id)) continue
-    const at = Number.isFinite(Date.parse(entry.at)) ? Date.parse(entry.at) : Date.parse(entry.since)
-    if (!Number.isFinite(at) || now - at < ROUND_WAKE_MS) continue
-    trace.unseen.add(entry.id)
-    await logLine($, 'supervision', `round wake: ${entry.id} open ${Math.floor((now - at) / 1000)} s, never drawn by the pane (last render ${trace.lastRender ?? 'none'})`)
   }
 }
 
@@ -1405,17 +1309,6 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
   })
 }
 
-// The answers the coordinator's `settle` left pending, delivered one reading at a time: the reading a command
-// starts waits for the one already running, so the same pending answer is never sent twice by
-// two readings that both found it pending.
-let delivering: Promise<void> = Promise.resolve()
-export function deliverInTurn($: any): Promise<void> {
-  delivering = delivering.then(() => deliverClosedAnswers($)).catch(async err => {
-    await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
-  })
-  return delivering
-}
-
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
 // a registration, never an open. Every session gets it, the tool.call refusing those that
 // supervise nothing, so a role read later than the start is never missed.
@@ -1447,7 +1340,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
-  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, forgotten: new Set(), answering: new Set(), typed: new Map() }
+  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, answering: new Set(), typed: new Map() }
   // The entry whose recommended choice was last asked the focus: once per entry, never at a redraw.
   let focusedFor: string | null = null
   // This session's own repository, read once it answers: its owner names the pull requests the
@@ -1462,7 +1355,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The coordinator's round read for questions just due, armed by a start or a turn end that
   // finds it the recorded coordinator (registerWake).
   wake = { timer: null, generation: 0 }
-  trace = { shown: new Set(), left: new Set(), unseen: new Set(), lastRender: null }
 
   // The engine allows one no-matcher registration per event, and the gauge
   // owns session.measure's and session.end's: this domain observes the same
@@ -1818,22 +1710,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // alone and never in another plugin's.
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
     const started = await clockNow($)
-    trace.lastRender = new Date(started).toISOString()
     try {
       // The store at draw time: the gauge's invalidate after every measure and
       // the pane's own clock re-raise this render. Display only.
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
-      let speaker: string | null = null
-      let asking: RoundEntry | null = null
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: RoundEntry[] = []
       let pending = 0
       // The open questions asked with `ask` (question.ts), drawn from their fields under the round's card.
       let asked: Asked[] = []
-      // The sessions whose open wait asks nothing, each with the line its row carries.
-      const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
       let ownUnattended: string | null = null
@@ -1847,31 +1734,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...((row as { prs?: unknown }).prs instanceof Array ? (row as { prs: string[] }).prs : [])])])
         none = WORDS.noOrchestrator
-        // A question whose sender has ended has no one left to answer: only the entries of a
-        // session with a live row are drawn, and counted, or of a successor an entry was moved to
-        // that the host runs before its first row (hostedSuccessors); an entry from another
-        // machine while a live remote row of its sender's name was measured on that machine.
         // Stat before the read: a write landing between the two is seen by the next tick.
-        await reconcileRound($)
         pane.roundSeen = await roundMtime($)
-        const read = await readRound($)
-        const hosted = await hostedSuccessors($, read.map(found => found.entry), local, store.alive)
-        const drawn = read.map(found => found.entry).filter(entry => entry.origin
-          ? merged[remoteKey(entry.from)]?.machine === entry.origin.machine
-          : sessionKey(entry.session) in local || hosted.has(entry.id))
-        const questions = paneQuestions(drawn)
-        for (const wait of waitsInTab(drawn)) if (!tabWaits.has(rowKeyOf(wait))) tabWaits.set(rowKeyOf(wait), waitSummary(wait))
-        // What this render takes in, for its trace: every question it counts, and each wait that
-        // asks nothing whose sender's row it draws, the line being on that row.
-        const rowKeys = new Set(blocks.map(block => block.key))
-        const taken = new Set([...questions, ...waitsInTab(drawn).filter(wait => rowKeys.has(rowKeyOf(wait)))].map(entry => entry.id))
-        const remote = Object.fromEntries(Object.entries(merged).filter(([key]) => !(key in local)))
-        await traceRender($, read.map(found => found.entry), taken, entry => drawn.includes(entry)
-          ? `its wait asks nothing and its sender ${entry.from} has no orchestrator row in the pane`
-          : leftOutReason(entry, store.dropped, remote))
-        // Each question counts, those of an entry that asks several one by one, less those
-        // already answered.
-        pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
         // One moved to a successor by its name alone is drawn while a live record of that name hosts it.
         // A replica of one asked on another machine, while a live remote row of its asker's name was measured there.
@@ -1881,26 +1745,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ? merged[remoteKey(entry.sender.name)]?.machine === entry.origin.machine
           : sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
         asked = askedGroups(localAsked).flat()
-        pending += asked.length
-        // The orchestrator whose question is drawn, by its session: two may share a name.
-        const first = questions[0]
-        speaker = first ? rowKeyOf(first) : null
-        asking = first ?? null
-        // An answer not delivered says so from the entry itself, a reload kept. One to this
-        // machine is said while its entry still holds the answer that failed, not withdrawn, and
-        // until a render finds its sender gone.
-        for (const { entry } of read) {
-          if (!entry.origin && entry.delivery?.state === 'failed' && !(sessionKey(entry.session) in local)) pane.forgotten.add(failedKey(entry))
-        }
-        failed = drawn.filter(entry => entry.delivery?.state === 'failed' && (entry.origin
-          || (entry.status !== 'withdrawn' && entry.answer?.at === entry.delivery.answerAt && !pane.forgotten.has(failedKey(entry)))))
-          .map(entry => ({ entry, reason: entry.delivery!.reason ?? 'no answer' }))
+        pending = asked.length
         // An answer to a question asked with `ask` not delivered, while its asker has a row here.
-        failed.push(...localAsked.filter(entry => (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
-          .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' })))
-        delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
+        failed = localAsked.filter(entry => (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
+          .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' }))
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
-        delivering.push(...localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry))
+        delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry)
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -1937,9 +1787,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const width = columns - TRACK_COLUMNS
       const rowsOf = (text: string, at: number) => width > 0 ? text.split('\n').reduce((sum, line) => sum + wrapWords(line, Math.max(1, at)).length, 0) : 0
       type Drawn = { node: unknown; rows: number }
-      // A column of pieces a blank line apart: their rows and one per gap.
-      const spacedRows = (items: readonly Drawn[]) => items.reduce((sum, item) => sum + item.rows, 0) + Math.max(0, items.length - 1)
-      const spaced = (items: readonly Drawn[]): Drawn => ({ node: el.Box({ flexDirection: 'column', gap: 1, children: items.map(item => item.node) }), rows: spacedRows(items) })
       // A text drawn with the marks it carried — inline code in its colour, bold, italic — and each
       // pull request it names a link of its own, `style` the whole text's.
       const rich = (text: string, style: object = {}) => el.Text({ children: textSpans(text).flatMap(span => linked(span.text).map(piece => el.Text({
@@ -1959,21 +1806,19 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         ? prPieces(plainText(text), owners).map(piece => (typeof piece === 'string' ? piece : `${piece.text} ${piece.href}`)).join('')
         : plainText(text)
       // Each orchestrator is a block: one line, a dot in its state's colour, its bold name and
-      // its figures in the normal colour; the speaker's whole line bold in `suggestion`. A wait
-      // adds a Status line and, on the operator, a Blocks line, each label in a column of its own
-      // so a long text wraps under its own first character. A blank line between two blocks.
+      // its figures in the normal colour. A wait adds a Status line and, on the operator, a Blocks
+      // line, each label in a column of its own so a long text wraps under its own first
+      // character. A blank line between two blocks.
       const block = (row: PaneRow, i: number): Drawn => {
         const state = row.waiting === 'operator' ? 'warning' : row.waiting === 'done' ? 'success' : 'suggestion'
-        const speaks = row.key === speaker
-        const style = (over: object = {}) => (speaks ? { bold: true, color: 'suggestion', ...over } : over)
         const line = el.Text({
           children: [
             el.Text({ color: state, children: '●' }),
             el.Text({ children: ' ' }),
-            el.Text(speaks ? style({ children: row.name }) : { bold: true, children: row.name }),
-            el.Text(style({ children: ` · ${row.head} · ` })),
-            el.Text(row.past ? { ...style(), color: 'error', children: row.fill } : style({ children: row.fill })),
-            ...(row.age !== null ? [el.Text(style({ children: ` · ${row.age}` }))] : []),
+            el.Text({ bold: true, children: row.name }),
+            el.Text({ children: ` · ${row.head} · ` }),
+            el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill }),
+            ...(row.age !== null ? [el.Text({ children: ` · ${row.age}` })] : []),
           ],
         })
         const labelled = (label: string, text: unknown): unknown => el.Box({
@@ -1985,10 +1830,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ],
         })
         const textWidth = width - 2 - WAIT_LABEL_COLUMN
-        // The line of a wait that asks nothing, one text wrapping under its own start: no label
-        // column, the label being longer than the one Status and Blocks share.
-        const tabWait = tabWaits.get(row.key)
-        const tabLine = `${WORDS.waitsInTab}: ${tabWait ?? ''}`
         return {
           node: el.Box({
             flexDirection: 'column',
@@ -1997,7 +1838,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
-              ...(tabWait !== undefined ? [el.Box({ paddingLeft: 2, children: [el.Text({ children: tabLine })] })] : []),
               ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, children: [rich(row.unattended, { color: 'warning' })] })] : []),
             ],
           }),
@@ -2005,66 +1845,26 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
-            + (tabWait !== undefined ? rowsOf(plainText(tabLine), width - 2) : 0)
             + (row.unattended !== null ? rowsOf(takesRows(row.unattended), width - 2) : 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      // A waiting row with its line in the pane, or whose question asked with `ask` the pane draws, is
-      // not one the operator is left without.
+      // A waiting row whose question asked with `ask` the pane draws is not one the operator is left
+      // without.
       const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key) && !askedHere.has(row.key)).length
+      const waiting = blocks.filter(row => row.waiting === 'operator' && !askedHere.has(row.key)).length
       const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
       const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
-      // The question the card asks: an entry that asks several presents them one at a time, the
-      // first not yet answered.
-      const parts = asking ? entryQuestions(asking) : []
-      const index = asking ? Math.min(asking.partial?.length ?? 0, parts.length - 1) : 0
-      const read = parts[index] ?? null
-      const part = read === null ? null : { ...read, question: withLetteredChoices(read.question, read.choices) }
-      // An entry's key, or with several questions its question's, so each question's picker, field
-      // and focus are its own.
-      const keyOf = (entry: RoundEntry) => (parts.length > 1 ? `${entry.id}:${index + 1}` : entry.id)
       // Where the surface draws a picker, the choices are one Select: it holds the arrows while it
       // has the ring, where a focused pane taller than its body scrolls on them, and a click only
       // gives it the ring — a stray click answers nothing. Its last option leads to the text
-      // field. A picker's option is one line, cut at the pane's width, so each choice's whole text
-      // is drawn once above it and the options carry their letter alone. Elsewhere (mobile, a tap
-      // the only way) one Button per choice.
+      // field. Elsewhere (mobile, a tap the only way) one Button per choice.
       const picker = typeof el.Select === 'function'
-      const pickKey = (entry: RoundEntry) => `choices:${keyOf(entry)}`
-      const firstPick = () => part === null ? null : (part.choices.find(c => c.letter === part.recommendation) ?? part.choices[0])?.letter ?? null
-      const focusKey = () => {
-        const pick = firstPick()
-        if (asking === null || pick === null) return null
-        return picker ? pickKey(asking) : `choice:${pick}`
-      }
-      const answer = (entry: RoundEntry, letter: string) => answerFromPane($, pane, entry, { letter, text: part!.choices.find(c => c.letter === letter)!.text }, index)
-      const choices = (entry: RoundEntry) => el.Select({
-        key: pickKey(entry),
-        // A prompt to choose, its value the choice the ring starts on: never an answer sent.
-        label: WORDS.choose,
-        options: [
-          ...part!.choices.map(c => ({ value: c.letter, label: c.letter === part!.recommendation ? `${c.letter} (${WORDS.recommended})` : c.letter })),
-          { value: OTHER_VALUE, label: WORDS.otherBelow },
-        ],
-        value: firstPick()!,
-        // The ring starts on the picker when the pane takes the keys.
-        autoFocus: true,
-        onSelect: (value: string) => {
-          if (value !== OTHER_VALUE) return answer(entry, value)
-          // The field is drawn from the next draw on, which the focus call waits for.
-          pane.writing = keyOf(entry)
-          $.ui.invalidate('ui.render')
-          return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(keyOf(entry)) })).catch(() => undefined)
-        },
-      })
-      // With no card, the first question asked with `ask` takes the controls: its picker, its choices, its field.
-      const answering: Asked | null = asking === null ? asked[0] ?? null : null
+      // The first question asked with `ask` takes the controls: its picker, its choices, its field.
+      const answering: Asked | null = asked[0] ?? null
       const answeringPick = answering === null ? null : (answering.choices.find(c => c.letter === answering.recommended) ?? answering.choices[0])?.letter ?? null
-      const focus = answering === null ? focusKey()
-        : answeringPick === null ? null : picker ? `choices:${answering.id}` : `choice:${answeringPick}`
-      const focusFor = asking !== null ? keyOf(asking) : answering?.id ?? null
+      const focus = answering === null || answeringPick === null ? null : picker ? `choices:${answering.id}` : `choice:${answeringPick}`
+      const focusFor = answering?.id ?? null
       if (focusFor !== null && focus !== null && focusedFor !== focusFor) {
         // Once per question: the ring to its first choice for a pane already holding the keys,
         // and the window to it, so a question drawn below the rows shows its choice. Never
@@ -2094,164 +1894,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           // A host without a clock: the window stays where it is.
         }
       }
-      // The card's widths: inside its border and padding, a field's value under its label, a
-      // choice's text after its badge.
-      const inner = width - 2 * CARD_BORDER - 2 * CARD_PADDING_X
-      const valueWidth = inner - FIELD_INDENT
-      const choiceWidth = valueWidth - BADGE_COLUMN
-      const choosing = part !== null && part.choices.length > 0
-      // A question in the decide shape draws its fields as the sender labelled them, and nothing
-      // else of its turn; one in an older shape draws its body whole.
-      const shape = part ? questionShape(part.question, part.choices) : null
-      const body = asking && part && shape === null ? questionBody({ question: part.question, choices: part.choices }) : ''
-      // The choices: the letter a badge, the text hanging after it so a wrapped line stays under
-      // its first word, a blank line between two; the recommended one in `success` with its star.
-      // Without a picker, each a Button carrying its whole text.
-      const choiceList = (entry: RoundEntry): Drawn => spaced(part!.choices.map(c => {
-        const recommended = c.letter === part!.recommendation
-        const tail = recommended ? `  ${STAR}` : ''
-        if (!picker) {
-          const label = `[${c.letter}] ${plainText(c.text)}${tail}`
-          const key = `choice:${c.letter}`
-          return {
-            node: el.Button({
-              key,
-              label,
-              hotkey: c.letter.toLowerCase(),
-              // The ring starts on the focused choice when the pane takes the keys.
-              ...(key === focus ? { autoFocus: true } : {}),
-              ...(recommended ? { children: [el.Text({ bold: true, color: 'success', children: label })] } : {}),
-              onPress: () => answer(entry, c.letter),
-            }),
-            rows: rowsOf(label, valueWidth),
-          }
-        }
-        const look = recommended ? { bold: true, color: 'success' } : {}
-        return {
-          node: el.Box({
-            flexDirection: 'row',
-            children: [
-              el.Box({ width: BADGE_COLUMN, flexShrink: 0, children: [el.Text({ bold: true, color: recommended ? 'success' : 'suggestion', children: `[${c.letter}]` })] }),
-              el.Box({ flexGrow: 1, flexShrink: 1, children: [el.Text({ ...look, children: [rich(c.text, look), ...(tail ? [el.Text({ ...look, children: tail })] : [])] })] }),
-            ],
-          }),
-          rows: rowsOf(`${takesRows(c.text)}${tail}`, choiceWidth),
-        }
-      }))
-      // A field: its label upper-case in `suggestion` on a line of its own, its value indented
-      // under it — the context dim, the question bold. A label with no text heads what follows
-      // it: the choices, when it is the last.
-      const indented = (inside: Drawn): Drawn => ({ node: el.Box({ paddingLeft: FIELD_INDENT, flexDirection: 'column', children: [inside.node] }), rows: inside.rows })
-      // The choices under a label of their own, as the sender's fields are, when the sender's text
-      // gives none above them.
-      const labelledChoices = (entry: RoundEntry): Drawn => {
-        const label = WORDS.choices.toUpperCase()
-        const list = indented(choiceList(entry))
-        return {
-          node: el.Box({ flexDirection: 'column', children: [el.Text({ bold: true, color: 'suggestion', children: label }), list.node] }),
-          rows: rowsOf(label, inner) + list.rows,
-        }
-      }
-      const fieldLook = (label: string) => /^cont/i.test(label) ? { dimColor: true } : /^quest/i.test(label) ? { bold: true } : {}
-      const fields = (entry: RoundEntry): Drawn[] => {
-        const list = shape?.fields ?? []
-        const heading = choosing && list.length > 0 && list[list.length - 1].text === '' ? list.length - 1 : -1
-        return list.map((field, i) => {
-          const label: Drawn = { node: el.Text({ bold: true, color: 'suggestion', children: field.label.toUpperCase() }), rows: rowsOf(field.label.toUpperCase(), inner) }
-          const value: Drawn | null = i === heading
-            ? indented(choiceList(entry))
-            : field.text === '' ? null : indented({ node: rich(field.text, fieldLook(field.label)), rows: rowsOf(takesRows(field.text), valueWidth) })
-          return {
-            node: el.Box({ flexDirection: 'column', children: [label.node, ...(value ? [value.node] : [])] }),
-            rows: label.rows + (value?.rows ?? 0),
-          }
-        }).concat(choosing && heading < 0 ? [labelledChoices(entry)] : [])
-      }
-      const recommendation = shape?.recommendation ?? null
-      const recommendationLine = (): Drawn | null => {
-        if (recommendation === null) return null
-        const head = `${STAR} ${recommendation.label}${recommendation.separator}`
-        return {
-          node: el.Text({ children: [el.Text({ color: 'success', children: `${STAR} ` }), el.Text({ bold: true, children: `${recommendation.label}${recommendation.separator}` }), rich(recommendation.text)] }),
-          rows: rowsOf(`${head}${takesRows(recommendation.text)}`, inner),
-        }
-      }
-      // What is typed in the field, drawn again under it whole and wrapped at the card.
-      const typedMirror = (entry: RoundEntry): Drawn[] => {
-        const typed = pane.typed?.get(keyOf(entry)) ?? ''
-        return typed === '' ? [] : [{ node: el.Text({ children: typed }), rows: rowsOf(typed, inner) }]
-      }
-      // Beside a picker the field is drawn only once « Other answer » is picked: drawn sooner,
-      // it is a stop of the ring that Tab reaches from a choice, and text typed there lands.
-      const otherAnswer = (entry: RoundEntry): Drawn[] => typeof el.Input === 'function'
-        ? (picker && choosing && pane.writing !== keyOf(entry) ? [] : [{
-          node: el.Input({
-            key: answerKey(keyOf(entry)),
-            label: OTHER_LABEL,
-            placeholder: WORDS.otherPlaceholder,
-            submitLabel: WORDS.send,
-            rows: ANSWER_ROWS,
-            onInput: (value: string) => {
-              if (value === '') pane.typed?.delete(keyOf(entry))
-              else pane.typed?.set(keyOf(entry), value)
-              $.ui.invalidate('ui.render')
-            },
-            onSubmit: (value: string) => answerFromPaneText($, pane, entry, value, index),
-          }),
-          rows: ANSWER_ROWS,
-        }, ...typedMirror(entry)])
-        : [{
-          node: el.Box({
-            flexDirection: 'column',
-            children: [
-              el.Button({
-                key: OTHER_KEY,
-                label: WORDS.otherInSession,
-                hotkey: OTHER_HOTKEY,
-                onPress: () => {
-                  pane.other.add(keyOf(entry))
-                  $.ui.invalidate('ui.render')
-                },
-              }),
-              ...(pane.other.has(keyOf(entry)) ? [el.Text({ color: 'suggestion', children: `type your answer in this tab, or in ${entry.from}'s tab` })] : []),
-            ],
-          }),
-          rows: 1 + (pane.other.has(keyOf(entry)) ? rowsOf(`type your answer in this tab, or in ${entry.from}'s tab`, inner) : 0),
-        }]
-      // The card: a rounded border in `suggestion`, its title the sender and the question's own
-      // number, then its pieces a blank line apart.
-      const card = (entry: RoundEntry): Drawn => {
-        const sender = entry.origin ? `${entry.from} · remote ${entry.origin.machine}` : entry.from
-        const title = part!.number === null ? sender : `${sender} · ${numberLabel(part!.number)}`
-        const pieces: Drawn[] = [
-          { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, inner) },
-          ...(shape !== null ? fields(entry) : []),
-          ...(body !== '' ? [{ node: rich(body), rows: rowsOf(takesRows(body), inner) }] : []),
-          ...(shape === null && choosing ? [labelledChoices(entry)] : []),
-          ...[recommendationLine()].filter((line): line is Drawn => line !== null),
-          ...(choosing && picker ? [{ node: choices(entry), rows: 1 + (e.props?.isFocused ? part!.choices.length + 1 : 0) }] : []),
-          ...otherAnswer(entry),
-        ]
-        return {
-          node: el.Box({
-            flexDirection: 'column',
-            borderStyle: 'round',
-            borderColor: 'suggestion',
-            paddingX: CARD_PADDING_X,
-            paddingTop: CARD_PADDING_TOP,
-            gap: 1,
-            children: pieces.map(piece => piece.node),
-          }),
-          rows: 2 * CARD_BORDER + CARD_PADDING_TOP + spacedRows(pieces),
-        }
-      }
-      // Under the card, the entry's next question, by its number and its first field, dim.
-      const following = asking && index + 1 < parts.length ? parts[index + 1] : null
-      const nextLine = following === null ? null : (() => {
-        const subject = questionShape(following.question, following.choices)?.fields[0]?.text.split('\n')[0] ?? ''
-        const words = `${WORDS.next}: ${following.number === null ? `question ${index + 2}` : numberLabel(following.number)}${subject ? ` — ${plainText(subject)}` : ''}`
-        return { node: el.Text({ dimColor: true, children: words }), rows: rowsOf(words, width) }
-      })()
       // An answer not delivered is one line at the section's foot, every one of them in it, so a
       // notice never stands between the title and the next question.
       const answerTo = (entry: RoundEntry) => `the answer to ${entry.from}${entry.origin ? ` on ${entry.origin.machine}` : ''} (blocks: ${entry.blocks})`
@@ -2374,11 +2016,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },
         // Beside the questions asked with `ask`, the line still counts the orchestrators waiting with none drawn.
-        ...(asking !== null ? [card(asking)] : askedPieces.length === 0 || waiting > 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
-        ...(nextLine ? [nextLine] : []),
+        ...(askedPieces.length === 0 || waiting > 0 ? [{ node: el.Text({ children: says }), rows: rowsOf(says, width) }] : []),
         ...(askedPieces.length === 0 ? [] : [{
-          node: el.Box({ flexDirection: 'column', ...(asking !== null ? { marginTop: 1 } : {}), children: askedPieces.map(piece => piece.node) }),
-          rows: (asking !== null ? 1 : 0) + askedPieces.reduce((sum, piece) => sum + piece.rows, 0),
+          node: el.Box({ flexDirection: 'column', children: askedPieces.map(piece => piece.node) }),
+          rows: askedPieces.reduce((sum, piece) => sum + piece.rows, 0),
         }]),
         ...notices,
         rule,
@@ -2386,7 +2027,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.orchestrators }), rows: rowsOf(WORDS.orchestrators, width) }
       // The key line, dim, at the foot: once the pane holds the keys, how to give them is no
       // longer said.
-      const keyLine = asking === null && answering === null ? null : picker
+      const keyLine = answering === null ? null : picker
         ? `${e.props?.isFocused ? '' : 'ctrl+x tab or a click: give the pane the keys · '}arrows: move · Enter: choose · Esc: back to the prompt`
         : 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt'
       const flow: Drawn[] = [
@@ -2399,7 +2040,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, answering?.id ?? null, index, pending, asked.map(entry => entry.id), blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -2640,277 +2281,11 @@ async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: str
   await writeConsent($, entry, `${chosen.letter} : ${chosen.text}`, 'tab', at)
 }
 
-// A choice pressed in the coordinator's pane: the entry, read again so a question settled
-// meanwhile is left as it is, becomes answered by the pane, written whole and renamed into
-// place, and the asking orchestrator's own session is sent the operator's choice (senderAddress).
-// Its fingerprint is forgotten, so the same question asked again is entered again. A send not
-// delivered, or one that throws, keeps the entry answered, is one log line, and the pane says it
-// on that question until its sender is gone or the entry is settled again. A press on an entry
-// whose answer is in flight does nothing. The pane is drawn again: the next open question comes up.
-export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry, choice: Choice, part = 0): Promise<void> {
-  return answerPart($, pane, asked, `${choice.letter} : ${choice.text}`, part)
-}
-
-// The text typed in the pane's « other answer » field answers the entry as a choice does; a
-// text empty once trimmed does nothing.
-export async function answerFromPaneText($: any, pane: PaneMemory, asked: RoundEntry, typed: string, part = 0): Promise<void> {
-  const text = typed.trim()
-  if (text === '') return
-  return answerPart($, pane, asked, text, part)
-}
-
-// The answer to one question of an entry. An entry that asks several is answered one question at
-// a time: each answer is kept in the entry (`partial`), read again first and written whole, with
-// the question's number, so a reload asks the next one, until the last, and then all of them go
-// together, in order, as the entry's answer. An answer to a question other than the one the
-// entry is at (a press landing late), or to an entry no longer open, does nothing.
-async function answerPart($: any, pane: PaneMemory, asked: RoundEntry, text: string, part: number): Promise<void> {
-  const parts = entryQuestions(asked)
-  if (parts.length < 2) return answerEntryFromPane($, pane, asked, text)
-  let answers: string[] | null = null
-  try {
-    const path = roundPath(await stateDir($), asked.id)
-    // Under the entry's lock: the answers kept so far are read again, and a part short of the
-    // last is written; the last one is written by the whole answer below.
-    await changeEntry($, path, entry => {
-      if (!entry || entry.status !== 'open') return null
-      const given = entry.partial ?? []
-      if (part !== given.length || part >= parts.length) return null
-      const number = parts[part].number
-      answers = [...given, `${number === null ? `Question ${part + 1}` : number}: ${text}`]
-      return answers.length < parts.length ? { ...entry, partial: answers } : null
-    })
-    if (answers === null) return
-    forgetDraft(pane, `${asked.id}:${part + 1}`)
-    if ((answers as string[]).length < parts.length) {
-      $.ui.invalidate('ui.render')
-      return
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-    return
-  }
-  return answerEntryFromPane($, pane, asked, (answers as string[]).join(' · '))
-}
-
-// A failed delivery to this machine, by its entry and the answer it carried.
-function failedKey(entry: RoundEntry): string {
-  return `${entry.id} ${entry.delivery?.answerAt ?? ''}`
-}
-
 // A question's « other answer » forgotten: its field and its note to answer in the session.
 function forgetDraft(pane: PaneMemory, key: string): void {
   pane.other.delete(key)
   pane.typed?.delete(key)
   if (pane.writing === key) pane.writing = null
-}
-
-// The one sequence both answers share: the entry written answered by the pane with `text`, its
-// fingerprint forgotten, the text sent to its sender, a send not delivered written failed in the
-// entry (deliverLocal). An entry from another machine forgets no wait file here: its answer is
-// pending in the same write and sent as a marked line to the address its ask came from
-// (sendAnswer), its sender's module forgetting the fingerprint.
-async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, text: string): Promise<void> {
-  if (pane.answering.has(asked.id)) return
-  pane.answering.add(asked.id)
-  try {
-    const path = roundPath(await stateDir($), asked.id)
-    const at = new Date().toISOString()
-    // The coordinator that was shown this question leaves it at once, in its own session: the
-    // entry is closed here, in the same rename, and never waits on the coordinator's `settle`.
-    const closed = await shownToCoordinator($, asked.id)
-    const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
-    // Read again under the entry's lock: a question its sender withdrew meanwhile is left as it
-    // is. An answer to another machine is pending in the same write, then sent by its module.
-    let entry: RoundEntry | null = null
-    const answered = await changeEntry($, path, current => {
-      if (!current || current.status !== 'open') return null
-      entry = current
-      const delivery: RoundDelivery | undefined = current.origin ? { state: 'pending', at, attempts: 0 } : undefined
-      return { ...current, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
-    })
-    if (!answered || !entry) return
-    await writeConsent($, entry, text, 'pane', at)
-    forgetDraft(pane, entry.id)
-    await answerTwins($, entry, text, at)
-    if (entry.origin) await sendAnswer($, path, answered, text)
-    else {
-      await forgetRelayed($, entry)
-      await deliverLocal($, path, answered, paneAnswerText(entry, text, at))
-    }
-    if (closed) {
-      const taken = await $.prompt.submit({ text: settledText(entry, answer) })
-      if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, 'supervision', `round: the host dropped the settled notice of ${entry.id}: ${String(taken.drop)}`)
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-  } finally {
-    pane.answering.delete(asked.id)
-    $.ui.invalidate('ui.render')
-  }
-}
-
-// The pane's answer to an entry, given to its twins: the open entries of the same session that ask
-// the same question when either of the two was moved to it at a succession. The sender asked once,
-// so it is sent the answer once (the entry's own send); the twins are settled in the round the same
-// way, answered or closed by the pane, so none stays in the pane or the coordinator's list. An entry
-// from another machine has no twin: a succession moves only the entries of this round.
-async function answerTwins($: any, entry: RoundEntry, text: string, at: string): Promise<void> {
-  if (entry.origin || entry.session === '') return
-  try {
-    for (const { path, entry: twin } of await readRound($)) {
-      if (twin.id === entry.id || twin.session !== entry.session || twin.kind !== 'operator' || twin.status !== 'open' || twin.origin) continue
-      if (!areTwins(entry, twin)) continue
-      const closed = await shownToCoordinator($, twin.id)
-      const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
-      const written = await changeEntry($, path, current =>
-        current && current.status === 'open' && current.session === entry.session ? { ...current, status: closed ? 'closed' : 'answered', answer } : null)
-      if (!written) continue
-      await forgetRelayed($, twin)
-      if (closed) await $.prompt.submit({ text: settledText(twin, answer) })
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-  }
-}
-
-// One send of an answer to a sender on this machine, `readable` the message it receives, to its
-// session (senderAddress); then the entry read again and, while it still holds that answer and its
-// delivery has not moved, written whole once: `failed` with the host's reason when the send was
-// not delivered, or, for an answer whose delivery settle left pending, `delivered`. A pane's
-// answer delivered writes nothing more.
-async function deliverLocal($: any, path: string, entry: RoundEntry, readable: string): Promise<void> {
-  const answer = entry.answer!
-  let reason: string | null = null
-  try {
-    const sent = await $.session.send({ to: await senderAddress($, entry), text: readable })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-  } catch (err) {
-    reason = (err as Error).message
-  }
-  const by = answer.by === 'coordinator' ? 'coordinator' : 'pane'
-  if (reason !== null) await logLine($, 'supervision', `round: the ${by}'s answer was not delivered to ${entry.from}: ${reason}`)
-  if (reason === null && !entry.delivery) return
-  const at = new Date().toISOString()
-  const moved: RoundDelivery = reason === null
-    ? { state: 'delivered', at, attempts: 1, answerAt: answer.at }
-    : { state: 'failed', at, attempts: 1, answerAt: answer.at, reason }
-  const written = await changeEntry($, path, now =>
-    !now || now.answer?.at !== answer.at || now.delivery?.state !== entry.delivery?.state ? null : { ...now, delivery: moved })
-  if (!written) {
-    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
-  if (reason !== null) $.ui.invalidate('ui.render')
-}
-
-// A pending delivery stamped for another answer than the one the entry holds is never sent: it is
-// written `failed` naming the mismatch, so that it is not left pending for ever.
-async function failMismatched($: any, path: string, entry: RoundEntry): Promise<void> {
-  const was = entry.delivery!
-  const reason = `the delivery was stamped for the answer of ${was.answerAt}, the entry holds the answer of ${entry.answer?.at}`
-  const written = await changeEntry($, path, now =>
-    !now?.delivery || now.delivery.state !== 'pending' || now.answer?.at !== entry.answer?.at
-      ? null
-      : { ...now, delivery: { ...now.delivery, state: 'failed', at: new Date().toISOString(), reason } })
-  if (written) await logLine($, 'supervision', `round: ${entry.id}: ${reason}`)
-}
-
-// The answers the coordinator closed in its tab, read at each round wake whether the pane is open
-// or not: an entry the coordinator's `settle` closed with a delivery pending and never sent is
-// sent once — to its sender's session on this machine (deliverLocal), or as a marked line to
-// another machine (sendAnswer, its resends then resendAnswers') — and its outcome written in its
-// delivery. One the coordinator withdrew with `settle` is told as a withdrawal (coordinatorClosedText). A failure of one entry is one log line, and the others are still read.
-async function deliverClosedAnswers($: any): Promise<void> {
-  for (const { path, entry } of await readRound($)) {
-    const delivery = entry.delivery
-    if (entry.kind !== 'operator' || entry.status !== 'closed' || entry.answer?.by !== 'coordinator' || delivery?.state !== 'pending' || delivery.attempts !== 0) continue
-    try {
-      if (entry.origin) await sendAnswer($, path, entry, entry.answer.text)
-      else if (delivery.answerAt === entry.answer.at) await deliverLocal($, path, entry, coordinatorClosedText(entry, entry.answer.text, entry.answer.at))
-      else await failMismatched($, path, entry)
-    } catch (err) {
-      await logLine($, 'supervision', `round delivery: ${entry.id}: ${(err as Error).message}`)
-    }
-  }
-}
-
-// One send of the pane's answer to an entry from another machine, its delivery `pending` or `sent`
-// as `entry` holds it: the marked line to the address its ask came from, the answer cut as the
-// channel carries it and the cut said; then the entry read again and, while its delivery is still
-// the one this send moves, written whole once: `sent` with one more attempt, or `failed` with the
-// host's reason when the send was not delivered.
-async function sendAnswer($: any, path: string, entry: RoundEntry, text: string): Promise<void> {
-  const at = entry.answer!.at
-  const carried = cutQuestion(text)
-  let reason: string | null = null
-  try {
-    const readable = (entry.answer!.by === 'coordinator' ? coordinatorClosedText : paneAnswerText)(entry, carried, at)
-    // An entry entered from an older machine's line, or before this release, is answered in that line, which it alone reads.
-    const line = entry.origin!.line === 'q' ? qAnswerLine : answerLine
-    const sent = await $.session.send({ to: entry.origin!.address, text: line(entry.id, entry.since, carried, at, readable) })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-  } catch (err) {
-    reason = (err as Error).message
-  }
-  const was = entry.delivery!
-  const attempts = was.attempts + 1
-  const moved: RoundDelivery = reason === null
-    ? { state: 'sent', at: new Date().toISOString(), attempts }
-    : { state: 'failed', at: new Date().toISOString(), attempts, reason }
-  const written = await changeEntry($, path, now =>
-    !now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts ? null : { ...now, delivery: moved })
-  if (!written) {
-    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
-  if (reason !== null) {
-    await logLine($, 'supervision', `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
-    $.ui.invalidate('ui.render')
-  }
-}
-
-// The answers sent to another machine and not acknowledged, read at each round wake whether the
-// pane is open or not: one whose last send is ANSWER_RESEND_MS old, or left pending that long (its
-// module stopped before the send), is sent again, or, sent ANSWER_SENDS times already, failed — the
-// entry read again first and written whole once. A failure of one entry is one log line, and the
-// others are still read.
-async function resendAnswers($: any): Promise<void> {
-  const now = Date.now()
-  for (const { path, entry } of await readRound($)) {
-    const delivery = entry.delivery
-    if (!entry.origin || !entry.answer || (delivery?.state !== 'sent' && delivery?.state !== 'pending') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
-    try {
-      if (delivery.attempts < ANSWER_SENDS) {
-        await sendAnswer($, path, entry, entry.status === 'closed' && entry.answer.text.startsWith(PANE_CLOSED) ? entry.answer.text.slice(PANE_CLOSED.length) : entry.answer.text)
-        continue
-      }
-      const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
-      const written = await changeEntry($, path, read =>
-        !read || read.delivery?.state !== delivery.state || read.delivery.attempts !== delivery.attempts
-          ? null
-          : { ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })
-      if (!written) continue
-      await logLine($, 'supervision', `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
-      $.ui.invalidate('ui.render')
-    } catch (err) {
-      await logLine($, 'supervision', `round resend: ${entry.id}: ${(err as Error).message}`)
-    }
-  }
-}
-
-// The row an entry's sender is drawn on: its session's, or, from another machine, its name's
-// remote row.
-function rowKeyOf(entry: RoundEntry): string {
-  return entry.origin ? remoteKey(entry.from) : sessionKey(entry.session)
-}
-
-// Where an entry's answer goes: its sender's own session, by the id the entry recorded, while
-// that session has a live row on this machine — two sessions may share a name, and a name sent
-// to is refused when they do. An entry naming no such session goes to its sender's name.
-export async function senderAddress($: any, entry: RoundEntry): Promise<string | { sessionId: string }> {
-  if (entry.session === '') return entry.from
-  return sessionKey(entry.session) in await readSessions($) ? { sessionId: entry.session } : entry.from
 }
 
 // Whether the round holds the entry of that id, open: a file absent, or in any other status, is not.
@@ -2926,23 +2301,6 @@ export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
 
-// The message the asking orchestrator receives: a report of the operator's choice, never more.
-export function paneAnswerText(entry: RoundEntry, answer: string, at: string): string {
-  return `[module] The operator answered from the coordinator's pane at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
-}
-
-// The same report for his answer the coordinator closed in its tab with settle.
-export function coordinatorAnswerText(entry: RoundEntry, answer: string, at: string): string {
-  return `[module] The operator answered through the coordinator at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
-}
-
-// What the sender of a question the coordinator withdrew with `settle` is told: that the coordinator
-// withdrew it, settled meanwhile, and the evidence it read on the artifact — never that the
-// operator answered it (the operator's ruling 6.1 of 2026-10-31).
-export function withdrawnText(entry: RoundEntry, evidence: string): string {
-  return `[module] The coordinator withdrew your question since ${entry.since}, settled meanwhile: ${evidence} (blocks: ${entry.blocks})`
-}
-
 // The role of the session: the name its row holds, else the name its walk reads.
 export async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
@@ -2952,12 +2310,6 @@ export async function sessionRole($: any, sessionId: string): Promise<string | n
 // Whether the session is an orchestrator.
 export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
   return (await sessionRole($, sessionId)) === 'orchestrator'
-}
-
-// The message for an entry the coordinator closed: a withdrawal when its answer carries the
-// evidence of one, the operator's answer otherwise.
-function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): string {
-  return typeof entry.answer?.evidence === 'string' ? withdrawnText(entry, entry.answer.evidence) : coordinatorAnswerText(entry, answer, at)
 }
 
 // An orchestrator's turn ended on a machine line other than the wait an open entry of its own
@@ -2989,42 +2341,6 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
     }
   }
   return settled
-}
-
-// The state of an entry's sender its latest row gives: a sender on another machine by its remote row
-// (measured on the machine the entry came from), one on this machine by its store row and the wait
-// file that vouches for what it holds. Null when there is no row to read.
-async function senderState($: any, entry: RoundEntry, local: Record<string, SessionRow>, remote: readonly RemoteRow[]): Promise<SenderState | null> {
-  if (entry.origin) {
-    const row = remote.find(found => found.name === entry.from && found.machine === entry.origin!.machine)
-    return row ? { at: row.updated_at, held: row.held } : null
-  }
-  const row = entry.session === '' ? undefined : local[sessionKey(entry.session)]
-  if (!row) return null
-  const wait = parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(entry.session)}`).catch(() => '')))
-  return { at: row.updated_at, held: openQuestions(wait) }
-}
-
-// The round brought to what its senders say: an open operator question that the latest row of its
-// sender, newer than the entry, no longer holds open is withdrawn by the sender, as a withdrawal
-// would have settled it. The one source is the sender's row, so a withdrawal message that was lost,
-// late or doubled changes nothing: the next row heals it. Read on every row received, at the round's
-// reading and at every pane draw; a failure is one log line.
-async function reconcileRound($: any): Promise<void> {
-  try {
-    const open = (await readRound($)).map(found => found.entry).filter(entry => entry.status === 'open' && entry.kind === 'operator')
-    if (open.length === 0) return
-    const local = await readSessions($)
-    const remote = await readRemoteRows($)
-    const now = Date.now()
-    for (const entry of open) {
-      const sender = await senderState($, entry, local, remote)
-      if (!sender || !droppedBy(entry, sender, now)) continue
-      await tellSettled($, await withdrawStale($, entry.session, null, `no longer waited on by ${entry.from} (row ${sender.at})`, other => other.id !== entry.id), now + RELAY_BOUND_MS)
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-  }
 }
 
 // Every entry of the round on this machine, each with the file it was read from. A file that
@@ -3062,9 +2378,8 @@ export function parseRoundEntry(text: string): RoundEntry | null {
     const choices = Array.isArray(e.choices) && e.choices.every((c: any) => typeof c?.letter === 'string' && typeof c?.text === 'string')
     const nullable = [e.blocks, e.recommendation].every(field => field === null || typeof field === 'string')
     const known = (e.kind === 'operator' || e.kind === 'done') && ROUND_STATUSES.includes(e.status)
-    const partial = e.partial === undefined || (Array.isArray(e.partial) && e.partial.every((answer: unknown) => typeof answer === 'string'))
     const consent = e.consent === undefined || parseConsentSubject(e.consent) !== undefined
-    return texts && choices && nullable && known && partial && consent && deliveryRead(e) ? e as RoundEntry : null
+    return texts && choices && nullable && known && consent && deliveryRead(e) ? e as RoundEntry : null
   } catch {
     return null
   }
@@ -3185,9 +2500,9 @@ async function readSuccessor($: any, sessionId: string): Promise<LearntSuccessor
 }
 
 // The session's open entries rewritten in place for its successor: its session and name become
-// theirs, the status stays open, and the answer goes to the successor (senderAddress). The
-// successor's own fingerprint is left as it is. Each move is one log line; one that cannot be
-// written is one too, and the others go on. Nothing is settled: the coordinator is told nothing.
+// theirs and the status stays open. The successor's own fingerprint is left as it is. Each move
+// is one log line; one that cannot be written is one too, and the others go on. Nothing is
+// settled: the coordinator is told nothing.
 async function moveToSuccessor($: any, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
   // A successor the registry did not name alone at its « takeover confirmed » is looked up again:
   // its record may have landed since. One still unnamed is drawn on its name (hostedSuccessors).
@@ -3476,7 +2791,6 @@ async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
     await logLine($, 'supervision', `receive: a remote row of ${row.name} was not stored: ${(err as Error).message}`)
     return { consumed: 'orchestrator: a supervision row, not stored' }
   }
-  await reconcileRound($)
   return { consumed: 'orchestrator: a supervision row, stored' }
 }
 
