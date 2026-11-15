@@ -189,15 +189,12 @@ NEVER mark a phase done while its check is red or its gate is untested
 
 Read-only subagents (search, the self-review's lens readers) are the exceptions: they only read.
 
-With the hooks module loaded, the first line is also held at the call: a
-subagent other than `Explore` runs only on the user's Allow; in an orchestrated build the
-orchestrator decides and releases the guard with `/implement:release-guard`. The guard lasts
-from this skill's start until another implement skill starts, the turn is interrupted, or that
-release. A refusal is a stop to report, never a wall to go around.
+With the hooks module loaded, a subagent other than `Explore` runs and is noted in the
+journal; nothing is refused. The note lasts until another implement skill starts, the turn
+is interrupted, or `/implement:release-guard`.
 
 This skill's own steps end at the branch; the self-review before the pull request, consent, ready
-and merge are `method:lifecycle`'s. Its lens readers are subagents this guard refuses: they run
-after `implement:close`, or once `/implement:release-guard` has released it.
+and merge are `method:lifecycle`'s. Its lens readers run when the self-review asks, each noted in the journal.
 
 ---
 
