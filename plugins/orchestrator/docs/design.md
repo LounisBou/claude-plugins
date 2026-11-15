@@ -123,7 +123,7 @@ commands/sleeping.md                 lists the orchestrators paused on the opera
 short-names.tsv                      each command's short name beside its file: the table the installer writes the user commands from, and brief-lint reads
 short-commands.sh                    launches skills/orchestrator/scripts/short-commands.ts, which writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
 hooks/hooks.json                     declares the hooks module, and nothing else
-hooks/host.ts                        the part of the host's API the strict hooks call, as types only
+hooks/host.ts                        the part of the host's API the strict hooks call: core's types (core/host.ts), under the name the module's files import them by
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure
 hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing
 hooks/gauge.ts                       measures the context into one file per session on session events, and announces model drift
