@@ -259,7 +259,8 @@ function apiAct(argv: string[]): Act | undefined {
   const path = endpoint.replace(API_HOST, '')
   if (method !== 'PUT' && method !== 'POST') return undefined
   const merge = MERGE_PATH.exec(path)
-  if (merge) return { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) }
+  const sha = fields.find((field) => field.name === 'sha')?.value
+  if (merge) return { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]), ...(sha ? { sha } : {}) }
   // A substitution splits the path into words: the words are joined as the shell would.
   const joined = parsed.positionals.join('').replace(API_HOST, '')
   return MERGE_SHAPE.test(joined) ? { kind: 'merge', name: 'gh api', unreadable: true } : undefined
@@ -821,6 +822,12 @@ export function autoMergeRefusal(repo: string, pr?: number, name?: string): stri
   return 'github: ' + (name ?? 'gh pr merge') + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge'
     + ' needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": ' + (pr ?? '<n>') + '} on '
     + repo + ': it checks that the pull request is ready, then asks them in the conversation.'
+}
+
+// A Bash merge the gate let through that pins no head: the line names the flag that pins the gated one.
+export function unpinnedMergeRefusal(name: string, repo: string, pr: number, head: string): string {
+  const flag = name.startsWith('gh.py ') ? '--sha ' : name === 'gh api' ? '-f sha=' : '--match-head-commit '
+  return 'github: ' + name + ' refused on ' + repo + '#' + pr + ': pin the head the gate checked, ' + flag + head + '.'
 }
 
 export function ciUndraftLine(repo: string, pr: number): string {
