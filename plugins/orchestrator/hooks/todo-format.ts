@@ -2,7 +2,8 @@
 // The to-do list of a session, owned by the orchestrator: what the operator asked of it that does
 // not end within the turn, or that is for another session. One file per holder, `<state>/todo/<name>.jsonl`,
 // one line per item, in the grammar of the dispatch record's rows (`id`, `opened`, `label`, `state`,
-// `deferred`, `verdict`) plus `words`, `said_at` and `from`. Written by the orchestrator's hooks module
+// `deferred`, `verdict`) plus `words`, `said_at`, `from` and `rows`: the item keeps his words and the
+// dispatch rows it turned into, never their state, which is the rows' own. Written by the orchestrator's hooks module
 // alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
 import { ROLES } from '../core/names.ts'
@@ -32,6 +33,8 @@ export interface TodoItem {
   /** The session that recorded it for the holder. */
   readonly from: string
   readonly closed?: string
+  /** The dispatch rows the item turned into; their state is read in the record, never copied here. */
+  readonly rows?: readonly number[]
 }
 
 /** What a caller records: his words, when he said them, who carries them, and a label if it has one. */
@@ -65,6 +68,8 @@ export function todoLabel(words: string): string {
   return words.replace(/\s+/g, ' ').trim().slice(0, TODO_LABEL_MAX)
 }
 
+const isRowId = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
+
 const filled = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
 
 /** An item as a line holds it, each field of its type, or undefined. */
@@ -77,6 +82,7 @@ export function parseTodoItem(raw: unknown): TodoItem | undefined {
   if (typeof o['label'] !== 'string' || typeof o['verdict'] !== 'string') return undefined
   if (o['deferred'] !== undefined && typeof o['deferred'] !== 'string') return undefined
   if (o['closed'] !== undefined && typeof o['closed'] !== 'string') return undefined
+  if (o['rows'] !== undefined && !(Array.isArray(o['rows']) && o['rows'].every(isRowId))) return undefined
   return raw as TodoItem
 }
 
@@ -131,6 +137,13 @@ export function closeTodo(text: string, id: number, verdict: string, now: Date):
 /** The list with the item put off by his ruling, still open, or why it cannot be. */
 export function deferTodo(text: string, id: number, ruling: string): { text: string; item: TodoItem } | { error: string } {
   return change(text, id, item => (item.state === 'closed' ? { error: `to-do ${id} is already closed` } : { ...item, deferred: ruling }))
+}
+
+/** The list with a row the item turned into added to the ones it names, or why it cannot be. */
+export function rowTodo(text: string, id: number, row: number): { text: string; item: TodoItem } | { error: string } {
+  if (!isRowId(row)) return { error: 'a dispatch row id is a positive integer' }
+  return change(text, id, item => (item.state === 'closed' ? { error: `to-do ${id} is already closed` }
+    : { ...item, rows: [...new Set([...(item.rows ?? []), row])].sort((a, b) => a - b) }))
 }
 
 const isDeferred = (item: TodoItem): boolean => typeof item.deferred === 'string' && item.deferred.trim() !== ''

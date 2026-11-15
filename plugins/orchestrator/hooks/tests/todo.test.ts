@@ -202,6 +202,22 @@ test('done closes an item with its outcome; drop and defer take his words; list 
   expect((await call(dollar, { action: 'done', id: 9, outcome: 'x' })).isError).toBe(true)
 })
 
+test('row names the dispatch rows an item turned into, each once, and keeps it open; a closed item or a bad row is refused', async () => {
+  const { dollar, files } = world()
+  await call(dollar, { action: 'add', words: 'ship the blocker field' })
+  await call(dollar, { action: 'add', words: 'done already' })
+  expect((await call(dollar, { action: 'row', id: 1, row: 205 })).result).toContain('rows 205')
+  expect((await call(dollar, { action: 'row', id: 1, row: 204 })).result).toContain('rows 204, 205')
+  expect((await call(dollar, { action: 'row', id: 1, row: 204 })).result).toContain('rows 204, 205')
+  expect((await call(dollar, { action: 'row', id: 1, row: 0 })).isError).toBe(true)
+  expect((await call(dollar, { action: 'row', id: 1 })).isError).toBe(true)
+  await call(dollar, { action: 'done', id: 2, outcome: 'acme/app#1' })
+  expect((await call(dollar, { action: 'row', id: 2, row: 3 })).result).toContain('already closed')
+  const [one] = listOf(files, 'Orch: billing')
+  expect([one?.state, one?.rows]).toEqual(['open', [204, 205]])
+  expect((await call(dollar, { action: 'list' })).result).toContain(', rows 204, 205')
+})
+
 test('an empty list says so', async () => {
   const { dollar } = world()
   expect((await call(dollar, { action: 'list' })).result).toContain('no open to-do')
@@ -246,7 +262,7 @@ test('the tool is registered loaded, not deferred, with flat fields', async () =
   expect(registrations).toHaveLength(1)
   expect(registrations[0].name).toBe(TODO_TOOL)
   expect(registrations[0].isDeferred).toBe(false)
-  expect(Object.keys(registrations[0].inputSchema.properties)).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome'])
+  expect(Object.keys(registrations[0].inputSchema.properties)).toEqual(['action', 'words', 'said_at', 'to', 'label', 'id', 'outcome', 'row'])
   expect(registrations[0].inputSchema.required).toEqual(['action'])
 })
 
