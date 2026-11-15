@@ -2135,6 +2135,9 @@ async function headMovedAt($: Mod, inDir: { cwd?: string }): Promise<number | un
 
 type E2eRun = { argv: string[] } | { ran: string }
 
+// The mark of an E2E pass or fail written on the session's word, with no run the tool performed or observed.
+const STATED = 'stated, not computed: '
+
 // The E2E run a pass or a fail rests on, from the input: `run` (an argv the tool runs) or `ran` (a command line the
 // session ran in Bash); a string says why the input names none.
 function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
@@ -2215,9 +2218,11 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   if (e2eRun && result !== '' && result !== 'pass' && result !== 'fail') {
     return { deny: 'github: a run gives a pass or a fail; a ' + result + ' rests on no run: leave "run" and "ran" out.' }
   }
-  if (kind === 'e2e' && !e2eRun && (result === 'pass' || result === 'fail' || result === '')) {
-    return await refuse($, REFUSED.recordE2eUnrun, 'github: an E2E pass or fail is computed from its run, not stated: give "run" (the command as an argv, run here in the checkout) or "ran" (the command line this session ran there in Bash).')
+  if (kind === 'e2e' && !e2eRun && result === '') {
+    return { deny: 'github: an E2E record gives "run" (the command as an argv, run here in the checkout), "ran" (the command line this session ran there in Bash), or a result.' }
   }
+  // An E2E pass or fail with no run (one made on another machine) is written as stated, not computed, and observed.
+  const stated = kind === 'e2e' && !e2eRun && (result === 'pass' || result === 'fail')
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
   }
@@ -2278,7 +2283,8 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
     const refused = await runtimeRefusal($, repo, pr, gate.head)
     if (refused) return await refuse($, REFUSED.recordRuntime, refused)
   }
-  let written = detail
+  let written = stated ? (STATED + detail).slice(0, DETAIL_MAX) : detail
+  if (stated) await observed($, OBSERVED.e2eStated)
   if (e2eRun) {
     const outcome = await e2eOutcome($, e2eRun, dir, gate.head, inDir, detail)
     if ('deny' in outcome) return await refuse($, REFUSED.recordE2eUnrun, outcome.deny)
@@ -2430,7 +2436,7 @@ export function register(on: On<Mod>): void {
         name: 'record',
         isDeferred: false,
         description:
-          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail computed from a run, "run" (an argv the tool runs there) or "ran" (a command line this session ran there in Bash), '
+          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail computed from a run, "run" (an argv the tool runs there) or "ran" (a command line this session ran there in Bash), or stated with neither for a run made elsewhere, '
           + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived on the operator\'s quoted, dated words. '
           + '{repo, exempt, paths?, labels?, until?} exempts a repository\'s pull requests for good, or until the instant given '
           + '(false revokes) and quotes the operator\'s dated words in detail. See '

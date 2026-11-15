@@ -1319,19 +1319,26 @@ test('the model records its E2E at the pull request\'s head from a clean checkou
 })
 
 // Program goal 8: the E2E result is computed from a run, never taken from the session's word.
-test('an E2E pass or fail with no run is refused, and the run decides the result whatever the session states', async ($, on) => {
+// Program goal 8: the E2E result is computed from a run; one made elsewhere is still written, as stated, and observed.
+test('an E2E pass or fail with no run is written as stated and observed, never refused', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', detail: 'campaign on the test box' } as any)
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv.slice(6, 10)).toEqual(['--kind', 'e2e', '--result', 'pass'])
+  expect(argv[13]).toBe('stated, not computed: campaign on the test box')
+  expect(seen.journal).toEqual(['github.record.e2e-stated'])
+  const none: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', detail: 'x' } as any)
+  expect(none.deny).toContain('gives "run"')
+})
+
+test('a run decides the E2E result whatever the session states', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, e2eExit: 1 })
-  for (const result of ['pass', 'fail', undefined]) {
-    const out: any = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ...(result ? { result } : {}), detail: 'all green' } as any)
-    expect(out.deny).toContain('an E2E pass or fail is computed from its run, not stated')
-  }
-  expect(recordRun(seen)).toBeUndefined()
-  // Each refusal journals one event under its stable code.
-  expect(seen.journal).toEqual(['github.record.e2e-unrun', 'github.record.e2e-unrun', 'github.record.e2e-unrun'])
   await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN } as any)
   const argv = recordRun(seen)!
   expect(argv.slice(6, 12)).toEqual(['--kind', 'e2e', '--result', 'fail', '--producer', 'session-e2e'])
   expect(argv[13]).toBe('ran `npm run e2e` at 0123456: exit 1 in 0 s (2 scenarios failed)')
+  expect(seen.journal).toEqual([])
 })
 
 test('a run Bash would ask for is not run by the record tool', async ($, on) => {

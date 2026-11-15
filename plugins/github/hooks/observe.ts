@@ -20,6 +20,8 @@ export const OBSERVED = {
   draftLeave: 'github.draft.leave',
   writing: 'github.writing.rule',
   noRecord: 'github.ready.no-record',
+  // An E2E pass or fail written with no run the record tool performed or observed: recorded as stated.
+  e2eStated: 'github.record.e2e-stated',
 } as const
 
 // The stable code of each refusal that protects something: the call is refused and one refusal event of its code
@@ -47,6 +49,7 @@ export const REFUSED = {
   recordRuntime: 'github.record.runtime-not-applicable',
   recordUnquoted: 'github.record.unquoted-words',
   recordUnplanned: 'github.record.waiver-unplanned',
+  // A run named for an E2E that the tool cannot perform or did not observe.
   recordE2eUnrun: 'github.record.e2e-unrun',
 } as const
 
