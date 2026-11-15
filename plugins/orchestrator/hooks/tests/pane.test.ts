@@ -853,27 +853,89 @@ test('a pane he closed with the tool or with its ✕ stays closed in the success
   }
 })
 
-test('a close that is not his word, an orchestrator\'s command and a pane he closed then opened again do not keep the pane closed', async () => {
+test('a close the host makes, or one with no origin, keeps no choice and is logged', async () => {
   const { handlers } = mounted(registerSupervision)
-  const host = coordinatorSession()
-  await handlers['turn.complete'](host.dollar, firstTurn, (x: unknown) => x)
-  await handlers['ui.close'](host.dollar, { id: 'supervision', origin: { kind: 'host' } }, (x: unknown) => x)
-  expect(host.files.has(CHOICE)).toBe(false)
+  const fx = coordinatorSession()
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await handlers['ui.close'](fx.dollar, { id: 'supervision', origin: { kind: 'host' } }, (x: unknown) => x)
+  await handlers['ui.close'](fx.dollar, { id: 'supervision' }, (x: unknown) => x)
+  expect(fx.files.has(CHOICE)).toBe(false)
+  expect(fx.written.some(l => l.includes('closed by host; his choice is not changed'))).toBe(true)
+  expect(fx.written.some(l => l.includes('closed by none; his choice is not changed'))).toBe(true)
+  const successor = successorOf(fx)
+  await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+  expect(successor.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+})
+
+test('an orchestrator\'s command, and his ✕ in a session that is no recorded coordinator, keep no choice', async () => {
+  const { handlers } = mounted(registerSupervision)
   const orch = fakeDollar({ launchName: 'Orch: belt' })
   orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
   await handlers['command.run'](orch.dollar, supervisionRun)
   await handlers['command.run'](orch.dollar, supervisionRun)
+  await handlers['ui.close'](orch.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
   expect(orch.files.has(CHOICE)).toBe(false)
-  const reopened = coordinatorSession()
-  await handlers['command.run'](reopened.dollar, supervisionRun)
-  await handlers['command.run'](reopened.dollar, supervisionRun)
-  await handlers['command.run'](reopened.dollar, supervisionRun)
-  expect(JSON.parse(String(reopened.files.get(CHOICE))).pane).toBe('open')
-  for (const fx of [host, reopened]) {
+  const none = coordinatorSession({ record: false })
+  // A module that never opened the pane (a reload forgot it) reads the role from the record.
+  const { handlers: reloaded } = mounted(registerSupervision)
+  expect(await reloaded['ui.close'](none.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)).toEqual({ id: 'supervision', origin: { kind: 'person' } })
+  expect(none.files.has(CHOICE)).toBe(false)
+  expect(none.written.some(l => l.includes('no recorded coordinator; his choice is not kept'))).toBe(true)
+})
+
+test('a pane he opened again, by the command or by the tool, opens in the successor', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const byCommand = coordinatorSession()
+  for (let i = 0; i < 3; i++) await handlers['command.run'](byCommand.dollar, supervisionRun)
+  const byTool = coordinatorSession()
+  await handlers['command.run'](byTool.dollar, supervisionRun)
+  await handlers['command.run'](byTool.dollar, supervisionRun)
+  await handlers['tool.call'](byTool.dollar, toolCall('open'))
+  for (const fx of [byCommand, byTool]) {
+    expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('open')
     const successor = successorOf(fx)
     await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
     expect(successor.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
   }
+})
+
+test('the tool\'s close is his word even when the pane was not open, and the successor leaves it closed', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
+  expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
+  const successor = successorOf(fx)
+  await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+  expect(successor.opened).toEqual([])
+})
+
+test('a choice file that holds no choice opens the pane and says so in the log', async () => {
+  const { handlers } = mounted(registerSupervision)
+  for (const text of ['{ not json', '{"pane":"x"}', 'null']) {
+    const fx = coordinatorSession()
+    fx.files.set(CHOICE, text)
+    await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+    expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+    expect(fx.written.some(l => l.includes('pane-choice.json holds no choice'))).toBe(true)
+  }
+})
+
+test('a choice that cannot be written leaves the command and the tool answering, and tells him', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  const write = fx.dollar.fs.write
+  fx.dollar.fs.write = async (path: string, text: string) => {
+    if (path.includes('pane-choice')) throw new Error('EACCES: permission denied')
+    return write(path, text)
+  }
+  const opened = await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(opened.text).toContain('Supervision pane opened;')
+  expect(opened.text).toContain('His choice could not be kept')
+  const closed = await handlers['tool.call'](fx.dollar, toolCall('close'))
+  expect(closed.result).toContain('Supervision pane closed.')
+  expect(closed.result).toContain('His choice could not be kept')
+  expect(fx.written.some(l => l.includes('the choice could not be kept'))).toBe(true)
+  expect(fx.closed.length).toBe(1)
 })
 
 test('with the pane left closed by his choice, the successor presents each due question in its tab', async () => {
