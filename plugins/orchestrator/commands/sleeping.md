@@ -2,6 +2,7 @@
 description: List the sleeping orchestrators, or drop one
 argument-hint: [drop <name>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read
+disable-model-invocation: true
 ---
 
 The operator's command. An orchestrator is sleeping when the coordinator paused it on his word:

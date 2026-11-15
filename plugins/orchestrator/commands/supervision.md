@@ -1,5 +1,6 @@
 ---
 description: Open or close the supervision pane
+disable-model-invocation: true
 ---
 
 The supervision pane is opened by the plugin's own hook, without a model turn. If you are
