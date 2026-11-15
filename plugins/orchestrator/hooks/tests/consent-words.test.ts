@@ -24,7 +24,9 @@ const row = (role: string, name: string) =>
 
 // A transcript line: the operator's typed turn, a cross-session message, a tool result, an assistant's text.
 const typed = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'user', timestamp: at, origin: { kind: 'human' }, promptSource: 'typed', turnOrigin: 'human', userType: 'external', message: { role: 'user', content: text } })
-const peer = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'user', isMeta: true, timestamp: at, origin: { kind: 'peer', from: 'bridge:session_x', name: 'Orch: other' }, promptSource: 'system', turnOrigin: 'peer', message: { role: 'user', content: `Another Claude session sent a message: <cross-session-message>${text}</cross-session-message>` } })
+const peer = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'user', isMeta: true, timestamp: at, origin: { kind: 'peer', from: 'bridge:session_x', name: 'Orch: other' }, promptSource: 'system', turnOrigin: 'peer', message: { role: 'user', content: `<cross-session-message>${text}</cross-session-message>` } })
+// A message typed while a turn runs: the host queues it and writes an attachment entry, not a user one.
+const queued = (prompt: unknown, at = TYPED_AT, attachment: Record<string, unknown> = {}) => JSON.stringify({ type: 'attachment', isSidechain: false, timestamp: at, attachment: { type: 'queued_command', prompt, commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true, timestamp: at, ...attachment } })
 const peerWithout = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'user', timestamp: at, turnOrigin: 'peer', message: { role: 'user', content: text } })
 const toolResult = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'user', timestamp: at, sourceToolAssistantUUID: 'u-1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't-1', content: text }] } })
 const assistant = (text: string, at = TYPED_AT) => JSON.stringify({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text }] } })
@@ -117,6 +119,35 @@ test('a kind whose readers take « Accorder » only is recorded with that answer
 
 test('the same words from a cross-session message, a tool result or an assistant\'s text are no consent: nothing is written', async () => {
   for (const line of [peer(SENTENCE), peerWithout(SENTENCE), toolResult(SENTENCE), assistant(SENTENCE)]) {
+    const m = machine('coordinator', [line])
+    const done = await settleWords(m.dollar, words(), NOW)
+    expect(done.isError).toBe(true)
+    expect(done.result).toMatch(/no message he typed in this tab/)
+    expect(records(m)).toEqual([])
+  }
+})
+
+test('a consent typed while a turn runs arrives as a queued command and is his turn: it is recorded, at the time he typed it', async () => {
+  for (const prompt of [SENTENCE, [{ type: 'text', text: SENTENCE }]]) {
+    const m = machine('coordinator', [assistant('working'), queued(prompt), assistant('done')])
+    const done = await settleWords(m.dollar, words(), NOW)
+    expect(done.isError).toBeUndefined()
+    expect(records(m)).toHaveLength(1)
+    expect(records(m)[0]).toMatchObject({ subject: { kind: 'e2e-exemption', repo: 'acme/guide' }, answer: SENTENCE, by: 'tab', at: '2026-11-15T07:11:30Z' })
+  }
+})
+
+test('a queued command that is not his turn is no consent: a peer\'s, a task\'s, a meta one, one with no human turn mark, a command, an image', async () => {
+  const lines = [
+    queued(SENTENCE, TYPED_AT, { origin: { kind: 'peer', from: 'bridge:session_x', name: 'Orch: other' } }),
+    queued(SENTENCE, TYPED_AT, { origin: { kind: 'task-notification', producer: 'session-task' }, commandMode: 'task-notification' }),
+    queued(SENTENCE, TYPED_AT, { isMeta: true }),
+    queued(SENTENCE, TYPED_AT, { humanTurn: undefined }),
+    queued(SENTENCE, TYPED_AT, { commandMode: 'bash' }),
+    queued([{ type: 'text', text: SENTENCE }, { type: 'image', source: { type: 'base64', data: 'x' } }]),
+    JSON.stringify({ type: 'attachment', isSidechain: true, timestamp: TYPED_AT, attachment: { type: 'queued_command', prompt: SENTENCE, commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true } }),
+  ]
+  for (const line of lines) {
     const m = machine('coordinator', [line])
     const done = await settleWords(m.dollar, words(), NOW)
     expect(done.isError).toBe(true)
@@ -335,6 +366,7 @@ test('a call with no id and a consent field asks for a consent in words; the fie
 
 test('the human turn is read from a user entry of origin human only', () => {
   expect(humanTurn(typed('Accorder'))).toEqual({ text: 'Accorder', at: '2026-11-15T07:11:30Z' })
+  expect(humanTurn(queued('Accorder'))).toEqual({ text: 'Accorder', at: '2026-11-15T07:11:30Z' })
   expect(humanTurn(JSON.stringify({ type: 'user', timestamp: TYPED_AT, origin: { kind: 'human' }, message: { content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } }))).toEqual({ text: 'a\nb', at: '2026-11-15T07:11:30Z' })
   for (const line of [peer('x'), peerWithout('x'), toolResult('x'), assistant('x'), 'not json', '{}', JSON.stringify({ type: 'user', timestamp: TYPED_AT, origin: { kind: 'human' }, isMeta: true, message: { content: 'x' } }), JSON.stringify({ type: 'user', timestamp: TYPED_AT, origin: { kind: 'task-notification' }, message: { content: 'x' } })]) {
     expect(humanTurn(line)).toBeNull()

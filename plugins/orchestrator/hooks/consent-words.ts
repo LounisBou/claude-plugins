@@ -239,7 +239,12 @@ export function judgeWords(words: Words, now: number): Judged {
 
 // ---- the turn he typed them in ------------------------------------------------------------------
 
-/** A transcript line that is a message the operator typed himself, its text and its time; null for any other line. */
+/**
+ * A transcript line that is a message the operator typed himself, its text and its time; null for any other line.
+ * Two shapes carry one: a `user` entry, and, when he typed it during a running turn, an `attachment` entry of
+ * type `queued_command` (the host queues it and hands it over mid-turn). Both must name origin human; the second
+ * must also say it is a human turn, as the host writes it, so a peer's or a task's queued line is not his.
+ */
 export function humanTurn(line: string): { text: string; at: string } | null {
   let entry: Fields
   try {
@@ -247,14 +252,26 @@ export function humanTurn(line: string): { text: string; at: string } | null {
   } catch {
     return null
   }
-  if (entry['type'] !== 'user' || entry['isMeta'] === true || entry['isSidechain'] === true || entry['isCompactSummary'] === true) return null
+  if (entry['isMeta'] === true || entry['isSidechain'] === true || entry['isCompactSummary'] === true) return null
   if (entry['toolUseResult'] !== undefined || entry['sourceToolAssistantUUID'] !== undefined || entry['sourceToolUseID'] !== undefined) return null
-  const origin = entry['origin']
+  let carrier: Fields
+  let content: unknown
+  if (entry['type'] === 'user') {
+    carrier = entry
+    content = (entry['message'] as Fields | undefined)?.['content']
+    if (entry['turnOrigin'] !== undefined && entry['turnOrigin'] !== 'human') return null
+  } else if (entry['type'] === 'attachment') {
+    const queued = entry['attachment']
+    if (typeof queued !== 'object' || queued === null) return null
+    carrier = queued as Fields
+    if (carrier['type'] !== 'queued_command' || carrier['humanTurn'] !== true || carrier['isMeta'] === true) return null
+    if (carrier['commandMode'] !== undefined && carrier['commandMode'] !== 'prompt') return null
+    content = carrier['prompt']
+  } else return null
+  const origin = carrier['origin']
   if (typeof origin !== 'object' || origin === null || (origin as Fields)['kind'] !== 'human') return null
-  if (entry['turnOrigin'] !== undefined && entry['turnOrigin'] !== 'human') return null
-  const at = entry['timestamp']
+  const at = typeof carrier['timestamp'] === 'string' ? carrier['timestamp'] : entry['timestamp']
   if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) return null
-  const content = (entry['message'] as Fields | undefined)?.['content']
   const blocks = Array.isArray(content) ? content as Fields[] : null
   const said = typeof content === 'string' ? content
     : blocks !== null && blocks.length > 0 && blocks.every(block => block['type'] === 'text' && typeof block['text'] === 'string') ? blocks.map(block => String(block['text'])).join('\n') : null
