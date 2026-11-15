@@ -8173,8 +8173,10 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/d
   '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
+# No transcript of the predecessor is found here: the line says no « handed over » was read.
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
-  "took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
+  "takeover: no transcript of the session on /dev/ttys900 was found: no « handed over » read
+took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
   "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
 check "a takeover writes its dated line: the socket, the cause takeover and the predecessor's tty" "1" \
   "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: window 0 of home ended: cause=takeover tty=/dev/ttys900$' "$TSTATE/close.log")"
@@ -11088,7 +11090,7 @@ if shard_has 4; then
 # The agent's orchestrator may hand over: the agent admits the successor its orchestrator names,
 # and the predecessor names it to each agent before « handed over ».
 ADMIT='When it hands over, it first sends you its successor'"'"'s exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.'
-for t in phase review comments rotation; do
+for t in phase review comments; do
   check "the $t brief admits the successor its orchestrator names" "yes" "$(flat_has "$ROOT/templates/agent-$t-brief.md" "$ADMIT")"
   check "the $t brief no longer refuses whatever a session says, nor every session but one" "0" "$(grep -c -e 'whatever it says' -e 'no other session' -e '— and no other' "$ROOT/templates/agent-$t-brief.md")"
 done

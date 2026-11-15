@@ -366,8 +366,8 @@ test('an agent spawned since the deck\'s last write is printed from the launcher
   writeFileSync(join(w.state, 'chains', 'ttys005.jsonl'), '{"tab_id": "t6", "tty": "/dev/ttys006", "owner": "s-old"}\n{"tab_id": "t8", "tty": "/dev/ttys008", "owner": "s-old"}\n')
   writeFileSync(join(w.state, 'chains', 'ttys009.jsonl'), '{"tab_id": "t4", "tty": "/dev/ttys004", "owner": "s-new"}\n')
   mkdirSync(join(w.state, 'prompts'), { recursive: true })
-  writeFileSync(join(w.state, 'prompts', 'launch-Agent--per-unit-restarts-1700000000000.sh'), "#!/bin/sh\nexport ORCHESTRATOR_BRIEF='/b/old.md' && claude\n")
-  writeFileSync(join(w.state, 'prompts', 'launch-Agent--per-unit-restarts-1700000009000.sh'), '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/b/rows/57-brief.md && claude\n')
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--per-unit-restarts-1700000000000.sh'), "#!/bin/sh\nexport ORCHESTRATOR_BRIEF='/b/old.md' && run\n")
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--per-unit-restarts-1700000009000.sh'), '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/b/rows/57-brief.md && run\n')
   assert.equal(w.run('--tty', '/dev/ttys005'), 0)
   assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: api \(ttys004\); Agent: per-unit restarts \(ttys006, brief \/b\/rows\/57-brief\.md\)\n/)
   // An agent of another orchestrator and a chained tty no session runs on stay out.
@@ -397,7 +397,7 @@ test('the launcher\'s list rows: the name, else the title without its glyph, and
   assert.equal(agentLine({ name: 'Agent: a', tty: '/dev/ttys004', brief: '/b.md' }), 'Agent: a (ttys004, brief /b.md)')
   assert.equal(briefOf(join(dir, 'nowhere'), 'Agent: a'), undefined)
   mkdirSync(join(dir, 'prompts'))
-  writeFileSync(join(dir, 'prompts', 'launch-Agent--a-12.sh'), '#!/bin/sh\nclaude\n')
+  writeFileSync(join(dir, 'prompts', 'launch-Agent--a-12.sh'), '#!/bin/sh\nrun\n')
   assert.equal(briefOf(dir, 'Agent: a'), undefined)
 })
 

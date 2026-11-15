@@ -4,7 +4,7 @@
 
 The module says when a gate trips; this is what you do then. It also tells the agent itself, which cannot read its own figure, but that line does not stand it down: a gate notice for an agent with work left gets your stand-down in the same turn, never left to its brief's gate line. It says the same when a newer version of the plugins is installed: hand over at the end of the step in progress, at once when a defect of the running version blocks you.
 
-Rotation = a **resume brief** for a fresh session, printed from the state, never typed. The stand-down asks the agent to finish the unit in hand, stop, and answer two lines: what is in flight, the decisions taken (a message to your own agent carries no `notify_when_idle`: its reply wakes you). On its answer — or at once, with neither line, when it is gone (ended by the host, a usage limit) — print the brief:
+Rotation = a **resume brief** for a fresh session, printed from the state, never typed. The stand-down asks the agent to finish the unit in hand, stop, and answer two lines: what is in flight, the decisions taken (a message to your own agent carries no `notify_when_idle`: its reply wakes you). On its answer — or at once, with neither line, when it is gone (ended by the host or by an error) — print the brief:
 
 ```
 brief.sh rotation --record <dispatch record> --row <id> --phase-brief <its phase brief> --worktree <its checkout> --orchestrator "<your name [ref]>" --tty <its tty> --title "<its title>" --out <briefs dir>/<row>-r<n>.md [--plan <plan> --phase "<heading>"] [--report <its report path>] [--in-flight "<line>"] [--decisions "<line>"]

@@ -301,7 +301,6 @@ evals/announces-then-takes-over/graders/agent-p8-addressed.md
 evals/announces-then-takes-over/graders/agent-review-addressed.md
 evals/announces-then-takes-over/graders/announces-before-confirming.md
 evals/announces-then-takes-over/graders/closes-predecessor-tab.md
-evals/announces-then-takes-over/graders/subscribes.md
 evals/triages-then-one-correction-round/prompt.md
 evals/triages-then-one-correction-round/graders/triage-then-one-correction.md
 evals/declares-ready-only-on-a-green-record/prompt.md
