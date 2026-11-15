@@ -155,7 +155,7 @@ def purge_all(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("cache-rules", help="the cache rules of a zone")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=cache_rules, read=True)
+    parser.set_defaults(handler=cache_rules)
 
     parser = subparsers.add_parser("cache-rule-add", help="add a cache rule for a host and/or a path prefix, or a raw expression")
     parser.add_argument("zone")

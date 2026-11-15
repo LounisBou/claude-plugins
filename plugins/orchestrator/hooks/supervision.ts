@@ -36,7 +36,7 @@ import {
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, toldText, type RoundAnswer, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, type RoundAnswer, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -1205,17 +1205,16 @@ async function wakeForDue($: any): Promise<void> {
   const local = store.rows
   const round = await readRound($)
   await withdrawOlder($, round)
-  // An operator entry of an older release is withdrawn above, never told nor due.
+  // An operator entry of an older release is withdrawn above, never due.
   const relayed = round.map(found => found.entry).filter(entry => entry.kind === 'done')
-  // The questions asked with `ask`, told and due as the relay's entries are, read through them only;
-  // one claimed by his prompt in its asker's tab has left the pane, and is neither told nor due
-  // until that turn's end, while its id stays one the round holds.
+  // The questions asked with `ask`, due as the relay's entries are, read through them only; one
+  // claimed by his prompt in its asker's tab has left the pane, and is not due until that turn's
+  // end, while its id stays one the round holds.
   const asked = await readAsked($)
   const read = [...relayed, ...asked.filter(entry => !entry.claimed).map(askedAsEntry)]
   const paneOpen = await paneIsOpen($)
   const present = new Set([...read.map(entry => entry.id), ...asked.map(entry => entry.id)])
   const now = Date.now()
-  await tellNew($, read, present)
   const hosted = await hostedSuccessors($, read, local, store.alive, new Set(asked.map(entry => entry.id)))
   const dueBeside = (woken: readonly string[]) => (entry: RoundEntry) =>
     (sessionKey(entry.session) in local || hosted.has(entry.id)) && !woken.includes(entry.id) && isDue(entry, now, paneOpen)
@@ -1263,37 +1262,6 @@ async function withdrawOlder($: any, round: readonly { path: string; entry: Roun
     } catch (err) {
       await logLine($, 'supervision', `round: ${entry.id}: ${(err as Error).message}`)
     }
-  }
-}
-
-// The entries the coordinator's conversation was told of, `<state>/round-told.json`, a JSON list
-// of ids beside round-woken.json, whose ids keep their own meaning (a wake submitted).
-async function toldPath($: any): Promise<string> {
-  return `${await stateDir($)}/round-told.json`
-}
-
-// Each new open operator question told to the coordinator's conversation in one line, the
-// operator's ruling of 2026-11-04 (« B »): pane open or not, read from the round alone, never from
-// what the pane drew — no live-row filter, no due rule. The line is a transcript notice
-// ($.ui.log), drawn in the conversation and starting no model turn, so nothing is shown between
-// two questions of a decision round (his ruling of 2026-10-31, 6.3). An id is recorded once its
-// line is drawn, and the list keeps the ids the round still holds. A failure is one log line and
-// never holds the due wake.
-async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet<string>): Promise<void> {
-  try {
-    const path = await toldPath($)
-    const told = (await readIds($, path)).filter(id => present.has(id))
-    const fresh = read.filter(entry => entry.status === 'open' && entry.kind === 'operator' && !told.includes(entry.id))
-    if (fresh.length === 0) return
-    // Each id written as soon as its line is drawn: a later line the host refuses never draws
-    // the earlier ones twice.
-    for (const entry of fresh) {
-      $.ui.log(toldText(entry))
-      told.push(entry.id)
-      await addIds($, path, [entry.id], id => present.has(id))
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round told: ${(err as Error).message}`)
   }
 }
 

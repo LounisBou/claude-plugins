@@ -81,7 +81,7 @@ what was read there.
 |---|---|---|---|
 | 1 | met | cloudflare: exact-argument sudoers rule, no committed `.claude/settings.json` (claude-plugins#7, claude-plugins#27); bugs-bot: the deploy check is run without a shell, its command split into words (`_check_argv`), and refused unless the project file is the operator's alone (`bugs_bot/agent.py`, `_refuse_foreign_check`) | — |
 | 2 | met | the catalogue's relative sources (`.claude-plugin/marketplace.json`), checked by `npm run marketplace -- --check`; the operator installs from the `lounisbou` catalogue in his own profile, the plan's separate one having been left, and `npm run deploy` installs each green commit of `main` on his MacBook by itself (claude-plugins#264, claude-plugins#266, claude-plugins#272; `d540c0c6` is the commit installed) | — (the install on IznoServer is the cutover's step 2, goal 17) |
-| 3 | partly met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); pr-review runs github's installer (claude-plugins#29) | the copies listed in « Copied rules core replaces » marked open: the session-name shape (`coordinator.sh`, statusbar's prefixes) and the read/write classification of cloudflare (`hooks/register.ts`, `engine/cf.py`, `engine/cf-write.py`) |
+| 3 | met | `packages/core/src` (store, paths, names, shell reader, environment names, locator, contracts, deadline, process group, verdict, consent, PR and install records, the learning journal, the orchestration's measure file, gate, launcher line and `ListAgents` reading) reaches bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review, statusbar and telemetry as a copy; the shell reader replaced its copies, norms' push guard included (claude-plugins#29, claude-plugins#73, claude-plugins#181); norms' `resolve_github.py` is gone (claude-plugins#181); the negative-phrase list is one data file read by both languages (claude-plugins#199); cloudflare's read/write classification is data in `hooks/register.ts`, read by `engine/cf.py`; pr-review runs github's installer (claude-plugins#29) | — |
 | 4 | partly met | typed in core with a version: PR records, the `tests` kind of a stacked pull request's light CI included (tested from both sides, `scripts/contracts.test.ts`; claude-plugins#242), consent records (claude-plugins#78), the learning events and the install record, the method's formats, the verdict line (`verdict.ts`), the store convention, the measure file (`orchestration.ts`); the launcher's `spawn` line and the `ListAgents` reading are core's | `deck.json` and the declared wait kinds are not typed in core, and the launcher's command lines carry no version (`docs/contracts.md`) |
 | 5 | partly met | `tsconfig.json` covers `scripts/`, core, the drift, learning, orchestrator and telemetry skill scripts, every hook file of bugs-bot (claude-plugins#235), cloudflare, implement, learning, norms, pr-review, statusbar and telemetry, and twelve of the orchestrator's, one of them by import; every plugin's hook tests run in its suite, so in CI (`claude plugin test`) | 35 hook files are outside the strict check, github's 9 and the orchestrator's 26, 10 of them typing `$` as `any`; under the check, 20 hook files of bugs-bot, cloudflare, implement, norms, pr-review and statusbar type their handlers' `$` as `any`, 190 times, against « No `any` » (`docs/conventions.md`) |
 | 6 | partly met | `ci/plugins.json`: twelve plugins, eleven block on Linux and macOS, drift on Linux and only at the release and the night (claude-plugins#23, claude-plugins#87, claude-plugins#94); the orchestrator's suite runs on Linux in four shards (claude-plugins#169); a pull request runs the Linux suites of what it changes, `main` every plugin but drift on Linux, macOS the release and each night (`scripts/plugin-matrix.ts`) | drift does not block on macOS |
@@ -132,8 +132,7 @@ the orchestration stands, not conditions of the end.
 - « je veux qu'on livre l'ensemble du développement »
 - « Je ne dois pas être à un point de blocage. »
 
-Goals 3, 5, 15 and 21 are therefore open like the others, after what slows his daily work: the two
-remaining copies (the session-name shape, cloudflare's read/write classification), strict typing of
+Goals 5, 15 and 21 are therefore open like the others, after what slows his daily work: strict typing of
 github's 9 hook files and the orchestrator's 26, the outcome measure run on the harness in place, and
 the calibration on more first-turn measures.
 
@@ -195,16 +194,15 @@ cap is the operator's.
   norms leaves locating the github plugin to it; pr-review's is the one copy.
 - The session-name shape: `plugins/orchestrator/hooks/naming.ts:29`,
   `skills/coordinator/scripts/coordinator.sh:316`, `skills/iterm-agents/scripts/iterm_agent.py:114`,
-  `dispatch-record.sh:168`, and statusbar's prefixes. **Open**: core's `names.ts` is read by
-  implement, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts` and
-  `session-name.ts`; `iterm_agent.py` reads it as `names.json`; `coordinator.sh` and statusbar
-  still hold their own.
+  `dispatch-record.sh:168`, and statusbar's prefixes. **Done**: core's `names.ts` is read by
+  implement, bugs-bot, `dispatch-record.ts` and the orchestrator's `hooks/naming.ts` and
+  `session-name.ts`; `iterm_agent.py`, `coordinator.sh` and statusbar read it as `names.json`.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`, and
   bugs-bot's third copy of the thresholds in `gate.py`. **Done**: core's `orchestration.ts`;
   statusbar shows the measure file's gate, `gate.py` reads the percentage as data.
 - The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in `hooks/usage.ts`, read by `routing.py`; one price table, `routing/prices.json` under the orchestrator's state directory.
 - The negative-phrase list in `plugins/github/engine/ghlib/assets.py:25` and `hooks/writing.ts`. **Done** (#199): one file, `engine/negative-phrases.json`, read by both.
-- The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Open.**
+- The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Done**: the list is data in `hooks/register.ts` (`READS`), read by `engine/cf.py`.
 - `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Done**: one module, `hooks/module-io.ts`, imported by every hook file.
 - The gh installer of `plugins/pr-review/install.sh:49-150`, which duplicates github's. **Done** (#29).
 

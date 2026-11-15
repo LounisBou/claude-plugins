@@ -367,6 +367,24 @@ test('the coordinator closing another orchestrator\'s question: a plain confirma
   expect(recordsOf(m).length).toBe(2)
 })
 
+test('a question asked with ask the coordinator here was shown is settled by its asker in its own tab, and the coordinator told once; one never shown, or settled by the coordinator, tells it nothing', async () => {
+  const m = machine()
+  m.files.set(`${MODULE}/coordinator.json`, JSON.stringify({ name: COORD, tty: '/dev/ttys009' }))
+  const [shown, unseen, held] = [await asked(m), await asked(m), await asked(m)]
+  m.files.set(`${MODULE}/round-listed.json`, JSON.stringify([shown, held]))
+  await settle(m.asker, request(unseen), AT)
+  expect(m.sent).toEqual([])
+  await settle(m.asker, request(shown), AT)
+  expect(entryOf(m, shown)).toMatchObject({ status: 'answered', answer: { by: 'tab' } })
+  expect(m.sent.length).toBe(1)
+  expect(m.sent[0].text).toContain(shown)
+  expect(JSON.stringify(m.sent[0].to)).not.toContain('s-ask')
+  // The coordinator's own settle sends the answer to its asker, and itself no notice.
+  await settle(m.coordinator, request(held), AT)
+  expect(m.sent.length).toBe(2)
+  expect(m.sent[1].to).toEqual({ sessionId: 's-ask' })
+})
+
 test('a relay\'s entry the coordinator here was shown is closed by its sender\'s settle, and the coordinator told so', async () => {
   const m = machine()
   m.files.set(`${MODULE}/coordinator.json`, JSON.stringify({ name: COORD, tty: '/dev/ttys009' }))
