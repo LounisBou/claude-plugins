@@ -17,10 +17,18 @@ import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learni
 import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
-  'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
+  'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|blocker|note|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'escaped', 'cost'])
+const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'blocker', 'note', 'escaped', 'cost'])
+
+/**
+ * What an open row waits on before it can start, in one of four forms, each checked on its artifact
+ * by the takeover (succession.ts): nothing, a pull request merged, another row closed, the release
+ * installed on this machine.
+ */
+export const BLOCKER = /^(none|PR [A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+ merged|row [0-9]+ closed|release installed)$/
+const BLOCKER_FORMS = '`none`, `PR <owner/repo>#<n> merged`, `row <n> closed` or `release installed`'
 // The writes of the pull request ledger (core's pr-ledger.ts): lines of the record that are no rows.
 const LEDGER_WRITES = new Set(['pr', 'pr-archive'])
 const GOAL_WRITES = new Set(['init', 'plan', 'met', 'rule-out', 'defer', 'reopen'])
@@ -513,12 +521,13 @@ export function stateRoot(env: Env): string {
 }
 
 async function open(ctx: Context, args: readonly string[]): Promise<void> {
-  const found = options(ctx, 'open', args, ['--class', '--tier', '--model', '--effort', '--label'], ['--cascade', '--explore'])
+  const found = options(ctx, 'open', args, ['--class', '--tier', '--model', '--effort', '--label', '--blocker'], ['--cascade', '--explore'])
   const klass = currentClass(last(found, '--class'))
   const tier = last(found, '--tier')
   const model = last(found, '--model')
   const effort = last(found, '--effort')
   const label = last(found, '--label')
+  const blocker = found.some(([f]) => f === '--blocker') ? last(found, '--blocker').trim() : undefined
   // A deliberate bet one tier below the table's row, or one notch below the class's pair: marked,
   // so the summary tells an economy from a cost on the row itself.
   const cascade = found.some(([f]) => f === '--cascade')
@@ -529,6 +538,7 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
   if (effort !== '' && !EFFORTS.includes(effort)) die(ctx, `open: unknown effort: ${effort} (expected low, medium, high, xhigh or max)`)
   if (effort !== '' && model === '') die(ctx, 'open: --effort needs --model')
   if (explore && model === '') die(ctx, 'open: --explore needs --model')
+  if (blocker !== undefined && !BLOCKER.test(blocker)) die(ctx, `open: --blocker takes ${BLOCKER_FORMS}, got: ${blocker}`)
   // The spec's goals are written before the first dispatch, or done is measured against the plan alone.
   if (!isFile(ctx.goalsFile)) die(ctx, `open: no goals.md beside ${ctx.record}: write the spec's goals first, dispatch-record.sh goals ${ctx.record} init --spec <path>|none`)
   const unplanned = (await ctx.deps.run(['python3', ctx.deps.goalsPy, 'unplanned', ctx.goalsFile])).stdout.split('\n').filter(g => g !== '')
@@ -541,6 +551,7 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
       id = nextId(parseRecord(content))
       const row: Row = { id, opened: stamp(ctx), class: klass, tier, label, rounds: 0, state: 'open', verdict: '', cascade }
       if (model !== '') Object.assign(row, { model, effort, explore, cost_usd: 0, sessions: [], cost_incomplete: false })
+      if (blocker !== undefined) row['blocker'] = blocker
       return `${content}${content === '' || content.endsWith('\n') ? '' : '\n'}${JSON.stringify(row)}\n`
     })
   } catch {
@@ -762,13 +773,19 @@ async function cost(ctx: Context, id: string, args: readonly string[]): Promise<
   noteLink(ctx, 'orchestrator.dispatch.cost', id, { session })
 }
 
-/** A row still open, as a successor reads it: deferred with the ruling it waits on, or open. */
+/**
+ * A row still open, as a successor reads it: deferred with the ruling it waits on, or open; then
+ * its blocker when it waits on something, its note of judgment, and the verdict line of its review.
+ */
 export function openLine(row: Row): string {
   const line = truthy(row['deferred'])
     ? `deferred=${text(row['id'])} label=${text(row['label'])} ruling=${text(row['deferred'])}`
     : `open=${text(row['id'])} label=${text(row['label'])}`
+  const blocker = typeof row['blocker'] === 'string' && row['blocker'] !== 'none' ? ` blocker=${row['blocker']}` : ''
+  const note = typeof row['note'] === 'string' && row['note'] !== '' ? ` note=${row['note']}` : ''
   const v = field(row['review'], 'verdict')
-  return truthy(v) ? `${line} verdict=${text(field(v, 'result'))}@${text(field(v, 'head')).slice(0, 7)} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : line
+  const verdict = truthy(v) ? ` verdict=${text(field(v, 'result'))}@${text(field(v, 'head')).slice(0, 7)} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : ''
+  return `${line}${blocker}${note}${verdict}`
 }
 
 const isOpen = (row: Row): boolean => row['state'] === 'open'
@@ -950,7 +967,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   if (cmd === 'open') return open(ctx, rest)
   if (cmd === 'summary') return summary(ctx, rest)
   if (cmd === 'goals') return goals(ctx, rest)
-  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, escaped, cost, summary, goals, pr or pr-archive)`)
+  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, blocker, note, escaped, cost, summary, goals, pr or pr-archive)`)
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)
@@ -976,6 +993,17 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     const closed = stamp(ctx)
     rewrite(ctx, id, row => Object.assign(row, { state: 'closed', verdict, closed }))
     return noteLink(ctx, 'orchestrator.dispatch.close', id, { prs: prRefsOf(verdict) })
+  }
+  // blocker and note change an open row: what it waits on, and the judgment a successor needs on it.
+  if (cmd === 'blocker' || cmd === 'note') {
+    if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `${cmd}: row ${id} is not open`)
+    if (args.length !== 1) die(ctx, cmd === 'blocker' ? `blocker: give the row's blocker, one of ${BLOCKER_FORMS}` : 'note: give the note, one argument ("" removes it)')
+    const value = (args[0] ?? '').trim()
+    if (cmd === 'blocker' && !BLOCKER.test(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
+    return rewrite(ctx, id, row => {
+      if (cmd === 'note' && value === '') delete row['note']
+      else row[cmd] = value
+    })
   }
   // defer: the operator ruled « later » on an open row: it stays open, with his words.
   if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `defer: row ${id} is not open`)
