@@ -84,7 +84,7 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
 
 /*
  * The operator's waiver of a required E2E or norms check: one question, « Dispense d'E2E pour <owner/name>#<n> : <why> »
- * or « Dispense de normes pour … », its choices « Accorder » and « Refuser », asked by dialog. His answer is the consent
+ * or « Dispense de normes pour … », its choices « Accorder » and « Refuser », asked by dialog or in the round. His answer, from any channel, is the consent
  * record of the pull request (core's consent-record.ts) whose subject names the check; the newest one decides. A waiver
  * written through mcp__github__record rests on his words quoted in `detail` with their date instead, and reads no record.
  */
