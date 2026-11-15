@@ -2,6 +2,7 @@
 // N4: the walkthrough guards, each false-positive case they were narrowed for,
 // and the releases (the user's own words, an interrupted turn, another command).
 import { expect, test } from 'claude-code/testing'
+import { parseJournalEvent } from '../../core/learning.ts'
 import { agentBashDecision, bashDecision, AGENT_DELETE_REFUSAL, AGENT_UNREADABLE_REFUSAL, PUSH_REFUSAL, editDecision, pushQuestion, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
 import { register as registerAll } from '../register.ts'
 import { register as registerRecord, markScope } from '../record.ts'
@@ -249,7 +250,7 @@ test('the Bash hook lets a plain push and a leaking commit through, one line eac
   expect(journal().length).toBe(3)
 })
 
-test('a forced push during a walkthrough goes through only on the user\'s own Allow, and leaves no line', async () => {
+test('a forced push during a walkthrough goes through only on the user\'s own Allow, and each answer of theirs is kept', async () => {
   resetGuards()
   const hooks = mount(register)
   const { $ } = fakeDollar({})
@@ -274,6 +275,29 @@ test('a forced push during a walkthrough goes through only on the user\'s own Al
   expect(asked.length).toBe(4)
   expect(await bash('npm test')).toBe('ran')
   expect(asked.length).toBe(4)
+  // The journal holds what they answered, in their trust, and nothing of the command.
+  const events = journal()
+  expect(events.map(e => parseJournalEvent(e))).toEqual(events)
+  expect(events.map(e => [e.kind, e.trust, e.source.code])).toEqual([
+    ['answer', 'operator', 'norms.answer.push.refused'], ['answer', 'operator', 'norms.answer.push.granted'],
+    ['answer', 'operator', 'norms.answer.push.refused'], ['answer', 'operator', 'norms.answer.push.refused'],
+  ])
+  expect(JSON.stringify(events)).not.toMatch(/force|feature|GIT_CONFIG/)
+})
+
+test('a push nobody could be asked about is refused, and no answer is written: none was given', async () => {
+  resetGuards()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const journal = watchJournal($)
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
+  for (const ask of [async () => { throw new Error('nobody to ask') }, async () => undefined]) {
+    $.ui = { ...$.ui, ask }
+    const { next, seen } = nextOf()
+    const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: 'git push --force origin feature' }, next)
+    expect(out.deny).toContain('never force-push')
+    expect(seen).toEqual([])
+  }
   expect(journal()).toEqual([])
 })
 

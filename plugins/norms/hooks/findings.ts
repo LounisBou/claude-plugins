@@ -74,8 +74,11 @@ export function resetReports(): void {
   reports.clear()
 }
 
+// A finding with the agent type that reported it.
+export type Found = Finding & { agent: string }
+
 export type Reported =
-  | { findings: Finding[] }
+  | { findings: Found[] }
   | { why: string }
 
 // The findings of the check once every agent that ran reported them, or why they are not known.
@@ -83,5 +86,5 @@ export function reported(): Reported {
   if (reports.size === 0) return { why: 'no norms agent has reported its findings since /norms:check began: run the check\'s agents first' }
   const unreadable = [...reports].filter(([, findings]) => findings === null).map(([agent]) => agent)
   if (unreadable.length > 0) return { why: `${unreadable.join(', ')} returned no readable findings block, so its findings are unknown: run it again` }
-  return { findings: [...reports.values()].flatMap(findings => findings ?? []) }
+  return { findings: [...reports].flatMap(([agent, findings]) => (findings ?? []).map(finding => ({ ...finding, agent }))) }
 }
