@@ -68,11 +68,11 @@ fact that changes a question still to come updates it before it is presented.
 
 ## 4. On the answer, in the same turn and in this order
 
-1. « Recorded: <the ruling in one line> » — the user sees their decision written back. Given in
+1. « Recorded: <his words> », then « My reading: <what you do with them> » — he sees both and corrects the reading. Given in
    your tab or by a message, close it with `settle`, the work it asks in `work`.
 2. His answer in the round is the module's dated record, answering any re-ask, a successor's
    too: never copy it. By hand only what binds beyond it (rulings file, `references/succession-predecessor.md`
-   item 0; plan; register) and, with no coordinator, the ruling there, verbatim and dated. A goal
+   item 0; plan; register) and, with no coordinator, his words there, verbatim and dated, your reading on an indented line under them, « Session's reading (not his words): … ». A goal
    ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
    stop gate reads. Work deferred (« later, when I say so »):
    `dispatch-record.sh defer <record> <id>` (a row) or `dispatch-record.sh goals <record> defer <G>`
@@ -84,10 +84,11 @@ fact that changes a question still to come updates it before it is presented.
 4. Launch what the ruling unblocks, then present the next question IN FULL (step 2) at the
    end of this same message.
 
-## 5. A ruling is not reopened
+## 5. His words stand, a reading is questioned
 
-If later evidence contradicts a ruling, that is a NEW question, with the evidence as its
-context, appended to the round. Never re-argue a ruled question inside another one.
+A reading that later evidence or his purpose contradicts is said in one line and put to him as a
+NEW question, the evidence as its context, appended to the round; it is never applied against his
+purpose because it is written. Never re-argue a question inside another one.
 
 ## 6. End of the wave, then the next one
 

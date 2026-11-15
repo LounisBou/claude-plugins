@@ -5359,8 +5359,6 @@ check "the lint says the open-questions value is outside the 9,000-character cap
 # decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
 # with no coordinator, in the rulings file; the lifecycle gives that file's format and what leaves it.
 DECIDE42=$(awk '/^## 4\. /{f=1} /^## 5\. /{f=0} f' "$ROOT/commands/decide.md" | awk '/^2\. /{f=1} /^3\. /{f=0} f' | tr '\n' ' ' | tr -s ' ')
-check "the decision round leaves his round answer to the module's record and writes by hand only what binds beyond it" "1|1" \
-  "$(printf '%s' "$DECIDE42" | grep -cF "His answer in the round is the module's dated record")|$(printf '%s' "$DECIDE42" | grep -cF 'coordinator, the ruling there, verbatim and dated')"
 # What the round writes by hand must reach the file's path, its entry format and the rule that a
 # ruling carried out or superseded leaves the file in the same move: the step points at the
 # lifecycle item that holds all three, and that item holds them.

@@ -9,7 +9,7 @@ the coordinator's session: anywhere else, say so in one line and stop.
 
 The round's shape is `/orchestrator-decide`'s, read from `commands/decide.md` and followed as
 written, the question's shape and what it blocks being `method:lifecycle`, « Questions to the
-operator »; a question left open in the round, never repeated; a ruling never reopened. The coordination
+operator »; a question left open in the round, never repeated; his words standing and a reading questioned. The coordination
 skill's rules for relayed questions hold too: the question and every field of its block are
 the sender's, verbatim, and you add nothing of your own. Only what follows differs.
 
@@ -31,7 +31,7 @@ the sender's, verbatim, and you add nothing of your own. Only what follows diffe
    an entry answered in the pane or withdrawn by its sender meanwhile is not asked, and one
    found settled on its artifact is withdrawn as the skill's step 5 says; write it back in the
    ledger and present the next one instead, the count moving with it.
-5. **The relay, on each answer, in the same turn.** « Recorded: <his ruling> »; for an entry of
+5. **The relay, on each answer, in the same turn.** « Recorded: <his words> »; for an entry of
    the round, `settle` on its id (`answered-here`, answer: his words) alone,
    which sends it, dated, to the sender in the same call; for a question that reached you by message, the ruling
    verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender, by `SendMessage` to its
