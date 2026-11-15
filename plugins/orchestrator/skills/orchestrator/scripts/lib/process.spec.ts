@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { fdWriter, isEntry, run } from './process.ts'
+import { fdWriter, isEntry, resolvedPath, run } from './process.ts'
 
 const node = process.execPath
 
@@ -100,4 +100,10 @@ test('a script run through a symbolic link prints what it prints when run direct
   } finally {
     rmSync(dir, { recursive: true })
   }
+})
+
+test('resolvedPath keeps a path that does not exist, and such a path is no entry', () => {
+  const missing = join(tmpdir(), 'entry-missing', 'script.ts')
+  assert.equal(resolvedPath(missing), missing)
+  assert.equal(isEntry(pathToFileURL(join(tmpdir(), 'entry-missing', 'other.ts')).href, missing), false)
 })
