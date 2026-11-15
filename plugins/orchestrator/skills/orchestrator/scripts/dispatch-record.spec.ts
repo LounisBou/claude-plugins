@@ -197,7 +197,7 @@ test('blocker and note: set at open or later on an open row, checked against the
   assert.equal(await cli(['blocker', r, '2', 'release installed']), '0||')
   assert.match(await cli(['blocker', r, '2', 'row x closed']), /blocker: `none`, .* got: row x closed/)
   assert.match(await cli(['blocker', r, '2']), /blocker: give the row's blocker/)
-  assert.equal(await cli(['note', r, '1', 'review the second commit first']), '0||')
+  assert.equal(await cli(['note', r, '1', 'review the second\n  commit first']), '0||')
   assert.match(await cli(['note', r, '1', 'a', 'b']), /note: give the note, one argument/)
   assert.equal(await cli(['blocker', r, '9', 'none']), `1||ERROR: blocker: no row with id 9 in ${r}\n`)
   assert.equal(await cli(['summary', r, '--open']), '0|open=1 label=one blocker=PR acme/app#12 merged note=review the second commit first\nopen=2 label=two blocker=release installed\n|')

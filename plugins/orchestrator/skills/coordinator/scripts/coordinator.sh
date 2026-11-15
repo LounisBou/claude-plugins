@@ -92,7 +92,7 @@
 # or withdrawn, at its answer's time (else its start), its delivery absent or delivered — into
 # <state>/round/archive/, a withdrawn one into <state>/round/archive/withdrawn/ (created when
 # absent), each in one rename under its lock; an open entry, a delivery pending, sent or failed,
-# and a file that does not parse stay. succession.sh live runs the same move. round sees only the
+# and a file that does not parse stay. succession.sh takeover runs the same move. round sees only the
 # files directly under round/. It also removes the *.json.tmp-* files a write died on, once a day
 # old; a fresher one is a write in flight and stays.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already

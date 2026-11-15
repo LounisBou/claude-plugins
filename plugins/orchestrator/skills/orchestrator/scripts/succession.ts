@@ -27,7 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
-import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
+import { openLine, orchForm, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
 import { ledgerLines, prKey, statusText } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, readAtTakeover, type PruneResult } from './prune.ts'
@@ -298,8 +298,8 @@ export function projectSheet(goals: string | undefined, installed: string): stri
   else {
     const value = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(goals)?.[1]?.trim() ?? ''
     const rows = goals.split('\n').filter(line => /^\| G[0-9]+ \|/.test(line)).map(line => line.split('|').map(cell => cell.trim()))
-    const open = rows.filter(cells => cells[2] !== 'met')
-    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`, `goals met=${rows.length - open.length}/${rows.length}`)
+    const open = rows.filter(cells => cells[2] === 'open')
+    parts.push(`objective ${value('aim') || 'none'}`, `spec ${value('spec') || 'none'}`, `goals met=${rows.filter(cells => cells[2] === 'met').length}/${rows.length}`)
     if (open.length > 0) parts.push(`open: ${open.map(cells => `${cells[1]} ${cells[2]} (plan: ${cells[4] || 'none'})`).join(', ')}`)
   }
   if (installed !== '') parts.push(`installed: ${installed}`)
@@ -358,7 +358,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     io.err(`succession: no dispatch record at ${parsed.record}\n`)
     return 2
   }
-  const name = parsed.name || (readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() || ''
+  const name = orchForm(parsed.name || (readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() || '')
   if (name === '') {
     io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration: pass --name "<Orch: x>"\n`)
     return 2

@@ -3178,7 +3178,7 @@ succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHES
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$PSTAB" bash "$AGENT" spawn --dir "$WORK" --successor \
   --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
 check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
-  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'Mode:')|$(succ_brief | grep -c '^launch=')"
+  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'loads the rulebook with its mode and runs the takeover')|$(succ_brief | grep -c '^launch=')"
 check "the template carries the mode on a line of its own, and succeed writes the successor's prompt with its own mode and the takeover" "1|yes|yes" \
   "$(grep -c '^Mode: {{MODE}}$' "$ROOT/templates/orchestrator-succession-brief.md")|$(spells "$ROOT/commands/succeed.md" 'Load the skill orchestrator:orchestrator with the argument "<your mode>"')|$(spells "$ROOT/commands/succeed.md" 'succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>')"
 check "the launch puts the prompt before the name" "1" \

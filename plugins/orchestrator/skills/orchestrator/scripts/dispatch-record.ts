@@ -997,7 +997,8 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   if (cmd === 'blocker' || cmd === 'note') {
     if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `${cmd}: row ${id} is not open`)
     if (args.length !== 1) die(ctx, cmd === 'blocker' ? `blocker: give the row's blocker, one of ${BLOCKER_FORMS}` : 'note: give the note, one argument ("" removes it)')
-    const value = (args[0] ?? '').trim()
+    // One line: the note is printed on its row's line of `summary --open` and of the takeover.
+    const value = (args[0] ?? '').replace(/\s+/g, ' ').trim()
     if (cmd === 'blocker' && !BLOCKER.test(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
     return rewrite(ctx, id, row => {
       if (cmd === 'note' && value === '') delete row['note']

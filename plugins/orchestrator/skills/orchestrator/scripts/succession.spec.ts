@@ -92,6 +92,55 @@ test('the Live state: the open rows at level 1, their owners by agent, ruling or
   assert.match(w.err.join(''), /^takeover: chars=[0-9]+ rulings_read=[0-9]+ rows=5 ready=2 prs=1 agents=1 questions=1 todo_stray=2 pruned=rulings:1,round:0\n$/)
 })
 
+test('takeover moves a ruling for rows the dispatch record closed, and keeps one for a row still open', () => {
+  const w = world()
+  const rulings = join(w.briefs, 'rulings.md')
+  writeFileSync(rulings, [
+    '- 2026-11-12T10:00:00Z « A » → the schema. [for: row 1]',
+    '- 2026-11-12T11:00:00Z « B » → the api. [for: rows 1, 2]', '',
+  ].join('\n'))
+  assert.equal(w.run(), 0)
+  assert.match(w.err.join(''), / pruned=rulings:1,round:0\n$/)
+  assert.ok(readFileSync(rulings, 'utf8').includes('the api') && !readFileSync(rulings, 'utf8').includes('the schema'))
+})
+
+test('takeover archives the round\'s entries settled over a day ago, and counts them in its pruned field', () => {
+  const old = '2026-11-01T10:00:00Z'
+  const settled = { from: NAME, session: SESSION, kind: 'operator', since: old, question: 'Q?' }
+  const w = world({ round: [
+    { id: 'q-open', ...settled, status: 'open', answer: null },
+    { id: 'q-answered', ...settled, status: 'answered', answer: { text: 'A', by: 'pane', at: old } },
+    { id: 'q-withdrawn', ...settled, status: 'withdrawn', answer: { text: 'moot', by: 'sender', at: old } },
+  ] })
+  assert.equal(w.run(), 0)
+  assert.match(w.err.join(''), / pruned=rulings:1,round:2\n$/)
+  assert.ok(existsSync(join(w.state, 'round', 'archive', 'q-answered.json')))
+  assert.ok(existsSync(join(w.state, 'round', 'archive', 'withdrawn', 'q-withdrawn.json')))
+  assert.ok(existsSync(join(w.state, 'round', 'q-open.json')))
+})
+
+test('takeover says a supersession it keeps', () => {
+  const w = world()
+  const rulings = join(w.briefs, 'rulings.md')
+  writeFileSync(rulings, '- 2026-11-12T16:00:00Z « C » → x. [superseded: 2026-12-01T00:00:00Z]\n')
+  assert.equal(w.run(), 0)
+  assert.ok(w.err.includes(`succession: ${rulings}: ruling 2026-11-12T16:00:00Z kept: superseded by 2026-12-01T00:00:00Z, which no ruling of the file or its archive opens on\n`))
+})
+
+test('the owner file read in the house shape: a name with its reference still finds its open questions', () => {
+  const w = world()
+  writeFileSync(`${w.record}.owner`, `${NAME} [a1b2c3]\n`)
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  assert.ok(w.text().includes('[q-2] **Question 1 of 1**\nWhich schema?'))
+  assert.ok(w.text().includes('--expect-title "Orch: belt"'))
+})
+
+test('the project sheet lists the open goals only: a goal ruled out or deferred is neither open nor met', () => {
+  const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | ruled-out | b | p2 | |\n| G3 | open | c | p3 | |\n' })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3; open: G3 open \(plan: p3\)\n/)
+})
+
 test('an open to-do item pointing to a closed or missing row is flagged; one pointing to an open row, a closed item or an item with no row is not', () => {
   const w = world()
   assert.equal(w.run(), 0)

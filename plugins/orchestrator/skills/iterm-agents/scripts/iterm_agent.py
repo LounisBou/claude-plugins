@@ -4808,9 +4808,9 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
         die("spawn: --prompt and --prompt-file are exclusive")
     if args.successor and args.brief:
         # --brief builds the prompt from the brief and would drop the successor's own, the one
-        # that loads the rulebook with the `Mode:` its succession brief carries.
-        die("spawn: refused: --successor takes its prompt, not --brief: give the succession "
-            "brief with --prompt or --prompt-file, which carries its `Mode:` line to the session")
+        # that loads the rulebook with its mode and runs the takeover.
+        die("spawn: refused: --successor takes its prompt, not --brief: give succeed's prompt "
+            "with --prompt, which loads the rulebook with its mode and runs the takeover")
     if args.brief and (args.prompt or args.prompt_file):
         die("spawn: --brief and --prompt/--prompt-file are mutually exclusive")
     if args.brief and not args.orchestrator:
