@@ -658,7 +658,11 @@ export async function closeRound(
     if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
   }
   if (done.relayed) await forgetRelayed($, done.entry as never)
-  if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }] as never)
+  if (done.told) {
+    // The notice reads a relay entry's fields: an object `ask` stored is told as one.
+    const asked = done.entry['v'] === ASK_VERSION ? parseAsked(JSON.stringify(done.entry)) : null
+    await tellSettled($, [{ entry: asked ? askedAsEntry(asked) : done.entry, answer: done.entry['answer'] }] as never)
+  }
   if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
   if (done.deliver === 'remote') {
     const refused = await sendReply($, String(done.entry['id']))
