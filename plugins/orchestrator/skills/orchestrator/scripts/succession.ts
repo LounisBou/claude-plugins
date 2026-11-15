@@ -649,7 +649,7 @@ export function movesHome(env: Env, platform: string = process.platform): boolea
 export const STAY_TURN = 'Then go on to step 4 in this same turn: no agent, watch or question of yours is there yet to wake you. With no row to dispatch, declare the wait naming what you wait on.'
 
 /** The sentence step 3 ends on when the turn's end moves this tab into the home session. */
-export const HOME_STEP = ' Its end turns this tab into your home session, as the orchestrator start command does: window 0 of a tmux server of your own resumes this conversation, and every agent you spawn from there is a window of it; the agents already in tabs stay where they are. Nothing to type; still in this tab at your next turn, the move failed and the module\'s log says why.'
+export const HOME_STEP = ' Its end turns this tab into your home session, as the orchestrator start command does: window 0 of a tmux server of your own resumes this conversation, and every agent you spawn from there is a window of it; the agents already in tabs stay where they are. Nothing to type; still in this tab at your next turn, the move did not happen (the module\'s log says why), and that turn, which the module starts, is step 4.'
 
 /**
  * The window of the tmux pane on a tty, read from the server (`tmux list-panes -a`): an

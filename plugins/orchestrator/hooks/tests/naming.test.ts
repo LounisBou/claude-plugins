@@ -7,7 +7,7 @@ import type { Reply } from 'claude-code/testing'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type CapturedOn } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit, ToolSpec } from '../../core/host.ts'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT } from '../naming.ts'
 
 type World = Host<Noun>
 
@@ -322,6 +322,8 @@ function movingDollar(answer: { exitCode: number; stdout: string; stderr?: strin
           if (answer instanceof Error) throw answer
           return { stderr: '', ...answer }
         }
+        const line = logLineOf(argv)
+        if (line !== null) fx.logged.push(line)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -388,13 +390,30 @@ test("a successor's takeover turn moves it into its home session, then ends it t
   expect(fx.processes.length).toBe(1)
 })
 
-test('a takeover kept where it is, failed, interrupted or run by a subagent ends nothing', async () => {
-  const kept = mounted()
-  const fx = movingDollar({ exitCode: 0, stdout: 'stay: this session already runs in a home session\n' })
-  await kept.handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
-  await kept.handlers['turn.complete'](fx.dollar, {}, pass)
-  expect(fx.processes.length).toBe(1)
-  expect(fx.order).toEqual([])
+test("a successor whose move does not happen is woken in its tab, the launcher's answer logged", async () => {
+  const cases: [string, { exitCode: number; stdout: string; stderr?: string } | Error, string][] = [
+    ['the launcher keeps it (stay:)', { exitCode: 0, stdout: 'stay: this session already runs in a home session\n' }, 'the launcher kept the session where it is: this session already runs in a home session'],
+    ['the launcher answers nothing', { exitCode: 0, stdout: '' }, 'the launcher kept the session where it is: no answer'],
+    ['the move fails', { exitCode: 1, stdout: '', stderr: 'ERROR: home: this session is not a tab of iTerm2s' }, 'the move into a home session failed, the session stays where it is: ERROR: home: this session is not a tab of iTerm2s'],
+    ['the move cannot run', new Error('spawn failed'), 'the move into a home session could not run, the session stays where it is: spawn failed'],
+  ]
+  for (const [what, answer, logged] of cases) {
+    const { handlers } = mounted()
+    const fx = movingDollar(answer)
+    await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+    await handlers['turn.complete'](fx.dollar, {}, pass)
+    expect(fx.processes.length, what).toBe(1)
+    expect(fx.order, what).toEqual(['prompt'])
+    expect(fx.submits, what).toEqual([{ text: TAKEN_OVER_STAYED_TEXT }])
+    expect(fx.logged.some(line => line.includes(logged)), `${what}: ${fx.logged.join(' | ')}`).toBe(true)
+    // The wake is for the takeover's turn alone: the next turn wakes nothing.
+    await handlers['turn.complete'](fx.dollar, {}, pass)
+    expect(fx.submits.length, what).toBe(1)
+  }
+  expect(TAKEN_OVER_STAYED_TEXT).toContain('step 4')
+})
+
+test('a takeover that failed, was interrupted, ended the session or was run by a subagent moves and wakes nothing', async () => {
   for (const [e, answer, done] of [
     [{ command: TAKEOVER_LINE }, { result: 'succession: no dispatch record', isError: true }, {}],
     [{ command: TAKEOVER_LINE }, { result: 'printed' }, { isAborted: true }],
@@ -408,6 +427,13 @@ test('a takeover kept where it is, failed, interrupted or run by a subagent ends
     expect(fy.processes).toEqual([])
     expect(fy.order).toEqual([])
   }
+  const ending = mounted()
+  const fz = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
+  await ending.handlers['tool.call:takeover'](fz.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+  await ending.handlers['tool.call:end'](fz.dollar, {})
+  await ending.handlers['turn.complete'](fz.dollar, {}, pass)
+  expect(fz.processes).toEqual([])
+  expect(fz.submits).toEqual([])
 })
 
 test('the takeover is read on the succession script, by either of its names', () => {

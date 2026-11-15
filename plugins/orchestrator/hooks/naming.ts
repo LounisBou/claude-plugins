@@ -98,6 +98,10 @@ export function runsTakeover(command: string): boolean {
 // The prompt window 0 resumes a successor with once its takeover's turn moved it.
 export const TAKEN_OVER_TEXT = 'Your takeover is done and this session now runs in its home session. Continue where you left off.'
 
+// The prompt that wakes a successor whose move did not happen (the launcher kept it, or the move failed):
+// its turn ended on the announcement and nothing of its own is there yet to start the next one.
+export const TAKEN_OVER_STAYED_TEXT = 'Your takeover is done but this session stays in its tab: the move into a home session did not happen. Go on to step 4 of your takeover: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
+
 export function checkName(raw: unknown): { name: string } | { refused: string } {
   const name = typeof raw === 'string' ? raw : ''
   const role = parseSessionName(name)?.role
@@ -255,6 +259,12 @@ export function register(on: On<Held>): void {
         .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
       return next(e)
     }
+    // The move did not happen: the turn that ended on the announcement is not followed by one of
+    // its own making, so the module starts it, as it does for a session resumed under its name.
+    else if (homeAfterTakeover && !ending) {
+      $.prompt.submit({ text: TAKEN_OVER_STAYED_TEXT })
+        .catch((err: unknown) => logLine($, 'naming', `the wake of a successor that stays in its tab failed: ${reasonOf(err)}`))
+    }
     if (ending) {
       ending = false
       // Queued after any rename, run once the session is idle.
@@ -290,6 +300,8 @@ async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name
     }
     if (done?.exitCode !== 0) {
       await logLine($, 'naming', `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
+    } else {
+      await logLine($, 'naming', `the launcher kept the session where it is: ${first.startsWith('stay: ') ? first.slice('stay: '.length) : first || 'no answer'}`)
     }
   } catch (err) {
     await logLine($, 'naming', `the move into a home session could not run, the session stays where it is: ${reasonOf(err)}`)
