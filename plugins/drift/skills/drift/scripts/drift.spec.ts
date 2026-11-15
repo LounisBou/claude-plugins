@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
-import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -350,4 +350,19 @@ test('--out is refused when it holds anything but a previous run, its content ke
   const first = await drift(refs('base', 'base'))
   assert.equal(first.code, 0)
   assert.equal(await main(['build', '--repo', REPO, '--out', first.dir, ...refs('base', 'base')], { tmp: first.work, home: HOME, env: {}, out: () => undefined, err: () => undefined }), 0)
+})
+
+test('drift run through a symbolic link answers what it answers when run directly', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'drift-link-'))
+  try {
+    const script = fileURLToPath(new URL('./drift.ts', import.meta.url))
+    const link = join(dir, 'drift.ts')
+    symlinkSync(script, link)
+    const direct = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', script], { encoding: 'utf8' })
+    const viaLink = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', link], { encoding: 'utf8' })
+    assert.notEqual(viaLink.stderr, '')
+    assert.deepEqual([viaLink.status, viaLink.stdout, viaLink.stderr], [direct.status, direct.stdout, direct.stderr])
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
 })
