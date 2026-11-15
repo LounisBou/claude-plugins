@@ -1,0 +1,203 @@
+// brief-lint — flag a brief before it is dispatched, not after the round.
+//
+//   brief-lint.sh <brief-path> [--expect-created <path>]...
+//
+// --expect-created names a path the brief tells its session to create, so it cannot exist
+// yet (an audit's report); the path check accepts exactly that path as absent. Repeatable.
+//
+// Prints one line per finding and exits 1 when there is any; exits 0 and says so otherwise.
+// Every check reads the file's structure: a hole, a path, an address, a field, a size. None
+// reads the wording of an instruction.
+//
+// What it CANNOT check: whether the scope is right, whether the contracts are the ones the
+// next phase consumes, whether the tier fits the work.
+// Those stay the orchestrator's, and a green lint is not an approved brief.
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
+import { rows } from './short-commands.ts'
+
+export const USAGE = 'usage: brief-lint.sh <brief-path> [--expect-created <path>]...'
+export const SUCCESSION_LIMIT = 9000
+const OPEN_QUESTIONS = /^- The operator.s open questions/
+const NEXT_FIELD = /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|To-do items|Project)/
+
+export interface Finding {
+  readonly line: number
+  readonly text: string
+}
+
+export interface Context {
+  /** The paths the brief tells its session to create. */
+  readonly expected: readonly string[]
+  /** The plugin's short command names, which a brief writes as `/name`. */
+  readonly shortNames: ReadonlySet<string>
+  readonly exists: (path: string) => boolean
+}
+
+const count = (text: string, re: RegExp): number => text.match(re)?.length ?? 0
+/** Characters, not bytes or UTF-16 units. */
+const chars = (text: string): number => [...text].length
+
+/**
+ * The open-questions field of a succession brief's Live state: its value (what follows the first
+ * colon of its line and the lines after it, up to the next field or heading), and the brief
+ * without that value. No such field: `value` is undefined and `rest` the whole brief.
+ */
+export function openQuestions(lines: readonly string[]): { readonly value: string | undefined; readonly rest: string; readonly line: number } {
+  const start = lines.findIndex(l => OPEN_QUESTIONS.test(l))
+  if (start < 0) return { value: undefined, rest: lines.map(l => `${l}\n`).join(''), line: 0 }
+  let end = start + 1
+  while (end < lines.length && !(lines[end] ?? '').startsWith('#') && !NEXT_FIELD.test(lines[end] ?? '')) end++
+  const first = lines[start] ?? ''
+  const colon = first.indexOf(':')
+  const value = [...(colon < 0 ? [] : [first.slice(colon + 1)]), ...lines.slice(start + 1, end)].join('\n')
+  const rest = [...lines.slice(0, start), colon < 0 ? first : first.slice(0, colon + 1), ...lines.slice(end)]
+  return { value, rest: rest.map(l => `${l}\n`).join(''), line: start + 1 }
+}
+
+/** Every finding of a brief's text, in the order the checks run. */
+export function lint(text: string, context: Context): Finding[] {
+  const lines = text.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  const found: Finding[] = []
+  const say = (line: number, message: string): void => { found.push({ line, text: message }) }
+  const some = (re: RegExp): boolean => lines.some(l => re.test(l))
+  const implementer = some(/^You are the implementer/)
+  const succession = (lines[0] ?? '').startsWith('# Orchestrator succession brief')
+
+  /*
+   * A placeholder that survived instantiation is a hole the agent reads as literal text. The one
+   * name a brief may quote is the succession template's mode, inside an inline code span closed
+   * on the same line (`Mode: {{MODE}}`): an odd count of backticks on each side of it.
+   */
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(/\{\{[A-Za-z0-9_]+\}\}/g)) {
+      const quoted = count(line.slice(0, m.index), /`/g) % 2 === 1 && count(line.slice(m.index + m[0].length), /`/g) % 2 === 1
+      if (!(m[0] === '{{MODE}}' && quoted)) say(i + 1, `unfilled placeholder ${m[0]}`)
+    }
+  })
+
+  // An upper-case variable reference does not expand in the shell of the session that opens the
+  // file. Wider than the host's own variables on purpose: every one of them fails the same way.
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(/\$\{[A-Z][A-Z0-9_]*[:-]*[^}]*\}|\$[A-Z][A-Z0-9_]{2,}/g)) {
+      say(i + 1, `unexpanded variable ${m[0]}: the agent's shell carries none of your environment; write the resolved value`)
+    }
+  })
+
+  /*
+   * Every absolute path the brief names in backticks exists on the machine the agent runs on,
+   * but the ones named with --expect-created. A slash command is no path: /<plugin>:<command>
+   * with or without arguments, or one of this plugin's commands under its short name.
+   */
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(/`(\/[^`]+)`/g)) {
+      const path = m[1] ?? ''
+      if (/^\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+( .*)?$/.test(path)) continue
+      if (context.shortNames.has((path.split(' ')[0] ?? '').slice(1))) continue
+      if (!context.exists(path) && !context.expected.includes(path)) say(i + 1, `path does not exist: ${path}`)
+    }
+  })
+
+  /*
+   * One session reference. An implementer brief with none leaves the agent to discover its
+   * orchestrator; two put a decoy beside the real address. A succession brief lists the agents
+   * running with their references, each a real address: it is not held to the bound.
+   */
+  const refs = [...new Set(lines.flatMap(l => l.match(/\[[0-9a-f]{6}\]/g) ?? []))].sort()
+  if (implementer && refs.length === 0) say(1, 'no orchestrator address: name the exact ListAgents name and reference')
+  if (!succession && refs.length > 1) {
+    say(1, `more than one session reference (${refs.map(r => `${r} `).join('')}): one address, no example beside it`)
+  }
+
+  /*
+   * A succession brief is read whole by a session with nothing else in its context yet. The
+   * open-questions field's value is not counted, its label is: a verbatim question block is
+   * several hundred characters, and the cap would refuse the handover the field exists for.
+   */
+  const questions = openQuestions(lines)
+  if (succession && chars(questions.rest) > SUCCESSION_LIMIT) {
+    say(1, `succession brief is ${chars(text)} characters, over the limit of ${SUCCESSION_LIMIT} once the open-questions value is set apart (${chars(questions.rest)}): keep Live state to what is live and the rest as pointers`)
+  }
+
+  // The Live state carries the operator's open questions, verbatim: one the successor never saw
+  // is lost at the handover. Missing, empty or still its placeholder is a finding; `none` passes.
+  if (some(/^## Live state/)) {
+    const value = questions.value?.replace(/\s/g, '')
+    if (value === undefined) say(1, 'Live state has no open-questions field: add "The operator\'s open questions", each verbatim, or none')
+    else if (value === '') say(questions.line, 'the open-questions field is empty: write each question verbatim, or none after reading the round')
+    else if (value === '{{LIVE_OPEN_QUESTIONS}}') say(questions.line, 'the open-questions field is still its placeholder: write each question verbatim, or none after reading the round')
+  }
+
+  // A succession brief carries its mode on a line of its own, the line the launcher reads to
+  // start the successor with that mode. A placeholder still there is the first check's.
+  if (succession && !some(/^Mode: (build|investigate) *$/) && !some(/^Mode: \{\{[A-Za-z0-9_]+\}\} *$/)) {
+    say(1, 'succession brief carries no `Mode: build` or `Mode: investigate` line: add it on a line of its own, the mode of the orchestrator that writes it')
+  }
+
+  /*
+   * A brief whose reader confirms the takeover to its own predecessor carries that predecessor's
+   * close, as the launcher's command: a brief written by hand dropped the step, and the
+   * predecessor stayed open after the takeover.
+   */
+  if (some(/takeover confirmed/i) && some(/your predecessor/i) && !some(/close --tty .*--expect-title/)) {
+    say(1, 'succession brief without the predecessor\'s close: the successor closes its predecessor\'s tab with the launcher\'s close --tty and --expect-title, on its "handed over" or after five minutes on a reading of its screen; instantiate the template, never write the brief by hand')
+  }
+  return found
+}
+
+export interface Deps {
+  readonly io: Io
+  /** The plugin's root, where short-names.tsv is. */
+  readonly root: string
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function shortNames(root: string): Set<string> {
+  try {
+    return new Set(rows(readFileSync(join(root, 'short-names.tsv'), 'utf8')).map(r => r.short))
+  } catch {
+    return new Set()
+  }
+}
+
+export function main(argv: readonly string[], deps: Deps): number {
+  const die = (message: string): number => {
+    deps.io.err(`${message}\n`)
+    return 1
+  }
+  let brief = ''
+  const expected: string[] = []
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? ''
+    if (arg === '--expect-created') {
+      const path = argv[++i] ?? ''
+      if (path === '') return die(`brief-lint: --expect-created needs a path (${USAGE})`)
+      expected.push(path)
+    } else if (brief !== '') return die(`brief-lint: one brief at a time (${USAGE})`)
+    else brief = arg
+  }
+  if (brief === '') return die(USAGE)
+  if (!isFile(brief)) return die(`brief-lint: not a file: ${brief}`)
+  const found = lint(readFileSync(brief, 'utf8'), { expected, shortNames: shortNames(deps.root), exists: existsSync })
+  for (const f of found) deps.io.out(`${brief}:${f.line}: ${f.text}\n`)
+  if (found.length === 0) {
+    deps.io.out(`brief-lint: ${brief}: 0 findings\n`)
+    return 0
+  }
+  return die(`brief-lint: ${brief}: ${found.length} finding(s)`)
+}
+
+/* node:coverage ignore next 4 */
+if (isEntry(import.meta.url)) {
+  const script = resolvedPath(process.argv[1] ?? '')
+  process.exitCode = main(process.argv.slice(2), { io: processIo, root: resolve(dirname(script), '..', '..', '..') })
+}

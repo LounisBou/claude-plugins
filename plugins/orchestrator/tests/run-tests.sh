@@ -2050,12 +2050,7 @@ unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL ORCHESTRATOR_HOST_TMP ORCHESTRAT
 echo "== brief lint =="
 
 # The largest category of multi-agent failure is specification, and a brief is this
-# plugin's whole specification act. Two defects reached a live agent before anything
-# Rule 88 of the rules review: the lint's header says what it is for and leaves each check's
-# rule to the comment above its code; the retired check 8 keeps one line.
-check "the lint's header tells no incident and repeats no check" "no|no|no|1" \
-  "$(spells "$LINT" 'Two defects reached a live agent')|$(spells "$LINT" '# Check 13 refuses a pull request title')|$(spells "$LINT" 'demanded an absolute path to context-gauge.sh')|$(grep -c '^# 8\. ' "$LINT")"
-
+# plugin's whole specification act.
 
 check_status "a complete brief passes" 0 bash "$LINT" "$B/good.md"
 check "a complete brief says so" "brief-lint: $B/good.md: 0 findings" "$(bash "$LINT" "$B/good.md" 2>&1)"
@@ -2116,8 +2111,6 @@ check "the succession template, unfilled, still fails on its mode line" "1" \
 printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
 check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
 check "the missing address is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no orchestrator address')"
-check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no STOP-and-ask clause')"
-check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
 # and holding it to one would make the check noise nobody reads.
@@ -2131,110 +2124,8 @@ check_status "a review brief with no norms-check line passes: norms is on demand
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
-# The executor lives until its pull request merges (the operator's ruling of 2026-11-14): a brief
-# that keeps it there, or the shipped phase template that says so, raises no finding.
-for phrase in 'Stay until merged.' 'Once merged, stand down.' 'Stand by for the kept findings.' 'Stay available for the review.'; do
-  ok_brief "$B/stays.md"; printf '%s\n' "$phrase" >> "$B/stays.md"
-  check_status "an executor kept until the merge is no finding: $phrase" 0 bash "$LINT" "$B/stays.md"
-done
-PHASEFILLED="$B/phase-filled.md"
-sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$ROOT/templates/agent-phase-brief.md" > "$PHASEFILLED"
-check "the shipped phase template, filled, orders no background run and no CI wait" "0" \
-  "$(bash "$LINT" "$PHASEFILLED" 2>&1 | grep -cE 'background|waits on CI')"
-
-# Nobody waits on CI in the foreground, and an agent never waits on it at all: an implementer
-# brief that orders a `gh pr checks` watch, a loop of `gh pr view`/`gh pr checks` around a
-# sleep is a finding; a clause that forbids it is not one.
-for phrase in 'Watch it with `gh pr checks 12 --watch --fail-fast`.' 'Run timeout 590 gh pr checks <n> --watch.' \
-              'for i in $(seq 1 120); do gh pr view 12 --json state; sleep 30; done' \
-              'while true; do gh pr checks 12; sleep 60; done'; do
-  ok_brief "$B/ciw.md"; printf '%s\n' "$phrase" >> "$B/ciw.md"
-  check_status "a CI wait is a finding: $phrase" 1 bash "$LINT" "$B/ciw.md"
-  check "and it is named: $phrase" "1" "$(bash "$LINT" "$B/ciw.md" 2>&1 | grep -c 'waits on CI')"
-done
-ok_brief "$B/ciw-loop.md"; printf '```bash\nfor i in $(seq 1 120); do\n  gh pr view 12 --json state\n  gh pr checks 12\n  sleep 30\ndone\n```\n' >> "$B/ciw-loop.md"
-check "a loop over several lines, in a fence, is one finding" "1" "$(bash "$LINT" "$B/ciw-loop.md" 2>&1 | grep -c 'waits on CI')"
-ok_brief "$B/ciw-noloop.md"; printf '```bash\nfor n in 1 2 3; do\n  gh pr view $n --json state\ndone\ngh pr checks 12\n```\n' >> "$B/ciw-noloop.md"
-check "a loop with no sleep, and a single read of the checks, are no wait" "0" "$(bash "$LINT" "$B/ciw-noloop.md" 2>&1 | grep -c 'waits on CI')"
-ok_brief "$B/ciw-forbid.md"; printf 'Never run `gh pr checks 12 --watch`; do not loop on `gh pr view` with a sleep.\n' >> "$B/ciw-forbid.md"
-check_status "a clause that forbids the wait is not one" 0 bash "$LINT" "$B/ciw-forbid.md"
-review_brief "$B/ciw-review.md"; printf 'End the report with `norms-check: tool <head>`.\nRun `gh pr checks 12 --watch`.\n' >> "$B/ciw-review.md"
-check_status "the same command in a review brief is not one" 0 bash "$LINT" "$B/ciw-review.md"
-# The orchestrator, and only it, starts the watch in the background: not a finding outside an
-# implementer brief, still one in it, and any other background run is one everywhere.
-printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`.\n' > "$B/ciw-orch.md"
-check_status "ci-watch.sh in the background is no finding outside an implementer brief" 0 bash "$LINT" "$B/ciw-orch.md"
-ok_brief "$B/ciw-agent.md"; printf 'Start `ci-watch.sh 12` with `run_in_background`.\n' >> "$B/ciw-agent.md"
-check_status "in an implementer brief it still is" 1 bash "$LINT" "$B/ciw-agent.md"
-printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`, and run the suite in the background.\n' > "$B/ciw-orch2.md"
-check_status "a second background run on the line is still one" 1 bash "$LINT" "$B/ciw-orch2.md"
-printf '# memo\n\nRun the suite in the background.\n' > "$B/ciw-orch3.md"
-check_status "another background run outside an implementer brief is still one" 1 bash "$LINT" "$B/ciw-orch3.md"
-# The clause awk must read a line the same way under any locale: a multibyte character before
-# the phrase (an em dash, a guillemet) made it blind under a UTF-8 locale, so both passes run
-# under LC_ALL=C. The locale is set here, not inherited from the runner.
-ok_brief "$B/loc-bg.md"; printf 'Report \xe2\x80\x94 \xc2\xab then run it in the background.\n' >> "$B/loc-bg.md"
-check "check 7 sees a background order after a multibyte character under a UTF-8 locale" "1" \
-  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/loc-bg.md" 2>&1 | grep -c 'background')"
 check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
 check_status "no argument is an error" 1 bash "$LINT"
-
-# An instruction to run something in the background, `run_in_background`, or a command
-# ending in ` &` costs an agent its turn: the host never wakes it back up, and the work is
-# picked up hours later by hand. A clause that FORBIDS it reads the opposite way and must
-# raise nothing, including when the forbidding word sits on the very same line.
-ok_brief "$B/bg-phrase.md"; printf 'Run the coverage suite in the background while you continue.\n' >> "$B/bg-phrase.md"
-check_status "an instruction to run in the background is a finding" 1 bash "$LINT" "$B/bg-phrase.md"
-check "the background instruction is named" "1" "$(bash "$LINT" "$B/bg-phrase.md" 2>&1 | grep -c 'background')"
-
-ok_brief "$B/bg-token.md"; printf 'Pass run_in_background: true to the tool call.\n' >> "$B/bg-token.md"
-check_status "the run_in_background token is a finding" 1 bash "$LINT" "$B/bg-token.md"
-check "the token is named" "1" "$(bash "$LINT" "$B/bg-token.md" 2>&1 | grep -c 'run_in_background')"
-
-ok_brief "$B/bg-amp.md"; printf 'Start it with `long-task.sh &` and move on.\n' >> "$B/bg-amp.md"
-check_status "a command ending in an ampersand is a finding" 1 bash "$LINT" "$B/bg-amp.md"
-check "the trailing ampersand is named" "1" "$(bash "$LINT" "$B/bg-amp.md" 2>&1 | grep -c 'ending in')"
-
-ok_brief "$B/bg-fence.md"; printf '```\nlong-task.sh &\n```\n' >> "$B/bg-fence.md"
-check_status "a fenced command ending in an ampersand is a finding" 1 bash "$LINT" "$B/bg-fence.md"
-
-ok_brief "$B/bg-neg1.md"; printf 'Never run anything in the background.\n' >> "$B/bg-neg1.md"
-check_status "a clause forbidding the background is not a finding" 0 bash "$LINT" "$B/bg-neg1.md"
-
-ok_brief "$B/bg-neg2.md"; printf 'There is no background run allowed here.\n' >> "$B/bg-neg2.md"
-check_status "a clause naming no background run is not a finding" 0 bash "$LINT" "$B/bg-neg2.md"
-
-ok_brief "$B/bg-neg3.md"; printf 'Never end a command with `&`.\n' >> "$B/bg-neg3.md"
-check_status "a clause naming a forbidden ampersand is not a finding" 0 bash "$LINT" "$B/bg-neg3.md"
-
-ok_brief "$B/bg-neg4.md"; printf 'Never run `sleep 5 &` under any circumstance.\n' >> "$B/bg-neg4.md"
-check_status "a forbidding word on the same line as the ampersand raises nothing" 0 bash "$LINT" "$B/bg-neg4.md"
-
-# The forbidding word counts only inside the trigger's own clause, before it: a line that
-# forbids one thing and then orders a background run is an order. And a tool parameter set
-# to false is the very opposite of one.
-ok_brief "$B/bg-clause.md"; printf 'Never skip tests; run the suite in the background.\n' >> "$B/bg-clause.md"
-check_status "a negation in an earlier clause does not cancel the trigger" 1 bash "$LINT" "$B/bg-clause.md"
-ok_brief "$B/bg-dont.md"; printf -- "- Don't run the suite in the background.\n" >> "$B/bg-dont.md"
-check_status "don't forbids the background" 0 bash "$LINT" "$B/bg-dont.md"
-ok_brief "$B/bg-donot.md"; printf -- '- Do not start the coverage run in the background, ever.\n' >> "$B/bg-donot.md"
-check_status "do not forbids the background" 0 bash "$LINT" "$B/bg-donot.md"
-ok_brief "$B/bg-false.md"; printf -- '- Every call carries `run_in_background: false`.\n- Or `run_in_background = false`.\n' >> "$B/bg-false.md"
-check_status "run_in_background set to false is not a finding" 0 bash "$LINT" "$B/bg-false.md"
-ok_brief "$B/bg-second.md"; printf 'Never run the lint in the background, and run the suite in the background.\n' >> "$B/bg-second.md"
-check_status "a second trigger on a line is read in its own clause" 1 bash "$LINT" "$B/bg-second.md"
-ok_brief "$B/bg-nothing.md"; printf 'NOTHING runs in the background.\n' >> "$B/bg-nothing.md"
-check_status "nothing forbids the background" 0 bash "$LINT" "$B/bg-nothing.md"
-ok_brief "$B/bg-run-it.md"; printf 'Run it in the background.\n' >> "$B/bg-run-it.md"
-check_status "run it in the background is still a finding" 1 bash "$LINT" "$B/bg-run-it.md"
-
-check "the shipped templates raise no background finding" "0" \
-  "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'background|run_in_background|ending in')"
-
-# The gauge-path check (lint check 8) retired with the context gauge's shell script: the
-# module measures every session itself, in-process, and no brief cites a script any more.
-# Its eleven cases — the missing path, the variable in its place, the review, comments and
-# rotation briefs held to it, the prose-mention and non-goal clause readings — went with it.
 
 # The class is the role declared at the start of a line, not the phrase anywhere: a review
 # brief or a memo that quotes an implementer brief is not one.
@@ -2243,23 +2134,6 @@ printf 'End the report with `norms-check: tool <head>`.\nThe phase brief opens w
 check_status "a review brief quoting the implementer line gets no implementer finding" 0 bash "$LINT" "$B/review-quotes.md"
 printf '# memo\nThe brief said "You are the implementer for this phase." inline, and You are the REVIEW agent too.\n' > "$B/memo.md"
 check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT" "$B/memo.md"
-
-# A pull request title the brief imposes is held to the operator's writing rule, 60
-# characters: a longer one makes the implementer choose between the brief and the rule.
-title_of() { printf 'x%.0s' $(seq 1 "$1"); }
-ok_brief "$B/title-61.md"; printf -- '- Draft PR through `pr-create --draft`, title `%s`, base `main`.\n' "$(title_of 61)" >> "$B/title-61.md"
-check_status "a 61-character imposed title is a finding" 1 bash "$LINT" "$B/title-61.md"
-check "it is one finding, naming the length and the limit" "1" "$(bash "$LINT" "$B/title-61.md" 2>&1 | grep -c 'title is 61 characters, over the limit of 60')"
-ok_brief "$B/title-60.md"; printf -- '- Draft PR through `pr-create --draft`, title `%s`, base `main`.\n' "$(title_of 60)" >> "$B/title-60.md"
-check_status "a 60-character imposed title is not a finding" 0 bash "$LINT" "$B/title-60.md"
-ok_brief "$B/title-none.md"; printf -- '- Draft PR, base `main`.\n' >> "$B/title-none.md"
-check "a brief with no imposed title raises no title finding" "0" "$(bash "$LINT" "$B/title-none.md" 2>&1 | grep -c 'pull request title')"
-ok_brief "$B/title-placeholder.md"; printf -- '- Draft PR, title `{{PR_TITLE}}`, base `main`.\n' >> "$B/title-placeholder.md"
-check "an unfilled title placeholder is check 1's, not a title finding" "0" "$(bash "$LINT" "$B/title-placeholder.md" 2>&1 | grep -c 'pull request title')"
-
-# The template no longer states the limit: the lint refuses a longer imposed title (rule 62 of the rules review).
-check "the phase brief template leaves the title limit to the lint" "0" "$(grep -c 'title `{{PR_TITLE}}` (at most 60 characters)' "$ROOT/templates/agent-phase-brief.md")"
-
 # The templates name no gauge script any more — the module's measure file replaced it,
 # named in prose as a path under the configuration directory. What the lint must still say
 # of them is that every path they DO name exists.
@@ -5388,8 +5262,6 @@ OQ_PAD=$(( 9100 - $(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ') 
 { cat "$OQ_BIG"; printf '%s\n' "$(head -c "$OQ_PAD" /dev/zero | tr '\0' 'x')"; } > "$OQ_BIG_PLUS"
 check "a succession brief whose open-questions value is a 4,000-character block, the rest within the limit, lints clean" "yes|0" \
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
-check "the lint says the open-questions value is outside the 9,000-character cap, and the succession texts do not say it again" "yes|no|no" \
-  "$(help_has "$LINT" "The open-questions field's value is not counted, its label is")|$(spells "$ORCH_REFS/succession-predecessor.md" '9,000 characters')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
 # The design gives the filled brief's cap the lint enforces (the operator's ruling of 2026-11-04,
 # 9,000 characters) and sends the reader to a lifecycle heading that exists, the section holding
 # the steps' how whatever its subsections are called. A hand-started predecessor is closed on the
@@ -11380,31 +11252,13 @@ PLUGIN_VERSION=$(jq -r .version "$ROOT/.claude-plugin/plugin.json")
 check "both manifests carry the plugin's version" "yes|2" \
   "$(printf '%s' "$PLUGIN_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && echo yes)|$(grep -cF "\"version\": \"$PLUGIN_VERSION\"" "$ROOT/.claude-plugin/marketplace.json")"
 
-# A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
-# Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
-# opening it); the github ready gate puts Ready. brief-lint refuses an implementer
-# brief whose delivery opens a pull request without one of the two. The github plugin's commands
-# are cited by name only: they do not exist on every machine, so nothing here calls them.
-LBL_LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
-LB="$WORK/label-briefs"; mkdir -p "$LB"
-ok_brief "$LB/none.md"
-check_status "an implementer brief that opens no pull request needs no label" 0 bash "$LBL_LINT" "$LB/none.md"
-ok_brief "$LB/bare.md"; printf -- '- Draft PR, title `x`, base `main`.\n' >> "$LB/bare.md"
-check_status "an implementer brief whose delivery opens a draft pull request with no label is a finding" 1 bash "$LBL_LINT" "$LB/bare.md"
-check "and the finding names the two ways" "1" \
-  "$(bash "$LBL_LINT" "$LB/bare.md" 2>&1 | grep -c 'Not Ready.*pr-create --draft.*pr-readiness')"
-ok_brief "$LB/create.md"; printf -- '- Draft PR through `pr-create --draft`, title `x`, base `main`.\n' >> "$LB/create.md"
-check_status "pr-create --draft passes" 0 bash "$LBL_LINT" "$LB/create.md"
-ok_brief "$LB/readiness.md"; printf -- '- Draft PR, then `pr-readiness 12 not-ready`.\n' >> "$LB/readiness.md"
-check_status "pr-readiness not-ready passes" 0 bash "$LBL_LINT" "$LB/readiness.md"
-printf '# review\n\nYou are the REVIEW agent.\n\nOpen the pull request {{PR}} and read it.\n' > "$LB/review.md"
-check "a review brief is not held to it" "0" "$(bash "$LBL_LINT" "$LB/review.md" 2>&1 | grep -c 'Not Ready')"
+# A pull request carries Ready or Not Ready beside the draft: the implementer's opens Not Ready,
+# through `pr-create --draft` or `pr-readiness <n> not-ready`; the github ready gate puts Ready.
 PB_LABEL="$ROOT/templates/agent-phase-brief.md"
 check "the phase brief delivery opens the pull request through pr-create --draft, Not Ready, or pr-readiness not-ready" "yes|yes|yes" \
   "$(spells "$PB_LABEL" 'opened with the github tool'"'"'s `pr-create --draft`')|$(spells "$PB_LABEL" '(it labels `Not Ready`;')|$(spells "$PB_LABEL" '`pr-readiness <n> not-ready`')"
 check "every agent brief template that opens a pull request says Not Ready or pr-create --draft" "0" \
   "$(for t in "$ROOT"/templates/agent-*-brief.md; do grep -qiE 'draft (PR|pull request)' "$t" && ! grep -qE 'Not Ready|pr-create --draft' "$t" && echo "$t"; done | wc -l | tr -d ' ')"
-check "the filled phase brief lints to zero" "0" "$(sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$PB_LABEL" > "$LB/phase.md"; bash "$LBL_LINT" "$LB/phase.md" 2>&1 | grep -c 'Not Ready')"
 
 LR="$WORK/label-ready/dispatch.jsonl"; mkdir -p "$WORK/label-ready"
 bash "$REC" goals "$LR" init --spec none >/dev/null

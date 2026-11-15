@@ -6,7 +6,7 @@ Read before writing any brief: how it is built, the standing rules every prompt 
 
 Write it to `<briefs dir>/<subject>.md`, then let `iterm-agent.sh spawn --brief <path> --orchestrator "<your exact ListAgents name and reference>"` build the startup prompt and spawn the fresh session in the same move (`references/agents.md`). Fill the fields of `${CLAUDE_PLUGIN_ROOT}/templates/agent-phase-brief.md`, a rotation's of `agent-rotation-brief.md`, never retyping their fixed text; a succession writes none, `succession.sh takeover` prints it. **The path must be one the fresh session can open on its machine and must survive until the phase is reviewed** — never only in your context or a container's temporary directory. The repository's policy on workflow artifacts (standing rules) says whether it is committed; state it in the prompt.
 
-**`spawn --brief` lints the brief before any tab exists, and a finding warns on stderr — the launch goes on.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <path>` flags: an unfilled placeholder, an unexpanded variable, a path missing here, a second session reference, a background run, an over-long succession brief, an implementer brief lacking address, non-goals or STOP-and-ask.
+**`spawn --brief` lints the brief before any tab exists, and a finding warns on stderr — the launch goes on.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <path>` flags: an unfilled placeholder, an unexpanded variable, a path missing here, a second session reference, an over-long succession brief, an implementer brief lacking its address.
 
 Its parts, in order:
 
