@@ -11142,6 +11142,12 @@ printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > 
 check "a pane record that names no tty is judged on its host's state alone" \
   "1|4" \
   "$(psround 'Ss ??')|$(psround '?Es ??')"
+# The machine's own ps, no stand-in: this shell's pid runs, a pid no process holds does not.
+printf '{"session":"s-coord","pid":"%s","at":"2026-10-24T09:00:00.000Z"}\n' "$$" > "$DSTATE/pane.json"
+ownps_live=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+printf '{"session":"s-coord","pid":"4999999","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+ownps_dead=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+check "with the machine's own ps a pane record is open on a running pid and not on one no process holds" "1|4" "$ownps_live|$ownps_dead"
 printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
 
 # An entry answered in the pane is never due, pane open or not, and once the coordinator closes

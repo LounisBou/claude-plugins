@@ -4,8 +4,8 @@
 // fill against the gate, the reading's age) the commands print, and the wiring
 // over a faked $ — no pane opened on any start, the pane opened by the
 // command in a coordinator session (the orchestrators) or an orchestrator
-// session (its own agents) alone, a coordinator's opened by itself once at the
-// end of its first turn and its round's first question drawn under its rows, the
+// session (its own agents) alone, never by itself, and a coordinator's round's
+// first question drawn under its rows, the
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
@@ -822,6 +822,7 @@ test('a pane he closed, by the command, the tool or his ✕, stays closed throug
     const fx = coordinatorSession()
     await handlers['command.run'](fx.dollar, supervisionRun)
     expect(fx.opened.length).toBe(1)
+    expect(fx.files.has(PANE_FILE)).toBe(true)
     await close(fx)
     expect(fx.files.has(PANE_FILE)).toBe(false)
     await everyTrigger(fx)
@@ -1691,6 +1692,23 @@ test('a host the machine lists as exiting or a zombie, or on another tty than th
   for (const listing of ['  501 ?Es ??\n', '  501 Z ttys001\n', '  501 Ss ttys009\n']) expect(await listed(listing)).toBe(1)
   // The same host running on the record's tty is a pane.
   expect(await listed('  501 Ss ttys001\n')).toBe(0)
+})
+
+test('a record of this session is dropped whatever pid it names, and one that cannot be removed is said', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young], { paneClosed: true })
+  fx.files.set(PANE_FILE, staleRecord({ pid: '9999' }))
+  await tick()
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+  const stuck = await wakingCoordinator([young], { paneClosed: true })
+  stuck.fx.files.set(PANE_FILE, staleRecord())
+  const run = stuck.fx.dollar.process.run
+  stuck.fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
+    argv[0] === 'rm' ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init)
+  await stuck.tick()
+  expect(stuck.fx.files.has(PANE_FILE)).toBe(true)
+  expect(stuck.fx.written.some(l => l.includes('could not be removed'))).toBe(true)
+  expect(stuck.fx.written.some(l => l.includes('removed') && l.includes('said open'))).toBe(false)
 })
 
 test('a record rewritten by an open while the reconciliation ran is the pane\'s and stays', async () => {
