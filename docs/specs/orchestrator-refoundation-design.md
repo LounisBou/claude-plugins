@@ -37,12 +37,12 @@ operator works.
 1. Every machine-wide fact of the orchestrator is kept by core's store, and `deck.json` is a view of it whose format is unchanged.
 2. A wait is declared by a structured tool call, `declare_wait({kind, blocks})`, and the stop gate decides on it deterministically.
 3. The hooks module is strict TypeScript on core, and every bash script is ported to TypeScript; Python remains only as a thin iTerm2 API adapter.
-4. The machine-to-machine move works end to end on core's store. **Withdrawn**: deleted on 2026-11-14.
+4. The machine-to-machine move works end to end on core's store. **Withdrawn**: deleted by #270.
 5. The local command-text push guard is removed once the program's forge protection has shipped.
 6. Deadlines cancel their work, and no temporary file outlives the write that made it.
 7. The suite blocks on macOS and Linux.
 8. The method kernel is about 2,000 tokens: ten principles, no dated quotation, each tested by ablation.
-9. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured at every release.
+9. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured monthly and before any learned method change merges (`program-design.md`, goal 15).
 10. `routing.py` is reduced to the tier-to-alias map and the cost rule, with one price table.
 11. The orchestrator starts in a mode: `build` loads the method's lifecycle, `investigate` loads supervision, agents, the gauge and the succession only.
 12. The succession brief is generated from the state, its notes of judgment are capped and promoted or dropped at each generation, and a script refuses a brief that misses an open item.
@@ -73,26 +73,26 @@ Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrat
 
 ## State on main (2026-11-15)
 
-Read from the code at orchestrator 0.104.5 (`775d7fdc`). Pull requests are this repository's.
+Read from the code at orchestrator 0.104.5 (`775d7fdc`), rows 3 and 9 at `4ca6f735`. Pull requests are this repository's.
 
 | Goal | State | Evidence | Open, and why |
 |---|---|---|---|
 | 1 | met | the hooks' store on core (`core/store.ts`, `store-io.ts`); `deck.json` (version 3) a view held byte for byte by `hooks/tests/golden-deck.ts`, written only when it differs or is a minute old (#66, #70) | `round/` and `chains/` sit outside `store/`, written under the store's lock convention |
 | 2 | partly met | `declare_wait` (`hooks/wait.ts`; #57, #60); the stop gate decides a turn's wake on the wait it declared alone, a turn that declared none ending on no wait (`checkWake` in `hooks/stop-gate.ts`, #179) | other readers of a turn's last line remain: `undeclaredOperatorWait` and `deferredIds` in `hooks/guards.ts`, and the relay's reading of an agent's `status:` line (`program-design.md`, goal 9) |
-| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | twelve hook files are under the strict check, one of them by import; 26 are not, `supervision.ts`, `stop-gate.ts`, `guards.ts` and `wait.ts` among them. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`; whether that Python is ported is open against the program's non-goal 4 (`program-design.md`, last row of « State on main ») |
-| 4 | withdrawn | the machine-to-machine move (`hooks/move.ts`, `hooks/moving.ts`) was deleted on the operator's order of 2026-11-14 | — |
+| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69), `brief-lint` (#341) and `install` (#340); `ci-watch.sh` and `dispatch-record.sh` are two-line launchers under a comment header | 16 of the 38 hook files are under the strict check, `stop-gate.ts` among them; 22 are not, `supervision.ts`, `guards.ts` and `wait.ts` among them. Bash with logic remains in `coordinator.sh` (port in progress); Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`; whether that Python is ported is open against the program's non-goal 4 (`program-design.md`, last row of « State on main ») |
+| 4 | withdrawn | the machine-to-machine move (`hooks/move.ts`, `hooks/moving.ts`) was deleted by #270 | — |
 | 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
 | 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
 | 7 | met | the suite blocks on Linux, in four shards (#65, #169), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
 | 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 2,153 tokens at a `build` start, 1,552 at an `investigate` start | no principle has been tested by ablation |
-| 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49), the orchestration arm run as an orchestration (#97) | no pilot of the rebuilt arm and no measure is recorded; paid runs are the operator's, under `evals/outcome/caps.json`. « At every release » is open against the monthly cadence of `learning-design.md`, question 4 (`program-design.md`, last row of « State on main ») |
-| 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted on the operator's order of 2026-11-14 | `routing.py` still holds `pick` and `profile` beside the cost rule, and both are in use, so the wording is not met by a deletion. No code calls them; `skills/model-routing/SKILL.md` has every dispatch run `pick`, which is also what reads the tier map (`CLASS_TIERS`, `models.json`). What `pick` holds beyond that map: the operator's hand-written tables and the shipped defaults, the size rule (`--files`, `--lines`), the exploration notch read on the dispatch record, the `corrective=` pair (`docs/agent-dispatches.md`), and the profile inference that names a profile's table, which `profile` prints. Reducing it to the map removes those behaviours: the operator's ruling, not a refactor |
+| 9 | met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49), the orchestration arm run as an orchestration (#97); one measure, `measure-1`, on 2026-11-10 (`program-design.md`, goal 15) | each case ran once per arm (proposal 6); the next measure is due by 2026-12-10 |
+| 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted by #273 | `routing.py` still holds `pick` and `profile` beside the cost rule, and both are in use, so the wording is not met by a deletion. No code calls them; `skills/model-routing/SKILL.md` has every dispatch run `pick`, which is also what reads the tier map (`CLASS_TIERS`, `models.json`). What `pick` holds beyond that map: the operator's hand-written tables and the shipped defaults, the size rule (`--files`, `--lines`), the exploration notch read on the dispatch record, the `corrective=` pair (`docs/agent-dispatches.md`), and the profile inference that names a profile's table, which `profile` prints. Reducing it to the map removes those behaviours, so #325 kept `pick` and `profile`; whether to remove them is open, not yet put to the operator |
 | 11 | met | « Your mode » in `skills/orchestrator/SKILL.md`: `build` loads `method:lifecycle`, `investigate` does not; both starts are scenarios of `ci/scenarios.json` (#74, #75) | — |
 | 12 | met, by another road | `succession.sh takeover` prints the takeover from the state alone (the dispatch record, the to-do list, the round, the goals, agents and pull requests read live): no brief is written, so no note is carried and no brief is left to refuse (#71, #307) | — |
 | 13 | met | the measure file's `start` (the first figure, the brief and its size; `hooks/gauge-core.ts`) (#61, #71) | — |
 
-Phases 1, 2, 5, 6, 10 and 11 are done and 4 is withdrawn; 3, 8 and 9 are partly done, for the
-reasons above; 7 waits on the operator's paid runs.
+Phases 1, 2, 5, 6, 7, 10 and 11 are done and 4 is withdrawn; 3, 8 and 9 are partly done, for the
+reasons above.
 
 ## Constraints
 
@@ -109,7 +109,7 @@ reasons above; 7 waits on the operator's paid runs.
 1. State: goal 1, once core's store exists (program phase 2), with a measured cut in processes spawned per measure event.
 2. `declare_wait`: goal 2.
 3. Strict TypeScript and ports: goals 3 and 6, one script per pull request, `workspace.sh` last.
-4. Move: goal 4, withdrawn: the machine-to-machine move was deleted on the operator's order of 2026-11-14.
+4. Move: goal 4, withdrawn: the machine-to-machine move was deleted by #270.
 5. Push guard: goal 5, after the program's forge protection.
 6. Platforms: goal 7.
 7. Outcome evals: goal 9; six to ten merged pull requests replayed, a spend cap per measure stated before any run, the cap the operator's.
@@ -180,9 +180,9 @@ takes it.
    time, re-measured on the same handovers. Failure-driven compression cut peak tokens by 26 to
    54 % while improving success on non-coding agent benchmarks (Kang et al. 2025, ACON,
    arXiv:2510.00615); the transfer to coding agents is an inference to test, not a result.
-6. **Goal 9's first step: the pilot, run twice.** No pilot has yet measured an orchestration:
-   the two before `outcome-orchestration-arm.md` measured the single arm twice. The next one
-   runs the rebuilt arm, and runs twice on the same case with the same model pair:
+6. **Goal 9's next step: the pilot, run twice.** The measure of 2026-11-10 (`measure-1`) ran the
+   rebuilt arm once on each of six cases; no case has run twice. The next pilot runs twice on the
+   same case with the same model pair:
 
    ```bash
    npm run outcome -- pilot --out <dir-1> --model <agent model> --judge-model <judge model>
