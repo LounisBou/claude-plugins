@@ -448,3 +448,10 @@ test('a state file that cannot be read, or is not valid, is silence', async () =
   expect(await newerInstalled(DEPLOYED_ROOT, reading('not json').read, null)).toBe(null)
   expect(await newerInstalled(DEPLOYED_ROOT, reading('{"version":2}').read, null)).toBe(null)
 })
+
+test('a newer install is told only once no other has followed it for half an hour', async () => {
+  const at = Date.parse('2026-01-01T00:00:00Z')
+  const file = reading(deployState(NEWER, OWN))
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, at + 29 * 60_000)).toBe(null)
+  expect(await newerInstalled(DEPLOYED_ROOT, file.read, null, at + 30 * 60_000)).toEqual({ own: OWN, installed: NEWER })
+})
