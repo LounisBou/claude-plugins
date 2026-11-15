@@ -194,19 +194,13 @@ export function roundPath(stateDir: string, id: string): string {
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
 // pane of the coordinator is open to show it, the operator's ruling of 2026-10-24: whether he
 // keeps the pane open decides where a question goes, and an open pane shows it for as long as
-// it waits. `coordinator.sh round` marks the same entries `due`. Due or not, each new question is
-// also told in one line to the coordinator's conversation (toldText), his ruling of 2026-11-04. A closing proposal is no
-// question: the pane cannot rule it, and the tab always presents it. `now` is kept for the
-// callers, the rule reading no age.
+// it waits. `coordinator.sh round` marks the same entries `due`. A question the open pane shows
+// puts nothing in the coordinator's conversation. A closing proposal is no question: the pane
+// cannot rule it, and the tab always presents it. `now` is kept for the callers, the rule reading
+// no age.
 export function isDue(entry: RoundEntry, _now: number, paneOpen: boolean): boolean {
   if (entry.status !== 'open' || entry.kind !== 'operator') return false
   return entry.urgent === true || !paneOpen
-}
-
-// The one line the coordinator's conversation shows for a new question, pane open or not: its
-// sender and what it blocks, never the question's text, which the round and the pane hold.
-export function toldText(entry: Pick<RoundEntry, 'from' | 'blocks' | 'urgent'>): string {
-  return `Question pending from ${entry.from} — blocks: ${(entry.blocks ?? '').trim() || '-'}${entry.urgent ? ' (urgent)' : ''}`
 }
 
 // The coordinator's wake for the questions just due: a report, never an order — it names them,

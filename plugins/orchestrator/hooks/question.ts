@@ -540,7 +540,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
     closed = await closeRound($, path, current => {
       const asked = current === undefined ? null : parseAsked(current)
       const relayed = asked !== null || current === undefined ? null : parseRoundEntry(current)
-      if (asked !== null) return planAsked(asked, request, me, at)
+      if (asked !== null) return planAsked(asked, request, me, at, shown)
       if (relayed !== null) return planRelayed(relayed, request, me, at, shown)
       if (current !== undefined) return { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
       return { error: `no entry ${request.id} in the round.` }
