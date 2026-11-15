@@ -3606,7 +3606,6 @@ check "the command reference states the title shape once" "1|no|no" \
 # transcript with or without --inherit-model, and the measure file feeds no launch.
 check "no text still says the opening takes the deep tier, the succession depends on --inherit-model or the measure file feeds it" "0|0|0" \
   "$(grep -c 'on the deep tier unless told' "$ROOT/docs/design.md")|$(grep -cE 'whether or not (it is typed|--inherit-model)|^ *# +--inherit-model is typed' "$ITERMCMDS")|$(grep -c -- "launcher's \`--inherit-model\` takes the model" "$ROOT/README.md")"
-rm -rf "$PYC"
 coord_outside_routing() {
   awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
