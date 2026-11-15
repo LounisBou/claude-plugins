@@ -196,20 +196,25 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   }
 
   // Whether the head's CI is still to come, as the github plugin's gate counts it: its result is
-  // PENDING and a check runs, a required check not yet reported being one. A head with a third-party
-  // check alone (a secret scanner) answers yes until the repository's own run has registered.
-  const awaitsCi = async (): Promise<boolean> => {
-    if (resolved === undefined || resolved === '') throw unread(pr, 'gh repo view failed: no repository read')
-    const ran = await deps.gate(resolved, pr)
+  // PENDING and a check runs (a required check not yet reported being one), or the gate could not
+  // read the checks the base requires (`unverified`: green cannot be told), or it speaks of another
+  // head than the one watched. A head with a third-party check alone (a secret scanner) answers yes
+  // until the repository's own run has registered.
+  const awaitsCi = async (name: string, head: string): Promise<boolean> => {
+    const ran = await deps.gate(name, pr)
     if (ran.status !== 0) throw unread(pr, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
-    let ci: { readonly result?: unknown; readonly running?: unknown } | undefined
+    interface Gate { readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown } }
+    let gate: Gate | null = null
     try {
-      ci = (JSON.parse(ran.stdout) as { readonly ci?: typeof ci }).ci
+      gate = JSON.parse(ran.stdout) as Gate | null
     } catch {
       // As an answer with no `ci`: refused below.
     }
+    const ci = gate?.ci
     if (typeof ci?.result !== 'string' || typeof ci.running !== 'number') throw unread(pr, 'pr-gate failed: an answer with no ci result')
-    return ci.result === 'PENDING' && ci.running > 0
+    // A verdict of another head is none: the head is read again before the gate is asked once more.
+    if (typeof gate?.head === 'string' && gate.head.toLowerCase() !== head.toLowerCase()) return true
+    return ci.result === 'PENDING' && (ci.running > 0 || (Array.isArray(ci.unverified) && ci.unverified.length > 0))
   }
 
   const failingNames = async (): Promise<string> =>
@@ -404,7 +409,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     if (!waited) {
       // Every run listed is done and the checks passed: green only once the gate awaits no more CI.
       // The head may move meanwhile, and the bound is the one a run is waited for within.
-      if (!(await awaitsCi())) break
+      if (!(await awaitsCi(resolved, current.head))) break
       if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
       await sleep()
       current = await reread(first)

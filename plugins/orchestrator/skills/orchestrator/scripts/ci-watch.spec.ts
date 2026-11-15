@@ -36,6 +36,10 @@ interface Script {
   repoViewFails?: string
   /** What the gate answers per read, `<RESULT>:<running>` (an answer for no read: SUCCESS:0), or `fail`, or `bad`. */
   gate?: string[]
+  /** The head the gate speaks of (default HA). */
+  gateHead?: string
+  /** What the gate lists as unverified. */
+  gateUnverified?: string[]
 }
 
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
@@ -62,11 +66,12 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
     draftGuard: '/plugin/draft_guard.py',
     gate: async (repo, pr) => {
       gates.push(`${repo}#${pr}`)
+      if (gates.length > 50) throw new Error('the gate is read without end: the bound is ignored')
       const answer = nth('gate', script.gate) ?? 'SUCCESS:0'
       if (answer === 'fail') return failed('error: no GitHub token; run /github:install\nmore\n')
       if (answer === 'bad') return ok('not json\n')
       const [result = '', running = '0'] = answer.split(':')
-      return ok(JSON.stringify({ repo, pr: Number(pr), ci: { result, running: Number(running), failed: [], skipped: [], total: 1, unverified: [] } }))
+      return ok(JSON.stringify({ repo, pr: Number(pr), head: script.gateHead ?? HA, ci: { result, running: Number(running), failed: [], skipped: [], total: 1, unverified: script.gateUnverified ?? [] } }))
     },
     run: async (argv, options = {}) => {
       const line = argv.join(' ')
@@ -311,7 +316,9 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
 test('a head with a third-party check alone is no green: it waits for the repository\'s own run, within the bound', async () => {
   // Only a secret scanner has registered and passed: the gate still counts the required `ci` as running.
   const alone = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:1'] }
-  assert.equal(await said(alone), `no-checks 7 ${HA}|2`)
+  const bounded = fake(alone)
+  assert.equal((await watch(options(), bounded)).line, `no-checks 7 ${HA}`)
+  assert.ok(bounded.gates.length <= 3, `${bounded.gates.length} gate reads inside a bound of 2 s at 1 s`)
   // The run registers late: it is watched to its end, the checks read again, and only then is it green.
   const late = fake({ ...alone, headRuns: ['-', '-', '201:in_progress', '201:completed'], gate: ['PENDING:1', 'PENDING:1', 'SUCCESS:0'], buckets: 'scanner:pass\nci:pass' })
   assert.equal((await watch(options(), late)).line, `green 7 ${HA} ${GATE}`)
@@ -322,12 +329,23 @@ test('a head with a third-party check alone is no green: it waits for the reposi
   await watch(options(['7', '--repo', 'o/r', '--interval', '1']), named)
   assert.deepEqual(named.gates, ['o/r#7'])
   // A head that moves while the run is awaited is said at once.
-  assert.equal(await said({ ...alone, view: [`OPEN ${HA}`, `OPEN ${HB}`] }), `moved 7 ${HA} ${HB}|3`)
+  assert.equal(await said({ ...alone, view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`] }), `moved 7 ${HA} ${HB}|3`)
 })
 
 test('the gate: nothing to await, or a read that failed', async () => {
   // PENDING over something that proved nothing (a skipped check) awaits no run: the line is the bucket read's.
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `green 7 ${HA} ${GATE}|0`)
+  // The result counts: a check running under a result that is no PENDING (a failure, a success) awaits no run.
+  for (const answer of ['FAILURE:1', 'SUCCESS:1']) {
+    assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gate: [answer] }), `green 7 ${HA} ${GATE}|0`, answer)
+  }
+  // The checks the base requires could not be read: green cannot be told, so it waits, then no-checks.
+  const blind = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:0'] }
+  assert.equal(await said({ ...blind, gateUnverified: ['rulesets of main: HTTP 403'] }), `no-checks 7 ${HA}|2`)
+  assert.equal(await said(blind), `green 7 ${HA} ${GATE}|0`)
+  // A verdict of another head is none: the watch waits and reads the pull request again.
+  assert.equal(await said({ ...blind, gateHead: HB }), `no-checks 7 ${HA}|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gateHead: HA.toUpperCase() }), `green 7 ${HA} ${GATE}|0`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }), 'unread 7 pr-gate failed: error: no GitHub token; run /github:install|5')
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['bad'] }), 'unread 7 pr-gate failed: an answer with no ci result|5')
   // A head whose watch is not green never reads the gate.
