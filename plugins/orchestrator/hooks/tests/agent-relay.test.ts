@@ -90,7 +90,7 @@ test('the facts are read from git in the checkout and gh on the pull request the
     const out = answers[argv.join(' ')]
     return out === undefined ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: out }
   }
-  const facts = await readDeliveryFacts(run, `Done.\nclaude-plugins#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`)
+  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`)
   expect(facts).toEqual({ dirty: 2, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } })
   // No verdict line: gh reads the branch's pull request; a run that throws is unread.
   calls.length = 0
@@ -102,7 +102,7 @@ test('the facts are read from git in the checkout and gh on the pull request the
 })
 
 test('a delivery reaches the orchestrator with its facts read on the repository, a false claim said', async () => {
-  const report = 'All green.\nclaude-plugins#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
   const view = (head: string) => JSON.stringify({ number: 12, headRefOid: head, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
   const clean = fake({ repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(SHA) } })
   await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
