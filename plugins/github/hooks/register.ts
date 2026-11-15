@@ -294,7 +294,7 @@ const AUTO_DEPLOY_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-deploy\.json$/
 const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
 const namesExemptions = (text: string) => text.includes(EXEMPT_DIR) || text.includes(PLAN_DIR)
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
-  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "« <the operator\'s words> », <their date>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 
@@ -311,7 +311,7 @@ export function quotedWordsRefusal(what: string, detail: string): string | undef
   if (detail.length > DETAIL_MAX) return asks + ': "detail" is at most ' + DETAIL_MAX + ' characters.'
   if (!QUOTED_DATE.test(detail)) return asks + ': it carries no date.'
   const words = detail.replace(new RegExp(QUOTED_DATE.source, 'g'), ' ').replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ').replace(/[^\p{L}]/gu, '')
-  if (words.length < QUOTE_LETTERS_MIN) return asks + ': it quotes no words, only a date.'
+  if (words.length < QUOTE_LETTERS_MIN) return asks + ': it quotes fewer than ' + QUOTE_LETTERS_MIN + ' letters of his words.'
   return undefined
 }
 
