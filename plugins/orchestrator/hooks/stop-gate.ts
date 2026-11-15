@@ -118,7 +118,7 @@ const DEFER_ROW = 'record his ruling with dispatch-record.sh defer <record> <id>
   + 'and declare a deferred wait'
 const ROW_ONE = `Not done: row %s is open%p. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
 const ROW_MANY = `Not done: rows %s are open%p. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
-// The spec's goals (goals.md beside a registered record, read by goals.py check): done is
+// The spec's goals (goals.md beside a registered record, read by goals.sh check): done is
 // measured against what the spec set out to reach, not against the plan alone.
 const GOALS_OPEN = 'Not done against the spec: %s open%p. Dispatch the work that meets it and record its evidence '
   + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled, '
@@ -560,7 +560,7 @@ export function isSuccessorSpawn(command: string): boolean {
 // The spec's goals come third: the goals each goals.md beside a registered record still
 // holds open, and the faults that make the file no record of the spec (a goal met with no
 // evidence on disk, one ruled out without the operator's words, a row count or a text that
-// is not the spec's). goals.py check reads them, the one implementation of the grammar.
+// is not the spec's). goals.sh check reads them, the one implementation of the grammar.
 //
 // Work the operator deferred (`deferredRows` among the open rows, `goalsDeferred` beside the
 // open goals) is open and put off by his ruling. The ending `waiting: deferred — <n> items`
@@ -629,7 +629,7 @@ export function checkWakeDone(left: {
   return { case: 'not-done', reason: reasons.join(' ') }
 }
 
-// One goals.md as the gate reads it: the path, and goals.py check --json's answer.
+// One goals.md as the gate reads it: the path, and goals.sh check --json's answer.
 export type GoalsReading = {
   path: string
   ok: boolean
@@ -639,7 +639,7 @@ export type GoalsReading = {
   notes: readonly string[]
 }
 
-// goals.py check --json's answer, or null when the text is none: a reading the gate cannot
+// goals.sh check --json's answer, or null when the text is none: a reading the gate cannot
 // parse is a read that failed, and lets the stop pass.
 export function parseGoalsCheck(path: string, text: string): GoalsReading | null {
   try {

@@ -1029,7 +1029,7 @@ async function readRecords($: Held, records: readonly string[], until: number): 
   return texts
 }
 
-// The spec's goals beside each registered record, read by goals.py check — the grammar's one
+// The spec's goals beside each registered record, read by goals.sh check — the grammar's one
 // implementation, shared with dispatch-record.sh. A record with no goals.md is a legacy one,
 // opened before the file existed (open refuses without it now): it passes, said once. A
 // check that cannot run, runs out of time, or cannot read its file lets the stop pass on
@@ -1042,7 +1042,7 @@ async function readGoals($: Held, records: readonly string[], root: string, unti
       await logLine($, 'guards', `stop gate: ${path.replace(/\/goals\.md$/, '')} has no goals.md`)
       continue
     }
-    const done = await inTime($, () => runUntil($, ['python3', `${root}/skills/orchestrator/scripts/goals.py`, 'check', path, '--json'], until), until)
+    const done = await inTime($, () => runUntil($, ['bash', `${root}/skills/orchestrator/scripts/goals.sh`, 'check', path, '--json'], until), until)
     const reading = done && (done.exitCode === 0 || done.exitCode === 1) ? parseGoalsCheck(path, String(done.stdout ?? '')) : null
     if (!reading) {
       await logLine($, 'guards', `stop gate: goals unread: ${path}: ${!done ? 'it did not answer in time' : `it exited ${done.exitCode}`}`)

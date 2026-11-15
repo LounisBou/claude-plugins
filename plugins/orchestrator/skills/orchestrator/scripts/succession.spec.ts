@@ -177,6 +177,8 @@ test('the project sheet reads the objective, the spec goals.md names, the open g
   assert.equal(v.run(), 0)
   assert.match(v.text(), /- Project: no goals\.md beside the record\n/)
   assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open=none; installed: 3 merged PRs not installed, oldest 2 h')
+  assert.equal(projectSheet('# Goals\naim: x\n', ''), 'goals unread: goals.md: no spec: line')
+  assert.equal(projectSheet('spec: none\n| G1 | open | a \\| b | | |\n', ''), 'objective none; spec none; goals met=0/1 open=G1 (plan: none)')
 })
 
 test('the name is the record\'s owner unless given; a record without one, or none at all, is refused', () => {
