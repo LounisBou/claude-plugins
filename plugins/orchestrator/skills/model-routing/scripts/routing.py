@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""routing.py - measure and pick the model/effort pair a dispatch runs on.
+"""routing.py - read the cost of a dispatch and pick the model/effort pair it runs on.
 
-The routing skill chose a tier from a table written by judgment, and nothing measured what
-a dispatch cost or whether a lighter pair would have closed it. Every subcommand here turns
-one part of that judgment into a reading: what a session cost, and which pair a table, else the
-tier map, names for a class. What replayed pull requests say each pair delivers is
-calibration.py's, which this file hands its subcommands to.
+Every subcommand here turns one part of the routing skill's judgment into a reading: what a
+session cost, and which pair a table, else the tier map, names for a class.
 
-Measured data lives in <state dir>/routing/ and names model identifiers; it never enters
-the plugin. Only `export` writes into the plugin, in tier/effort form.
+Data in <state dir>/routing/ names model identifiers; it never enters the plugin.
 """
 
 import argparse
@@ -257,7 +253,7 @@ def cmd_cost(argv):
              m["cache_read"], m["cache_write"]))
 
 
-# The size rule and the trials a rung needs, read by `pick` and by the calibration alike.
+# The size rule and the trials a rung needs, read by `pick`.
 MIN_TRIALS = 6  # graded trials a pair needs in a class with no bench task, record rows only
 SMALL_FILES = 3
 SMALL_LINES = 50
@@ -592,24 +588,13 @@ def cmd_pick(argv):
         print("corrective=%s" % up)
 
 
-# The calibration engine's subcommands live in calibration.py, which reads this file's map,
-# cost rule and tables: imported here only when one of them runs, under this module's name so
-# both read one copy of its state.
-CALIBRATION = ("calibrate", "harvest", "ready", "void", "trial", "bench", "generalize", "show", "export")
 COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick}
 
 
 def main():
-    names = sorted(COMMANDS) + sorted(CALIBRATION)
-    if len(sys.argv) < 2 or sys.argv[1] not in names:
-        die("usage: routing.py {%s} ..." % "|".join(sorted(names)))
-    if sys.argv[1] in COMMANDS:
-        COMMANDS[sys.argv[1]](sys.argv[2:])
-        return
-    sys.modules.setdefault("routing", sys.modules[__name__])
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import calibration
-    calibration.COMMANDS[sys.argv[1]](sys.argv[2:])
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        die("usage: routing.py {%s} ..." % "|".join(sorted(COMMANDS)))
+    COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
 if __name__ == "__main__":

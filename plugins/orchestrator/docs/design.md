@@ -94,10 +94,7 @@ skills/coordinator/scripts/context.ts, skills/coordinator/scripts/liveness.ts, s
 skills/coordinator/scripts/fixture.ts, skills/coordinator/scripts/lock.spec.ts, skills/coordinator/scripts/record.spec.ts, skills/coordinator/scripts/round.spec.ts, skills/coordinator/scripts/sleeping.spec.ts  their node tests, on a context of their own
 skills/model-routing/SKILL.md        which model/effort pair a dispatch gets
 skills/model-routing/scripts/routing.py  the entry point of every routing subcommand: what a session cost under the cost rule, a repository's profile, and the pair a class is picked on from the tables, else the tier map
-skills/model-routing/scripts/calibration.py  the calibration engine routing.py hands its other subcommands to: the bench of merged pull requests, and the tables calibrated from trials and record rows, generalised, shown and exported
 skills/model-routing/defaults/README.md  what the shipped tier/effort tables are and how they are made
-skills/model-routing/references/calibration.md  how the routing tables are measured, generalised and exported, in the operator's order
-skills/model-routing/references/judge-rubric.md  the fixed rubric a bench judge grades a mechanically passing trial by
 templates/agent-phase-brief.md       one implementer, one phase, one PR
 templates/agent-rotation-brief.md    resume brief for a fresh implementer
 templates/agent-review-brief.md      one review round, read-only, readers sized by the orchestrator
@@ -116,7 +113,6 @@ commands/succeed.md                  runs the orchestrator succession
 commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
-commands/calibrate.md                calibrates a project's routing table on the operator's spend cap; generalize and export left to him
 commands/audit.md                    launches an audit of the method on the operator's word
 commands/coordinator.md              starts the machine's coordinator on the operator's word, announced to every orchestrator
 commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
@@ -227,14 +223,11 @@ tests/fixtures/usage/transcript.jsonl, tests/fixtures/usage/prices.json  a trans
 tests/fixtures/goals/spec.md         a spec with a Why and five numbered Goals, one carrying a pipe, for goals.py
 tests/fixtures/routing/prices.json, tests/fixtures/routing/projects/-repo/s-1.jsonl, tests/fixtures/routing/projects/-repo/s-1/subagents/agent-x.jsonl, tests/fixtures/routing/projects/-repo/s-2.jsonl, tests/fixtures/routing/projects/-repo/s-3.jsonl, tests/fixtures/routing/projects/-repo/s-4.jsonl  a price file, a session with a subagent, a prompt crossing the tiered threshold through cache reads, an unpriced model and a transcript with no usage, for routing.py cost
 tests/fixtures/routing/trees/laravel/composer.json, tests/fixtures/routing/trees/laravel/artisan, tests/fixtures/routing/trees/plugin/.claude-plugin/plugin.json, tests/fixtures/routing/trees/plugin/run.sh, tests/fixtures/routing/trees/plugin/a.sh, tests/fixtures/routing/trees/plugin/b.py, tests/fixtures/routing/trees/pycli/pyproject.toml, tests/fixtures/routing/trees/pycli/bin/tool, tests/fixtures/routing/trees/jslib/package.json, tests/fixtures/routing/trees/jslib/index.js  four marker trees a profile is inferred from, for routing.py profile and pick
-tests/fixtures/routing/gh-stub.sh, tests/fixtures/routing/host-stub.sh  a forge and a headless host answering from the environment, for harvest, trial and bench
 docs/design.md                       this document
 docs/state.md                        the machine-wide state files, their writers and how each is written
 docs/specs/2026-10-01-stop-gate-design.md  the stop gate's approved spec
 docs/specs/2026-10-07-hooks-module-design.md  the hooks module's approved spec
 docs/plans/2026-10-07-hooks-module-plan.md     the hooks module's implementation plan
-docs/specs/2026-10-09-model-routing-calibration-design.md  the model routing calibration's approved spec
-docs/plans/2026-10-09-model-routing-calibration-plan.md     the model routing calibration's implementation plan
 docs/agent-dispatches.md             the standing dispatch choices, each with its reason and evidence
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
@@ -538,7 +531,7 @@ A template is read by an agent that does not load the orchestrator skill, so it 
 
 ## 6. Commands
 
-Each command carries its own procedure and points at the skill for the rules. `install` unwires any tap a previous install left and creates the state directory, `uninstall` runs the same unwrap and removes it (section 3.3); `status` lists live sessions with their measured context fill, `agents` reports each running implementer's progress and `progress` says where the build stands — the three answered without a model turn by the module's command handlers, their markdown files kept as the degraded path; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` launches an audit of the method on the operator's word (section 52); `coordinator` and `coordinator-end` start and end the machine's coordinator on the operator's word, `coordinator-decide` runs its decision round over every orchestrator's open questions (section 9.6), and `sleeping` lists the orchestrators it paused and drops one (section 9.5); `supervision` opens or closes the supervision pane; `calibrate` calibrates a project's routing table on the operator's spend cap (`skills/model-routing/references/calibration.md`).
+Each command carries its own procedure and points at the skill for the rules. `install` unwires any tap a previous install left and creates the state directory, `uninstall` runs the same unwrap and removes it (section 3.3); `status` lists live sessions with their measured context fill, `agents` reports each running implementer's progress and `progress` says where the build stands — the three answered without a model turn by the module's command handlers, their markdown files kept as the degraded path; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` launches an audit of the method on the operator's word (section 52); `coordinator` and `coordinator-end` start and end the machine's coordinator on the operator's word, `coordinator-decide` runs its decision round over every orchestrator's open questions (section 9.6), and `sleeping` lists the orchestrators it paused and drops one (section 9.5); `supervision` opens or closes the supervision pane.
 
 A command names in its `allowed-tools` the tools it needs, and nothing more: `progress` lets the artifacts win where they disagree with the state file, and corrects the file before presenting, which is why it holds `Edit` (section 56).
 
