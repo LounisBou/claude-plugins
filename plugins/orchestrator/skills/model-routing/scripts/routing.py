@@ -254,7 +254,7 @@ def cmd_cost(argv):
 
 
 # The size rule and the trials a rung needs, read by `pick`.
-MIN_TRIALS = 6  # graded trials a pair needs in a class with no bench task, record rows only
+MIN_TRIALS = 6  # graded trials a pair needs in a class, record rows only
 SMALL_FILES = 3
 SMALL_LINES = 50
 

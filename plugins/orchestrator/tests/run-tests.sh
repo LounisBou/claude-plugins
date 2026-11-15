@@ -11531,6 +11531,24 @@ check "a negative count, or one that is not a whole number, is a refusal that sa
   "$(zpick --class behaviour-phase --files -1 --lines 3 >/dev/null 2>&1; echo "exit $?")|$(zpick --class behaviour-phase --files -1 --lines 3 2>&1)|$(zpick --class behaviour-phase --files 3 --lines -1 2>&1)|$(zpick --class behaviour-phase --files abc --lines 3 2>&1)|$(zpick --class behaviour-phase --files 2.5 --lines 3 2>&1)"
 check "a refusal prints no pair" "0" "$(zpick --class behaviour-phase --files -1 --lines 3 2>/dev/null | wc -l | tr -d ' ')"
 
+# A shipped ladder is in tier form; the dispatched pair is an alias. The rungs are read
+# through the map, or a shipped ladder's measured floor is never honoured.
+UT="$WORK/unknown-tree"; mkdir -p "$UT"
+XS="$WORK/xstate"; XD="$WORK/xdefaults"; mkdir -p "$XS" "$XD"
+printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$XS/models.json"
+printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"standard/high","floor":0.9,"n":6,"pass_rate":1.0,"ladder":[{"pair":"light/high","n":6,"pass_rate":0.5,"eligible":false},{"pair":"standard/high","n":6,"pass_rate":1.0,"eligible":true}]}}}' > "$XD/global.json"
+for i in 1 2 3; do printf '{"id":%d,"class":"behaviour-phase","model":"b-model","effort":"high","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/x.jsonl"
+xpick() { ORCHESTRATOR_STATE_DIR="$XS" ORCHESTRATOR_ROUTING_DEFAULTS="$XD" python3 "$ROUTING" pick --repo "$UT" --class behaviour-phase --record "$WORK/x.jsonl"; }
+check "a shipped rung measured below the floor, read through the map, is no notch" $'pair=b-model/high source=shipped:global\ncorrective=b-model/xhigh' "$(xpick)"
+printf '{"deep":"a-model","standard":"b-model"}' > "$XS/models.json"
+check "a shipped rung on an unbound tier is skipped: the effort notch stands" "explore=b-model/medium" "$(xpick | sed -n 2p)"
+
+# A rung written before the selection by equivalence has no `equivalent`, and a null one reads
+# the same: the floor rule that selected the table reads it, never the new rule on a key that
+# was not measured.
+check "a rung with no equivalence, or a null one, is read by the floor rule" "True|True|False|False|False" \
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); e={"floor":0.9}; f=lambda r: m.failed_rung(r, e); print("|".join(str(x) for x in (f({"n":8,"pass_rate":0.5}), f({"n":8,"pass_rate":0.5,"covered":None,"equivalent":None}), f({"n":8,"pass_rate":1.0}), f({"n":8,"pass_rate":1.0,"covered":None,"equivalent":None}), f({"n":2,"pass_rate":0.5,"equivalent":None}))))' "$ROUTING")"
+
 echo "== routing: the skill =="
 
 MR="$ROOT/skills/model-routing/SKILL.md"
@@ -11547,8 +11565,8 @@ CLASSES="$(python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_fil
 check "pick knows classes to name" "yes" "$([ -n "$CLASSES" ] && echo yes || echo no)"
 check "the skill's table names every class pick knows, in backticks" "" \
   "$(for c in $CLASSES; do grep -qF "\`$c\`" "$MR" || echo "$c"; done)"
-# The notch an exploration may take is ladder_down's to choose (its checks above refuse a notch
-# measured and found not equivalent): the skill names neither that rule nor a floor.
+# The notch an exploration may take is ladder_down's to choose: the skill names neither that
+# rule nor a floor.
 check "the routing skill leaves the notch to pick, and names no floor" "yes|no|no" \
   "$(spells "$MR" 'allows a try one notch below')|$(spells "$MR" 'measured and found not equivalent to the best')|$(spells "$MR" 'measured below the floor')"
 check "the skill passes the phase's size to pick: both options, and the two thresholds of the readings" "yes|yes|yes|yes" \
