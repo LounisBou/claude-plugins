@@ -4,9 +4,9 @@
 // dialog in the session's own tab reaches neither the coordinator's pane nor a `waiting:`
 // line, so the operator is never told a session is blocked on him.
 import { expect, test } from 'claude-code/testing'
-import { asksTheMode, MODE_DIALOG_DENY, WAITED_ON_DIALOG_DENY } from '../mode-dialog.ts'
+import { asksTheMode } from '../mode-dialog.ts'
 import { register as registerGuards } from '../guards.ts'
-import { logLineOf } from './fakes.ts'
+import { journalled, logLineOf } from './fakes.ts'
 
 const modeDialog = {
   tool: 'AskUserQuestion',
@@ -81,11 +81,13 @@ test('the guard mounts on the dialog tool', () => {
   expect(mounted().matcher).toEqual({ tool: 'AskUserQuestion' })
 })
 
-test("an orchestrator's dialog for its mode is denied with the way to ask it", async () => {
+test("an orchestrator's dialog for its mode is let through, with one escape in the journal", async () => {
   const { guard } = mounted()
-  const out = await call(guard, fakeDollar('Orch: belt'), modeDialog)
-  expect((out.answer as any).deny).toBe(MODE_DIALOG_DENY)
-  expect(out.passed).toBeNull()
+  const fx = journalled(fakeDollar('Orch: belt'))
+  const out = await call(guard, fx.dollar, modeDialog)
+  expect(out.passed).toBe(modeDialog)
+  expect(out.answer).toBe(modeDialog)
+  expect(fx.journal()).toEqual(['escape orchestrator.mode.dialog'])
 })
 
 test("an orchestrator's other dialog, and any other session's mode dialog, pass", async () => {
@@ -97,8 +99,8 @@ test("an orchestrator's other dialog, and any other session's mode dialog, pass"
 })
 
 // A session others wait on never asks in a dialog (method:lifecycle, « Questions to the operator »):
-// while a coordinator runs, an orchestrator's or the coordinator's dialog is denied, and the question
-// goes to the round, whose pane presents it.
+// while a coordinator runs, an orchestrator's or the coordinator's dialog is observed: it opens, and
+// the journal holds one escape.
 function withCoordinator(launchName: string | null): any {
   const dollar = fakeDollar(launchName)
   const record = '/tmp/h/.claude/claude-orchestrator/coordinator.json'
@@ -108,13 +110,16 @@ function withCoordinator(launchName: string | null): any {
   } } }
 }
 
-test('while a coordinator runs, an orchestrator\'s or the coordinator\'s dialog is denied, the question sent to the round; an agent\'s passes', async () => {
+test('while a coordinator runs, an orchestrator\'s or the coordinator\'s dialog is let through with one escape; an agent\'s passes with none', async () => {
   const { guard } = mounted()
   for (const name of ['Orch: belt', 'Coord: ops']) {
-    const out = await call(guard, withCoordinator(name), otherDialog)
-    expect((out.answer as any).deny).toBe(WAITED_ON_DIALOG_DENY)
-    expect(out.passed).toBeNull()
+    const fx = journalled(withCoordinator(name))
+    const out = await call(guard, fx.dollar, otherDialog)
+    expect(out.passed).toBe(otherDialog)
+    expect(fx.journal()).toEqual(['escape orchestrator.dialog.waited-on'])
   }
-  const agent = await call(guard, withCoordinator('Agent: x'), otherDialog)
+  const fx = journalled(withCoordinator('Agent: x'))
+  const agent = await call(guard, fx.dollar, otherDialog)
   expect(agent.answer).toBe(agent.passed)
+  expect(fx.journal()).toEqual([])
 })

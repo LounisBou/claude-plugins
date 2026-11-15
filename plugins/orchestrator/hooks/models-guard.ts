@@ -5,6 +5,8 @@
 // an orchestrator to « bind the three tiers in models.json » was followed over the rule:
 // prose alone lost. guards.ts holds the $ that reads the session's role and the prompt.
 
+// A Bash line that overwrites the map destroys the operator's bindings, with no backup: it keeps
+// refusing (the deletion class). A file tool's write is observed by guards.ts.
 export const MODELS_DENY = 'The tier map is the operator\'s (model-routing, « Pairs, tiers and the map »): '
   + 'put the binding to him as one arbitration. A pair `pick` returned goes in the brief and the record.'
 
