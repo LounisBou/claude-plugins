@@ -16,6 +16,7 @@ import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/dead
 import type { ConsentSubject } from '../core/consent-record.ts'
 import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
+import type { ChainEntry } from '../core/chain-entries.ts'
 import type { Host } from './host.ts'
 
 // A parsed value that holds fields: an object, an array among them.
@@ -238,7 +239,6 @@ export function hostStatusOf(text: string): 'idle' | 'busy' | null {
   }
 }
 
-export type ChainEntry = { tab_id: unknown; tty: string; owner?: unknown; resident?: unknown }
 export type OwnAgent = { label: string; state: 'idle' | 'busy'; tty: string }
 
 // own_agents() ported: the chain entries this session wrote that still run an agent,
@@ -283,28 +283,8 @@ export async function chainOwner($: Host<'env'>): Promise<string> {
   return session.includes(':') ? session.slice(session.lastIndexOf(':') + 1) : ''
 }
 
-// chain_read() ported over an already-read text (iterm_agent.py:1009-1020): entries
-// with a tab id and a tty. One line that is no JSON empties the whole file, as the
-// launcher's own read does — its writes are atomic, so a bad line means the file is
-// not a chain, and the remains of a non-atomic write must not leave a stranger's
-// entry anchoring the stop. An entry that parses but is no dict, or carries no tab
-// id, is dropped alone.
-export function chainEntries(text: string): ChainEntry[] {
-  const entries: ChainEntry[] = []
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue
-    let entry: unknown
-    try {
-      entry = JSON.parse(line)
-    } catch {
-      return []
-    }
-    if (entry && typeof entry === 'object' && (entry as ChainEntry).tab_id && typeof (entry as ChainEntry).tty === 'string') {
-      entries.push(entry as ChainEntry)
-    }
-  }
-  return entries
-}
+// The chains are read through core's parser; supervision.ts still imports it under this name.
+export { parseChain as chainEntries } from '../core/chain-entries.ts'
 
 // --- the pull request of an idle agent (stop_gate.py:250-288) ----------------------------
 

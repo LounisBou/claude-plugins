@@ -328,3 +328,40 @@ test('an orchestrator whose name names no orchestration owns no record, an unown
   await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/54'))
   expect(world.files.get(loose)).toBe(ROWS)
 })
+
+// A merge the orchestrator runs through the github tool, and the open rows of its record that wait on it.
+const WAITERS = [
+  JSON.stringify({ id: 2, state: 'open', label: 'P17 scraper', note: 'Dispatched 2026-11-15: Agent: p17' }),
+  JSON.stringify({ id: 3, state: 'open', label: 'P18 cache', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p18' }),
+  JSON.stringify({ id: 4, state: 'open', label: 'P19 ui', blocker: 'none', note: 'stacked on app#17, merge main once it lands' }),
+  JSON.stringify({ id: 5, state: 'closed', label: 'P16', blocker: 'PR acme/app#17 merged' }),
+  JSON.stringify({ id: 6, state: 'open', label: 'later', blocker: 'PR acme/app#17 merged', deferred: 'later, 2026-11-15' }),
+  JSON.stringify({ id: 7, state: 'open', label: 'other repo', blocker: 'PR acme/lib#17 merged' }),
+  ledgerLine(17, 'working', { agent: 'Agent: p17' }),
+].join('\n') + '\n'
+const merge = (extra: object = {}) => ({ tool: 'mcp__github__gh', command: 'pr-merge', repo: 'acme/app', args: { pr: 17 }, ...extra })
+const MERGED = { result: 'merged 0123abc' }
+
+test('a merge the orchestrator runs names, in its answer, the open rows that wait on it by their blocker or their note', async () => {
+  const { dollar } = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
+  expect(await call(mounted(), dollar, merge(), MERGED)).toEqual({
+    result: 'merged 0123abc\n[module] acme/app#17 merged; open rows waiting on it: row 3 « P18 cache » (Agent: p18), row 4 « P19 ui ». Tell each one\'s agent now.',
+  })
+})
+
+test('a merge naming no repository takes the one the record\'s ledger holds for its number', async () => {
+  const { dollar } = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
+  const out = await call(mounted(), dollar, merge({ repo: undefined }), MERGED) as { result: string }
+  expect(out.result).toContain('[module] acme/app#17 merged; open rows waiting on it: row 3')
+  expect(out.result).not.toContain('row 7')
+})
+
+test('a merge nothing waits on, an agent\'s merge, a failed merge and another command leave the answer as it came', async () => {
+  const handlers = mounted()
+  const orch = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
+  expect(await call(handlers, orch.dollar, merge({ args: { pr: 99 } }), MERGED)).toEqual(MERGED)
+  expect(await call(handlers, orch.dollar, merge(), { result: 'HTTP 405', isError: true })).toEqual({ result: 'HTTP 405', isError: true })
+  expect(await call(handlers, orch.dollar, merge({ command: 'pr-get' }), MERGED)).toEqual(MERGED)
+  const agent = fake({ rows: { [RECORD]: WAITERS } })
+  expect(await call(handlers, agent.dollar, merge(), MERGED)).toEqual(MERGED)
+})
