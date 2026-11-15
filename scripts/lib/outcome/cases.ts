@@ -46,9 +46,19 @@ export interface Caps {
   readonly cases: number
 }
 
+/** What the evals of one learning retrospective may spend: the ablations of the prompt rules it proposes. */
+export interface RetrospectiveCaps {
+  /** The whole retrospective's eval spend stops here. */
+  readonly runUsd: number
+  /** How many prompt-rule candidates one retrospective may prove. */
+  readonly promptRules: number
+}
+
 export interface CapsFile {
   readonly version: 1
   readonly runs: Readonly<Record<Mode, Caps>>
+  /** Absent, a retrospective spends nothing on evals. */
+  readonly retrospective?: RetrospectiveCaps
 }
 
 const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -123,7 +133,17 @@ export function parseCapsFile(raw: unknown, origin: string = CAPS_FILE): CapsFil
   if (raw['version'] !== 1) throw new Error(`${origin}: "version" must be 1`)
   const runs = raw['runs']
   if (!isRecord(runs)) throw new Error(`${origin}: "runs" must be an object`)
-  return { version: 1, runs: { pilot: parseCaps(runs['pilot'], `${origin} pilot`), measure: parseCaps(runs['measure'], `${origin} measure`) } }
+  const parsed = { version: 1 as const, runs: { pilot: parseCaps(runs['pilot'], `${origin} pilot`), measure: parseCaps(runs['measure'], `${origin} measure`) } }
+  const retrospective = raw['retrospective']
+  if (retrospective === undefined) return parsed
+  if (!isRecord(retrospective)) throw new Error(`${origin} retrospective: must be an object`)
+  return {
+    ...parsed,
+    retrospective: {
+      runUsd: field(retrospective, 'runUsd', `${origin} retrospective`, isPositive, 'a positive amount'),
+      promptRules: field(retrospective, 'promptRules', `${origin} retrospective`, isCount, 'a positive count'),
+    },
+  }
 }
 
 /** The cases a run replays: the one named, or the first `caps.cases` of the file. */

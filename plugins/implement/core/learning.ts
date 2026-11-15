@@ -530,6 +530,231 @@ export function parseCandidate(raw: unknown): Candidate | undefined {
   return { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos }
 }
 
+// ----- the candidate's state -----
+//
+// What the retrospective judges of a candidate and what becomes of it, one file per signature under
+// the learning plugin's state directory, written by its script and by nothing else. The candidate is
+// kept whole as the provenance (its signature, its events by identifier, its pull requests); the
+// cause is a structured claim or « unresolved »; the remedy names its scope, its rung and its proof.
+// A state added later (a guard in warn, then enforced; a remedy archived) is a new version of this
+// contract, read beside this one.
+
+export const CANDIDATE_STATE_CONTRACT = {
+  version: 1,
+  // proposed: judged, a remedy named; merged: its pull request landed; ineffective: the signature
+  // did not fall after it; rejected: the operator ruled against it; unresolved: no cause was found.
+  states: ['proposed', 'merged', 'ineffective', 'rejected', 'unresolved'],
+  scopes: ['project', 'language', 'method', 'personal'],
+  rungs: ['guard', 'lint', 'test', 'routing', 'prompt-rule'],
+  confidences: ['low', 'medium', 'high'],
+  // The proof a rung carries: a prompt rule its eval case, any other its test.
+  proofs: ['test', 'eval-case'],
+  text_max: 600,
+  alternatives_max: 5,
+  // A candidate already rejected or left unresolved is judged again at this many times its events.
+  again_factor: 2,
+  // The directory under the learning plugin's state directory, and that plugin's name.
+  plugin: 'learning',
+  dir: 'candidates',
+  patterns: { eval_case: '^[a-z0-9]+(?:-[a-z0-9]+)*$' },
+} as const
+
+const stateContract = CANDIDATE_STATE_CONTRACT
+
+export const CANDIDATE_STATE_VERSION = stateContract.version
+
+export type CandidateStateName = (typeof stateContract.states)[number]
+export type Scope = (typeof stateContract.scopes)[number]
+export type Rung = (typeof stateContract.rungs)[number]
+export type Confidence = (typeof stateContract.confidences)[number]
+
+/**
+ * The cause of a cluster, as a claim that can be checked: the first upstream failure (the earliest
+ * step that changed the path, not the last symptom), the counterfactual (had that step been right,
+ * would the failure still have occurred), the events it rests on, the alternatives weighed, a
+ * confidence. Or none found, with the observation that would have decided.
+ */
+export type Cause =
+  | { readonly resolved: true; readonly first_failure: string; readonly counterfactual: string; readonly evidence: readonly string[]; readonly alternatives: readonly string[]; readonly confidence: Confidence }
+  | { readonly resolved: false; readonly observation: string }
+
+export type Proof = { readonly type: 'test'; readonly path: string } | { readonly type: 'eval-case'; readonly case: string }
+
+export interface Remedy {
+  readonly scope: Scope
+  readonly rung: Rung
+  /** The repository the remedy lands in. */
+  readonly target: string
+  readonly proof: Proof
+}
+
+export interface CandidateState {
+  readonly v: number
+  readonly signature: string
+  readonly state: CandidateStateName
+  /** When the candidate entered this state. */
+  readonly at: string
+  /** The candidate as the distiller computed it when it was judged. */
+  readonly candidate: Candidate
+  readonly cause: Cause
+  /** Null only where the cause is unresolved. */
+  readonly remedy: Remedy | null
+  /** The remedy's pull request, as `owner/name#7`. */
+  readonly pr: string | null
+  /** The operator's ruling, where the state is `rejected`. */
+  readonly ruling: string | null
+}
+
+/** What the retrospective gives of a candidate: its judgment, and nothing code computes. */
+export interface Judgement {
+  readonly signature: string
+  readonly cause: Cause
+  readonly remedy: Remedy | null
+}
+
+const EVAL_CASE = new RegExp(stateContract.patterns.eval_case)
+
+const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '' && value.length <= stateContract.text_max
+
+function causeOf(raw: unknown, candidate: Candidate): Cause | string {
+  const resolved = typeof raw === 'object' && raw !== null ? (raw as Fields)['resolved'] : undefined
+  if (resolved === false) {
+    const { observation } = fieldsOf(raw, ['resolved', 'observation']) ?? {}
+    return isText(observation) ? { resolved, observation } : 'an unresolved cause names the observation that would have decided, in `observation`'
+  }
+  if (resolved !== true) return 'the cause says `resolved`, true or false'
+  const { first_failure, counterfactual, evidence, alternatives, confidence } = fieldsOf(raw, ['resolved', 'first_failure', 'counterfactual', 'evidence', 'alternatives', 'confidence']) ?? {}
+  if (!isText(first_failure) || !isText(counterfactual)) return 'a resolved cause holds `first_failure`, `counterfactual`, `evidence`, `alternatives` and `confidence`, each text non-empty and short'
+  if (!isRising(evidence, isId) || evidence.length === 0 || !evidence.every(id => candidate.events.includes(id))) return 'the cause\'s `evidence` is one or more of the candidate\'s event identifiers, in order'
+  if (!Array.isArray(alternatives) || alternatives.length === 0 || alternatives.length > stateContract.alternatives_max || !alternatives.every(isText)) return 'the cause\'s `alternatives` are the other causes weighed, one at least'
+  if (!isOneOf(stateContract.confidences, confidence)) return `the cause's \`confidence\` is one of ${stateContract.confidences.join(', ')}`
+  return { resolved, first_failure, counterfactual, evidence, alternatives, confidence }
+}
+
+function proofOf(raw: unknown): Proof | undefined {
+  const type = typeof raw === 'object' && raw !== null ? (raw as Fields)['type'] : undefined
+  if (type === 'test') {
+    const { path } = fieldsOf(raw, ['type', 'path']) ?? {}
+    return isPath(path) ? { type, path } : undefined
+  }
+  if (type === 'eval-case') {
+    const fields = fieldsOf(raw, ['type', 'case']) ?? {}
+    const name = fields['case']
+    return matches(EVAL_CASE, name, contract.check_name_max) ? { type, case: name } : undefined
+  }
+  return undefined
+}
+
+/**
+ * Whether the candidate's evidence places a lesson at `scope`: a project's events come from one
+ * repository, a language's or the method's from two at least, a personal one from the operator's answers.
+ */
+export function scopeFits(candidate: Candidate, scope: Scope): boolean {
+  if (scope === 'personal') return candidate.kind === 'answer'
+  return scope === 'project' ? candidate.repos.length <= 1 : candidate.repos.length >= 2
+}
+
+function remedyOf(raw: unknown, candidate: Candidate): Remedy | string {
+  const { scope, rung, target, proof: rawProof } = fieldsOf(raw, ['scope', 'rung', 'target', 'proof']) ?? {}
+  if (!isOneOf(stateContract.scopes, scope) || !isOneOf(stateContract.rungs, rung) || !isRepo(target)) {
+    return `a remedy holds \`scope\` (${stateContract.scopes.join(', ')}), \`rung\` (${stateContract.rungs.join(', ')}), \`target\` (owner/name) and \`proof\``
+  }
+  const proof = proofOf(rawProof)
+  if (proof === undefined || (proof.type === 'eval-case') !== (rung === 'prompt-rule')) return 'the proof is { "type": "test", "path" } for a code remedy, { "type": "eval-case", "case" } for a prompt rule'
+  if (!scopeFits(candidate, scope)) return `the candidate's events do not place a lesson at the scope ${scope}: it names ${candidate.repos.length} repositories and its kind is ${candidate.kind}`
+  if (scope === 'project' && candidate.repos.length === 1 && target !== candidate.repos[0]) return `a project remedy lands in the repository of its events, ${candidate.repos[0]}`
+  return { scope, rung, target, proof }
+}
+
+/**
+ * The state `raw` holds, or the sentence that says what breaks the contract: exactly its fields, a
+ * candidate of the contract under the same signature, a cause with every part of its claim, a remedy
+ * with its scope, its rung and its proof unless the cause is unresolved, a pull request once merged,
+ * a ruling where rejected and only there.
+ */
+export function readCandidateState(raw: unknown): CandidateState | string {
+  const top = fieldsOf(raw, ['v', 'signature', 'state', 'at', 'candidate', 'cause', 'remedy', 'pr', 'ruling'])
+  if (!top) return 'a candidate\'s state holds exactly v, signature, state, at, candidate, cause, remedy, pr and ruling'
+  const { v, signature, state, at, pr, ruling } = top
+  const candidate = parseCandidate(top['candidate'])
+  if (v !== CANDIDATE_STATE_VERSION || !isOneOf(stateContract.states, state) || !isTime(at)) return `the state is version ${CANDIDATE_STATE_VERSION}, one of ${stateContract.states.join(', ')}, at a time`
+  if (candidate === undefined || candidate.signature !== signature) return 'the state holds the candidate of its signature, as the distiller computed it'
+  const cause = causeOf(top['cause'], candidate)
+  if (typeof cause === 'string') return cause
+  const remedy = top['remedy'] === null ? null : remedyOf(top['remedy'], candidate)
+  if (typeof remedy === 'string') return remedy
+  if ((remedy === null) !== !cause.resolved) return 'a resolved cause has a remedy and an unresolved one has none'
+  if ((state === 'unresolved') !== !cause.resolved) return 'the state is `unresolved` where the cause is, and only there'
+  if (!nullable(pr, isPrOf) || ((state === 'merged' || state === 'ineffective') && pr === null) || (remedy === null && pr !== null)) return 'a remedy merged or ineffective names its pull request, as owner/name#7; no remedy, no pull request'
+  if (!nullable(ruling, isText) || (state === 'rejected') !== (ruling !== null)) return 'a rejected candidate holds the ruling, and no other state does'
+  return { v, signature, state, at, candidate, cause, remedy, pr, ruling }
+}
+
+/** The state `raw` holds, or undefined when it breaks the contract. */
+export function parseCandidateState(raw: unknown): CandidateState | undefined {
+  const read = readCandidateState(raw)
+  return typeof read === 'string' ? undefined : read
+}
+
+/** The state a judgment gives its candidate at `at`: proposed, or unresolved; or the sentence that says what the judgment lacks. */
+export function judged(candidate: Candidate, judgement: unknown, at: string): CandidateState | string {
+  const fields = fieldsOf(judgement, ['signature', 'cause', 'remedy'])
+  if (!fields || fields['signature'] !== candidate.signature) return 'a judgment holds exactly `signature` (the candidate\'s), `cause` and `remedy`'
+  const cause = fields['cause']
+  const isUnresolved = typeof cause === 'object' && cause !== null && (cause as Fields)['resolved'] === false
+  return readCandidateState({
+    v: CANDIDATE_STATE_VERSION, signature: candidate.signature, state: isUnresolved ? 'unresolved' : 'proposed', at, candidate,
+    cause, remedy: fields['remedy'], pr: null, ruling: null,
+  })
+}
+
+/** `state` moved to another state at `at`, with its pull request or its ruling; or the sentence that says what the move lacks. */
+export function moved(state: CandidateState, to: { readonly state: CandidateStateName; readonly pr?: string | null; readonly ruling?: string | null }, at: string): CandidateState | string {
+  return readCandidateState({ ...state, state: to.state, at, pr: to.pr ?? state.pr, ruling: to.ruling ?? (to.state === 'rejected' ? state.ruling : null) })
+}
+
+/**
+ * Whether the retrospective judges `candidate`: one with no state yet, or one rejected or left
+ * unresolved whose events have since reached `again_factor` times the count it was judged at. A
+ * candidate proposed, merged or ineffective is in flight and is not judged twice.
+ */
+export function isDue(candidate: Candidate, state: CandidateState | undefined): boolean {
+  if (state === undefined) return true
+  if (state.state !== 'rejected' && state.state !== 'unresolved') return false
+  return candidate.events.length >= stateContract.again_factor * state.candidate.events.length
+}
+
+/** The directory of the candidates' states under the host's configuration directory. */
+export function candidateStateDir(configDir: string): string {
+  return `${configDir}/${stateContract.plugin}/${stateContract.dir}`
+}
+
+/** The file of a signature's state: the signature, its `:` written `_`, which no signature holds. */
+export function candidateStateFile(signature: string): string {
+  return `${signature.replaceAll(':', '_')}.json`
+}
+
+// ----- the retrospective's start -----
+//
+// What a lifecycle boundary runs to start a retrospective: one command of the learning plugin, which
+// decides by itself whether enough candidates wait and starts the session. Held here so that the
+// plugins that call it and the one that answers read the same line.
+
+export const RETROSPECTIVE_CONTRACT = {
+  script: 'skills/learning/scripts/retrospective.ts',
+  // A retrospective starts at this many candidates to judge, and not again within these hours.
+  min_candidates: 3,
+  again_hours: 24,
+  // The digest's ceiling, in characters (about 4,000 tokens), and the events it shows of a candidate.
+  digest_max_chars: 16_000,
+  digest_events: 6,
+} as const
+
+/** The command line that starts a retrospective when the candidates reach the threshold, from the learning plugin's install directory. */
+export function retrospectiveStartArgv(root: string, configDir: string): string[] {
+  return ['node', '--experimental-strip-types', '--no-warnings', `${root.replace(/\/+$/, '')}/${RETROSPECTIVE_CONTRACT.script}`, 'start', '--config', configDir]
+}
+
 // ----- version 2: the audit trail -----
 //
 // The facts an auditor needs to say where a pull request's time went and how the method held,
