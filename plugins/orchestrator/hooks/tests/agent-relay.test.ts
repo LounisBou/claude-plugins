@@ -500,7 +500,8 @@ test('a gate send that fails is logged and tried again on the next measure', asy
   fx.usage.context.tokens = 400000
   await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.logged.some(l => l.includes('gate: not delivered to Orch: belt'))).toBe(true)
-  expect(fx.files.has(GATE)).toBe(false)
+  // The agent itself was told; only its orchestrator's line is owed at the next measure.
+  expect(fx.files.get(GATE)).toBe('told\n')
 })
 
 // --- a turn that ends without its status line ---------------------------------------------

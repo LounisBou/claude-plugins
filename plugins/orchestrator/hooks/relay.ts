@@ -315,6 +315,13 @@ export function gateText(name: string, tokens: number, percent: number): string 
   return `[module] ${name} context ${tokens.toLocaleString('en-US')} (${percent}%) — at the gate`
 }
 
+// The same crossing said to the agent itself, in its own session, once per crossing: it cannot
+// read its own figure, so the stand-down starts from this line, not from its brief alone.
+export function gateSelfText(tokens: number, percent: number): string {
+  return `[module] Your context is ${tokens.toLocaleString('en-US')} (${percent}%): you are at your context gate. `
+    + 'Finish the unit in hand, write your hand-over, then stop.'
+}
+
 // The deduplication key of an agent's turn that ended without its status line, kept in the
 // wait file's `relayed` like a status line's fingerprint. It names the turn, never the kind:
 // one turn handled twice is one key, and the turn after it is another, so a report written
