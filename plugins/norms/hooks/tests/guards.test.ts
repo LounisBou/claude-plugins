@@ -6,7 +6,8 @@ import { parseJournalEvent } from '../../core/learning.ts'
 import { agentBashDecision, bashDecision, AGENT_DELETE_REFUSAL, AGENT_UNREADABLE_REFUSAL, PUSH_REFUSAL, editDecision, pushQuestion, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
 import { register as registerAll } from '../register.ts'
 import { register as registerRecord, markScope } from '../record.ts'
-import { mount, hook, nextOf, fakeDollar, HEAD, type Hook } from './fakes.ts'
+import { mount, hook, nextOf, fakeDollar, skillHookOf, HEAD, type Hook, type World, type Call } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
 import { observedAs, watchJournal } from './journal.ts'
 
 test('under /norms:check, an edit is found on the command turn and after pass or discuss, and none of them is irreversible', () => {
@@ -135,12 +136,12 @@ test('the hooks follow the session: command, the user\'s words, an interrupt, an
   const hooks = mount(register)
   const { $ } = fakeDollar({})
   const journal = watchJournal($)
-  const run = (e: any) => hook(hooks, 'command.run', { command: e.command }).handler($, e, nextOf().next)
+  const run = (e: { command: string; args: string }) => hook(hooks, 'command.run', { command: e.command }).handler($, e, nextOf().next)
   const say = (text: string, kind = 'composer') => hook(hooks, 'prompt.submit').handler($, { text, origin: { kind } }, nextOf().next)
   const edit = async (file_path: string, agentId?: string) => {
     const { next, seen } = nextOf()
-    const out = await hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path, agentId }, next)
-    return seen.length && !out?.deny ? 'ran' : out.deny
+    const out = await hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path, ...(agentId === undefined ? {} : { agentId }) }, next)
+    return seen.length && !fieldsOf(out)?.['deny'] ? 'ran' : fieldsOf(out)?.['deny']
   }
 
   await run({ command: 'norms:check', args: '' })
@@ -177,7 +178,7 @@ test('the hooks follow the session: command, the user\'s words, an interrupt, an
   expect(guardState().mode).toBeUndefined()
 
   await run({ command: 'norms:learn', args: '12' })
-  await hook(hooks, 'session.end').handler($, { reason: 'clear' }, nextOf().next)
+  await hook(hooks, 'session.end').handler($, { sessionId: 'sess-1' }, nextOf().next)
   expect(guardState().mode).toBeUndefined()
 })
 
@@ -189,10 +190,10 @@ test('with no walkthrough armed, no hook leaves a line or refuses a call', async
   const asked: string[] = []
   $.ui = { ...$.ui, ask: async (question: string) => { asked.push(question); return 'Deny' } }
   await hook(hooks, 'prompt.submit').handler($, { text: 'skip', origin: { kind: 'composer' } }, nextOf().next)
-  const run = async (e: any) => {
+  const run = async (e: { tool: string } & Readonly<Record<string, unknown>>) => {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: e.tool }).handler($, e, next)
-    return seen.length ? 'ran' : out.deny
+    return seen.length ? 'ran' : fieldsOf(out)?.['deny']
   }
   expect(await run({ tool: 'Edit', file_path: 'CONTRIBUTING.md' })).toBe('ran')
   expect(await run({ tool: 'Write', file_path: 'src/a.ts' })).toBe('ran')
@@ -213,7 +214,7 @@ test('under /norms:learn a CONTRIBUTING.md edit before add goes through and leav
   const edit = async (file_path: string) => {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Write' }).handler($, { tool: 'Write', file_path }, next)
-    return seen.length && !out?.deny ? 'ran' : out.deny
+    return seen.length && !fieldsOf(out)?.['deny'] ? 'ran' : fieldsOf(out)?.['deny']
   }
   expect(await edit('src/a.ts')).toBe('ran')
   expect(journal()).toEqual([])
@@ -232,7 +233,7 @@ test('the Bash hook lets a plain push and a leaking commit through, one line eac
   const bash = async (command: string) => {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command }, next)
-    return seen.length ? 'ran' : out.deny
+    return seen.length ? 'ran' : fieldsOf(out)?.['deny']
   }
   expect(await bash('git push')).toBe('ran')
   expect(journal().map(e => e.source.code)).toEqual(['norms.push.ungranted'])
@@ -262,7 +263,7 @@ test('a forced push during a walkthrough goes through only on the user\'s own Al
   const bash = async (command: string) => {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command }, next)
-    return seen.length ? 'ran' : out.deny
+    return seen.length ? 'ran' : fieldsOf(out)?.['deny']
   }
   expect(await bash('git push --force origin feature')).toContain('never force-push')
   reply = 'Allow'
@@ -291,11 +292,11 @@ test('a push nobody could be asked about is refused, and no answer is written: n
   const { $ } = fakeDollar({})
   const journal = watchJournal($)
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
-  for (const ask of [async () => { throw new Error('nobody to ask') }, async () => undefined]) {
+  for (const ask of [async (): Promise<string> => { throw new Error('nobody to ask') }, async () => '']) {
     $.ui = { ...$.ui, ask }
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: 'git push --force origin feature' }, next)
-    expect(out.deny).toContain('never force-push')
+    expect(fieldsOf(out)?.['deny']).toContain('never force-push')
     expect(seen).toEqual([])
   }
   expect(journal()).toEqual([])
@@ -316,10 +317,10 @@ test('norms hooks only its own commands, so no other command\'s run passes throu
   expect(runs.length).toBeGreaterThan(0)
   for (const h of runs) {
     expect(h.matcher).toBeDefined()
-    expect(String(h.matcher!.command).startsWith('norms:')).toBe(true)
+    expect(String(h.matcher!['command']).startsWith('norms:')).toBe(true)
   }
   // What the host does for /orchestrator:supervision: only hooks whose matcher names it run.
-  const reached = runs.filter(h => h.matcher!.command === 'orchestrator:supervision')
+  const reached = runs.filter(h => h.matcher!['command'] === 'orchestrator:supervision')
   expect(reached.length).toBe(0)
 })
 
@@ -414,7 +415,7 @@ test('a subagent\'s deletion is refused to its tool call, an unreadable line inc
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command, agentId: 'agent-1' }, next)
     expect(seen, command).toEqual([])
-    expect(out.deny, command).toBe(reason)
+    expect(fieldsOf(out)?.['deny'], command).toBe(reason)
   }
   expect(journal()).toEqual([])
   // The deletion is refused before the user is asked about a push on the same line.
@@ -422,7 +423,7 @@ test('a subagent\'s deletion is refused to its tool call, an unreadable line inc
   $.ui = { ...$.ui, ask: async (question: string) => { asked.push(question); return 'Allow' } }
   const { next, seen } = nextOf()
   const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: 'rm -rf build && git push --force', agentId: 'agent-1' }, next)
-  expect(out.deny).toBe(AGENT_DELETE_REFUSAL)
+  expect(fieldsOf(out)?.['deny']).toBe(AGENT_DELETE_REFUSAL)
   expect(seen).toEqual([])
   expect(asked).toEqual([])
 })
@@ -434,8 +435,8 @@ test('the Bash hook lets a subagent\'s write through during a check with one lin
   const journal = watchJournal($)
   const bash = async (command: string, agentId?: string) => {
     const { next, seen } = nextOf()
-    const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command, agentId }, next)
-    return seen.length ? 'ran' : out.deny
+    const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command, ...(agentId === undefined ? {} : { agentId }) }, next)
+    return seen.length ? 'ran' : fieldsOf(out)?.['deny']
   }
   expect(await bash('rm -rf build', 'agent-1')).toBe('ran')
   expect(await bash('sed -i s/a/b/ a.ts', 'agent-1')).toBe('ran')
@@ -452,16 +453,10 @@ test('the Bash hook lets a subagent\'s write through during a check with one lin
 })
 
 // The Skill tool.call hook that names a skill, among the hooks of a mount.
-const skillHookOf = (hooks: Hook[], skill: string) => {
-  const found = hooks.find(h => h.event === 'tool.call' && h.matcher?.tool === 'Skill' && (h.matcher.skill as RegExp).test(skill))
-  if (!found) throw new Error(`no Skill hook for ${skill}`)
-  return found
-}
-
-const editOf = async (hooks: Hook[], $: any, file_path: string, agentId?: string) => {
+const editOf = async (hooks: Hook[], $: World, file_path: string, agentId?: string) => {
   const { next, seen } = nextOf()
-  const out = await hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path, agentId }, next)
-  return seen.length ? 'ran' : out.deny
+  const out = await hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path, ...(agentId === undefined ? {} : { agentId }) }, next)
+  return seen.length ? 'ran' : fieldsOf(out)?.['deny']
 }
 
 test('a /norms:check or /norms:learn run through the Skill tool arms its guards', async () => {
@@ -487,7 +482,7 @@ test('a /norms:check or /norms:learn run through the Skill tool arms its guards'
   resetGuards()
   await skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '', agentId: 'agent-1' }, nextOf().next)
   expect(guardState().mode).toBeUndefined()
-  expect(hooks.some(h => h.matcher?.tool === 'Skill' && (h.matcher.skill as RegExp).test('norms:validate'))).toBe(false)
+  expect(hooks.some(h => h.matcher?.['tool'] === 'Skill' && (h.matcher['skill'] as RegExp).test('norms:validate'))).toBe(false)
 })
 
 test('a forced push during a Skill-armed walkthrough asks the user, and is refused without their Allow; a plain one is noted', async () => {
@@ -495,11 +490,11 @@ test('a forced push during a Skill-armed walkthrough asks the user, and is refus
   const hooks = mount(register)
   const { $ } = fakeDollar({})
   const journal = watchJournal($)
-  ;($ as any).ui.ask = async () => { throw new Error('nobody to ask') }
+  ;($).ui.ask = async () => { throw new Error('nobody to ask') }
   await skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
   const { next, seen } = nextOf()
   const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: 'git push --force' }, next)
-  expect(out.deny).toBe(PUSH_REFUSAL)
+  expect(fieldsOf(out)?.['deny']).toBe(PUSH_REFUSAL)
   expect(seen).toEqual([])
   expect(journal()).toEqual([])
   const plain = nextOf()
@@ -509,7 +504,7 @@ test('a forced push during a Skill-armed walkthrough asks the user, and is refus
 })
 
 // The check's agent has reported no finding: the figures of a check_done then account for all.
-const noFindings = (hooks: Hook[], $: any) => hook(hooks, 'tool.call', { tool: 'Agent' })
+const noFindings = (hooks: Hook[], $: World) => hook(hooks, 'tool.call', { tool: 'Agent' })
   .handler($, { tool: 'Agent', subagent_type: 'norms:norms-diff-scope' }, async () => ({ result: '```json\n{"findings": []}\n```' }))
 
 // A $ where check_done can write its record: the scope is marked in the state and the
@@ -523,7 +518,7 @@ function recordable(over: { marked?: boolean; dirty?: boolean } = {}) {
       'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
       'git rev-parse --abbrev-ref HEAD': { stdout: 'feature\n' },
     },
-    tool: (input: any) => (input.tool === 'mcp__github__gh' ? { result: JSON.stringify([{ number: 12 }]) } : { result: '/records/norms.json\n' }),
+    tool: (input: Call) => (input.tool === 'mcp__github__gh' ? { result: JSON.stringify([{ number: 12 }]) } : { result: '/records/norms.json\n' }),
   })
 }
 
@@ -537,7 +532,7 @@ test('a check run through the Skill tool ends its mode at the main loop\'s check
   const done = async (agentId?: string) => {
     await noFindings(hooks, $)
     return hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
-      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0, agentId })
+      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0, ...(agentId === undefined ? {} : { agentId }) }, nextOf().next)
   }
   await skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
   await done('agent-1')
@@ -557,32 +552,32 @@ test('a check_done that is refused or leaves no record keeps the Skill-armed mod
     register(on)
     registerRecord(on)
   })
-  const arm = ($: any) => skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
-  const done = async ($: any) => {
+  const arm = ($: World) => skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
+  const done = async ($: World) => {
     await noFindings(hooks, $)
     return hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
-      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0 })
+      .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0 }, nextOf().next)
   }
 
   // No scope marked: the call is refused, the walkthrough goes on.
   const unmarked = recordable({ marked: false }).$
   await arm(unmarked)
-  expect((await done(unmarked)).isError).toBe(true)
+  expect(fieldsOf((await done(unmarked)))?.['isError']).toBe(true)
   expect(guardState().mode).toBe('check')
 
   // A dirty tree leaves no record: the walkthrough goes on.
-  expect((await done(recordable({ dirty: true }).$)).result).toBe('record: none — the tracked files have changes')
+  expect(fieldsOf((await done(recordable({ dirty: true }).$)))?.['result']).toBe('record: none — the tracked files have changes')
   expect(guardState().mode).toBe('check')
 
   // The record written: the walkthrough is over.
-  expect((await done(recordable().$)).result).toBe('record: /records/norms.json')
+  expect(fieldsOf((await done(recordable().$)))?.['result']).toBe('record: /records/norms.json')
   expect(guardState().mode).toBeUndefined()
 })
 
 test('only a spawned session\'s Skill call arms nothing; the words of the call never disarm', async () => {
   resetGuards()
   const hooks = mount(register)
-  const run = ($: any, args: string) => skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args }, nextOf().next)
+  const run = ($: World, args: string) => skillHookOf(hooks, 'norms:check').handler($, { tool: 'Skill', skill: 'norms:check', args }, nextOf().next)
   await run(fakeDollar({ env: { ORCHESTRATOR_SPAWNED: '1' } }).$, '')
   expect(guardState().mode).toBeUndefined()
   // An empty variable is no variable.
@@ -597,7 +592,7 @@ test('only a spawned session\'s Skill call arms nothing; the words of the call n
   // A variable that cannot be read is no proof of a spawned session: the guards arm.
   resetGuards()
   const unreadable = fakeDollar({}).$
-  ;(unreadable as any).env.get = () => { throw new Error('env refused') }
+  ;(unreadable).env.get = () => { throw new Error('env refused') }
   await run(unreadable, '')
   expect(guardState().mode).toBe('check')
 })
@@ -605,7 +600,7 @@ test('only a spawned session\'s Skill call arms nothing; the words of the call n
 test('the module registers one session.end hook, which the host would refuse twice without a matcher', () => {
   const ends = mount(registerAll).filter(h => h.event === 'session.end')
   expect(ends.length).toBe(1)
-  expect(ends[0].matcher).toBeUndefined()
+  expect(ends[0]?.matcher).toBeUndefined()
 })
 
 test('one session.end resets the guards and clears the scope mark', async () => {
@@ -618,7 +613,7 @@ test('one session.end resets the guards and clears the scope mark', async () => 
   expect(guardState().mode).toBe('check')
 
   const { next, seen } = nextOf()
-  await hook(hooks, 'session.end').handler($, { reason: 'exit' }, next)
+  await hook(hooks, 'session.end').handler($, { sessionId: 'sess-1' }, next)
   expect(guardState().mode).toBeUndefined()
   expect(state.get('norms/scopeMark')).toBeNull()
   // The event goes on to the hook beneath.

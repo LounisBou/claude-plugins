@@ -5,17 +5,21 @@
 // plugin does without the module: the markdown command runs, the skill text
 // is read as written, the tool call goes through.
 import {
-  IDLE, armedBy, agentDecision, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
+  IDLE, armedBy, guardOf, keptBand, agentDecision, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
   ignoreVerdict, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
+import { fieldsOf, reasonOf, type Host, type On, type OnStream } from '../core/host.ts'
 import { spawnArgv } from '../core/orchestration.ts'
 import { observed } from './observe.ts'
 import { startRetrospective } from './retrospective.ts'
 import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
 export const TOOL = 'mcp__implement__state'
+
+// What the module reads of the host.
+type ImplementHost = Host<'env' | 'fs' | 'process' | 'session' | 'settings' | 'state' | 'tool' | 'ui' | 'clock'>
 
 // The values the host keeps for this plugin, read by the band as it draws.
 const GUARD = { plugin: 'implement', key: 'guard' } as const
@@ -45,12 +49,12 @@ const STATE_SPEC = {
   isDeferred: false,
 }
 
-async function git($: any, args: string[]): Promise<{ code: number; out: string }> {
+async function git($: ImplementHost, args: string[]): Promise<{ code: number; out: string }> {
   const run = await $.process.run(['git', ...args], { timeoutMs: 10_000 })
   return { code: run.exitCode, out: String(run.stdout ?? '').trim() }
 }
 
-async function readText($: any, path: string): Promise<string | null> {
+async function readText($: ImplementHost, path: string): Promise<string | null> {
   try {
     return String(await $.fs.read(path))
   } catch {
@@ -60,16 +64,16 @@ async function readText($: any, path: string): Promise<string | null> {
 
 // The preflight, scripts/preflight.sh's checks over the merged settings. With
 // depsOnly, its --deps-only form: the repository is not looked at.
-async function preflight($: any, depsOnly = false): Promise<string[]> {
-  const settings = await $.settings.read()
-  if (depsOnly) return preflightLines(settings?.enabledPlugins, null)
+async function preflight($: ImplementHost, depsOnly = false): Promise<string[]> {
+  const enabled = fieldsOf(await $.settings.read())?.['enabledPlugins']
+  if (depsOnly) return preflightLines(enabled, null)
   const inside = (await git($, ['rev-parse', '--is-inside-work-tree'])).code === 0
   const branch = inside ? (await git($, ['branch', '--show-current'])).out : ''
-  return preflightLines(settings?.enabledPlugins, { inside, branch })
+  return preflightLines(enabled, { inside, branch })
 }
 
 // Everything the skills' derivation blocks compute, read once.
-async function snapshot($: any, docs?: string): Promise<Snapshot> {
+async function snapshot($: ImplementHost, docs?: string): Promise<Snapshot> {
   const branch = (await git($, ['branch', '--show-current'])).out
   const codename = codenameOf(branch)
   const given = typeof docs === 'string' && docs.trim() !== ''
@@ -90,17 +94,16 @@ async function snapshot($: any, docs?: string): Promise<Snapshot> {
   }
 }
 
-async function readGuard($: any): Promise<Guard> {
-  const { value } = await $.state.get(GUARD)
-  return value && typeof value === 'object' ? { ...IDLE, ...value } : IDLE
+async function readGuard($: ImplementHost): Promise<Guard> {
+  return guardOf((await $.state.get(GUARD))?.value)
 }
 
-async function writeGuard($: any, g: Guard): Promise<void> {
+async function writeGuard($: ImplementHost, g: Guard): Promise<void> {
   await $.state.set(GUARD, g)
 }
 
 // The band follows the phase run: redrawn from the state file after each step.
-async function refreshBand($: any): Promise<void> {
+async function refreshBand($: ImplementHost): Promise<void> {
   try {
     const g = await readGuard($)
     const band: Band | null = g.outer === 'phase' ? bandOf(await snapshot($)) : null
@@ -108,17 +111,23 @@ async function refreshBand($: any): Promise<void> {
   } catch { /* the band keeps what it drew */ }
 }
 
-async function serveState($: any, e: any): Promise<{ result: string; isError?: true }> {
-  if (e.action === 'get') return { result: JSON.stringify(await snapshot($, e.docs), null, 2) }
-  if (e.action !== 'mark') return { result: `unknown action: ${e.action}; use get or mark`, isError: true }
+// The state tool's arguments, as far as it reads them.
+type StateCall = { readonly [argument: string]: unknown }
+
+async function serveState($: ImplementHost, e: StateCall): Promise<{ result: string; isError?: true }> {
+  const docs = typeof e['docs'] === 'string' ? e['docs'] : undefined
+  const action = e['action']
+  if (action === 'get') return { result: JSON.stringify(await snapshot($, docs), null, 2) }
+  if (action !== 'mark') return { result: `unknown action: ${String(action)}; use get or mark`, isError: true }
   if ((await readGuard($)).checking) return { result: 'implement:check edits nothing: mark refused until its verdict line is written', isError: true }
-  const s = await snapshot($, e.docs)
+  const s = await snapshot($, docs)
   const path = `${s.docs}/IMPLEMENTATION.md`
   const text = await readText($, path)
   if (text === null) return { result: `no IMPLEMENTATION.md under ${s.docs}: run implement:feature first, or pass docs`, isError: true }
-  const wanted = String(e.milestone ?? 'HEAD').trim() || 'HEAD'
+  const wanted = String(e['milestone'] ?? 'HEAD').trim() || 'HEAD'
   const milestone = wanted === 'HEAD' ? s.head : wanted
-  const marked = markRow(text, e.phase, String(e.status ?? ''), milestone)
+  const phase = e['phase']
+  const marked = markRow(text, typeof phase === 'number' ? phase : String(phase), String(e['status'] ?? ''), milestone)
   if ('error' in marked) return { result: marked.error, isError: true }
   await $.fs.write(path, marked.text)
   const next = nextRow(parseState(marked.text).rows)
@@ -133,7 +142,7 @@ function touchesState(command: string): boolean {
 
 // /implement:review: the reviewer launched as another session, in iTerm when the orchestrator's
 // launcher is installed on macOS, headless otherwise. Never the implementer's own review.
-async function launchReviewer($: any): Promise<string> {
+async function launchReviewer($: ImplementHost): Promise<string> {
   const branch = await git($, ['branch', '--show-current'])
   const top = await git($, ['rev-parse', '--show-toplevel'])
   if (branch.code !== 0 || !branch.out || top.code !== 0) return 'implement:review needs a git repository on a branch: nothing was launched.'
@@ -170,52 +179,52 @@ const method = { isLoaded: false }
 // Whether implement:close ran in the turn in progress: its end is where the learning retrospective may start.
 const close = { ran: false }
 
-export function register(on: any) {
+export function register(on: On<ImplementHost> & OnStream<ImplementHost>): void {
   // The state tool, listed from the first turn.
-  on('session.start', async ($: any, e: any, next: any) => {
+  on('session.start', async ($, e, next) => {
     await $.tool.register(STATE_SPEC)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
-  on('session.end', async ($: any, e: any, next: any) => {
+  on('session.end', async ($, e, next) => {
     await writeGuard($, IDLE)
     await $.state.set(BAND, null)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
-  on('tool.call', { tool: TOOL }, async ($: any, e: any) => {
+  on('tool.call', { tool: TOOL }, async ($, e) => {
     // Answering in place of next skips the engine's permission check, so its
     // verdict is asked first: a rule that denies the tool is honoured.
-    const verdict = await $.tool.check({ tool: TOOL, input: { action: e.action, docs: e.docs, phase: e.phase, status: e.status, milestone: e.milestone } })
+    const verdict = await $.tool.check({ tool: TOOL, input: { action: e['action'], docs: e['docs'], phase: e['phase'], status: e['status'], milestone: e['milestone'] } })
     if (verdict?.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
     try {
       const out = await serveState($, e)
-      if (e.action === 'mark') await refreshBand($)
+      if (e['action'] === 'mark') await refreshBand($)
       return out
-    } catch (err: any) {
-      return { result: String(err?.message ?? err), isError: true }
+    } catch (err) {
+      return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'the implement state tool failed; derive the state with the bash blocks of the skill' }))
 
   // /implement:install and /implement:doctor, answered without a model turn.
   // They check the dependency only; the skills check the repository.
   for (const command of ['implement:install', 'implement:doctor']) {
-    on('command.run', { command }, async ($: any) => {
+    on('command.run', { command }, async ($) => {
       return { text: doctorText(await preflight($, true)) }
-    }).catch(async ($: any, e: any, next: any) => next(e))
+    }).catch(async ($, e, next) => next(e))
   }
 
-  on('command.run', { command: 'implement:review' }, async ($: any) => ({ text: await launchReviewer($) }))
-    .catch(async ($: any, e: any, next: any) => next(e))
+  on('command.run', { command: 'implement:review' }, async ($) => ({ text: await launchReviewer($) }))
+    .catch(async ($, e, next) => next(e))
 
-  on('command.run', { command: 'implement:release-guard' }, async ($: any) => {
+  on('command.run', { command: 'implement:release-guard' }, async ($) => {
     await writeGuard($, IDLE)
     await $.state.set(BAND, null)
     return { text: 'implement: every guard is released until an implement skill starts again.' }
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
   // The preflight ahead of the skill's text, and the guards the skill arms.
-  on('skill.prompt', async ($: any, e: any, next: any) => {
+  on('skill.prompt', async ($, e, next) => {
     if (String(e.skill ?? '') === METHOD_SKILL) {
       method.isLoaded = true
       return next(e)
@@ -229,14 +238,14 @@ export function register(on: any) {
     const line = lines.length === 0 && reads ? stateLine(await snapshot($)) : null
     if (skill === 'phase') await refreshBand($)
     return { text: skillText(String(e.text ?? ''), lines, line, !method.isLoaded) }
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+  on('prompt.submit', async ($, e, next) => {
     if (typedByUser(String(e.origin?.kind ?? ''))) await writeGuard($, onTyped(await readGuard($), String(e.text ?? '')))
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
-  on('turn.complete', async ($: any, e: any, next: any) => {
+  on('turn.complete', async ($, e, next) => {
     const aborted = e.isAborted === true || e.reason === 'aborted'
     if (!e.agentId) await writeGuard($, onTurnEnd(await readGuard($), aborted))
     if (!e.agentId && close.ran) {
@@ -244,13 +253,13 @@ export function register(on: any) {
       if (!aborted) await startRetrospective($)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
   // implement:check ends with its verdict, even mid-turn inside a phase run.
-  on('turn.step', async function* ($: any, e: any, next: any) {
+  on('turn.step', async function* ($, e, next) {
     const response = yield* next(e)
     try {
-      if (!e.agentId && isVerdict(String(response?.answer ?? ''))) {
+      if (!e.agentId && isVerdict(String(fieldsOf(response)?.['answer'] ?? ''))) {
         const g = await readGuard($)
         if (g.checking) await writeGuard($, { ...g, checking: false })
       }
@@ -260,42 +269,42 @@ export function register(on: any) {
 
   // The guards. Each judges before next. A guard that could not read what is
   // armed lets the call through. A failure after next replays what already ran.
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const g = await readGuard($)
-    const found = bashDecision(g, String(e.command ?? ''))
+    const found = bashDecision(g, String(e['command'] ?? ''))
     if (found?.irreversible) return { deny: checkDeny(found.what) }
     if (found) await observed($, found.code)
     const out = await next(e)
-    if (g.outer === 'phase' && touchesState(String(e.command ?? ''))) await refreshBand($)
+    if (g.outer === 'phase' && touchesState(String(e['command'] ?? ''))) await refreshBand($)
     return out
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch(($, e, next) => next(e))
 
   // A subagent that writes, during a phase, runs: the call goes through and the journal keeps one line.
-  on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
-    const found = agentDecision(await readGuard($), e.subagent_type)
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    const found = agentDecision(await readGuard($), e['subagent_type'])
     if (found) await observed($, found.code)
     return next(e)
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch(($, e, next) => next(e))
 
-  on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] }, async ($: any, e: any, next: any) => {
+  on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] }, async ($, e, next) => {
     const g = await readGuard($)
-    const found = editDecision(g, String(e.tool))
+    const found = editDecision(g, String(e['tool']))
     if (found) await observed($, found.code)
     const out = await next(e)
-    if (g.outer === 'phase' && String(e.file_path ?? e.notebook_path ?? '').endsWith('IMPLEMENTATION.md')) await refreshBand($)
+    if (g.outer === 'phase' && String(e['file_path'] ?? e['notebook_path'] ?? '').endsWith('IMPLEMENTATION.md')) await refreshBand($)
     return out
-  }).catch(($: any, e: any, next: any) => next(e))
+  }).catch(($, e, next) => next(e))
 
   // No commit trailer is asked for while a skill that commits runs.
-  on('attribution.text', { kind: 'commit' }, async ($: any, e: any, next: any) => {
+  on('attribution.text', { kind: 'commit' }, async ($, e, next) => {
     return silencesAttribution(await readGuard($)) ? { text: '' } : next(e)
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 
   // The band above the prompt while a phase run is armed.
-  on('ui.render', { component: 'AbovePrompt' }, async ($: any, e: any, next: any) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props?.hasSurvey) return next(e)
     const g = await readGuard($)
-    const { value: band } = await $.state.get(BAND)
+    const band = keptBand((await $.state.get(BAND))?.value)
     if (g.outer !== 'phase' || !band) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const pieces = bandSegments(band, e.props?.bodyColumns ?? 80)
@@ -303,5 +312,5 @@ export function register(on: any) {
       key: 'implement',
       children: pieces.map((p, i) => Text({ key: `p${i}`, color: p.color, bold: p.bold, dimColor: p.dim, children: [p.text] })),
     })
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 }

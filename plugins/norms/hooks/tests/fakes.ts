@@ -1,35 +1,36 @@
 // hooks/tests/fakes.ts
-// A fake `on` that records each hook with its matcher and .catch net, and a
+// The module's hooks, each with its matcher and .catch net (core's capture), and a
 // fake $ answering process runs, file reads and tool calls from tables. The
 // hooks are called directly, so each test controls every seam they read.
+import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
+import type { Host, Noun, On } from '../../core/host.ts'
 
-export type Hook = { event: string; matcher?: Record<string, unknown>; handler: Function; net?: Function }
+// The host a hook under test is handed: every noun, those a test does not set throwing.
+export type World = Host<Noun>
+export type Hook = Captured<World>
+// A tool's input, as a fake tool reads it.
+export type Call = { readonly tool: string } & Readonly<Record<string, unknown>>
 
-export function mount(register: (on: any) => void): Hook[] {
-  const hooks: Hook[] = []
-  const on = (event: string, a: any, b?: any) => {
-    const hook: Hook = b === undefined ? { event, handler: a } : { event, matcher: a, handler: b }
-    hooks.push(hook)
-    return { catch: (net: Function) => { hook.net = net } }
-  }
-  register(on)
-  return hooks
+export function mount(register: (on: On<World>) => void): Hook[] {
+  return capture(register)
 }
 
-export function hook(hooks: Hook[], event: string, matcher?: Record<string, unknown>): Hook {
-  const found = hooks.find(h => h.event === event && JSON.stringify(h.matcher ?? null) === JSON.stringify(matcher ?? null))
-  if (!found) throw new Error(`no hook ${event} ${JSON.stringify(matcher)}`)
+export { hookOf as hook, hooksOn }
+
+// The first hook on the Skill tool whose skill matcher takes `skill`.
+export function skillHookOf(hooks: Hook[], skill: string) {
+  const found = hooksOn(hooks, 'tool.call').find(h => h.matcher?.['tool'] === 'Skill' && h.matcher['skill'] instanceof RegExp && h.matcher['skill'].test(skill))
+  if (!found) throw new Error(`no Skill hook for ${skill}`)
   return found
 }
 
 // next(e) as the chain beneath: records what it was handed and answers it.
-export function nextOf(answer: (e: any) => any = e => e): { next: any; seen: any[] } {
-  const seen: any[] = []
-  const next: any = async (e: any) => {
+export function nextOf(answer: (e: unknown) => unknown = e => e): { next: ((e: unknown) => Promise<unknown>) & { called: boolean }; seen: unknown[] } {
+  const seen: unknown[] = []
+  const next = Object.assign(async (e: unknown) => {
     seen.push(e)
     return answer(e)
-  }
-  next.called = false
+  }, { called: false })
   return { next, seen }
 }
 
@@ -40,7 +41,7 @@ export type FakeSetup = {
   runs?: Record<string, { exitCode?: number; stdout?: string; stderr?: string }>
   files?: Record<string, string>
   dirs?: Record<string, string[]>
-  tool?: (input: any) => any
+  tool?: (input: Call) => unknown
   home?: string
   env?: Record<string, string>
   // The host's $.state for the session, seeded by `plugin/key`; stateFails makes every set throw.
@@ -65,11 +66,11 @@ export function normalize(path: string): string {
 }
 
 export function fakeDollar(setup: FakeSetup): {
-  $: any; argvs: string[]; written: Record<string, string>; toolCalls: any[]; state: Map<string, unknown>; logs: string[]
+  $: World; argvs: string[]; written: Record<string, string>; toolCalls: Call[]; state: Map<string, unknown>; logs: string[]
 } {
   const argvs: string[] = []
   const written: Record<string, string> = {}
-  const toolCalls: any[] = []
+  const toolCalls: Call[] = []
   const cwd = setup.cwd ?? '/repo'
   const abs = (p: string) => normalize(p.startsWith('/') ? p : `${cwd}/${p}`)
   const keyed = <T>(table: Record<string, T> = {}) => Object.fromEntries(Object.entries(table).map(([p, v]) => [abs(p), v]))
@@ -77,8 +78,8 @@ export function fakeDollar(setup: FakeSetup): {
   const dirs: Record<string, string[]> = keyed(setup.dirs)
   const state = new Map<string, unknown>(Object.entries(setup.state ?? {}))
   const logs: string[] = []
-  const $ = {
-    plugin: { name: 'norms', root: '/plugin' },
+  const $ = hostOf({
+    plugin: { root: '/plugin' },
     env: { get: async (name: string) => (name === 'HOME' ? setup.home ?? '/home/u' : setup.env?.[name]) },
     process: {
       // A run in another directory than the session's is keyed `(<dir>) <argv>`.
@@ -95,8 +96,9 @@ export function fakeDollar(setup: FakeSetup): {
     fs: {
       exists: async (p: string) => abs(p) in files || abs(p) in dirs,
       read: async (p: string) => {
-        if (!(abs(p) in files)) throw new Error(`missing ${p}`)
-        return files[abs(p)]
+        const text = files[abs(p)]
+        if (text === undefined) throw new Error(`missing ${p}`)
+        return text
       },
       write: async (p: string, text: string) => {
         // A journal file is read back through watchJournal, not as a file a test's subject wrote.
@@ -104,10 +106,10 @@ export function fakeDollar(setup: FakeSetup): {
         written[p] = text
         files[abs(p)] = text
       },
-      list: async (p: string) => (dirs[abs(p)] ?? []).map(name => ({ name, kind: 'file' })),
+      list: async (p: string) => (dirs[abs(p)] ?? []).map(name => ({ name, kind: 'file' as const, size: 0, isLink: false })),
       stat: async (p: string) => {
-        if (abs(p) in dirs) return { kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
-        if (abs(p) in files) return { kind: 'file', size: files[abs(p)].length, mtimeMs: 0, isLink: false }
+        if (abs(p) in dirs) return { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false }
+        if (abs(p) in files) return { kind: 'file' as const, size: files[abs(p)]?.length ?? 0, mtimeMs: 0, isLink: false }
         throw new Error(`missing ${p}`)
       },
     },
@@ -123,13 +125,13 @@ export function fakeDollar(setup: FakeSetup): {
     clock: { sleep: async () => undefined },
     ui: { log: (text: string) => { logs.push(text) } },
     tool: {
-      call: async (input: any) => {
+      call: async (input: Call) => {
         toolCalls.push(input)
         if (!setup.tool) throw new Error('no tool')
         return setup.tool(input)
       },
     },
-  }
+  })
   return { $, argvs, written, toolCalls, state, logs }
 }
 
@@ -137,8 +139,8 @@ export function fakeDollar(setup: FakeSetup): {
 export const BASE = 'b'.repeat(40)
 export const HEAD = 'a'.repeat(40)
 
-export function gitRuns(changed: string[], tracked: string[], diffs: Record<string, string> = {}, baseArg?: string): FakeSetup['runs'] {
-  const runs: FakeSetup['runs'] = {
+export function gitRuns(changed: string[], tracked: string[], diffs: Record<string, string> = {}, baseArg?: string): NonNullable<FakeSetup['runs']> {
+  const runs: NonNullable<FakeSetup['runs']> = {
     [`bash /plugin/scripts/resolve_base.sh${baseArg ? ' ' + baseArg : ''}`]: { stdout: BASE + '\n' },
     'git rev-parse HEAD': { stdout: HEAD + '\n' },
     'git rev-parse --abbrev-ref HEAD': { stdout: 'feature\n' },

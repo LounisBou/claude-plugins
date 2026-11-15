@@ -1,14 +1,17 @@
 // hooks/tests/journal.ts
 // The journal beneath the module in a test: the host's configuration directory, the session's
 // id, and every file the module writes into its journal, read back as events.
+import type { TestOn } from 'claude-code/testing'
+import { parseLearningEvent, type LearningEvent } from '../../core/learning.ts'
 
 // The events the module wrote so far, parsed; each is one file under <config>/pr-review/journal/.
-export function watchJournal(on: any): () => any[] {
-  const events: any[] = []
-  on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+export function watchJournal(on: TestOn): () => LearningEvent[] {
+  const events: LearningEvent[] = []
+  on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
   on('session.id', () => ({ value: 'sess-1' }))
-  on('fs.write', (_$: any, e: any) => {
-    if (String(e.path).startsWith('/home/op/.claude/pr-review/journal/')) events.push(JSON.parse(String(e.text)))
+  on('fs.write', (_$, e) => {
+    const event = String(e.path).startsWith('/home/op/.claude/pr-review/journal/') ? parseLearningEvent(JSON.parse(String(e.text))) : undefined
+    if (event !== undefined) events.push(event)
     return { value: undefined }
   })
   return () => events

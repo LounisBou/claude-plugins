@@ -5,7 +5,8 @@
 // run through to the markdown body, so the command still works, with a turn, as
 // it did before this module. The markdown files stay the commands' public face
 // and the whole path under a non-interactive run and on a host that does not load modules.
-import { KEYS } from './config-sync.ts'
+import type { On } from '../core/host.ts'
+import { KEYS, type StatusbarHost } from './config-sync.ts'
 
 // The restart line the install command ends on, as the markdown body says it.
 export const RESTART = 'Restart your session for the bar to appear.'
@@ -36,7 +37,7 @@ export function settingsText(file: string, path: string): string {
 }
 
 // The config directory and the settings file the script reads, by its own rule.
-async function configPath($: any): Promise<string> {
+async function configPath($: StatusbarHost): Promise<string> {
   const override = await $.env.get('STATUSBAR_CONFIG')
   if (override) return override
   const dir = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
@@ -44,26 +45,26 @@ async function configPath($: any): Promise<string> {
 }
 
 // Runs one of the plugin's two scripts and answers its output.
-async function runScript($: any, script: string, tail: string): Promise<{ text: string }> {
+async function runScript($: StatusbarHost, script: string, tail: string): Promise<{ text: string }> {
   const run = await $.process.run(['bash', `${$.plugin.root}/${script}`], { timeoutMs: 60000 })
   return { text: scriptText(run, tail) }
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<StatusbarHost>): void {
   // The matcher names the invocation spelling the markdown commands carry, so
   // each hook answers its own command's run and no other plugin's.
-  on('command.run', { command: 'statusbar:install' }, async ($: any) => runScript($, 'install.sh', RESTART))
-    .catch(async ($: any, e: any, next: any) => next(e))
+  on('command.run', { command: 'statusbar:install' }, async ($) => runScript($, 'install.sh', RESTART))
+    .catch(async ($, e, next) => next(e))
 
-  on('command.run', { command: 'statusbar:uninstall' }, async ($: any) => runScript($, 'uninstall.sh', ''))
-    .catch(async ($: any, e: any, next: any) => next(e))
+  on('command.run', { command: 'statusbar:uninstall' }, async ($) => runScript($, 'uninstall.sh', ''))
+    .catch(async ($, e, next) => next(e))
 
   // A request needs the model to be read. Only the bare command, which shows the
   // current settings, is answered here; the request goes on to the markdown body.
-  on('command.run', { command: 'statusbar:config' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'statusbar:config' }, async ($, e, next) => {
     if (String(e.args).trim() !== '') return next(e)
     const path = await configPath($)
     const file = await $.fs.read(path).catch(() => '')
     return { text: settingsText(String(file), path) }
-  }).catch(async ($: any, e: any, next: any) => next(e))
+  }).catch(async ($, e, next) => next(e))
 }

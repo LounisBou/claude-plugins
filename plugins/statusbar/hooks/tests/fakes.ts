@@ -1,28 +1,14 @@
 // hooks/tests/fakes.ts
-// A fake $ over an in-memory file system, and the capture of what a module
-// registers: the handlers and their nets, matchers beside them.
-export type Registration = { event: string; matcher: object | undefined; handler: Function; net: Function }
+// The world beneath the module, registered on the test's `on`: an in-memory file system, the
+// settings, the environment and the scripts' runs. What reaches the bottom of a chain answers as
+// the host would: the markdown body names the run it was handed, a start its directory, an option its value.
+import type { TestOn } from 'claude-code/testing'
 
-export function mount(register: (on: any) => void): Registration[] {
-  const registrations: Registration[] = []
-  register((...args: unknown[]) => {
-    const caught: { net: Function } = { net: () => undefined }
-    registrations.push({
-      event: String(args[0]),
-      matcher: args.length === 3 ? (args[1] as object) : undefined,
-      handler: args[args.length - 1] as Function,
-      net: (...call: unknown[]) => (caught.net as (...x: unknown[]) => unknown)(...call),
-    })
-    return { catch: (net: Function) => { caught.net = net } }
-  })
-  return registrations
-}
+// The plugin's directory, as the host hands it to the module.
+export const ROOT = decodeURIComponent(new URL('../..', import.meta.url).pathname).replace(/\/$/, '')
 
-// The real next is a callable carrying fields; a spread would not be callable.
-export function fakeNext(failure?: string) {
-  const through = (x: unknown) => ({ passed: x })
-  return Object.assign(through, { called: false, error: failure ? { kind: 'failure', message: failure } : undefined })
-}
+// What the markdown body of a command answers, in place of a model turn.
+export const markdown = (command: string, args: string): string => `markdown body of ${command} (${args})`
 
 export type FakeOptions = {
   env?: Record<string, string>
@@ -30,34 +16,34 @@ export type FakeOptions = {
   pluginConfigs?: Record<string, unknown>
   run?: { exitCode: number; stdout: string; stderr: string }
   failSettings?: boolean
+  failRun?: string
 }
 
-export function fakeDollar(opts: FakeOptions = {}) {
+export function world(on: TestOn, opts: FakeOptions = {}) {
   const files = new Map<string, string>(Object.entries(opts.files ?? {}))
   const env: Record<string, string> = { HOME: '/home/u', ...(opts.env ?? {}) }
   const ran: (readonly string[])[] = []
-  const dollar = {
-    env: { get: async (name: string) => env[name] },
-    settings: {
-      read: async () => {
-        if (opts.failSettings) throw new Error('settings unavailable')
-        return opts.pluginConfigs ? { pluginConfigs: opts.pluginConfigs } : {}
-      },
-    },
-    fs: {
-      read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
-      },
-      write: async (p: string, text: string) => { files.set(p, text) },
-    },
-    plugin: { name: 'statusbar', root: '/plugins/sb' },
-    process: {
-      run: async (argv: readonly string[]) => {
-        ran.push(argv)
-        return opts.run ?? { exitCode: 0, stdout: '', stderr: '' }
-      },
-    },
-  }
-  return { dollar, files, ran }
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('config.set', (_$, e) => ({ value: e.value }))
+  on('command.run', (_$, e) => ({ text: markdown(e.command, e.args) }))
+  on('env.get', (_$, e) => ({ value: env[e.name] }))
+  on('settings.read', () => {
+    if (opts.failSettings) throw new Error('settings unavailable')
+    return { value: opts.pluginConfigs ? { pluginConfigs: opts.pluginConfigs } : {} }
+  })
+  on('fs.read', (_$, e) => {
+    const text = files.get(e.path)
+    if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
+    return { value: text }
+  })
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('process.run', (_$, e) => {
+    if (opts.failRun) throw new Error(opts.failRun)
+    ran.push(e.argv)
+    return { value: opts.run ?? { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  return { files, ran }
 }

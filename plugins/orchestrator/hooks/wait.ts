@@ -10,7 +10,7 @@
 import { waitLine, type DeclaredWait } from './stop-gate.ts'
 import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
-import { messageOf, type Host, type On } from './host.ts'
+import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
@@ -125,7 +125,7 @@ const lastLine = (text: string): string => text.trim().split('\n').at(-1)?.trim(
 // never throws, and says what it did in one line of the module's log.
 export async function startRetrospective($: Held): Promise<void> {
   try {
-    if ((await $.settings.read())?.enabledPlugins?.[LEARNING] !== true) return
+    if (fieldsOf(fieldsOf(await $.settings.read())?.['enabledPlugins'])?.[LEARNING] !== true) return
     const config = await configDir($)
     const recorded = recordedInstallPaths(await $.fs.read(`${config}/plugins/installed_plugins.json`), 'learning', ['lounisbou'])
     for (const root of 'problem' in recorded ? [] : recorded.paths) {

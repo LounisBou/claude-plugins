@@ -102,11 +102,11 @@ test('a record of another head, repository or pull request is skipped and named'
   const files = [
     record('review', 'pass', undefined, { head: OTHER }), record('norms', 'pass'), record('e2e', 'pass'),
   ]
-  expect(missingItems(gate(), files)).toEqual(['review: no record at 0123456', 'unreadable record ' + files[0].name])
+  expect(missingItems(gate(), files)).toEqual(['review: no record at 0123456', 'unreadable record ' + files[0]?.name])
   const pr = [record('review', 'pass', undefined, { pr: 13 }), record('norms', 'pass'), record('e2e', 'pass')]
-  expect(missingItems(gate(), pr)[1]).toBe('unreadable record ' + pr[0].name)
+  expect(missingItems(gate(), pr)[1]).toBe('unreadable record ' + pr[0]?.name)
   const repo = [record('review', 'pass', undefined, { repo: 'acme/other' }), record('norms', 'pass'), record('e2e', 'pass')]
-  expect(missingItems(gate(), repo)[1]).toBe('unreadable record ' + repo[0].name)
+  expect(missingItems(gate(), repo)[1]).toBe('unreadable record ' + repo[0]?.name)
 })
 
 test('a file that does not parse, or names another kind than its file, is named', () => {
@@ -200,11 +200,11 @@ test('the Bash merges and undrafts are recognised with their repository and pull
   expect(bashActs('gh api -X PUT repos/o/r/pulls/12/merge')).toEqual([{ kind: 'merge', name: 'gh api', repo: 'o/r', pr: 12 }])
   expect(bashActs('gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}\''))
     .toEqual([{ kind: 'merge', name: 'gh api graphql', unnamed: true }])
-  expect(bashActs('gh api graphql -f query=\'mutation{markPullRequestReadyForReview(input:{}){clientMutationId}}\'')[0].kind).toBe('undraft')
-  expect(bashActs('gh api graphql -f query=\'mutation{enablePullRequestAutoMerge(input:{}){clientMutationId}}\'')[0].kind).toBe('merge')
+  expect(bashActs('gh api graphql -f query=\'mutation{markPullRequestReadyForReview(input:{}){clientMutationId}}\'')[0]?.kind).toBe('undraft')
+  expect(bashActs('gh api graphql -f query=\'mutation{enablePullRequestAutoMerge(input:{}){clientMutationId}}\'')[0]?.kind).toBe('merge')
   expect(bashActs('gh pr create -t t -b b')).toEqual([{ kind: 'create', name: 'gh pr create' }])
   expect(bashActs('gh pr create -d -t t -R o/r')).toEqual([{ kind: 'create-draft', name: 'gh pr create', repo: 'o/r' }])
-  expect(bashActs('gh pr create --draft --label Ready')[0].kind).toBe('create-draft')
+  expect(bashActs('gh pr create --draft --label Ready')[0]?.kind).toBe('create-draft')
   expect(bashActs('gh pr ready 3 -R o/r --undo')).toEqual([{ kind: 'redraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
 })
 
@@ -238,10 +238,10 @@ test('a merge or an undraft whose pull request is a command substitution is unre
 })
 
 test('gh pr ready --undo is read as gh reads a boolean flag: =false leaves draft', () => {
-  expect(bashActs('gh pr ready 3 -R o/r --undo')[0].kind).toBe('redraft')
-  expect(bashActs('gh pr ready 3 -R o/r --undo=true')[0].kind).toBe('redraft')
+  expect(bashActs('gh pr ready 3 -R o/r --undo')[0]?.kind).toBe('redraft')
+  expect(bashActs('gh pr ready 3 -R o/r --undo=true')[0]?.kind).toBe('redraft')
   expect(bashActs('gh pr ready 3 -R o/r --undo=false')).toEqual([{ kind: 'undraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
-  expect(bashActs('gh pr ready 3 -R o/r --undo --undo=0')[0].kind).toBe('undraft')
+  expect(bashActs('gh pr ready 3 -R o/r --undo --undo=0')[0]?.kind).toBe('undraft')
 })
 
 test('a GraphQL query the line does not show is an unread act, on every spelling of the endpoint', () => {
@@ -287,7 +287,7 @@ test('a Ready label put by hand is no act, on any route: the gate alone decides 
 test('the engine fed on stdin from Bash is an act of its own, its request unread', () => {
   expect(bashActs('printf %s "$REQ" | python3 /p/engine/gh.py --stdin-json'))
     .toEqual([{ kind: 'merge', name: 'gh.py --stdin-json', stdin: true }])
-  expect(bashActs('python3 /p/engine/gh.py --repo o/r pr-merge 12 -- --stdin-json')[0].kind).toBe('merge')
+  expect(bashActs('python3 /p/engine/gh.py --repo o/r pr-merge 12 -- --stdin-json')[0]?.kind).toBe('merge')
 })
 
 test('gh pr create --draft=false and --draft=0 open a pull request out of draft, --draft=true and a bare --draft a draft', () => {

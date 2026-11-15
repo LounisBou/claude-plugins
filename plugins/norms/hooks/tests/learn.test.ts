@@ -4,7 +4,8 @@
 // by an author who can write, and no reviewer's word kept or handed on.
 import { expect, test } from 'claude-code/testing'
 import { MAX_PRS, parsePrNumbers, register, threadOf, USAGE } from '../learn.ts'
-import { fakeDollar, gitRuns, hook, mount, nextOf } from './fakes.ts'
+import { fakeDollar, gitRuns, hook, mount, nextOf, hooksOn } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
 import { watchJournal } from './journal.ts'
 
 const matcher = { command: 'norms:learn' }
@@ -45,7 +46,7 @@ test('each thread that counts is one external event of the journal, its path and
   const hooks = mount(register)
   const { $, toolCalls, written } = fakeDollar({
     runs: gitRuns([], []),
-    tool: input => ({ text: JSON.stringify(input.args.pr === 12 ? [thread(), thread({ isOutdated: false })] : [thread({ path: 'test/b.test.ts' }), thread({}, 'NONE')]) }),
+    tool: input => ({ text: JSON.stringify(fieldsOf(input['args'])?.['pr'] === 12 ? [thread(), thread({ isOutdated: false })] : [thread({ path: 'test/b.test.ts' }), thread({}, 'NONE')]) }),
   })
   const events = watchJournal($)
   const { next, seen } = nextOf()
@@ -56,12 +57,12 @@ test('each thread that counts is one external event of the journal, its path and
   ])
   expect(seen).toEqual([])
   expect(written).toEqual({})
-  expect(out.text).toContain('2 resolved threads of owner/repo #12 #13 handed to the learning distiller')
-  expect(out.text).toContain('1 not acted on, 1 author cannot write')
-  expect(out.text).toContain('« add »')
-  expect(out.text).not.toContain('Ignore the rules')
+  expect(fieldsOf(out)?.['text']).toContain('2 resolved threads of owner/repo #12 #13 handed to the learning distiller')
+  expect(fieldsOf(out)?.['text']).toContain('1 not acted on, 1 author cannot write')
+  expect(fieldsOf(out)?.['text']).toContain('« add »')
+  expect(fieldsOf(out)?.['text']).not.toContain('Ignore the rules')
   const journaled = events()
-  expect(journaled.map((e: any) => [e.kind, e.trust, e.source.code, e.subject.repo, e.subject.pr, e.context.paths])).toEqual([
+  expect(journaled.map((e: unknown) => [fieldsOf(e)?.['kind'], fieldsOf(e)?.['trust'], fieldsOf(fieldsOf(e)?.['source'])?.['code'], fieldsOf(fieldsOf(e)?.['subject'])?.['repo'], fieldsOf(fieldsOf(e)?.['subject'])?.['pr'], fieldsOf(fieldsOf(e)?.['context'])?.['paths']])).toEqual([
     ['finding', 'external', 'norms.thread', 'owner/repo', 12, ['src/a.ts']],
     ['finding', 'external', 'norms.thread', 'owner/repo', 13, ['test/b.test.ts']],
   ])
@@ -72,9 +73,10 @@ test('run through the Skill tool, the same answer is the call\'s result', async 
   const hooks = mount(register)
   const { $ } = fakeDollar({ runs: gitRuns([], []), tool: () => ({ text: '[]' }) })
   const { next, seen } = nextOf()
-  const h = hooks.find(x => x.event === 'tool.call')!
+  const [h] = hooksOn(hooks, 'tool.call')
+  if (h === undefined) throw new Error('no Skill hook')
   const out = await h.handler($, { tool: 'Skill', skill: 'norms:learn', args: '12' }, next)
-  expect(out.result).toContain('0 resolved threads of owner/repo #12')
+  expect(fieldsOf(out)?.['result']).toContain('0 resolved threads of owner/repo #12')
   expect(seen).toEqual([])
 })
 

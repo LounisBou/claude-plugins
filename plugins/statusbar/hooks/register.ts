@@ -2,10 +2,11 @@
 // Entry point of the hooks module: mounts the two domains. The status line
 // itself stays a shell command the host runs from settings.json; this module
 // only feeds it its settings and answers the plugin's commands without a turn.
-import { register as registerConfigSync } from './config-sync.ts'
+import type { On } from '../core/host.ts'
+import { register as registerConfigSync, type StatusbarHost } from './config-sync.ts'
 import { register as registerCommands } from './commands.ts'
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<StatusbarHost>): void {
   registerConfigSync(on)
   registerCommands(on)
 }

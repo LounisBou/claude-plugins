@@ -4,6 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import { lintContributing, register } from '../validate.ts'
 import { mount, hook, nextOf, fakeDollar } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
 
 const DOC = [
   '# Project norms', //  1
@@ -42,13 +43,13 @@ test('a file with no top-level header is flagged', () => {
 test('the scan is appended to the skill prompt; no CONTRIBUTING.md leaves it as it was', async () => {
   const hooks = mount(register)
   const h = hook(hooks, 'skill.prompt', { skill: 'norms:validate' })
-  const { next } = nextOf(e => ({ text: e.text }))
+  const { next } = nextOf(e => ({ text: fieldsOf(e)?.['text'] }))
 
   const withFile = fakeDollar({ files: { 'CONTRIBUTING.md': DOC } })
   const out = await h.handler(withFile.$, { skill: 'norms:validate', text: 'SKILL' }, next)
-  expect(out.text.startsWith('SKILL\n\n<norms-validate-scan>')).toBe(true)
-  expect(out.text).toContain('| 2 | ERROR | 5 | [naming] | Empty bullet')
-  expect(out.text).toContain('(11 lines)')
+  expect(String(fieldsOf(out)?.['text']).startsWith('SKILL\n\n<norms-validate-scan>')).toBe(true)
+  expect(fieldsOf(out)?.['text']).toContain('| 2 | ERROR | 5 | [naming] | Empty bullet')
+  expect(fieldsOf(out)?.['text']).toContain('(11 lines)')
 
   const without = fakeDollar({})
   expect(await h.handler(without.$, { skill: 'norms:validate', text: 'SKILL' }, next)).toEqual({ text: 'SKILL' })

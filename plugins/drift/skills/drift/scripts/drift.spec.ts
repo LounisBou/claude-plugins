@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { PLAYWRIGHT_VERSION } from '../../../core/index.ts'
+import { PLAYWRIGHT_VERSION } from '../../../core/playwright.ts'
 import { main, type Deps } from './drift.ts'
 
 const FIXTURE = fileURLToPath(new URL('../../../tests/fixture', import.meta.url))
