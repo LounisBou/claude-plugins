@@ -123,20 +123,16 @@ The program is finished on the day all of this holds:
 | 8 | Lines of the method's code, release to release | net zero or less |
 | 9 | `main` red | never |
 
-After that the repository changes only on a fact from one of the operator's projects (his ruling of
-2026-11-14).
+### Nothing of the design is set aside (the operator's words, 2026-11-15)
 
-### Universal goals, closed where they are (decided B, 2026-11-15)
+- « le rangement interne des types strict, tu peux ne pas le mettre en priorité, mais ça n'empêche que ça doit être fait. Ton objectif est tout de même d'aller jusqu'au bout du développement »
+- « je veux qu'on livre l'ensemble du développement »
+- « Je ne dois pas être à un point de blocage. »
 
-Decided B on 2026-11-15T06:32:38Z by the coordinator, on the operator's delegation (« c'est à toi de décider ce qu'il y a de mieux pour avancer »): the 1.0 above is the finish line, and the goals below stay open beyond it.
-
-Four goals have no end of their own: each is closed where it stands, at `d540c0c6`, and moves
-again only on a fact from one of his projects.
-
-- **Goal 3, the remaining copies**: two stay, the session-name shape and cloudflare's read/write classification.
-- **Goal 5, strict typing everywhere**: every hook file but github's 8 and the orchestrator's 25 is strict, and the ratchet keeps it so.
-- **Goal 15, the outcome evals**: the harness, its nine cases and the 120 USD cap of the measure are in place, with no pilot and no measure run.
-- **Goal 21, the calibration**: the simulator and each pull request's difference exist, on 10 first-turn measures, too few to calibrate it.
+Goals 3, 5, 15 and 21 are therefore open like the others, after what slows his daily work: the two
+remaining copies (the session-name shape, cloudflare's read/write classification), strict typing of
+github's 8 hook files and the orchestrator's 25, the outcome measure run on the harness in place, and
+the calibration on more first-turn measures.
 
 ## Constraints
 
