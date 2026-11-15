@@ -343,17 +343,19 @@ function askedFields(entry: Fields): Pick<Asked, 'sender' | 'blocks' | 'consent'
 
 /**
  * An entry of the round, `ask`'s (v 2) or the relay's; undefined for anything else. A withdrawal the
- * operator made in the asker's own tab (`by: tab`) is his answer, the words he typed; a relay entry
- * `closed` with a `withdrawn:` text is a withdrawal.
+ * operator made in the asker's own tab (`by: tab`) is his answer, the words he typed, whether the
+ * entry was withdrawn or closed after a coordinator was shown it; a relay entry `closed` with a
+ * `withdrawn:` text is otherwise a withdrawal.
  */
 function seen(text: string | undefined, name: string, session: string): Seen | undefined {
   const entry = object(text)
   if (entry === undefined || typeof entry['id'] !== 'string' || typeof entry['status'] !== 'string') return undefined
   const answer = typeof entry['answer'] === 'object' && entry['answer'] !== null ? (entry['answer'] as Fields) : {}
   const reason = isText(answer['text']) ? answer['text'] : ''
-  const inTab = entry['status'] === 'withdrawn' && answer['by'] === 'tab'
-  const said = inTab && isText(answer['typed']) && answer['typed'] !== '' ? answer['typed'] : reason
-  const status = inTab ? 'answered' : entry['status'] === 'closed' && reason.startsWith('withdrawn:') ? 'withdrawn' : entry['status']
+  const withdrawal = entry['status'] === 'withdrawn' || (entry['status'] === 'closed' && reason.startsWith('withdrawn:'))
+  const inTab = withdrawal && answer['by'] === 'tab'
+  const said = inTab ? (isText(answer['typed']) && answer['typed'] !== '' ? answer['typed'] : reason.replace(/^withdrawn:\s*/, '')) : reason
+  const status = inTab ? 'answered' : withdrawal ? 'withdrawn' : entry['status']
   const settled = isText(answer['at']) ? answer['at'] : ''
   const asked = entry['v'] === 2 ? askedFields(entry) : undefined
   if (asked !== undefined) {
