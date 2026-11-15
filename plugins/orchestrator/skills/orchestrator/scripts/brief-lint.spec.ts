@@ -43,8 +43,14 @@ test('a backticked absolute path exists, is expected, or is a slash command', ()
   ])
 })
 
-test('an implementer brief names its orchestrator', () => {
-  assert.deepEqual(texts('# p\n\nYou are the implementer for this phase.\n'), ['1: no orchestrator address: name the exact ListAgents name and reference'])
+test('an implementer brief names one orchestrator and a spec field', () => {
+  assert.deepEqual(texts('# p\n\nYou are the implementer for this phase.\n'), [
+    '1: no orchestrator address: name the exact ListAgents name and reference',
+    '1: no spec field: name the design this phase builds on a line of its own, `Spec: <path>`, or `Spec: none`',
+  ])
+  assert.deepEqual(texts(IMPLEMENTER.replace('1. Spec: `/s.md`', '- Spec: none')), [])
+  assert.deepEqual(texts(IMPLEMENTER.replace('1. Spec: `/s.md`', 'Spec:')).length, 1)
+  assert.deepEqual(texts(IMPLEMENTER.replace('1. Spec: `/s.md`', 'The Spec: is elsewhere')).length, 1)
 })
 
 test('a second session reference is a finding, but in a succession brief; the class is read at the start of a line', () => {

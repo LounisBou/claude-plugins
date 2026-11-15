@@ -2111,6 +2111,7 @@ check "the succession template, unfilled, still fails on its mode line" "1" \
 printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
 check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
 check "the missing address is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no orchestrator address')"
+check "the missing spec field is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no spec field')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
 # and holding it to one would make the check noise nobody reads.

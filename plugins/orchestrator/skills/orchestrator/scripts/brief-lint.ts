@@ -10,7 +10,7 @@
 // reads the wording of an instruction.
 //
 // What it CANNOT check: whether the scope is right, whether the contracts are the ones the
-// next phase consumes, whether the tier fits the work.
+// next phase consumes, whether the tier fits the work, whether the spec it names was validated.
 // Those stay the orchestrator's, and a green lint is not an approved brief.
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -109,6 +109,12 @@ export function lint(text: string, context: Context): Finding[] {
   if (implementer && refs.length === 0) say(1, 'no orchestrator address: name the exact ListAgents name and reference')
   if (!succession && refs.length > 1) {
     say(1, `more than one session reference (${refs.map(r => `${r} `).join('')}): one address, no example beside it`)
+  }
+
+  // An implementer brief names the spec its phase builds, as a field of its own (`Spec: <path>`,
+  // or `Spec: none` for a build that has none); the path's existence is the path check's.
+  if (implementer && !some(/^(\d+\.\s+|[-*]\s+)?Spec:\s*\S/)) {
+    say(1, 'no spec field: name the design this phase builds on a line of its own, `Spec: <path>`, or `Spec: none`')
   }
 
   /*
