@@ -5,7 +5,7 @@
 // in the turn's text, the gate sent once per crossing, nothing from a session that is no
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
-import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP, heldReport } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP, heldReport, ciState, readDeliveryFacts, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -53,6 +53,69 @@ test('the messages: a header, the reply address, then the text cut past the cap'
   }
 })
 
+// --- the facts of a delivery -------------------------------------------------------------
+
+const SHA = 'abcdef0123456789abcdef0123456789abcdef01'
+const OTHER = '9999999123456789abcdef0123456789abcdef01'
+const FACTS: DeliveryFacts = { dirty: 0, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } }
+
+test('the checks of a head read as one word: failing, green, pending or none', () => {
+  expect(ciState([])).toBe('none')
+  expect(ciState([{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }, { conclusion: 'SKIPPED' }])).toBe('green')
+  expect(ciState([{ status: 'IN_PROGRESS', conclusion: '' }, { conclusion: 'SUCCESS' }])).toBe('pending')
+  expect(ciState([{ status: 'IN_PROGRESS' }, { state: 'FAILURE' }])).toBe('failing')
+  expect(ciState([{ conclusion: 'CANCELLED' }])).toBe('failing')
+})
+
+test('the facts line says each fact, and a false claim of delivery plainly, first', () => {
+  expect(factsLine(FACTS)).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
+  expect(falseClaims(FACTS)).toEqual([])
+  const wrong: DeliveryFacts = { dirty: 2, unpushed: 1, head: SHA, pr: { number: 12, head: OTHER, ci: 'pending' }, claimed: { pr: 12, head: '9999999' } }
+  expect(factsLine(wrong)).toBe('facts (read by the module): FALSE CLAIM of delivery (tree dirty; commits unpushed; local head is not the pull request\'s; named head 9999999 is not the local head) — '
+    + 'tree dirty (2 paths), 1 unpushed, head abcdef0 ≠ #12\'s head 9999999, CI pending at 9999999')
+  expect(falseClaims({ ...FACTS, pr: { number: 13, head: SHA, ci: 'none' } })).toEqual(['#12 named, #13 read'])
+  expect(factsLine({ dirty: null, unpushed: null, head: SHA, pr: null, claimed: null })).toBe('facts (read by the module): tree unread, unpushed unread, head abcdef0, pull request unread')
+})
+
+test('the facts are read from git in the checkout and gh on the pull request the verdict line names', async () => {
+  const calls: string[] = []
+  const answers: Record<string, string> = {
+    'git status --porcelain': ' M a.ts\n?? b.ts\n',
+    'git rev-parse HEAD': `${SHA}\n`,
+    'git rev-list --count HEAD --not --remotes': '0\n',
+    'gh pr view 12 --json number,headRefOid,statusCheckRollup': JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: [{ conclusion: 'SUCCESS' }] }),
+  }
+  const run: FactsRun = async argv => {
+    calls.push(argv.join(' '))
+    const out = answers[argv.join(' ')]
+    return out === undefined ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: out }
+  }
+  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`)
+  expect(facts).toEqual({ dirty: 2, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } })
+  // No verdict line: gh reads the branch's pull request; a run that throws is unread.
+  calls.length = 0
+  const bare = await readDeliveryFacts(async argv => { if (argv[0] === 'gh') throw new Error('no gh'); return run(argv) }, 'status: done')
+  expect(bare.pr).toBeNull()
+  expect(bare.claimed).toBeNull()
+  expect(calls.includes('gh pr view --json number,headRefOid,statusCheckRollup')).toBe(false)
+  expect((await readDeliveryFacts(async () => ({ exitCode: 0, stdout: 'not json' }), 'status: done')).pr).toBeNull()
+})
+
+test('a delivery reaches the orchestrator with its facts read on the repository, a false claim said', async () => {
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const view = (head: string) => JSON.stringify({ number: 12, headRefOid: head, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
+  const clean = fake({ repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(SHA) } })
+  await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
+  expect(clean.sent[0].text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
+  const dirty = fake({ repo: { 'git status --porcelain': ' M a.ts\n', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(OTHER) } })
+  await drive(mounted(), 'turn.complete', dirty.dollar, turnEnd(report))
+  expect(dirty.sent[0].text.split('\n')[1]).toContain('FALSE CLAIM of delivery (tree dirty; local head is not the pull request\'s)')
+  // A question carries no facts line: nothing is claimed delivered.
+  const asks = fake({ repo: { 'git status --porcelain': ' M a.ts\n' } })
+  await drive(mounted(), 'turn.complete', asks.dollar, turnEnd(QUESTION))
+  expect(asks.sent[0].text.includes('facts')).toBe(false)
+})
+
 test('the owner is the chain naming the tty, the one written last when two do', () => {
   const entry = (tty: string) => JSON.stringify({ tab_id: 't', tty, owner: 'o' })
   const chains = [
@@ -84,7 +147,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { repo?: Record<string, string>; name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -172,6 +235,9 @@ function fake(over: Over = {}) {
         }
         if (argv[0] === 'ps' && argv[1] === '-A' && (over.alive || over.exiting)) return { exitCode: 0, stdout: (over.alive ?? []).map(pid => `${pid}\n`).join('') + (over.exiting ?? []).map(pid => `${pid} ?Es ??\n`).join(''), stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
+        // The agent's checkout, as git and gh answer for it: by the command's first three words.
+        const repo = over.repo?.[argv.slice(0, 3).join(' ')]
+        if (repo !== undefined) return { exitCode: 0, stdout: repo, stderr: '' }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
     },
@@ -198,6 +264,7 @@ async function drive(chains: Record<string, Function[]>, event: string, dollar: 
 }
 
 const turnEnd = (answer: string, turnId = 't') => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId })
+const UNREAD = 'facts (read by the module): tree unread, unpushed unread, head unread'
 const QUESTION = 'Merge the fixture change first, or rebase on it?\n\nstatus: question — merge order'
 
 test('each state is sent once to the orchestrator, a repeat sends nothing, a new question sends', async () => {
@@ -220,7 +287,7 @@ test('each state is sent once to the orchestrator, a repeat sends nothing, a new
   expect(fx.sent.length).toBe(5)
   expect(fx.sent[1].text).toContain('Which base branch?')
   expect(fx.sent[2].text).toBe(`[module] ${AGENT} is blocked — no seed\n${REPLY}\n\nThe seed fails.`)
-  expect(fx.sent[3].text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
+  expect(fx.sent[3].text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${UNREAD}\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
   expect(fx.sent[4].text).toContain('head def')
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
 })
@@ -457,6 +524,26 @@ test('every turn without a status line is reported with its own text, a status t
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.', 'turn-4'))
   expect(fx.sent.length).toBe(4)
   expect(fx.sent[3]).toEqual({ to: ORCH, text: silent('Back at it.') })
+})
+
+test('a turn without a status line that ends on subagents or background work still running wakes no one', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const stop = (tasks: unknown[], crons: unknown[] = []) => drive(chains, 'classic.Stop', fx.dollar, { last_assistant_message: 'Lenses running.', background_tasks: tasks, session_crons: crons })
+  await stop([{ type: 'local_agent', description: 'lens: tests', status: 'running' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Lenses running.', 'turn-1'))
+  await stop([{ type: 'local_bash', command: 'npm test', status: 'pending' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Suite running.', 'turn-2'))
+  await stop([], [{ schedule: '*/10 * * * *' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back in ten minutes.', 'turn-3'))
+  expect(fx.sent).toEqual([])
+  // Its work settled, the agent idle with no status line: the orchestrator is told.
+  await stop([{ type: 'local_agent', description: 'lens: tests', status: 'completed' }])
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Lenses done.', 'turn-4'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent('Lenses done.') }])
+  // A turn whose stop carried no task list at all is reported, as before.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('No stop seen.', 'turn-5'))
+  expect(fx.sent.length).toBe(2)
 })
 
 test('the final report written without a status line still reaches the orchestrator after earlier silent turns', async () => {

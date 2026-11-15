@@ -3250,8 +3250,8 @@ code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     try:
-        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
-                     '--trust', '--no-verify'])
+        m.cmd_spawn(m.args_from_line('spawn', ['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
+                     '--trust', '--no-verify']))
     except SystemExit as exc:
         code = exc.code or 0
 print(code)
@@ -4391,13 +4391,13 @@ rm -rf "$SWEEP"
 
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
-# the draft flag in its own definition. `draft_guard.py` reads the run behind the check's link,
+# the draft flag in its own definition. `draft-guard.sh` reads the run behind the check's link,
 # the workflow file at the run's head and, for a local reusable workflow, the called file. A fake
 # `gh` answers from files: `api` from DGA (the run, the contents), `pr view` and `pr checks` from
 # the files of DG. The fixtures are shared with the cases of ci-watch and of the stop gate below.
 DG="$WORK/draft-guard"; DGA="$DG/api"; DGB="$DG/bin"; DGS="$DG/state"
 mkdir -p "$DGA" "$DGB" "$DGS"
-DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft_guard.py"
+DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft-guard.sh"
 dg_key() { printf '%s' "$1" | tr '/?=@' '____'; }
 dg_run() {  # <run id> <workflow path> <head sha>
   printf '{"path": "%s", "head_sha": "%s"}\n' "$2" "$3" > "$DGA/$(dg_key "repos/acme/thing/actions/runs/$1")"
@@ -4470,10 +4470,9 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$DGB/gh"
-check "draft_guard.py exists" "yes" "$([ -f "$DGSCRIPT" ] && echo yes || echo no)"
 # dg_raw: the command's stdout, its exit code; dg <draft: true|false> <checks, a JSON array>: the
 # names it printed joined by `, `, then the exit code.
-dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
+dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
 dg() {
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4531,22 +4530,6 @@ printf '[%s]\n' "$C_WIP" > "$DG/checks"
 dg_out=$(dg_raw); dg_rc=$?
 check "gh failing (the draft flag unread): exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
-dg_reset
-check "guards() runs on an injected gh and answers the names of the guards" "wip-check / wip-check" \
-  "$(DGA="$DGA" DGCHECKS="[$C_WIP, $C_TESTS]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
-import json, os, sys
-import draft_guard
-
-def gh(argv):
-    if argv[0] != "api":
-        raise RuntimeError("only api is stubbed")
-    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
-    with open(path) as fh:
-        return fh.read()
-
-print(", ".join(sorted(draft_guard.guards("acme/thing", json.loads(os.environ["DGCHECKS"]), sys.argv[1], gh))))
-PYEOF
-)"
 
 # A trailing comment is no part of the definition; a draft test written only in one is no guard.
 IFS= read -r -d '' WF_TRAIL <<'EOF'
@@ -4655,7 +4638,7 @@ C_BUILD_N=$(dg_pass build 570 9101); C_LINT_N=$(dg_pass lint 570 9102); C_DEPLOY
 C_DOCS_N=$(dg_pass docs 570 9104)
 C_EXT_P='{"name": "secrets", "bucket": "pass", "link": "https://ci.example.com/scan/4"}'
 C_NOREAD_P=$(dg_pass build 558 9105)
-dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
+dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
 dg_dep() {  # <draft: true|false> <checks, a JSON array>: the names printed joined by `, `, then the exit code
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4685,23 +4668,6 @@ printf '[%s]\n' "$C_BUILD_N" > "$DG/checks"
 dg_out=$(dg_dep_raw); dg_rc=$?
 check "--dependents with gh failing: exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
-dg_reset
-check "dependents() runs on an injected gh and answers the names behind the guards" "build, deploy, lint" \
-  "$(DGA="$DGA" DGCHECKS="[$C_WIP_N, $C_BUILD_N, $C_LINT_N, $C_DEPLOY_N, $C_DOCS_N, $C_EXT_P]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
-import json, os, sys
-import draft_guard
-
-def gh(argv):
-    if argv[0] != "api":
-        raise RuntimeError("only api is stubbed")
-    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
-    with open(path) as fh:
-        return fh.read()
-
-checks = json.loads(os.environ["DGCHECKS"])
-print(", ".join(sorted(draft_guard.dependents("acme/thing", checks, ["wip-check / wip-check"], sys.argv[1], gh))))
-PYEOF
-)"
 
 echo "== ci-watch =="
 # The one way to wait on CI: a script an orchestrator starts in the background, that exits on
@@ -5005,10 +4971,10 @@ check "an unknown argument: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" 7 --bogus | se
 
 # A draft pull request: a red whose every failing check is a draft guard is no red. The watch
 # runs without --fail-fast (it would stop on the guard before the real checks finish), then the
-# failing names are classified by draft_guard.py; a pull request that is no draft keeps its path.
+# failing names are classified by draft-guard.sh; a pull request that is no draft keeps its path.
 # The view file's `draft` token is what `gh pr view --json isDraft` answers from.
 CWD="OPEN $HA draft"
-# On a draft, green needs a passed check whose job needs the guard (`draft_guard.py --dependents`),
+# On a draft, green needs a passed check whose job needs the guard (`draft-guard.sh --dependents`),
 # so the passed checks of these cases (build, lint) are jobs behind the guard of run 570.
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
 check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
@@ -5784,7 +5750,7 @@ ia.terminal_for = lambda tty: Accepting()
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
 try:
-    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout'])
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout']))
 except SystemExit as exc:
     print('exit %s' % exc.code)
 else:
@@ -6021,7 +5987,7 @@ ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
@@ -6326,9 +6292,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if mode == 'rotate':
-            ia.cmd_rotate(['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light'])
+            ia.cmd_rotate(ia.args_from_line('rotate', ['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light']))
         else:
-            ia.cmd_close(['--tty', tty] + sys.argv[3:])
+            ia.cmd_close(ia.args_from_line('close', ['--tty', tty] + sys.argv[3:]))
 except SystemExit as e:
     code = e.code
 print('exit=%s' % code)
@@ -6661,7 +6627,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_spawn(["--dir", workdir, "--prompt", "p"] + argv)
+        ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p"] + argv))
 except SystemExit as e:
     code = e.code
 def chain(name):
@@ -6755,12 +6721,12 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if scenario in ("survivor", "closed"):
-            ia.cmd_close(["--tty", "/dev/ttys901", "--keep-checkout"])
+            ia.cmd_close(ia.args_from_line('close', ["--tty", "/dev/ttys901", "--keep-checkout"]))
         elif scenario in ("stranger", "mine"):
-            ia.cmd_move(["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"])
+            ia.cmd_move(ia.args_from_line('move', ["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"]))
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
-                         + (["--right-of", "self"] if scenario == "beside" else []))
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
+                         + (["--right-of", "self"] if scenario == "beside" else [])))
 except SystemExit as e:
     code = e.code
 def chain():
@@ -6853,9 +6819,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if argv[:1] == ["list"]:
-            ia.cmd_list([])
+            ia.cmd_list(None)
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--no-verify"] + argv)
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--no-verify"] + argv))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -7001,7 +6967,7 @@ ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
 check "a takeover hands the predecessor's agents to the successor and removes the predecessor's chain" \
   "1|tmux:/s:@2,tmux:/s:@4|absent" \
   "$(printf '%s' "$res" | grep -c '^took window 0')|$(jq -r .tab_id "$TKSTATE/chains/ttys967.jsonl" | paste -sd, -)|$([ -e "$TKSTATE/chains/ttys966.jsonl" ] && echo present || echo absent)"
@@ -7633,7 +7599,7 @@ def interrupted(argv):
     """The close interrupted: by the keyboard, or by a signal this probe sends itself."""
     calls.append("cmd_close")
     if mode == "sent-interrupt":
-        ia.KILL_SENT.add(argv[1])
+        ia.KILL_SENT.add(argv.tty)
     if mode in ("sigterm", "sighup"):
         signal.raise_signal(signal.SIGTERM if mode == "sigterm" else signal.SIGHUP)
     raise KeyboardInterrupt()
@@ -7658,11 +7624,11 @@ elif mode == "nohup":
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     ia.cmd_close = refused_seeing_hangup
 elif mode in ("sent-gone", "sent-there"):
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv.tty))
 elif mode == "raises":
     ia.cmd_close = raises
 elif mode == "vanished":
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv.tty))
 else:
     ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: refused late"))
 class Out(io.StringIO):
@@ -7670,7 +7636,7 @@ class Out(io.StringIO):
     def flush(self):
         if mode == "closed-pipe" and "closed 1 session" in self.getvalue():
             raise BrokenPipeError(32, "Broken pipe")
-rotate = ["--old-tty", "/dev/ttys901", "--dir", "/x", "--title", "T", "--tier", "light"]
+rotate = ["--old-tty", "/dev/ttys901", "--dir", "/", "--title", "Agent: t", "--tier", "light", "--prompt", "p"]
 if len(sys.argv) > 3:
     rotate = ["--old-tty", "/dev/ttys901", "--dir", sys.argv[3], "--title", "Agent: two",
               "--tier", "light", "--prompt", "p"]
@@ -7681,13 +7647,13 @@ if mode.startswith("pipe-"):
     os.close(r)
     os.dup2(w, 1)
     os.close(w)
-    ia.cmd_rotate(rotate)
+    ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 handlers = [signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
 out, err = Out(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_rotate(rotate)
+        ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8020,7 +7986,7 @@ sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 ia.cmd_spawn = lambda *a, **k: print("spawned")
 try:
-    ia.cmd_rotate(["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"])
+    ia.cmd_rotate(ia.args_from_line('rotate', ["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"]))
 except SystemExit as e:
     print("exit=%s" % e.code)
 PYEOF
@@ -8100,7 +8066,7 @@ def asked(*args, **kwargs):
     sys.exit(3)
 for method in ('chain_state', 'can_place', 'create', 'find', 'identity'):
     setattr(ia.ITERM, method, asked)
-ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
+ia.cmd_spawn(ia.args_from_line('spawn', sys.argv[3:]))" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
 OUTREFUSED="spawn: refused: this session is an orchestrator ('Orch: rev') outside its home session"
 out=$(outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
 check "an orchestrator not yet moved home (named by --orchestrator, its rename pending) is refused, and iTerm2 is never asked" "1|1|none" \
@@ -8530,7 +8496,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home(["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"])
+        ia.cmd_home(ia.args_from_line('home', ["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8648,8 +8614,8 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home_release(["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
-                             "--pane-tty", "/dev/ttys961", "--resumed", resumed])
+        ia.cmd_home_release(ia.args_from_line('home-release', ["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
+                             "--pane-tty", "/dev/ttys961", "--resumed", resumed]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8806,7 +8772,7 @@ code = 0
 argv = json.loads(sys.argv[5])
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.COMMANDS[argv[0]](argv[1:])
+        ia.COMMANDS[argv[0]](ia.args_from_line(argv[0], argv[1:]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { cutAt, reportPathOf, shorten, VERDICT_LIMIT, verdictLine } from './verdict.ts'
+import { cutAt, reportPathOf, shorten, VERDICT_LIMIT, verdictLine, verdictOf } from './verdict.ts'
 
 const PATH = '/Users/x/.claude/claude-orchestrator/briefs/demo/report-p3.md'
 
@@ -15,6 +15,13 @@ describe('the verdict line', () => {
   it('stays under the limit with a long absolute report path', () => {
     const line = verdictLine({ repo: 'claude-plugins', pr: 1234, head: 'a'.repeat(40), verdict: 'gate green — fix reverted → tests fall: verified', blocking: [], report: PATH })
     assert.ok(line.length < VERDICT_LIMIT)
+  })
+
+  it('is read back for its pull request and head, the last one in the text, or null', () => {
+    const line = verdictLine({ repo: 'owner/claude-plugins', pr: 12, head: 'abcdef0123456789', verdict: 'gate green', blocking: [], report: PATH })
+    assert.deepEqual(verdictOf(`Done.\nclaude-plugins#3 1111111 — old — blocking: none\n${line}\nstatus: done — PR`), { repo: 'claude-plugins', pr: 12, head: 'abcdef0' })
+    assert.deepEqual(verdictOf('`owner/x#7 abcdef0123` - pass'), { repo: 'owner/x', pr: 7, head: 'abcdef0123' })
+    assert.equal(verdictOf('PR #12, head abc, 40 passed.\nstatus: done — PR #12'), null)
   })
 })
 

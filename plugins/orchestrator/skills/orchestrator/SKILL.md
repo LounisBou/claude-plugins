@@ -41,7 +41,9 @@ words.
    claims until the repository, the process table or the running artifact reads clean, the
    measurement that found a fault taken again. A delivery is read by its review session and
    the gate: you read their verdict line, never a diff or a finding. A fact you did not read
-   is not stated; a figure relayed from an agent says « per the agent's report ».
+   is not stated; a figure relayed from an agent says « per the agent's report ». A delivery's
+   tree, unpushed commits, head against its pull request's and CI come read on its `facts` line:
+   never re-checked by hand; a `FALSE CLAIM` there sends the delivery back.
 3. **The operator's word comes first.** Read his message before any tool call and answer
    every question, in order, before you measure. A question gets an answer and at most a proposal: only an order, or his recorded
    choice, authorises a change. His explicit instruction on the point replaces this skill:
@@ -65,7 +67,8 @@ words.
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
-   you launched wakes you undeclared.
+   you launched wakes you undeclared. A wake that brings nothing new gets no text to him: a
+   question already asked is never restated.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
     opens its dispatch-record row the moment it is decided, `--blocker` naming what it waits
