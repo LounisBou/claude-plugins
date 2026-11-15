@@ -18,6 +18,10 @@
     "learning: retrospective": ["learning/skills/retrospective/SKILL.md"],
     "orchestrator: start (build)": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"],
     "orchestrator: start (investigate)": ["orchestrator/skills/orchestrator/SKILL.md"],
-    "orchestrator: succession": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/templates/orchestrator-succession-brief.md"]
+    "orchestrator: succession": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/templates/orchestrator-succession-brief.md"],
+    "orchestrator: coordinator start": ["orchestrator/skills/coordination/SKILL.md", "orchestrator/commands/coordinator.md"],
+    "orchestrator: coordinator succession": ["orchestrator/skills/coordination/SKILL.md", "orchestrator/templates/coordinator-succession-brief.md"],
+    "orchestrator: auditor": ["orchestrator/templates/agent-audit-brief.md"],
+    "orchestrator: auditor succession": ["orchestrator/templates/auditor-succession-brief.md"]
   }
 }
