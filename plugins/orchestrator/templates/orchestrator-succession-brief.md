@@ -25,14 +25,14 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must
 
 ## Live state — read from the state at the takeover
 
-Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round, the forge and the goals; a judgment on a row is its note.
+Printed by `succession.sh takeover` from the dispatch record, the to-do list, the deck, the round, the forge and the goals; a judgment on a row is its note, his words in it named by their round entry or to-do item.
 
 - Rows open (id, label, what remains): {{LIVE_ROWS}}
 - Row owners: {{LIVE_OWNERS}}
 - Pull requests open (number, head, where each stands): {{LIVE_PULL_REQUESTS}}
 - Agents running (name and reference, brief path): {{LIVE_AGENTS}}
 - The operator's open questions, each verbatim (its `Question i of N` block whole), with its round entry id, or `none`: {{LIVE_OPEN_QUESTIONS}}
-- Questions the operator answered, to apply (subject, answer), or `none`: {{LIVE_ANSWERED}}
+- Questions the operator answered, still to apply (round entry, subject: his letter or first sentence; his words are in that entry, read only if the item needs them): {{LIVE_ANSWERED?}}
 - Questions withdrawn, to ask again under step 2 (round entry, reason, question verbatim), or `none`: {{LIVE_REASK}}
 - To-do items whose row is closed or missing: {{LIVE_TODO}}
 - Project: {{PROJECT_SHEET}}
