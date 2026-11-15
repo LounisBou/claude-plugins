@@ -70,9 +70,9 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   const text = w.text()
   assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\nMode: build\n'))
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
-  assert.ok(text.includes('with `open=none` it is the goals line, nothing more; else, in'))
+  assert.ok(text.includes('nothing more unless it lists open or deferred goals: then, in'))
   assert.ok(text.includes(`dispatch-record.sh goals ${w.record} status | grep -v '| met |'`))
-  assert.ok(text.includes(`grep -vE '\\[(for|superseded): ' ${join(w.briefs, 'rulings.md')}\``))
+  assert.ok(text.includes(`grep -v '\\[for: ' ${join(w.briefs, 'rulings.md')}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
   assert.ok(text.includes('`workspace.sh list belt`'))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
@@ -140,6 +140,12 @@ test('the project sheet lists the open goals only: a goal ruled out or deferred 
   const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | ruled-out | b | p2 | |\n| G3 | open | c | p3 | |\n' })
   assert.equal(w.run(), 0)
   assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=G3 \(plan: p3\)\n/)
+})
+
+test('a deferred goal shows on the Project line beside open=none, so the table is read for it', () => {
+  const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | deferred | b | p2 | his words |\n| G3 | deferred | c | p3 | his words |\n' })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=none deferred=G2,G3\n/)
 })
 
 test('an open to-do item pointing to a closed or missing row is flagged; one pointing to an open row, a closed item or an item with no row is not', () => {

@@ -100,14 +100,9 @@ export function pruneRulings(text: string, archive: string, closed: ReadonlySet<
   return { kept: kept.join('\n'), moved, warnings }
 }
 
-/**
- * What a takeover reads of the rulings file, the live ones: every line but the entries marked
- * `[for: <ref>]` (read by grep when a task reaches that item) and those marked superseded, which a
- * later ruling replaces, even when the prune kept one whose replacement it cannot find.
- */
+/** What a takeover reads of the rulings file: every line but the entries marked `[for: <ref>]`. */
 export function readAtTakeover(text: string): string {
-  const out = new Set(['for', 'superseded'])
-  return entries(text).filter(group => !(group.entry && out.has(markerOf(group.lines.join('\n'))?.kind ?? ''))).flatMap(group => group.lines).join('\n')
+  return entries(text).filter(group => !(group.entry && markerOf(group.lines.join('\n'))?.kind === 'for')).flatMap(group => group.lines).join('\n')
 }
 
 /** The archive beside a file: `rulings.md` → `rulings-archive.md`. */

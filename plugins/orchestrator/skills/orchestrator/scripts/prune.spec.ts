@@ -109,9 +109,6 @@ test('a ruling for one open item stays in the file and is left out of what a tak
   assert.equal(pruneRulings(text, '').kept, text)
   assert.equal(readAtTakeover(text), text.replace('- 2026-11-09T10:00:00Z « A » → a last correction of acme/app#12, then its review. [for: acme/app#12]\n', ''))
   assert.equal(readAtTakeover(text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, '')), text.replaceAll(/ \[(standing|for: [^\]]+)\]/g, ''))
-  // A superseded ruling is not printed, whether its replacement is found or not.
-  const old = '- 2026-11-10T06:00:00Z « C » → replaced. [superseded: 2026-12-01T00:00:00Z]\n'
-  assert.equal(readAtTakeover(`${old}- 2026-11-10T07:00:00Z « D » → live.\n`), '- 2026-11-10T07:00:00Z « D » → live.\n')
 })
 
 test('a ruling for rows all closed in the dispatch record moves as a carried-out one; one with a row open or no row number stays', () => {
