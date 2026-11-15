@@ -11880,6 +11880,8 @@ check "a brief fills its template's fields, never retypes them" "yes|yes|yes|no|
   "$(spells "$OREF/brief.md" 'never retyping their fixed text')|$(spells "$OREF/review-round.md" 'filled by its fields, never retyped')|$(spells "$OREF/standing-rules.md" 'the brief templates carry them, never retyped')|$(spells "$OREF/standing-rules.md" 'put in every prompt')|$(spells "$OREF/brief.md" 'Start from `')"
 check "a set-aside is a few words, the index holds the rest" "yes|no" \
   "$(spells "$OREF/review-verdict.md" 'in a few words with its reason in a few words, which `accepted` requires: the index holds the rest.')|$(spells "$OREF/review-verdict.md" 'each point set aside with its one-line reason, which')"
+check "the review tool's schema asks a set-aside in a few words" "yes" \
+  "$(spells "$ROOT/hooks/review.ts" 'each point set aside in a few words, its reason in a few words')"
 check "the successor tells its agents its address and asks nothing back" "yes|no" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'asking nothing back')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'ask a one-line status')"
 

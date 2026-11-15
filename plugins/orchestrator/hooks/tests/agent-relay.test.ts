@@ -41,6 +41,9 @@ test('the messages: a header, the reply address, then the text cut past the cap'
   // acknowledgment, which the orchestrator acts on nowhere (measured: half the relayed text).
   expect(relayText(AGENT, { kind: 'waiting', blocks: '3 review lenses', question: 'Lenses running, I touch nothing.' }, 'T'))
     .toBe(`[module] ${AGENT} waits on its background work — 3 review lenses\n${REPLY}`)
+  // A bare `status: waiting` names nothing: its text is the only word of what it watches.
+  expect(relayText(AGENT, { kind: 'waiting', blocks: '', question: 'CI of #12 running.' }, 'T'))
+    .toBe(`[module] ${AGENT} waits on its background work\n${REPLY}\n\nCI of #12 running.`)
   const long = relayText(AGENT, { kind: 'question', blocks: '', question: 'x'.repeat(RELAY_CAP + 5) }, 'T')
   expect(long).toContain(`[cut at ${RELAY_CAP} of ${RELAY_CAP + 5} characters]`)
   expect(gateText(AGENT, 312000, 31)).toBe(`[module] ${AGENT} context 312,000 (31%) — at the gate`)

@@ -81,6 +81,17 @@ test('the detail github echoes back is named, never carried back', async () => {
   expect(said.result.split('\n')[0]).toBe('github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, the detail sent')
 })
 
+test('only the echo is named: a detail found elsewhere, absent, or never sent leaves the answer, and a refusal, whole', async () => {
+  const line = '/cfg/records/x/Ready.json\ngithub: acme/thing#128 Ready at 0123456: a clean review, passed E2E and green CI hold at its head.'
+  const short = fake('Orch: belt', { result: line })
+  expect((await handler()(short.dollar, { pr: 128, verdict: 'pass', detail: 'Ready' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
+  const bare = fake('Orch: belt', { result: line })
+  expect((await handler()(bare.dollar, { pr: 128, verdict: 'pass' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
+  const refused = fake('Orch: belt', { deny: 'github: refused, two to fix by orchestrator, two to fix' })
+  expect(await handler()(refused.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' }))
+    .toEqual({ result: 'github: refused, two to fix by orchestrator, two to fix', isError: true })
+})
+
 for (const verdict of ['pass', 'fail']) {
   test(`an orchestrator's ${verdict} is written as a review record with its line`, async () => {
     const fx = fake('Orch: belt')

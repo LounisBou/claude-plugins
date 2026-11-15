@@ -138,8 +138,8 @@ export function fingerprint(wait: Wait): string {
 
 // The report sent up: to the coordinator for an orchestrator, to its orchestrator for an
 // agent. A header naming the session and its state, the address the answer goes back to,
-// then the text the turn carried, cut past the cap and said; a wait on background work carries
-// its status line alone. A report, never an order: it carries no approval, no merge, no undraft
+// then the text the turn carried, cut past the cap and said; a wait on background work that
+// names what it watches carries its status line alone. A report, never an order: it carries no approval, no merge, no undraft
 // and no stand-down.
 export function relayText(name: string, wait: Wait, since: string, context: string | null = null): string {
   const reply = `reply with SendMessage to: ${name}`
@@ -149,7 +149,7 @@ export function relayText(name: string, wait: Wait, since: string, context: stri
     : wait.kind === 'waiting' ? `[module] ${name} waits on its background work`
     : `[module] ${name} ${wait.kind === 'blocked' ? 'is blocked' : 'asks'}`
   const said = 'blocks' in wait && wait.kind !== 'operator' && wait.blocks ? ` — ${wait.blocks}` : ''
-  if (!wait.question || wait.kind === 'waiting') return `${header}${said}\n${reply}`
+  if (!wait.question || (wait.kind === 'waiting' && wait.blocks)) return `${header}${said}\n${reply}`
   return `${header}${said}\n${reply}\n\n${cutQuestion(wait.question)}`
 }
 
