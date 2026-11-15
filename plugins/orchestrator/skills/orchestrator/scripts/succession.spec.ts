@@ -464,11 +464,25 @@ test('a successor asks again only what its predecessor never had answered: each 
   assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn'), storedAsk('q-5', 'answered')), [], NAME, SESSION).reask, [])
   assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn')), texts(storedAsk('q-6', 'answered')), NAME, SESSION).reask, [])
   // The same question withdrawn twice: the newest alone is asked again, once.
-  assert.deepEqual(roundSettled(texts(storedAsk('q-7', 'withdrawn'), storedAsk('q-8', 'withdrawn', { at: '2026-11-15T08:30:00.000Z' })), [], NAME, SESSION).reask.map(q => q.id), ['q-8'])
+  assert.deepEqual(roundSettled(texts(storedAsk('q-7', 'withdrawn'), storedAsk('q-8', 'withdrawn', { answer: { text: 'ended', by: 'sender', at: '2026-11-15T09:30:00.000Z', settler: NAME } })), [], NAME, SESSION).reask.map(q => q.id), ['q-8'])
   // A different question is its own key.
   assert.deepEqual(roundSettled(texts(storedAsk('q-3', 'withdrawn'), storedAsk('q-9', 'open', { ask: 'Which later?' })), [], NAME, SESSION).reask.map(q => q.id), ['q-3'])
   // Another orchestration's entries, and what is no entry, are none of its business.
   assert.deepEqual(roundSettled([...texts(storedAsk('q-3', 'withdrawn', { sender: { session: 'x', name: 'Orch: other', role: 'orchestrator', machine: 'mbp' } }), storedAsk('q-2', 'answered', { sender: { session: 'x', name: 'Orch: other', role: 'orchestrator', machine: 'mbp' } })), 'not json', undefined as unknown as string], [], NAME, SESSION), none)
+})
+
+test('a withdrawal made in the asker\'s tab is the operator\'s answer, with the words he typed; a relay entry closed with a withdrawal is a withdrawal; another asker\'s newer withdrawal silences nobody', () => {
+  const tab = storedAsk('q-1', 'withdrawn', { answer: { text: 'answered in the sender\'s own tab', by: 'tab', at: '2026-11-15T09:00:00.000Z', settler: NAME, typed: 'B please' } })
+  const typed = roundSettled(texts(tab), [], NAME, SESSION)
+  assert.deepEqual([typed.answered.map(q => q.said), typed.reask], [['B please'], []])
+  const untyped = roundSettled(texts({ ...tab, answer: { ...tab.answer, typed: undefined } }), [], NAME, SESSION)
+  assert.deepEqual(untyped.answered.map(q => q.said), ['answered in the sender\'s own tab'])
+  const closed = (id: string, text: string) => ({ id, session: SESSION, from: NAME, kind: 'operator', status: 'closed', question: id === 'r-1' ? 'Later?' : 'Done?', answer: { text, by: 'tab', at: '2026-11-15T09:00:00Z' } })
+  const relayed = roundSettled(texts(closed('r-1', 'withdrawn: answered in the sender\'s own tab'), closed('r-2', 'B')), [], NAME, SESSION)
+  assert.deepEqual([relayed.reask.map(q => q.id), relayed.answered.map(q => q.id)], [['r-1'], ['r-2']])
+  const stranger = storedAsk('q-9', 'withdrawn', { sender: { session: 'x', name: 'Agent: belt', role: 'agent', machine: 'mbp' }, answer: { text: 'ended', by: 'sender', at: '2026-11-15T10:30:00.000Z', settler: 'x' } })
+  assert.deepEqual(roundSettled(texts(storedAsk('q-8', 'withdrawn'), stranger), [], NAME, SESSION).reask.map(q => q.id), ['q-8'])
+  assert.equal(roundSettled(texts(storedAsk('q-8', 'withdrawn', { answer: { text: '', by: 'sender', at: '2026-11-15T09:00:00.000Z', settler: NAME } })), [], NAME, SESSION).reask[0]?.said, '')
 })
 
 test('an entry `ask` stored malformed is ignored, and a consent asked keys the question apart', () => {
