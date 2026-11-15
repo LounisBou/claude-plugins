@@ -56,7 +56,8 @@ export interface Deps {
   /** Runs a child on this process's own streams and returns its exit status (`goals`). */
   readonly passThrough: (argv: readonly [string, ...string[]]) => Promise<number>
   readonly now: () => Date
-  readonly goalsPy: string
+  /** The command that runs goals.ts, its arguments to follow. */
+  readonly goals: readonly [string, ...string[]]
   readonly routingPy: string
   /** Takes each fact a write leaves for the audit trail (lib/audit.ts); none, nothing is written. */
   readonly journal?: Journal
@@ -546,9 +547,9 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
   if (blocker !== undefined && !blockerValid(blocker)) die(ctx, `open: --blocker takes ${BLOCKER_FORMS}, got: ${blocker}`)
   // The spec's goals are written before the first dispatch, or done is measured against the plan alone.
   if (!isFile(ctx.goalsFile)) die(ctx, `open: no goals.md beside ${ctx.record}: write the spec's goals first, dispatch-record.sh goals ${ctx.record} init --spec <path>|none`)
-  const unplanned = (await ctx.deps.run(['python3', ctx.deps.goalsPy, 'unplanned', ctx.goalsFile])).stdout.split('\n').filter(g => g !== '')
+  const unplanned = (await ctx.deps.run([...ctx.deps.goals, 'unplanned', ctx.goalsFile])).stdout.split('\n').filter(g => g !== '')
   for (const goal of unplanned) warn(ctx, `${goal} is in no phase and not ruled out: plan it or put it to the operator`)
-  if (unplanned.length > 0) warn(ctx, (await ctx.deps.run(['python3', ctx.deps.goalsPy, 'line', ctx.goalsFile])).stdout.replace(/\n+$/, ''))
+  if (unplanned.length > 0) warn(ctx, (await ctx.deps.run([...ctx.deps.goals, 'line', ctx.goalsFile])).stdout.replace(/\n+$/, ''))
   let id = 0
   try {
     update(ctx.record, current => {
@@ -913,7 +914,7 @@ async function goals(ctx: Context, args: readonly string[]): Promise<void> {
   if (!GOAL_SUBS.includes(sub)) die(ctx, `goals: unknown subcommand: ${sub} (expected init, status, plan, met, rule-out, defer, reopen or check)`)
   ctx.registerAbsent = true
   if (sub === 'init') mkdirSync(dirname(ctx.record), { recursive: true })
-  const code = await ctx.deps.passThrough(['python3', ctx.deps.goalsPy, sub, ctx.goalsFile, ...args.slice(1)])
+  const code = await ctx.deps.passThrough([...ctx.deps.goals, sub, ctx.goalsFile, ...args.slice(1)])
   if (code === 0 && sub === 'met') {
     const evidence = args.filter((_, k) => args[k - 1] === '--evidence')
     noteLink(ctx, 'orchestrator.goals.met', null, { goal: args[1] ?? null, prs: prRefsOf(evidence.join(' ')) })
@@ -1071,7 +1072,7 @@ if (isEntry(import.meta.url)) {
       spawn(command, args, { stdio: 'inherit' }).on('error', () => done(127)).on('close', status => done(status ?? 1))
     }),
     now: () => new Date(),
-    goalsPy: join(here, 'goals.py'),
+    goals: [process.execPath, '--no-warnings', join(here, 'goals.ts')],
     routingPy: resolve(here, '../../model-routing/scripts/routing.py'),
     journal: scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)),
   })

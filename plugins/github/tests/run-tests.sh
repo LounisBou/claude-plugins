@@ -317,6 +317,15 @@ runs = json.loads(sys.argv[2])
 ci = fmt.gate_ci({"statuses": []}, runs, False, {})
 print(ci["result"], len(ci["failed"]), ci["total"], ci["running"])
 ' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"failure"},{"id":2,"name":"a","status":"in_progress"},{"id":3,"name":"b","app":{"slug":"s"},"status":"completed","conclusion":"success"}]')"
+# No check at a head: CI not started (PENDING), or, in a repository with no CI configured, NONE.
+check "gate_ci reads no check as PENDING, and as NONE where the repository has no CI" "PENDING NONE PENDING" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+print(fmt.gate_ci({"statuses": []}, [], False, {})["result"], fmt.gate_ci({"statuses": []}, [], False, {}, no_ci=True)["result"],
+      fmt.gate_ci({"statuses": []}, [], False, {}, required=["ci"], no_ci=True)["result"])
+' "$GHDIR")"
 # A run without an integer id, or tied on the greatest id, is never dropped.
 check "gate_ci keeps a success and a running run without an id" "PENDING 2" \
   "$(python3 -c '
@@ -2679,12 +2688,14 @@ check "pr-issue-comments answers a table, no object" "| id | author | first line
 check "pr-issue-comments --json keeps the whole comment" "second" \
   "$(gh9 pr-issue-comments 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["body"].splitlines()[1])')"
 
-fix9 graphql '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_1","isResolved":false,"path":"a.py","line":4,"comments":{"nodes":[{"id":"c","body":"x","author":{"login":"rev"}}]}},{"id":"PRRT_2","isResolved":true,"path":"b.py","line":1,"comments":{"nodes":[]}}]}}}}'
+fix9 graphql '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_1","isResolved":false,"path":"a.py","line":4,"comments":{"nodes":[{"id":"c","body":"x","authorAssociation":"MEMBER","author":{"login":"rev"}}]}},{"id":"PRRT_2","isResolved":true,"path":"b.py","line":1,"comments":{"nodes":[]}}]}}}}'
 check "pr-threads answers the open threads as a table" \
-  "| thread | file | line | author |^|---|---|---|---|^| PRRT_1 | a.py | 4 | rev |" \
+  "| thread | file | line | author | association |^|---|---|---|---|---|^| PRRT_1 | a.py | 4 | rev | MEMBER |" \
   "$(gh9 pr-threads 7 | paste -sd'^' -)"
 check "pr-threads --json keeps the resolved thread and the comments" "2 PRRT_2" \
   "$(gh9 pr-threads 7 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d), d[1]["id"])')"
+check "pr-threads asks each comment's author association and --json keeps it" "authorAssociation MEMBER" \
+  "$(grep -o 'authorAssociation' "$GHDIR/ghlib/comments.py" | head -1) $(gh9 pr-threads 7 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["comments"]["nodes"][0]["authorAssociation"])')"
 
 ISSUE9='{"number":3,"title":"An issue","state":"open","user":{"login":"me"},"labels":[{"name":"bug"}],"repository_url":"https://api.github.com/repos/acme/thing","html_url":"https://github.com/acme/thing/issues/3","body":"The body.\nMore.","reactions":{"total_count":0}}'
 fix9 GET_repos_acme_thing_issues_3 "$ISSUE9"

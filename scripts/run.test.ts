@@ -2,7 +2,7 @@
 // the pure functions of scripts.test.ts do not reach.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -201,6 +201,16 @@ describe('release run', () => {
     writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify({ budgets: { alpha: 1, beta: 100 }, duplicates: 0 }))
     assert.throws(() => release(root, [], recorder()), /budget is exceeded/)
     assert.equal(JSON.parse(readFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.0.0')
+  })
+
+  it('prints the balance since the last release with its plan', () => {
+    const root = released()
+    git(root, 'commit', '-q', '--allow-empty', '-m', 'chore(release): alpha 1.0.0')
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed, and longer.\n')
+    git(root, 'commit', '-q', '-am', 'change alpha again')
+    const io = recorder()
+    assert.equal(release(root, ['--dry-run', '--base', 'HEAD~2'], io), 0)
+    assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+3 prompt tokens \(7 -> 10\)$/)
   })
 
   it('writes no budget on a dry run', () => {
@@ -419,6 +429,30 @@ describe('prompts run', () => {
       assert.equal(prompts(branched('chore: lower a budget'), ['--base', 'work'], recorder()), 0)
     })
 
+    it('prints the prompt tokens gained since the last release as a warning, lost ones as a plain line', () => {
+      const root = branched('chore(release): alpha 1.0.1')
+      writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), `${sentence}\n${sentence}\n`)
+      writeFileSync(join(root, 'plugins', 'alpha', 'notes.md'), 'é\n')
+      const io = recorder()
+      assert.equal(prompts(root, ['--balance'], io), 0)
+      assert.match(io.lines.out.at(-1) ?? '', /^warning: balance since the last release \([0-9a-f]{8}\): \+22 prompt tokens \(44 -> 66\)$/)
+      const json = JSON.parse((() => { const out = recorder(); prompts(root, ['--json'], out); return out.lines.out[0] ?? '' })())
+      assert.deepEqual([json.balance.released, json.balance.now], [44, 66])
+      writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'x\n')
+      const lost = recorder()
+      prompts(root, ['--balance'], lost)
+      assert.match(lost.lines.out.at(-1) ?? '', /^balance since the last release \([0-9a-f]{8}\): -20 prompt tokens \(44 -> 24\)$/)
+    })
+
+    it('says so when the history holds no release', () => {
+      const io = recorder()
+      prompts(branched('chore: lower a budget'), ['--balance'], io)
+      assert.equal(io.lines.out.at(-1), 'balance: no release in this history')
+      const json = recorder()
+      prompts(withPrompts({ budgets: { alpha: 100, beta: 100 }, duplicates: 1 }), ['--json'], json)
+      assert.equal(JSON.parse(json.lines.out[0] ?? '').balance, null)
+    })
+
     it('refuses --base without a ref', () => {
       assert.throws(() => prompts(branched('chore: lower a budget'), ['--base'], recorder()), /needs a git ref/)
     })
@@ -515,6 +549,7 @@ describe('core copies', () => {
 
   it('writes the copy into every plugin holding a core directory, then finds it current', () => {
     const root = withCore()
+    writeFileSync(join(root, 'plugins', 'alpha', 'a.ts'), "import { A } from './core/a.ts'\n")
     const io = recorder()
     assert.equal(core(root, [], io), 0)
     assert.deepEqual(io.lines.out, ['plugins/alpha/core rewritten'])
@@ -522,8 +557,26 @@ describe('core copies', () => {
     assert.equal(core(root, ['--check'], recorder()), 0)
   })
 
+  it('copies only the modules a plugin imports, with theirs, and the data files it names', () => {
+    const root = withCore()
+    const src = join(root, 'packages', 'core', 'src')
+    writeFileSync(join(src, 'b.ts'), "import type { C } from './c.ts'\nexport const B = 1\n")
+    writeFileSync(join(src, 'c.ts'), 'export type C = 1\n')
+    writeFileSync(join(src, 'd.ts'), 'export const D = 1\n')
+    mkdirSync(join(root, 'plugins', 'alpha', 'hooks'))
+    writeFileSync(join(root, 'plugins', 'alpha', 'hooks', 'h.ts'), "export { B } from '../core/b.ts'\nconst a = await import('../core/a.ts')\n")
+    writeFileSync(join(root, 'plugins', 'alpha', 'run.py'), "open(join('core', 'kept.json'))\n")
+    const data = { 'kept.json': { version: 1 }, 'unread.json': { version: 1 } }
+    assert.equal(core(root, [], recorder(), data), 0)
+    assert.deepEqual(readdirSync(join(root, 'plugins', 'alpha', 'core')).sort(), ['a.ts', 'b.ts', 'c.ts', 'kept.json'])
+    assert.equal(core(root, ['--check'], recorder(), data), 0)
+    writeFileSync(join(root, 'plugins', 'alpha', 'core', 'd.ts'), `${MARK}export const D = 1\n`)
+    assert.equal(core(root, ['--check'], recorder(), data), 1)
+  })
+
   it('fails a check on a copy edited by hand', () => {
     const root = withCore()
+    writeFileSync(join(root, 'plugins', 'alpha', 'a.ts'), "import { A } from './core/a.ts'\n")
     core(root, [], recorder())
     writeFileSync(join(root, 'plugins', 'alpha', 'core', 'a.ts'), 'edited\n')
     const io = recorder()

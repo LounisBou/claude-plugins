@@ -1,5 +1,6 @@
 // The release: one commit raises the version of every plugin that changed since its last release,
-// lowers the prompt budgets to what is measured, then regenerates the catalogue. A feature pull
+// lowers the prompt budgets to what is measured, then regenerates the catalogue. It prints the
+// balance first: the prompt tokens gained or lost since the last release (a warning when gained). A feature pull
 // request raises no version and lowers no budget (`npm run prompts -- --base` refuses one lowered).
 //
 //   npm run release                       patch for each plugin changed since its last release; commits
@@ -18,7 +19,7 @@ import { join } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
 import { isEntry, isRecord, manifestPath, parseManifest, PLUGINS_DIR, readPlugins } from './lib/plugins.ts'
 import { run as writeCatalogue } from './marketplace.ts'
-import { CEILINGS_PATH, run as lowerBudgets } from './prompts.ts'
+import { balance, balanceLine, CEILINGS_PATH, run as lowerBudgets } from './prompts.ts'
 import { shippedChanges } from './version-bump.ts'
 
 export type Level = 'major' | 'minor' | 'patch'
@@ -125,6 +126,8 @@ export function run(root: string, args: readonly string[], io: Io): number {
     return 0
   }
   for (const bump of bumps) io.out(`${bump.dir}: ${bump.from} -> ${bump.to}`)
+  const figures = balance(root)
+  if (figures !== undefined) io.out(balanceLine(figures))
   if (args.includes('--dry-run')) return 0
   if (lowerBudgets(root, ['--lower'], { ...io, out: () => {} }) !== 0) throw new Error(`a prompt budget is exceeded: fix it before the release lowers ${CEILINGS_PATH}`)
   const touched = [CEILINGS_PATH]

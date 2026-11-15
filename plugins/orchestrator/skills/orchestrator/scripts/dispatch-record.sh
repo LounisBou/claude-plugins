@@ -122,7 +122,7 @@
 # which lists the open rows. Registering never fails a command.
 #
 # `goals` keeps the spec's goals of the build in `goals.md`, beside the record (the grammar
-# and the reasons are `goals.py`'s header). A build was once declared done against its plan
+# and the reasons are `goals.ts`'s header). A build was once declared done against its plan
 # while its plan had moved three of the spec's five goals « after the build », and no row was
 # ever opened for them. So `open` refuses while no `goals.md` sits beside the record (a build
 # with no spec says `goals <record> init --spec none`), warns on every open goal no phase

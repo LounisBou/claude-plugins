@@ -65,8 +65,10 @@ jobs:
               echo '| plugin | tokens | budget |'; echo '|---|---:|---:|'
               printf '%s' "$json" | jq -r '.budgets | to_entries[] | "| \(.key) | \(.value.tokens) | \(.value.budget // "none") |"'
               echo; printf '%s' "$json" | jq -r '"Sentences said more than once: \(.duplicates.count), ceiling \(.duplicates.ceiling)."'
+              echo; printf '%s' "$json" | jq -r '.balance.line // "balance: no release in this history"'
             } >> "$GITHUB_STEP_SUMMARY"
             printf '%s' "$json" | jq -r '.faults[]' | head -n 5 | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done
+            printf '%s' "$json" | jq -r 'select(.balance != null and .balance.now > .balance.released) | .balance.line' | while IFS= read -r line; do echo "::warning title=balance since the last release::${line}"; done
           else
             echo "### Prompt budgets and duplicates: npm run prompts exited $rc and printed no figures" >> "$GITHUB_STEP_SUMMARY"
             { grep -v '^$' "$RUNNER_TEMP/prompts.err" || echo "npm run prompts exited $rc with no message"; } | head -n 5 | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done

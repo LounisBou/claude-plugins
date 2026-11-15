@@ -177,6 +177,8 @@ test('the project sheet reads the objective, the spec goals.md names, the open g
   assert.equal(v.run(), 0)
   assert.match(v.text(), /- Project: no goals\.md beside the record\n/)
   assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open=none; installed: 3 merged PRs not installed, oldest 2 h')
+  assert.equal(projectSheet('# Goals\naim: x\n', ''), 'goals unread: goals.md: no spec: line')
+  assert.equal(projectSheet('spec: none\n| G1 | open | a \\| b | | |\n', ''), 'objective none; spec none; goals met=0/1 open=G1 (plan: none)')
 })
 
 test('the name is the record\'s owner unless given; a record without one, or none at all, is refused', () => {
@@ -193,6 +195,10 @@ test('the command line: takeover, a record and the mode, flags checked', () => {
   assert.deepEqual(parseArgs(['takeover', 'r.jsonl', '--mode', 'investigate', '--tty', '/dev/ttys1'], '/w'), { record: '/w/r.jsonl', mode: 'investigate', tty: '/dev/ttys1', name: '', session: '', worktree: '/w' })
   assert.match((parseArgs(['live', 'b.md'], '/w') as { error: string }).error, /^usage:/)
   assert.match((parseArgs(['takeover'], '/w') as { error: string }).error, /^usage:/)
+  const fromPlugin = '/Users/x/.claude/deploys/lounisbou/' + 'a'.repeat(40) + '/plugins/orchestrator/skills/orchestrator'
+  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], fromPlugin) as { error: string }).error, /from the project's directory/)
+  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], '/Users/x/.claude/plugins/cache/lounisbou/orchestrator/1.0.0') as { error: string }).error, /from the project's directory/)
+  assert.equal((parseArgs(['takeover', 'r.jsonl', '--mode', 'build', '--worktree', '/w'], fromPlugin) as { worktree: string }).worktree, '/w')
   assert.match((parseArgs(['takeover', 'r', '--mode', 'other'], '/w') as { error: string }).error, /--mode build\|investigate is required/)
   assert.match((parseArgs(['takeover', 'r', '--mode'], '/w') as { error: string }).error, /--mode needs a value/)
   assert.match((parseArgs(['takeover', 'r', '--next', 'x'], '/w') as { error: string }).error, /unknown argument: --next/)
@@ -311,7 +317,7 @@ test('the successor\'s prompt names no script directory of the predecessor: it r
   const succeed = readFileSync(join(import.meta.dirname, '..', '..', '..', 'commands', 'succeed.md'), 'utf8')
   const prompt = /--prompt '([^']*)'/.exec(succeed)?.[1] ?? ''
   assert.ok(prompt.includes('succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>'), prompt)
-  assert.ok(prompt.includes('in the base directory that skill load printed'), prompt)
+  assert.ok(prompt.includes('from your working directory (do not cd), run <the base directory that skill load printed>/scripts/succession.sh'), prompt)
   assert.ok(!/<scripts>|CLAUDE_PLUGIN_ROOT|\/skills\/orchestrator\/scripts/.test(prompt), prompt)
   const w = world()
   assert.equal(w.run(), 0)

@@ -69,7 +69,10 @@ cloudflare stands outside it; telemetry observes every role and changes none; le
 The host installs a plugin by copying its directory into its cache: nothing outside
 `plugins/<name>/` exists at run time. `core` therefore reaches each plugin as a generated copy
 in its `core/` directory, written by `npm run core` and checked identical to the source by CI
-(decision 0002). A plugin imports `../core/<module>.ts`; nobody edits the copy.
+(decision 0002). A plugin imports `../core/<module>.ts`; nobody edits the copy. The copy holds only
+what the plugin uses: the modules its TypeScript imports from `core/` and the modules those import,
+and each of core's JSON contracts a file of the plugin names (`orchestration.json` read by a shell
+or Python script). A new import, then `npm run core`, brings the module in.
 
 ## State
 
@@ -204,10 +207,10 @@ release still raises the versions other machines install.
 | every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
-| prompt budgets and duplicates against their ceilings (a report: a warning and the run's summary, never a red check; a line of the weekly report) | `npm run prompts`, `ci/prompts.json` |
+| prompt budgets and duplicates against their ceilings, and the balance: the prompt tokens gained or lost since the last release (a report: a warning and the run's summary, never a red check; a line of the weekly report) | `npm run prompts`, `ci/prompts.json` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary, a warning when the script fails) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary; a line of the weekly report) | `npm run rules` |
-| the release raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
+| the release prints the balance, then raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
 | the repository rules and every blocking cell passed, as one check the default branch requires (`/github:protect apply ci`, once that job runs on `main`) | the `ci` job, named by `packages/core/src/readiness.ts` |
 

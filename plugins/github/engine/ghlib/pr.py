@@ -56,15 +56,8 @@ def pr_status(args):
     sha = (pull.get("head") or {}).get("sha") or ""
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
-    workflows, suite_runs = _suite_workflows(owner, name, sha)
     args.format = "pr-summary"
-    return {
-        "pull": pull,
-        "ci": fmt.gate_ci(
-            statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs,
-            *_required_checks(owner, name, _base(pull)),
-        ),
-    }
+    return {"pull": pull, "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [])}
 
 
 def _suite_workflows(owner, name, sha):
@@ -128,6 +121,41 @@ def _base(pull):
     return (pull.get("base") or {}).get("ref") or ""
 
 
+def _no_ci(owner, name, pull, statuses, runs, required, unverified):
+    """Whether the repository has no CI configured, read only when the head has no check and no status:
+    no active Actions workflow, no check the base requires, and no check run nor status on the default
+    branch's head. A head with no check in a repository that has CI is a CI not started yet; any read
+    that fails says why on stderr and reads as CI configured, so the gate keeps waiting on it."""
+    if runs or ((statuses or {}).get("statuses") or []) or required or unverified:
+        return False
+    default = ((pull.get("base") or {}).get("repo") or {}).get("default_branch") or ""
+    if not default:
+        return False
+    branch = quote(default, safe="")
+    try:
+        workflows = (http.rest("GET", "/repos/%s/%s/actions/workflows?per_page=100" % (owner, name)) or {}).get("workflows") or []
+        if any(isinstance(w, dict) and w.get("state") == "active" for w in workflows):
+            return False
+        checked = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=1" % (owner, name, branch)) or {}
+        if checked.get("total_count") or checked.get("check_runs"):
+            return False
+        status = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, branch)) or {}
+        return not (status.get("statuses") or [])
+    except (errors.GhError, OSError) as exc:
+        why = exc.message if isinstance(exc, errors.GhError) else exc
+        print("error: cannot read whether %s/%s has CI: %s" % (owner, name, why), file=sys.stderr)
+        return False
+
+
+def _gate_ci(owner, name, pull, sha, statuses, runs):
+    """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
+    the repository has no CI at all read beside it."""
+    workflows, suite_runs = _suite_workflows(owner, name, sha)
+    required, unverified = _required_checks(owner, name, _base(pull))
+    no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)
+    return fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci)
+
+
 def _stacked(owner, name, pull):
     """Whether the pull request is stacked: its base is the head branch of another open pull request of
     the repository, and no long-lived branch: neither the default branch nor one under branch protection or a
@@ -161,7 +189,9 @@ def pr_checks(args):
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
     workflows, suite_runs = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))
+    check_runs = runs.get("check_runs", [])
     return {
+        "no_ci": _no_ci(owner, name, pull, statuses, check_runs, required, unverified),
         "statuses": statuses,
         "check_runs": runs.get("check_runs", []),
         "draft": bool(pull.get("draft")),
@@ -183,7 +213,6 @@ def pr_gate(args):
         raise errors.ApiError("pull request %s has no head sha" % args.pr)
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
     runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
-    workflows, suite_runs = _suite_workflows(owner, name, sha)
     state = "merged" if pull.get("merged_at") else pull.get("state", "")
     return {
         "repo": ("%s/%s" % (owner, name)).lower(),
@@ -196,10 +225,7 @@ def pr_gate(args):
         "commits": pull.get("commits"),
         "base": _base(pull),
         "stacked": _stacked(owner, name, pull),
-        "ci": fmt.gate_ci(
-            statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft")), workflows, suite_runs,
-            *_required_checks(owner, name, _base(pull)),
-        ),
+        "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or []),
     }
 
 
