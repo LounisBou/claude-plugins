@@ -116,7 +116,7 @@ test('the tool is registered with flat fields, for every main session but an age
   m.asker.tool = { register: async (spec: unknown) => { registered.push(spec) } }
   await handlers['session.start'](m.asker, { cwd: '/w' }, async () => undefined)
   expect(registered.map(spec => spec.name)).toEqual(['settle'])
-  expect(Object.keys(registered[0].inputSchema.properties).sort()).toEqual(['answer', 'author', 'id', 'outcome', 'reason', 'work'])
+  expect(Object.keys(registered[0].inputSchema.properties).sort()).toEqual(['answer', 'author', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'id', 'outcome', 'reason', 'said_at', 'until', 'work'])
   const id = await asked(m)
   expect((await handlers['tool.call:mcp__orchestrator__settle'](m.asker, { id, outcome: 'answered-here', answer: 'A', agentId: 'a-1' })).isError).toBe(true)
   expect((await handlers['tool.call:mcp__orchestrator__settle'](m.asker, { id, outcome: 'answered-here', answer: 'A' })).isError).toBeUndefined()
