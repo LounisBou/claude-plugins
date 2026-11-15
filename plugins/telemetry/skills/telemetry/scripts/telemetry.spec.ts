@@ -189,7 +189,7 @@ test('a session_end starts the day\'s sweep, detached, until one took the day; s
     assert.equal(run(['append', '--config', config], deps), 0)
     assert.deepEqual(deps.detached, [`sweep:${config}`])
     assert.equal(run(['sweep', '--auto', '--config', config], deps), 0)
-    assert.equal(deps.outs.at(-1), 'sweep: 1 session(s) without an end summarized, 0 round question(s) recorded')
+    assert.equal(deps.outs.at(-1), 'sweep: 1 session(s) without an end summarized, 0 round question(s) recorded, 0 dispatch(es) recorded')
     const said = deps.outs.length
     assert.equal(run(['sweep', '--auto', '--config', config], deps), 0)
     assert.equal(deps.outs.length, said)
@@ -197,7 +197,7 @@ test('a session_end starts the day\'s sweep, detached, until one took the day; s
     assert.equal(run(['append', '--config', config], deps), 0)
     assert.deepEqual(deps.detached, [`sweep:${config}`])
     assert.equal(run(['sweep', '--config', config], deps), 0)
-    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 0 round question(s) recorded')
+    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 0 round question(s) recorded, 0 dispatch(es) recorded')
     const summaries = readFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'session_summary')
     assert.deepEqual(summaries.map(e => [e['session'], e['source']]), [[S, 'sweep']])
   })
@@ -217,7 +217,7 @@ test('sweep reads the round of the orchestrator\'s module directory, where its e
     }))
     assert.equal(run(['sweep', '--config', config], { ...deps, env: { ...deps.env, ORCHESTRATOR_MODULE_DIR: module } }), 0)
     assert.deepEqual(deps.errs, ['telemetry: a line was refused (bad session)'])
-    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 1 round question(s) recorded')
+    assert.equal(deps.outs.at(-1), 'sweep: 0 session(s) without an end summarized, 1 round question(s) recorded, 0 dispatch(es) recorded')
   })
 })
 

@@ -14,7 +14,7 @@ import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
-import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
+import { AUDIT_CONTRACT, prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
 import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, untilOf, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
@@ -347,6 +347,8 @@ interface Context {
   writing: boolean
   claimed: boolean
   registerAbsent: boolean
+  /** The row the write touched, once known: the dispatch event names it. */
+  row: string | null
 }
 
 function die(ctx: Context, message: string): never {
@@ -373,6 +375,47 @@ function noteStep(ctx: Context, sub: string, id: string, step: Step, edge: Edge,
 function noteLink(ctx: Context, code: string, id: string | null, link: Partial<Facts['link']>, subject: { repo?: string; pr?: number } = {}): void {
   writeAudit(ctx.deps.journal, auditRun(ctx.deps.env, ctx.deps.now()), 'link', code,
     { ...rowFact(ctx, id), session: null, goal: null, prs: [], ...link }, { subject })
+}
+
+const CLASS = new RegExp(AUDIT_CONTRACT.patterns.class)
+const MODEL = new RegExp(AUDIT_CONTRACT.patterns.model)
+const WORD = new RegExp(AUDIT_CONTRACT.patterns.result)
+const fitting = (value: unknown, pattern: RegExp): string | null => (typeof value === 'string' && pattern.test(value) ? value : null)
+const among = <T extends string>(values: readonly T[], value: unknown): T | null => values.find(v => v === value) ?? null
+/** The value of the last `name` flag of `argv`. */
+const flagOf = (argv: readonly string[], name: string): string | undefined => {
+  const at = argv.lastIndexOf(name)
+  return at < 0 ? undefined : argv[at + 1]
+}
+
+/**
+ * Publishes a write that succeeded as a `dispatch` event (core's audit contract, version 3): the
+ * subcommand, the row with the class and the pair it runs on, a one-word verdict (`verdict`'s
+ * result, or `close`'s verdict when it is one plain word), the head a `--head` names in full. A
+ * value the contract does not take is written null, so the event is never lost for it. A read
+ * (`summary`, `goals status|check`) publishes nothing.
+ */
+function publish(ctx: Context, argv: readonly string[]): void {
+  const goalWrite = ctx.cmd === 'goals' && GOAL_WRITES.has(argv[2] ?? '')
+  const sub = WRITES.has(ctx.cmd) || LEDGER_WRITES.has(ctx.cmd) || goalWrite ? among(AUDIT_CONTRACT.dispatch_subs, ctx.cmd) : null
+  if (sub === null) return
+  let row: Row = {}
+  if (ctx.row !== null) {
+    const n = parseId(ctx.row)
+    try {
+      row = withCurrentClass(parseRecord(readText(ctx.record) ?? '').find(r => !isLedgerMarked(r) && r['id'] === n) ?? {})
+    } catch { /* the record moved under the write: the row's pair is left unknown */ }
+  }
+  const verdict = ctx.cmd === 'verdict' ? flagOf(argv, '--result') : ctx.cmd === 'close' ? flagOf(argv, '--verdict')?.trim() : undefined
+  writeAudit(ctx.deps.journal, auditRun(ctx.deps.env, ctx.deps.now()), 'dispatch', `orchestrator.dispatch.${sub}`, {
+    sub,
+    ...rowFact(ctx, ctx.row),
+    class: fitting(row['class'], CLASS),
+    tier: among(AUDIT_CONTRACT.tiers, row['tier']),
+    model: fitting(row['model'], MODEL),
+    effort: among(AUDIT_CONTRACT.efforts, row['effort']),
+    verdict: fitting(verdict, WORD),
+  }, { subject: { head: fullHead(flagOf(argv, '--head')) } })
 }
 
 /** The record's dispatch rows: its ledger lines are no rows. */
@@ -563,6 +606,7 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
   } catch {
     die(ctx, `could not update ${ctx.record}`)
   }
+  ctx.row = String(id)
   say(ctx, String(id))
   noteStep(ctx, 'open', String(id), 'implement', 'start')
 }
@@ -989,6 +1033,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)
+  ctx.row = id
   const args = argv.slice(3)
   const step = STEPS[cmd]
   if (step !== undefined) {
@@ -1047,7 +1092,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     cmd, record, deps,
     goalsFile: goalsFileOf(record),
     ownerFile: ownerFileOf(record),
-    writing: false, claimed: false, registerAbsent: false,
+    writing: false, claimed: false, registerAbsent: false, row: null,
   }
   let code = 0
   try {
@@ -1057,6 +1102,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     code = error.code
   }
   finish(ctx, code)
+  if (code === 0) publish(ctx, argv)
   return code
 }
 

@@ -693,7 +693,8 @@ bash "$REC" goals "$R" init --spec none >/dev/null
 
 id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
 check "open prints the row id" "1" "$id1"
-check "the record's audit trail goes to the suite's journal, never to a configuration directory" "1|no" \
+# Three entries: the goals' and the open's dispatch events, and the open's step.
+check "the record's audit trail goes to the suite's journal, never to a configuration directory" "3|no" \
   "$(ls "$ORCHESTRATOR_JOURNAL_DIR" | wc -l | tr -d ' ')|$(JH="$WORK/journal-home"; JR="$WORK/journal-rec.jsonl"
     HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" goals "$JR" init --spec none >/dev/null 2>&1
     HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" open "$JR" --class corrective --tier light >/dev/null 2>&1

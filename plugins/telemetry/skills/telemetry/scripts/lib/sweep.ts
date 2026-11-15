@@ -4,16 +4,19 @@
 //   killed process, a machine that slept) gets the `session_summary` of its transcript, as
 //   `backfill` writes one, with `source: sweep`;
 // - a question of the orchestrator's round, once settled, gets a `question` event read from its
-//   file through core's `parseRoundQuestion`: its id, its asker and the letter chosen.
+//   file through core's `parseRoundQuestion`: its id, its asker and the letter chosen;
+// - a write of the orchestrator's dispatch record gets a `dispatch` event read from the event its
+//   script published in the orchestrator's journal (core's audit contract, kind `dispatch`).
 // Nothing is kept beside the store: a session is closed by an end or a summary at or after its last
-// event, a question is recorded when an event of the window carries its id, and one settled before
-// the window is past reading.
+// event, a question or a dispatch is recorded when an event of the window carries its id, and one
+// before the window is past reading.
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { journalDir, journalEntryOf, parseAuditEvent, type AuditEvent } from '../../../../core/learning.ts'
 import { moduleDirOf, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
 import { parseRoundQuestion, type RoundQuestion } from '../../../../core/round-question.ts'
 import { readText, update } from '../../../../core/store.ts'
-import { makeEvent, roleOf, type Event } from '../../../../hooks/collect.ts'
+import { HEAD_MAX, makeEvent, roleOf, type Event } from '../../../../hooks/collect.ts'
 import type { EnvSecrets } from './redact.ts'
 import { append, dayFiles, eventsDir } from './store.ts'
 import { summarizeFile, transcriptOf } from './transcript.ts'
@@ -25,6 +28,10 @@ export const IDLE_MS = 24 * 3_600_000
 /** The `source` of a question read from its round file, and of a summary the sweep wrote. */
 export const ROUND_FILE = 'round_file'
 export const SWEPT = 'sweep'
+/** The `source` of a dispatch read from the orchestrator's journal. */
+export const JOURNAL = 'journal'
+/** The plugin whose journal holds the dispatch record's events. */
+const DISPATCH_PLUGIN = 'orchestrator'
 
 const DAY_MS = 24 * 3_600_000
 const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10)
@@ -66,10 +73,11 @@ interface Seen {
   spawned: boolean
 }
 
-/** The sessions of the window's day files, and the ids of the round questions they already record. */
-export function readWindow(dir: string, firstDay: string): { sessions: Map<string, Seen>; questions: Set<string> } {
+/** The sessions of the window's day files, and the ids of the round questions and journal dispatches they already record. */
+export function readWindow(dir: string, firstDay: string): { sessions: Map<string, Seen>; questions: Set<string>; dispatches: Set<string> } {
   const sessions = new Map<string, Seen>()
   const questions = new Set<string>()
+  const dispatches = new Set<string>()
   for (const name of dayFiles(dir).filter(file => file.slice(0, 10) >= firstDay)) {
     for (const line of readFileSync(join(dir, name), 'utf8').split('\n')) {
       if (line === '') continue
@@ -86,6 +94,10 @@ export function readWindow(dir: string, firstDay: string): { sessions: Map<strin
         if (typeof e['id'] === 'string') questions.add(e['id'])
         continue
       }
+      if (e['event'] === 'dispatch' && e['source'] === JOURNAL) {
+        if (typeof e['id'] === 'string') dispatches.add(e['id'])
+        continue
+      }
       const seen = sessions.get(session) ?? { last: -Infinity, closed: -Infinity, spawned: false }
       if (e['event'] === 'session_end' || e['event'] === 'session_summary') seen.closed = Math.max(seen.closed, at)
       else seen.last = Math.max(seen.last, at)
@@ -93,7 +105,7 @@ export function readWindow(dir: string, firstDay: string): { sessions: Map<strin
       sessions.set(session, seen)
     }
   }
-  return { sessions, questions }
+  return { sessions, questions, dispatches }
 }
 
 /** The summary of a session the window shows idle and never ended, or undefined when it ended, is still fresh or has no transcript. */
@@ -155,22 +167,65 @@ export function questionEvent(question: RoundQuestion): Event | undefined {
   })
 }
 
+type Dispatch = Extract<AuditEvent, { kind: 'dispatch' }>
+
+/** The dispatch events of the journal `dir` written on or after `firstDay`, by a known session; an entry that is none left out. */
+export function journalDispatches(dir: string, firstDay: string): Dispatch[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir).sort()
+  } catch {
+    return []
+  }
+  const found: Dispatch[] = []
+  for (const name of names) {
+    const entry = journalEntryOf(name)
+    if (entry === undefined || entry.at.slice(0, 10) < firstDay) continue
+    try {
+      const event = parseAuditEvent(JSON.parse(readFileSync(join(dir, name), 'utf8')))
+      if (event?.kind === 'dispatch' && event.context.session !== null) found.push(event)
+    } catch { /* a file being written, or no JSON: read at the next sweep */ }
+  }
+  return found
+}
+
+/** The `dispatch` event of a journal's dispatch: the session that wrote it, the record's file name, the row and its pair. */
+export function dispatchEvent(event: Dispatch): Event {
+  const { fact } = event
+  return makeEvent('dispatch', Date.parse(event.at), event.context.session ?? '', {
+    source: JOURNAL,
+    id: event.id,
+    sub: fact.sub,
+    record: fact.record === null ? undefined : basename(fact.record),
+    row: fact.row === null ? undefined : String(fact.row),
+    class: fact.class ?? undefined,
+    tier: fact.tier ?? undefined,
+    model: fact.model ?? undefined,
+    effort: fact.effort ?? undefined,
+    head: event.subject.head?.slice(0, HEAD_MAX),
+    verdict: fact.verdict ?? undefined,
+  })
+}
+
 export interface SweepOptions {
   readonly config: string
   readonly stateDir: string
   readonly secrets: EnvSecrets
   /** The orchestrator's module directory, when its environment moves it. */
   readonly moduleDir?: string | undefined
+  /** The orchestrator's journal, when its environment moves it (ORCHESTRATOR_JOURNAL_DIR). */
+  readonly journalDir?: string | undefined
   readonly now: number
 }
 
 export interface SweepResult {
   readonly sessions: number
   readonly questions: number
+  readonly dispatches: number
   readonly refused: readonly string[]
 }
 
-/** One sweep: the summaries of the sessions that never ended and the settled round questions, appended to the store. */
+/** One sweep: the summaries of the sessions that never ended, the settled round questions and the journal's dispatches, appended to the store. */
 export function sweep(options: SweepOptions): SweepResult {
   const { config, stateDir, now } = options
   const firstDay = dayOf(now - (SWEEP_DAYS - 1) * DAY_MS)
@@ -180,7 +235,12 @@ export function sweep(options: SweepOptions): SweepResult {
   const questions = settledQuestions(moduleDirOf(config, options.moduleDir))
     .filter(question => question.answer !== null && question.answer.at.slice(0, 10) >= firstDay && !window.questions.has(question.id))
     .flatMap(question => questionEvent(question) ?? [])
-  const { refused } = append(dir, [...summaries, ...questions].map(event => JSON.stringify(event)).join('\n'), options.secrets)
-  // A refused line is a question whose asker's session has no id of the host's shape; a summary's session came from the store.
-  return { sessions: summaries.length, questions: questions.length - refused.length, refused }
+  const dispatches = journalDispatches(options.journalDir ?? journalDir(config, DISPATCH_PLUGIN), firstDay)
+    .filter(event => !window.dispatches.has(event.id))
+    .map(dispatchEvent)
+  const lines = (events: readonly Event[]): string => events.map(event => JSON.stringify(event)).join('\n')
+  // A refused line is a question or a dispatch whose session has no id of the host's shape; a summary's session came from the store.
+  const asked = append(dir, lines([...summaries, ...questions]), options.secrets).refused
+  const published = append(dir, lines(dispatches), options.secrets).refused
+  return { sessions: summaries.length, questions: questions.length - asked.length, dispatches: dispatches.length - published.length, refused: [...asked, ...published] }
 }

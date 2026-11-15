@@ -318,12 +318,12 @@ describe('the audit event, version 2 of the contract', () => {
       wait: { wait: 'operator', edge: 'end', span: '20261114T101400Z-00000000', on: 'operator' },
       failure: { failure: 'fix-after-merge', count: null, prs: ['claude-plugins#180'] },
     }
-    for (const kind of AUDIT_KINDS) {
+    for (const kind of AUDIT_KINDS.filter(k => AUDIT_CONTRACT.kind_versions[k] === 2)) {
       const event = { ...STEP, kind, fact: facts[kind] }
       assert.deepEqual(parseAuditEvent(event), event, kind)
     }
-    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure'])
-    assert.equal(AUDIT_VERSION, 2)
+    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'])
+    assert.equal(AUDIT_VERSION, 3)
   })
 
   it('reads a fact whose every field is unknown, as null', () => {
@@ -369,6 +369,22 @@ describe('the audit event, version 2 of the contract', () => {
     assert.equal(parseLearningEvent(STEP), undefined)
     assert.equal(parseAuditEvent(EVENT), undefined)
     assert.equal(parseJournalEvent({ ...STEP, v: 3 }), undefined)
+  })
+
+  it('reads a dispatch at version 3, and no version 2 kind there', () => {
+    const DISPATCH = { ...STEP, v: 3, kind: 'dispatch', fact: { sub: 'open' as const, record: 'claude-orchestrator/briefs/p/dispatch.jsonl', row: 3, class: 'plugin', tier: null, model: 'claude-opus-4-5[1m]', effort: 'high' as const, verdict: null } }
+    assert.deepEqual(parseAuditEvent(DISPATCH), DISPATCH)
+    assert.deepEqual(parseJournalEvent(DISPATCH), DISPATCH)
+    assert.ok(parseAuditEvent({ ...DISPATCH, fact: { ...DISPATCH.fact, sub: 'close', model: null, effort: null, tier: 'light', verdict: 'merged' } }))
+    const broken: Record<string, unknown>[] = [
+      { v: 2 }, { fact: { ...DISPATCH.fact, sub: 'summary' } }, { fact: { ...DISPATCH.fact, tier: 'cheap' } },
+      { fact: { ...DISPATCH.fact, effort: 'huge' } }, { fact: { ...DISPATCH.fact, verdict: 'merged after two rounds' } },
+      { fact: { ...DISPATCH.fact, model: 'two words' } }, { fact: { ...DISPATCH.fact, class: 'Some Class' } }, { fact: { ...DISPATCH.fact, line: 'x' } },
+    ]
+    for (const change of broken) assert.equal(parseAuditEvent({ ...DISPATCH, ...change }), undefined, JSON.stringify(change))
+    assert.equal(parseAuditEvent({ ...STEP, v: 3 }), undefined)
+    const built = auditEvent({ at: AT, random: '0a1b2c3d', source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.open' }, trust: 'computed', kind: 'dispatch', fact: DISPATCH.fact })
+    assert.equal(built?.v, 3)
   })
 
   it('is written as learning-audit.json, beside version 1', () => {
