@@ -44,7 +44,7 @@ def auth_check(args, ctx):
 
 def register(subparsers):
     parser = subparsers.add_parser("accounts", help="the accounts found, with no API call")
-    parser.set_defaults(handler=accounts, read=True, account_free=True)
+    parser.set_defaults(handler=accounts, account_free=True)
 
     parser = subparsers.add_parser("auth-check", help="verify the account's token")
-    parser.set_defaults(handler=auth_check, read=True)
+    parser.set_defaults(handler=auth_check)

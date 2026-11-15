@@ -3267,29 +3267,21 @@ check "the README's sudoers rule gives SETENV to caddy alone, never to cat or te
 
 echo "== the mod and the engine agree =="
 
-# The mod's lists are static; they must name exactly the engine's commands,
-# and its reads exactly the commands the engine marks as reads.
+# The mod's command list is static; it must name exactly the engine's commands.
 agreement=$(python3 - "$ENGINE" "$ROOT/hooks/register.ts" <<'PYENUM'
 import re, sys
 sys.path.insert(0, sys.argv[1])
 import cf
-parser = cf.build_parser()
-subs = [a for a in parser._actions if a.dest == "command"][0].choices
-src = open(sys.argv[2], encoding="utf-8").read()
-def listed(head, close):
-    if head not in src:
-        return None
-    return set(re.findall(r"'([A-Za-z0-9_-]+)'", src.split(head, 1)[1].split(close, 1)[0]))
-commands = listed("export const COMMANDS = [", "]")
-reads = listed("export const READS = new Set([", "])")
-if commands is None or reads is None:
-    print("no COMMANDS or READS list in register.ts")
+subs = [a for a in cf.build_parser()._actions if a.dest == "command"][0].choices
+src, head = open(sys.argv[2], encoding="utf-8").read(), "export const COMMANDS = ["
+if head not in src:
+    print("no COMMANDS list in register.ts")
     sys.exit()
-engine_reads = {name for name in subs if cf.is_read(parser, name)}
-print("commands:" + " ".join(sorted(set(subs) ^ commands)) + " reads:" + " ".join(sorted(engine_reads ^ reads)))
+commands = set(re.findall(r"'([A-Za-z0-9_-]+)'", src.split(head, 1)[1].split("]", 1)[0]))
+print("commands:" + " ".join(sorted(set(subs) ^ commands)))
 PYENUM
 )
-check "the mod's COMMANDS and READS match the engine's" "commands: reads:" "$agreement"
+check "the mod's COMMANDS match the engine's" "commands:" "$agreement"
 
 echo "== the mod =="
 

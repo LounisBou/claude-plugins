@@ -323,18 +323,18 @@ def caddy_reload(args, ctx):
 
 def register(subparsers):
     parser = subparsers.add_parser("caddy-sites", help="the site blocks of the Caddyfile")
-    parser.set_defaults(handler=caddy_sites, read=True, account_free=True)
+    parser.set_defaults(handler=caddy_sites, account_free=True)
 
     parser = subparsers.add_parser("caddy-site", help="the block that serves a host, as written")
     parser.add_argument("host")
-    parser.set_defaults(handler=caddy_site, read=True, account_free=True)
+    parser.set_defaults(handler=caddy_site, account_free=True)
 
     parser = subparsers.add_parser("caddy-status", help="binary, admin API, Caddyfile, validate, envfile, service")
-    parser.set_defaults(handler=caddy_status, read=True, account_free=True)
+    parser.set_defaults(handler=caddy_status, account_free=True)
 
     parser = subparsers.add_parser("caddy-docs", help="the Caddy digests: the index, or one topic")
     parser.add_argument("topic", nargs="?")
-    parser.set_defaults(handler=caddy_docs, read=True, account_free=True)
+    parser.set_defaults(handler=caddy_docs, account_free=True)
 
     parser = subparsers.add_parser("caddy-site-set", help="replace or add the block of a host, then validate and reload")
     parser.add_argument("host")
