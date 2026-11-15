@@ -52,6 +52,17 @@ export const LEARNING_CONTRACT = {
     swift: ['.swift'],
     typescript: ['.ts', '.tsx', '.mts', '.cts'],
   },
+  /*
+   * The class of a path, the one table a signature's classes are computed from: the first class one
+   * of whose directory names is a segment of the path, one of whose marks is in its file name, or one
+   * of whose extensions ends it; a path of no class is `source`.
+   */
+  path_classes: {
+    test: { segments: ['test', 'tests', '__tests__', 'spec', 'specs', 'e2e'], marks: ['.test.', '.spec.', '_test.'], extensions: [] },
+    docs: { segments: ['doc', 'docs'], marks: [], extensions: ['.md', '.mdx', '.rst', '.txt', '.adoc'] },
+    configuration: { segments: [], marks: [], extensions: ['.json', '.jsonc', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.lock', '.xml'] },
+  },
+  path_class_default: 'source',
   patterns: {
     id: String.raw`^\d{8}T\d{6}Z-[0-9a-f]{8}$`,
     at: String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`,
@@ -199,6 +210,23 @@ export function languagesOf(paths: readonly string[]): string[] {
   return [...found].sort()
 }
 
+export type PathClass = keyof typeof contract.path_classes | typeof contract.path_class_default
+
+interface ClassRule { readonly segments: readonly string[]; readonly marks: readonly string[]; readonly extensions: readonly string[] }
+const CLASS_RULES = Object.entries(contract.path_classes) as ReadonlyArray<readonly [PathClass, ClassRule]>
+
+/** The classes of `paths` (test, docs, configuration, source), each once, in alphabetical order. */
+export function pathClassesOf(paths: readonly string[]): PathClass[] {
+  const found = new Set<PathClass>()
+  for (const path of paths) {
+    const segments = path.toLowerCase().split('/')
+    const base = segments.pop() ?? ''
+    const rule = CLASS_RULES.find(([, r]) => r.segments.some(s => segments.includes(s)) || r.marks.some(m => base.includes(m)) || r.extensions.some(e => base.endsWith(e)))
+    found.add(rule?.[0] ?? contract.path_class_default)
+  }
+  return [...found].sort()
+}
+
 /** The identifier of an event: its time, compact, then a random part (8 lowercase hex digits), so a name sorts by time; undefined when either does not fit. */
 export function eventId(at: string, random: string): string | undefined {
   if (!isTime(at) || !PATTERNS.random.test(random)) return undefined
@@ -283,18 +311,36 @@ export interface Foldable {
   readonly kind: string
   readonly source: { readonly code: string }
   readonly evidence: readonly Evidence[]
-  readonly context: { readonly languages: readonly string[] }
+  readonly context: { readonly paths: readonly string[]; readonly languages: readonly string[] }
+}
+
+/** What a signature is made of. */
+export interface SignatureParts {
+  readonly kind: string
+  readonly code: string
+  readonly severity: Severity | null
+  readonly classes: readonly PathClass[]
+  readonly languages: readonly string[]
+}
+
+/** The parts of an event's signature: its kind, the code that raised it, the severity of its first finding, the classes of its paths, its languages. */
+export function signaturePartsOf(event: Foldable): SignatureParts {
+  const severity = event.evidence.flatMap(e => (e.type === 'finding' ? [e.severity] : []))[0] ?? null
+  return { kind: event.kind, code: event.source.code, severity, classes: pathClassesOf(event.context.paths), languages: event.context.languages }
+}
+
+/** The signature its parts give: the kind and the code, then the severity, the classes and the languages there are. */
+export function signatureFrom(parts: SignatureParts): string {
+  return [parts.kind, parts.code, ...(parts.severity ? [parts.severity] : []), ...parts.classes, ...parts.languages].join(':')
 }
 
 /**
  * What groups events of one kind of fact: the kind, the code that raised it, then, when the event
- * has them, the severity of its first finding and its languages. The same events give the same
- * signature, whoever reads them.
+ * has them, the severity of its first finding, the classes of its paths and its languages. The same
+ * events give the same signature, whoever reads them.
  */
 export function signatureOf(event: Foldable): string {
-  const severity = event.evidence.flatMap(e => (e.type === 'finding' ? [e.severity] : []))[0]
-  const parts = [event.kind, event.source.code, ...(severity ? [severity] : []), ...event.context.languages]
-  return parts.join(':')
+  return signatureFrom(signaturePartsOf(event))
 }
 
 export interface FoldedCount {
@@ -414,6 +460,73 @@ export function foldDropped(dropped: ReadonlyArray<{ readonly id: string; readon
   const added = events.filter(({ id }) => !counted.has(id))
   if (added.length === 0) return undefined
   return foldedText(mergeFolded(before.counts, foldWeekly(added.map(({ event }) => event))), events.map(({ id }) => id))
+}
+
+// ----- the candidate -----
+//
+// What the distiller computes from the journals, with no model: the version 1 events of one
+// signature, inside the window, once they reach the thresholds held here. It carries what code can
+// say of the cluster (its signature's parts, the events by identifier, the pull requests and the
+// repositories they name) and nothing a session judges: the cause, the remedy and its scope are the
+// retrospective's.
+
+export const CANDIDATE_CONTRACT = {
+  version: 1,
+  // A cluster becomes a candidate at this many events, from this many pull requests, within the window.
+  min_events: 3,
+  min_prs: 2,
+  // The trusts whose events form a cluster: an `external` event is a pointer, never a count.
+  trusts: ['computed', 'operator', 'review'],
+} as const
+
+export const CANDIDATE_VERSION = CANDIDATE_CONTRACT.version
+
+export interface Candidate extends SignatureParts {
+  readonly v: number
+  readonly signature: string
+  readonly kind: LearningKind
+  /** The window the events fall in: its start and its end, the time the distiller ran at. */
+  readonly since: string
+  readonly until: string
+  /** The identifiers of the events, in order. */
+  readonly events: readonly string[]
+  /** The pull requests the events name, as `owner/name#7`, in order. */
+  readonly prs: readonly string[]
+  /** The repositories the events name, in order. */
+  readonly repos: readonly string[]
+}
+
+const CANDIDATE_FIELDS = ['v', 'signature', 'kind', 'code', 'severity', 'classes', 'languages', 'since', 'until', 'events', 'prs', 'repos'] as const
+const PATH_CLASSES: readonly PathClass[] = [...CLASS_RULES.map(([name]) => name), contract.path_class_default]
+
+/** A list of `isT` values in strictly rising order, so each is there once and the same set reads the same. */
+function isRising<T extends string>(value: unknown, isT: (v: unknown) => v is T): value is T[] {
+  return Array.isArray(value) && value.every((v, i) => isT(v) && (i === 0 || value[i - 1] < v))
+}
+
+function isPrOf(value: unknown): value is string {
+  const [repo, pr, ...more] = typeof value === 'string' ? value.split('#') : []
+  return more.length === 0 && isRepo(repo) && pr !== undefined && /^[1-9][0-9]*$/.test(pr)
+}
+
+/**
+ * The candidate `raw` holds, or undefined: exactly the contract's fields, a signature that is the one
+ * its parts give, a window that ends after it starts, the thresholds reached, and every pull request
+ * in a repository the candidate names.
+ */
+export function parseCandidate(raw: unknown): Candidate | undefined {
+  const top = fieldsOf(raw, CANDIDATE_FIELDS)
+  if (!top) return undefined
+  const { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos } = top
+  if (v !== CANDIDATE_VERSION || !isOneOf(contract.kinds, kind) || !matches(PATTERNS.code, code)) return undefined
+  if (!nullable(severity, (s): s is Severity => isOneOf(contract.severities, s))) return undefined
+  if (!isRising(classes, (c): c is PathClass => isOneOf(PATH_CLASSES, c)) || !isRising(languages, (l): l is string => typeof l === 'string' && Object.hasOwn(contract.languages, l))) return undefined
+  if (signature !== signatureFrom({ kind, code, severity, classes, languages })) return undefined
+  if (!isTime(since) || !isTime(until) || since >= until) return undefined
+  if (!isRising(events, isId) || events.length < CANDIDATE_CONTRACT.min_events) return undefined
+  if (!isRising(repos, isRepo) || !isRising(prs, isPrOf) || prs.length < CANDIDATE_CONTRACT.min_prs) return undefined
+  if (!prs.every(pr => repos.includes(pr.slice(0, pr.indexOf('#'))))) return undefined
+  return { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos }
 }
 
 // ----- version 2: the audit trail -----
