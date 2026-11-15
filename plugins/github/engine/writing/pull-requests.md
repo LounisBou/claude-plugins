@@ -58,8 +58,7 @@ No heading: the description starts directly with the summary text, never
 with `## Summary` or any other title. State what the PR does, never what it does not
 do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
 a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
-plugin refuses, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do,
-and names them in its refusal. The summary names no pull request: no
+plugin observes, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do. The summary names no pull request: no
 `#N`, no `repo#N`, no `owner/repo#N`, no pull request URL above the sections, as links
 go in `PRs Dependency` or `Related PRs`, a closing keyword such as `Fixes #12` excepted. No horizontal rule (`---`, `***`, `___`)
 other than the `---` between two screenshots, and no bold label line (`**Label:**`)

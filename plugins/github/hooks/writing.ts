@@ -396,13 +396,3 @@ function squash(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// The refusal the model reads: each broken rule with its field, then how to
-// go on.
-export function refusal(command: string, found: Violation[]): string {
-  const lines = found.map((v) => '- ' + v.field + ': ' + v.rule)
-  return 'gh ' + command + ' refused, its text breaks the writing rules:\n' + lines.join('\n')
-    + '\nRewrite the text and call again. If the user asked for this exact text, call again unchanged:'
-    + ' the user is then asked whether to send it as it is.'
-    + ' A title or a body taken from a brief, a plan or another session\'s message is not the user\'s exact text:'
-    + ' shorten or rewrite it and name the change in your report.'
-}
