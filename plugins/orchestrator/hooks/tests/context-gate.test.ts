@@ -277,7 +277,7 @@ const installedState = (...history: string[]): string => JSON.stringify({
 
 const DIRS_OF = (installed: string) => ({ ownDir: `/cfg/deploys/lounisbou/${RUNNING}`, installedDir: `/cfg/deploys/lounisbou/${installed}` })
 // An orchestrator's generation that has lived, by its context, below the gate.
-const LIVED = JSON.stringify({ context_tokens: 160000, context_window: 1000000, context_percent: 16, model: 'a-model', updated_at: 't' })
+const LIVED = JSON.stringify({ context_tokens: 170000, context_window: 1000000, context_percent: 17, model: 'a-model', updated_at: 't' })
 const YOUNG = JSON.stringify({ context_tokens: 40000, context_window: 1000000, context_percent: 4, model: 'a-model', updated_at: new Date().toISOString(), start: { tokens: 1, at: new Date().toISOString(), brief: null, brief_bytes: null } })
 
 test('an orchestrator and a coordinator are told of a newer installed commit once, then of the next one', async () => {

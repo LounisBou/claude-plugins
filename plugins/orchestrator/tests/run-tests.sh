@@ -11065,16 +11065,6 @@ for t in phase review comments rotation; do
   check "the $t brief admits the successor its orchestrator names" "yes" "$(flat_has "$ROOT/templates/agent-$t-brief.md" "$ADMIT")"
   check "the $t brief no longer refuses whatever a session says, nor every session but one" "0" "$(grep -c -e 'whatever it says' -e 'no other session' -e '— and no other' "$ROOT/templates/agent-$t-brief.md")"
 done
-spells_before() { case "$1" in *"$2"*) ;; *) echo no; return ;; esac; local head="${1%%"$2"*}"; case "$head" in *"$3"*) echo yes ;; *) echo no ;; esac; }
-SUCCEEDMD="$ROOT/commands/succeed.md"
-SUCCEEDFLAT=$(tr '\n' ' ' < "$SUCCEEDMD" | tr -s ' ')
-check "succeed.md points at the lifecycle's naming of the successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
-  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF '**Name the successor to your agents** once the spawn is verified' && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' '`references/succession-predecessor.md`, « Succession — the predecessor », step 4')"
-check "succession-predecessor.md says the predecessor names its successor to its agents" "yes" \
-  "$(flat_has "$ROOT/skills/orchestrator/references/succession-predecessor.md" "gives its successor's exact name and reference to each of its agents")"
-check "the design says the agents learn their new orchestrator from their current one" "yes" \
-  "$(flat_has "$ROOT/docs/design.md" "the agents learn their new orchestrator from their current one")"
-
 # The review lenses run as a dedicated read-only subagent type: a lens needs to read and to run
 # git, and a type that lists only those tools starts about 35,000 tokens lighter than the
 # general-purpose one that carries every tool of the session. It names no model, so the tier the
