@@ -195,7 +195,13 @@ export function register(on: On<Held>): void {
     const out = await next(e)
     if (!e.agentId && runsTakeover(String(e['command'] ?? ''))) {
       const answer = answerOf(out)
-      if (!answer.isError && answer.deny === undefined) tookOver = await isOrchestratorSession($, await $.session.id())
+      // Read past the command's answer: a failure here is logged and moves nothing, never a second run of it.
+      if (!answer.isError && answer.deny === undefined) {
+        tookOver = await $.session.id().then(id => isOrchestratorSession($, id)).catch(async (err: unknown) => {
+          await logLine($, 'naming', `the takeover's session role could not be read, nothing moves: ${reasonOf(err)}`)
+          return false
+        })
+      }
     }
     return out
   }).catch(async ($, e, next) => {

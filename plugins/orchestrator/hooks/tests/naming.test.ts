@@ -452,6 +452,15 @@ test('a takeover run by a session that is not an orchestrator moves and wakes no
     expect(fx.processes, name).toEqual([])
     expect(fx.submits, name).toEqual([])
   }
+  // A role that cannot be read moves nothing, said in the log, and the command's answer stands.
+  const { handlers } = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
+  const unread: World = { ...fx.dollar, session: { ...fx.dollar.session, id: async () => { throw new Error('no session id') } } }
+  expect(await handlers['tool.call:takeover'](unread, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))).toEqual({ result: 'printed' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes).toEqual([])
+  expect(fx.submits).toEqual([])
+  expect(fx.logged.some(line => line.includes("the takeover's session role could not be read, nothing moves: no session id")), fx.logged.join(' | ')).toBe(true)
 })
 
 test('the takeover is read on the succession script, by either of its names', () => {
