@@ -1,7 +1,6 @@
 ---
-# Grades: no host-expanded variable in the brief
+# Grades: no host-expanded variable in the command
 type: regex
-target: {source: file, path: briefs/phase-5.md}
 match: not_contains
 ---
 

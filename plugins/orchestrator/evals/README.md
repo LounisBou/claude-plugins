@@ -77,9 +77,8 @@ and three runs (`--runs 3 --case <id>`) on any case that scored below its baseli
 - `--case <glob>` splits a run too long for one sitting; each part gets its own `<label>`.
 - `--trust-plugin` answers the first-run trust question for this repository's own plugin;
   nothing else is trusted.
-- `--allow-tools Write` is the one grant. `Write` is gated, so the cases that grade a
-  written brief (`writes-a-well-formed-phase-brief`, `coord-succession`, the only
-  ones listing it) cannot pass without it. It writes into the run's sandbox directory and
+- `--allow-tools Write` is the one grant. `Write` is gated, so the case that grades a
+  written brief (`coord-succession`, the only one listing it) cannot pass without it. It writes into the run's sandbox directory and
   reaches nothing else.
 
 ## The committed baseline

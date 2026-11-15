@@ -1,7 +1,6 @@
 ---
-# Grades: the address is the exact name and reference
+# Grades: the address is the exact name and reference, passed to the script
 type: regex
-target: {source: file, path: briefs/phase-5.md}
 ---
 
-Orch: inventory \[a3k9c2\]
+--orchestrator ["']Orch: inventory \[a3k9c2\]["']
