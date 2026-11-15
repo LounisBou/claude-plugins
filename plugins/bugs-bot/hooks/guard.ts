@@ -14,12 +14,14 @@
 // calls, so an aborted turn leaves nothing behind. A guard that throws fails closed
 // on what it protects only: its `.catch` refuses a call that posts or may reach the
 // token file, judged from the call alone, and lets every other call through.
+// Each refusal leaves one event in the module's journal under its stable code (observe.ts).
 import {
   DYNAMIC_DENIAL, PROJECT_FILE, TOKEN_DENIAL, TOOL, bashNamesTokenFile, bashNetDenial, bugsCalls, leakDenial, leaksOf,
   parentsOf, postedWords, projectFacts, readNetDenial, shellWords, tokenFile, toolNetDenial, typedByPerson,
   typedNamesTokenFile, unreleased,
   type Word,
 } from './core.ts'
+import { CODES, refuse, type RefusalCode } from './observe.ts'
 
 // The last prompt the person typed, by session: what releases a finding.
 let lastTyped: { sessionId: string; text: string } | null = null
@@ -48,13 +50,13 @@ async function deployUrl($: any): Promise<string | null> {
   return null
 }
 
-// The verdict on what a call would post: a denial, or nothing.
-async function judgePosted($: any, words: readonly Word[]): Promise<string | null> {
+// The verdict on what a call would post: a denial under its code, or nothing.
+async function judgePosted($: any, words: readonly Word[]): Promise<{ code: RefusalCode; denial: string } | null> {
   if (words.length === 0) return null
-  if (words.some(w => w.isDynamic)) return DYNAMIC_DENIAL
+  if (words.some(w => w.isDynamic)) return { code: CODES.dynamic, denial: DYNAMIC_DENIAL }
   const url = await deployUrl($)
   const leaks = unreleased(words.flatMap(w => leaksOf(w.text, url)), await typed($))
-  return leaks.length > 0 ? leakDenial(leaks) : null
+  return leaks.length > 0 ? { code: CODES.leak, denial: leakDenial(leaks) } : null
 }
 
 async function tokenPath($: any): Promise<{ file: string; home: string }> {
@@ -89,33 +91,33 @@ export function register(on: any): void {
       if (words === null) {
         // Unbalanced quotes: the line is read whole, as one text.
         if (/bugs-bot\S*\s+(reply|edit|post|done)\b/.test(command)) {
-          const denial = await judgePosted($, [{ text: command, isDynamic: false, isOperator: false }])
-          if (denial) return { deny: denial }
+          const verdict = await judgePosted($, [{ text: command, isDynamic: false, isOperator: false }])
+          if (verdict) return refuse($, verdict.code, verdict.denial)
         }
       } else {
         for (const call of bugsCalls(words)) {
-          const denial = await judgePosted($, postedWords(call.command, call.args))
-          if (denial) return { deny: denial }
+          const verdict = await judgePosted($, postedWords(call.command, call.args))
+          if (verdict) return refuse($, verdict.code, verdict.denial)
         }
       }
     }
     const { file, home } = await tokenPath($)
-    if (bashNamesTokenFile(command, file, home) && !typedNamesTokenFile(await typed($))) return { deny: TOKEN_DENIAL }
+    if (bashNamesTokenFile(command, file, home) && !typedNamesTokenFile(await typed($))) return refuse($, CODES.token, TOKEN_DENIAL)
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => {
+  }).catch(async ($: any, e: any, next: any) => {
     const denial = bashNetDenial(String(e?.command ?? ''))
-    return denial === null ? next(e) : { deny: denial }
+    return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 
   // The tool form: its arguments are the words already.
   on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($: any, e: any, next: any) => {
     const args = Array.isArray(e.args) ? e.args.map((a: unknown) => ({ text: String(a), isDynamic: false, isOperator: false })) : []
-    const denial = await judgePosted($, postedWords(String(e.command ?? ''), args))
-    if (denial) return { deny: denial }
+    const verdict = await judgePosted($, postedWords(String(e.command ?? ''), args))
+    if (verdict) return refuse($, verdict.code, verdict.denial)
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => {
+  }).catch(async ($: any, e: any, next: any) => {
     const denial = toolNetDenial(String(e?.command ?? ''))
-    return denial === null ? next(e) : { deny: denial }
+    return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 
   // Read and Grep on the token file (Grep on the directory that holds it too).
@@ -127,10 +129,10 @@ export function register(on: any): void {
     const tokenReal = await realPath($, file)
     const holder = tokenReal.slice(0, tokenReal.lastIndexOf('/'))
     const reaches = real === tokenReal || (e.tool === 'Grep' && real === holder)
-    if (reaches && !typedNamesTokenFile(await typed($))) return { deny: TOKEN_DENIAL }
+    if (reaches && !typedNamesTokenFile(await typed($))) return refuse($, CODES.token, TOKEN_DENIAL)
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => {
+  }).catch(async ($: any, e: any, next: any) => {
     const denial = readNetDenial(String(e?.tool === 'Read' ? e?.file_path ?? '' : e?.path ?? ''))
-    return denial === null ? next(e) : { deny: denial }
+    return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 }
