@@ -23,6 +23,8 @@ import { rows } from './short-commands.ts'
 export const USAGE = 'usage: brief-lint.sh <brief-path> [--expect-created <path>]...'
 export const SUCCESSION_LIMIT = 9000
 const OPEN_QUESTIONS = /^- The operator.s open questions/
+/** The line of a review brief's §4 that names the index its review writes: a file that does not exist yet. */
+const REVIEW_INDEX = /^\d+\. \*\*Your index\*\*, `(\/[^`]+)`/
 const NEXT_FIELD = /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|Questions the operator answered|Questions withdrawn|To-do items|Project)/
 
 export interface Finding {
@@ -91,12 +93,16 @@ export function lint(text: string, context: Context): Finding[] {
 
   /*
    * Every absolute path the brief names in backticks exists on the machine the agent runs on,
-   * but the ones named with --expect-created. A slash command is no path: /<plugin>:<command>
-   * with or without arguments, or one of this plugin's commands under its short name.
+   * but the ones named with --expect-created and the index a review brief tells its review to
+   * write (`REVIEW_INDEX`), a file to be written, never one to be found. A slash command is no
+   * path: /<plugin>:<command> with or without arguments, or one of this plugin's commands under
+   * its short name.
    */
   lines.forEach((line, i) => {
+    const index = REVIEW_INDEX.exec(line)?.[1]
     for (const m of line.matchAll(/`(\/[^`]+)`/g)) {
       const path = m[1] ?? ''
+      if (path === index) continue
       if (/^\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+( .*)?$/.test(path)) continue
       if (context.shortNames.has((path.split(' ')[0] ?? '').slice(1))) continue
       if (!context.exists(path) && !context.expected.includes(path)) say(i + 1, `path does not exist: ${path}`)
