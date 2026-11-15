@@ -118,7 +118,7 @@ waits on the operator's paid runs.
 8. Kernel: goal 8, on the evals' harness, within the program's method plugin if the operator adopts it.
 9. Routing: goal 10.
 10. Modes: goal 11, once the program's method plugin exists.
-11. Succession: goals 12 and 13, on core's store and the rulings register (the in-flight `docs/standing-rulings` work is its starting point).
+11. Succession: goals 12 and 13, on core's store and the round's record of his answers.
 
 ## Non-goals
 
@@ -162,7 +162,7 @@ takes it.
    performance on average, models committing early to a guess and not recovering (Laban et al.
    2025, arXiv:2505.06120, over 200,000 simulated conversations; not coding agents). Signs a
    gauge cannot see call for the same fresh start from a consolidated brief: an agent
-   proposing again what a ruling in `rulings.md` rejected, re-reading a file it already read
+   proposing again what an answer of his in the round rejected, re-reading a file it already read
    in the same phase, a second correction round on the same finding. Each is countable by
    code; each could trip the gate as tokens do.
 3. **Every brief names the head it was written against.** Stale context misleads: with
