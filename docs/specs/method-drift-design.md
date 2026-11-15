@@ -1,6 +1,6 @@
 # Design — correcting the method's drift: pull requests no longer go all the way
 
-Date: 2026-11-13. Author: `Coord : general [76269c]`, after a brainstorming with the operator. Status: sections 2 and 4 validated by the operator on 13 November 2026; section 9 is the coordinator's.
+Date: 2026-11-13. Author: `Coord : general [76269c]`, after a brainstorming with the operator. Status: sections 2 and 4 are the coordinator's wording, which it recorded as validated by the operator on 13 November 2026, his words not quoted; section 9 is the coordinator's.
 
 ## 1. Intent and why
 
@@ -17,9 +17,9 @@ Observed on 13 November 2026 on the claude-plugins orchestration itself:
 
 The defect is not the absence of an owner: it is that the orchestrator does not play its role. The method makes it send back to the operator decisions that are its own, and it does too much execution itself to keep the overall view.
 
-## 2. What the operator decided
+## 2. Decisions of the brainstorming
 
-Their words, rephrased and validated by them on 13 November 2026. Each decision is given in English, then in the French in which it was validated.
+The coordinator's wording of the brainstorming of 13 November 2026, not the operator's words. Each decision is given in English, then in the coordinator's French.
 
 1. **The orchestrator is responsible for each pull request until its merge.** It hands out the tasks and makes sure the work goes to the merge, or to « ready, waiting only for the operator » outside auto-merge. It is responsible for its agents. It is the one who answers their questions.
 
@@ -33,9 +33,9 @@ Their words, rephrased and validated by them on 13 November 2026. Each decision 
 
    > **L'opérateur ne reçoit que les vrais doutes** : un point qui semble critique à l'orchestrateur et qu'il ne peut pas trancher avec le design. Tout le reste avance sans lui.
 
-4. **The verifications are decided upstream, pull request by pull request, not repository by repository.** A framing agent reads the scope of the work and sets, according to its complexity and its criticality, the necessary verifications: end-to-end test or not, norms or not, depth of the review. The operator's examples: documentation, text, translation, a small graphical change (where screenshots are enough) need no E2E; a large piece of work on a sensitive scope needs one; an E2E can also be judged counter-productive.
+4. **The verifications are decided upstream, pull request by pull request, not repository by repository.** A framing agent reads the scope of the work and sets, according to its complexity and its criticality, the necessary verifications: end-to-end test or not, norms or not, depth of the review. Examples: documentation, text, translation, a small graphical change (where screenshots are enough) need no E2E; a large piece of work on a sensitive scope needs one; an E2E can also be judged counter-productive.
 
-   > **Les vérifications se décident en amont, PR par PR, pas par dépôt.** Un agent de cadrage lit le périmètre du travail et fixe, selon sa complexité et sa criticité, les vérifications nécessaires : test de bout en bout ou non, normes ou non, profondeur de la relecture. Exemples de l'opérateur : documentation, texte, traduction, petit changement graphique (où des captures d'écran suffisent) n'ont pas besoin d'E2E ; un gros travail sur un périmètre sensible en a besoin ; un E2E peut aussi être jugé contre-productif.
+   > **Les vérifications se décident en amont, PR par PR, pas par dépôt.** Un agent de cadrage lit le périmètre du travail et fixe, selon sa complexité et sa criticité, les vérifications nécessaires : test de bout en bout ou non, normes ou non, profondeur de la relecture. Exemples : documentation, texte, traduction, petit changement graphique (où des captures d'écran suffisent) n'ont pas besoin d'E2E ; un gros travail sur un périmètre sensible en a besoin ; un E2E peut aussi être jugé contre-productif.
 
 5. **A waiver is asked for only to go back on a verification planned as necessary.** At the end, what was planned is applied; if a planned E2E turns out to be useless, a waiver is asked for. Never a waiver for what was not planned.
 
@@ -54,10 +54,10 @@ Their words, rephrased and validated by them on 13 November 2026. Each decision 
 - **O5 — Questions to the operator limited to the real doubts.** The method's rules that send the orchestrator's decisions up are removed: « review failed after a correction: ask », « waiver: only the operator's words, typed in the session », « everything waits for the answer ». A pending question blocks only what it concerns (claude-plugins#137).
 - **O6 — An orchestrator that holds.** It keeps the decisions and hands the execution (update on `main`, version raise, recording of proofs, CI watching, move to Ready) to agents that send it back one line. Reports reach it as a short verdict (work item 92). A relay rereads little and loses nothing (work item 93).
 - **O7 — Precondition to launch.** The orchestrator does not launch a feature without its design validated by the operator; this is where the questions of substance are asked, not during the work.
-- **O8 — A succession rebuilt, not written** (the operator's request). The succession does not depend on what the outgoing orchestrator thinks of writing: it is rebuilt from the durable elements already written — the state file, the pull requests in progress and their state, the agents in progress, the design, each pull request's verification plan, the operator's decisions, where the work stands. It is idempotent: rerun at any moment, from the same elements, it produces the same succession. The successor's prompt is short and only points to these elements; everything it needs is at its disposal, read on demand.
-- **O9 — Prompts and context that do not grow** (the operator's request). Each addition of this design is paid for in text read by a session; it is offset or avoided. The method's rules, the agents' instructions and the relay prompt stay short: the detail lives in files read only when needed, never loaded by default. An orchestrator's context at the start of its relay does not exceed what it is today at the start, and falls if possible.
+- **O8 — A succession rebuilt, not written.** The succession does not depend on what the outgoing orchestrator thinks of writing: it is rebuilt from the durable elements already written — the state file, the pull requests in progress and their state, the agents in progress, the design, each pull request's verification plan, the operator's decisions, where the work stands. It is idempotent: rerun at any moment, from the same elements, it produces the same succession. The successor's prompt is short and only points to these elements; everything it needs is at its disposal, read on demand.
+- **O9 — Prompts and context that do not grow.** Each addition of this design is paid for in text read by a session; it is offset or avoided. The method's rules, the agents' instructions and the relay prompt stay short: the detail lives in files read only when needed, never loaded by default. An orchestrator's context at the start of its relay does not exceed what it is today at the start, and falls if possible.
 
-## 4. Success criteria (validated by the operator)
+## 4. Success criteria
 
 In two weeks:
 
@@ -110,14 +110,14 @@ The split into pull requests and their order, the exact form of the records and 
 
 ## 11. Amendment after the full analysis (2026-11-13) — remove first
 
-Sources: four read-only analyses (gates in the code and the plugins, history, questions, context). The operator's principle: « by wanting to add safeguards, we do worse rather than better » — the correction removes and simplifies before it adds.
+Sources: four read-only analyses (gates in the code and the plugins, history, questions, context). The correction removes and simplifies before it adds.
 
 ### 11.1 Established causes
 
 1. **The cut thread.** The Ready gate requires a review, the norms check and E2E, recorded at the head commit (`plugins/github/hooks/ready.ts:578`). Only the `pr-review:auto-fix-loop` loop can write a review (`packages/core/src/pr-record.ts:22`, `register.ts:1703`); the orchestrator's review never launches it. In an orchestrated build there is no path to Ready without the operator.
 2. **A moving head cancels everything.** Every correction or update on `main` cancels the three proofs, and `review.md:47` then demands a new review. `f283aef` (25 September) had settled this (one review and one correction); `97f4e07` (8 November) brought it back. Review rounds per pull request: 1.0 (claude-plugins#95 to claude-plugins#121) → 2.3 (claude-plugins#122 to claude-plugins#144).
 3. **E2E without a route.** No brief records E2E; a pull request without an E2E test becomes a question (`review.md:43`, `dispatch-record.ts:674`), and the waiver accepts only words typed in the session (`register.ts:1714`): typed again 4 times for claude-plugins#123 on the 12th, 3 times on the 13th. No forged waiver has ever been observed.
-4. **Rules piled up, never removed.** Code of the github hooks: 0 → 504 KB; the orchestrator's prose 70 → 297 KB (moved from SKILL.md to references and guards). 26 removals approved on 31 October, none delivered. Share of the work spent on control: 16–26 % (September) → 49 % (claude-plugins, 11–13 November).
+4. **Rules piled up, never removed.** Code of the github hooks: 0 → 504 KB; the orchestrator's prose 70 → 297 KB (moved from SKILL.md to references and guards). 26 removals listed on 31 October, none delivered. Share of the work spent on control: 16–26 % (September) → 49 % (claude-plugins, 11–13 November).
 5. **Relays too frequent that lose the answers.** 300 k reached in 23–33 min on the 13th; `pr-status` returns the raw JSON (≈ 5.8 k tokens per call, `plugins/github/engine/ghlib/pr.py:49`, +45–55 k at each resumption). 154 questions asked again by a new session, 96 of them already answered.
 6. **The questions.** 1,571 from 19 October to 13 November, median answer time 85 min. 55–65 % should not have reached the operator: merge/Ready/draft in repositories in auto-merge (30 %), tooling (17 %), waivers (12 %), successions (11 %), state notes (4 %).
 
@@ -134,7 +134,7 @@ The orchestrator's review (its readers plus its judgment, O2) writes the review 
 - O1: refusal of a stop that asks several questions; O3: refusal beyond 5 choices or of a recommendation judged unargued; O6: refusal of a malformed machine line (replaced by `declare_wait`); O10: refusal of a stop to display the goals table.
 - O21 and the E2E branch of O18: « no E2E → the operator's validation pull request by pull request » (replaced by the O3 plan).
 - O22: new review demanded after the correction (back to `f283aef`).
-- Deliver the 26 removals approved on 31 October that never were.
+- Deliver the 26 removals listed on 31 October that never were.
 
 ### 11.4 Carried pull request by pull request (O3 verification plan)
 

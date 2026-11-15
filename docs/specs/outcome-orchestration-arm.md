@@ -61,7 +61,7 @@ harness the way the operator opens one, on the same machine and plugin release:
 ## Decided
 
 - Questions the orchestrator would put to the operator are decided by its own recommendation,
-  and the run goes on (the operator's choice, 2026-11-09).
+  and the run goes on.
 
 ## Review notes (2026-11-11)
 
