@@ -1,6 +1,7 @@
 // The sweep over a scratch store: a session whose events stopped with no end gets its transcript's
 // summary, once; a settled round question gets its event, once, with its asker and its letter and
-// none of its words; and the day's sweep is taken by one caller.
+// none of its words; a dispatch the orchestrator's journal holds gets its event, once; and the
+// day's sweep is taken by one caller.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,7 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check, eventsDir } from './store.ts'
-import { claimSweep, IDLE_MS, questionEvent, settledQuestions, sweep, sweepDue } from './sweep.ts'
+import { claimSweep, IDLE_MS, journalDispatches, questionEvent, settledQuestions, sweep, sweepDue } from './sweep.ts'
+import { auditEvent, journalFileOf } from '../../../../core/learning.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const OTHER = '11111111-2222-4333-8444-555555555555'
@@ -39,12 +41,12 @@ function scratch(work: (r: { config: string; stateDir: string; module: string; d
 test('a session whose events stopped a day ago with no end is summarized from its transcript, once', () => {
   scratch(r => {
     r.day('2026-11-13', [event('2026-11-13T20:00:00.000Z', 'session_start', S, { spawned: true }), event('2026-11-13T20:30:00.000Z', 'turn_end', S)])
-    assert.deepEqual(r.run(), { sessions: 1, questions: 0, refused: [] })
+    assert.deepEqual(r.run(), { sessions: 1, questions: 0, dispatches: 0, refused: [] })
     const summary = r.stored().find(e => e['event'] === 'session_summary')
     assert.deepEqual([summary?.['session'], summary?.['source'], summary?.['title'], summary?.['role']], [S, 'sweep', 'Orch: billing', 'orchestrator'])
     // Written at the later of the transcript's end and the last event, so it closes them all.
     assert.equal(Date.parse(String(summary?.['ts'])) >= Date.parse('2026-11-13T20:30:00.000Z'), true)
-    assert.deepEqual(r.run(), { sessions: 0, questions: 0, refused: [] })
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 0, refused: [] })
     assert.equal(r.stored().filter(e => e['event'] === 'session_summary').length, 1)
     assert.deepEqual(check(eventsDir(r.stateDir), new Map()), [])
   })
@@ -95,7 +97,7 @@ test('a settled round question is recorded once: its id, its asker, the letter, 
       recommendation: 'A', status: 'withdrawn', at: '2026-11-14T08:00:01.000Z', answer: { text: 'superseded', by: 'sender', at: '2026-11-14T09:00:00.000Z' },
     }))
     writeFileSync(join(r.module, 'round', 'archive', 'old.json'), JSON.stringify(asked('q-old', { answer: { text: 'B', by: 'tab', at: '2026-11-01T10:00:00.000Z' } })))
-    assert.deepEqual(r.run(), { sessions: 0, questions: 2, refused: [] })
+    assert.deepEqual(r.run(), { sessions: 0, questions: 2, dispatches: 0, refused: [] })
     const answered = r.stored().find(e => e['status'] === 'answered')
     const withdrawn = r.stored().find(e => e['status'] === 'withdrawn')
     assert.deepEqual(answered, {
@@ -104,7 +106,7 @@ test('a settled round question is recorded once: its id, its asker, the letter, 
     })
     assert.deepEqual([withdrawn?.['session'], withdrawn?.['title'], withdrawn?.['id'], withdrawn?.['chosen'], withdrawn?.['status'], withdrawn?.['by']], [OTHER, 'Orch: other', `${S}-0badf00d`, ['-'], 'withdrawn', 'sender'])
     assert.equal(/secret|Ship it|superseded/.test(JSON.stringify(r.stored())), false)
-    assert.deepEqual(r.run(), { sessions: 0, questions: 0, refused: [] })
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 0, refused: [] })
     assert.equal(r.stored().length, 2)
     assert.deepEqual(check(eventsDir(r.stateDir), new Map()), [])
   })
@@ -115,15 +117,46 @@ test('a question answered in other words is `other`; one whose asker has no sess
     mkdirSync(join(r.module, 'round'), { recursive: true })
     writeFileSync(join(r.module, 'round', 'a.json'), JSON.stringify(asked('q-a', { answer: { text: 'neither, do a third thing', by: 'coordinator', at: '2026-11-14T10:05:00.000Z' }, urgent: true })))
     writeFileSync(join(r.module, 'round', 'b.json'), JSON.stringify(asked('q-b', { sender: { session: 'remote session', name: 'Orch: far' } })))
-    assert.deepEqual(r.run(), { sessions: 0, questions: 1, refused: ['bad session'] })
+    assert.deepEqual(r.run(), { sessions: 0, questions: 1, dispatches: 0, refused: ['bad session'] })
     assert.deepEqual([r.stored()[0]?.['chosen'], r.stored()[0]?.['urgent']], [['other'], true])
     assert.equal(questionEvent({ ...settledQuestions(r.module)[0]!, answer: null }), undefined)
   })
 })
 
+test('a dispatch the orchestrator\'s journal holds is recorded once, with its row and pair; another kind, an old one and one with no session are not', () => {
+  scratch(r => {
+    const journal = join(r.config, 'orchestrator', 'journal')
+    mkdirSync(journal, { recursive: true })
+    const put = (at: string, random: string, kind: 'dispatch' | 'step', session: string | null): void => {
+      const base = { at, random, source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.close' }, trust: 'computed' as const, subject: { head: 'a'.repeat(40) }, context: { session } }
+      const event = kind === 'dispatch'
+        ? auditEvent({ ...base, kind, fact: { sub: 'close', record: 'claude-orchestrator/briefs/p/dispatch.jsonl', row: 4, class: 'feature', tier: null, model: 'opus', effort: 'high', verdict: 'merged' } })
+        : auditEvent({ ...base, kind, fact: { step: 'implement', edge: 'start', record: null, row: 4, result: null } })
+      assert.ok(event)
+      writeFileSync(join(journal, journalFileOf(event.id)), JSON.stringify(event))
+    }
+    put('2026-11-14T09:00:00Z', '0000000a', 'dispatch', S)
+    put('2026-11-14T09:00:01Z', '0000000b', 'step', S)
+    put('2026-11-14T09:00:02Z', '0000000c', 'dispatch', null)
+    put('2026-11-01T09:00:00Z', '0000000d', 'dispatch', S)
+    put('2026-11-14T09:00:03Z', '0000000e', 'dispatch', 'orch-1')
+    writeFileSync(join(journal, '20261114T090004Z-0000000f.json'), '{')
+    writeFileSync(join(journal, 'folded.json'), '{}')
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 1, refused: ['bad session'] })
+    assert.deepEqual(r.stored(), [{
+      v: 1, ts: '2026-11-14T09:00:00.000Z', event: 'dispatch', session: S, source: 'journal', id: '20261114T090000Z-0000000a',
+      sub: 'close', record: 'dispatch.jsonl', row: '4', class: 'feature', model: 'opus', effort: 'high', head: 'aaaaaaaaaaaa', verdict: 'merged',
+    }])
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 0, refused: ['bad session'] })
+    assert.equal(r.stored().length, 1)
+    assert.deepEqual(journalDispatches(join(r.config, 'none'), '2026-11-01'), [])
+    assert.deepEqual(sweep({ config: r.config, stateDir: r.stateDir, secrets: new Map(), now: NOW, journalDir: join(r.config, 'none') }).dispatches, 0)
+  })
+})
+
 test('no round directory, no store: a sweep that finds nothing writes nothing', () => {
   scratch(r => {
-    assert.deepEqual(sweep({ config: join(r.config, 'none'), stateDir: join(r.config, 'none', 'telemetry'), secrets: new Map(), now: NOW }), { sessions: 0, questions: 0, refused: [] })
+    assert.deepEqual(sweep({ config: join(r.config, 'none'), stateDir: join(r.config, 'none', 'telemetry'), secrets: new Map(), now: NOW }), { sessions: 0, questions: 0, dispatches: 0, refused: [] })
     assert.deepEqual(settledQuestions(join(r.config, 'none')), [])
   })
 })
