@@ -313,7 +313,7 @@ test('cost: measured, counted once, recounted when priced, named on a legacy row
   const priced = deps({}, { cost: s => s === 'bad' ? { status: 3, stdout: '', stderr: '' } : s === 'junk' ? ok('nope') : s === 'text' ? ok('{"cost_usd":"1"}') : ok(JSON.stringify({ cost_usd: s.startsWith('u') ? null : 0.25 })) })
   assert.equal(await cli(['cost', r, '1'], priced), '1||ERROR: cost: --session is required\n')
   assert.equal(await cli(['cost', r, '1', '--session', 'a'], priced), '0|cost: row 1 +0.25 (session a)\n|')
-  assert.ok(priced.calls.includes('python3 /p/routing.py cost --session a --alias m --json'))
+  assert.ok(priced.calls.includes('python3 /p/routing.py cost --session a --json'))
   assert.match(await cli(['cost', r, '1', '--session', 'a'], priced), /^0\|\|WARNING: cost: session a is already counted on row 1/)
   assert.equal(await cli(['cost', r, '1', '--session', 'u1'], priced), '0|cost: row 1 +null (session u1)\n|WARNING: cost: session u1 has an unpriced model: row 1 is marked cost_incomplete\n')
   assert.equal(await cli(['cost', r, '1', '--session', 'bad'], priced), '1||ERROR: cost: could not measure session bad\n')

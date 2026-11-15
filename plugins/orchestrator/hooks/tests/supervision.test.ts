@@ -501,8 +501,8 @@ test('a row that cannot be written never blocks the measure, and is said', async
 const ROUND = `${STATE}/round`
 const SENT = '2026-11-03T10:00:00.000Z'
 
-function openEntry(files: Map<string, string>, session: string, kind: 'operator' | 'done', over: Record<string, unknown> = {}): string {
-  const entry = { ...roundEntry(session, `Orch: ${session}`, { kind, blocks: kind === 'operator' ? 'a phase' : null, question: 'which one?' } as any, SENT, SENT), ...over }
+function openEntry(files: Map<string, string>, session: string, kind: 'done', over: Record<string, unknown> = {}): string {
+  const entry = { ...roundEntry(session, `Orch: ${session}`, { kind, question: 'which one?' }, SENT, SENT), ...over }
   files.set(`${ROUND}/${entry.id}.json`, JSON.stringify(entry) + '\n')
   return entry.id
 }
@@ -514,12 +514,12 @@ test('a read of the store closes the open entries of a sender whose row it remov
   await writeSession(dollar, 'alive', { role: 'orchestrator', name: 'Orch: alive', pid: '501' })
   await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
   files.set(`${SESSIONS}/emptied`, '')
-  const live = openEntry(files, 'alive', 'operator')
-  const killed = openEntry(files, 'killed', 'operator')
+  const live = openEntry(files, 'alive', 'done')
+  const killed = openEntry(files, 'killed', 'done')
   const emptied = openEntry(files, 'emptied', 'done')
-  const unmeasured = openEntry(files, 'successor-not-measured', 'operator', { movedFrom: 'old' })
-  const unnamed = openEntry(files, 'x', 'operator', { session: '' })
-  const remote = openEntry(files, 'far', 'operator', { origin: { machine: 'Elsewhere', address: 'x' } })
+  const unmeasured = openEntry(files, 'successor-not-measured', 'done', { movedFrom: 'old' })
+  const unnamed = openEntry(files, 'x', 'done', { session: '' })
+  const remote = openEntry(files, 'far', 'done', { origin: { machine: 'Elsewhere', address: 'x' } })
   await readSessions(dollar)
   expect(statusOf(files, live)).toBe('open')
   expect(statusOf(files, killed)).toBe('withdrawn')
@@ -536,7 +536,7 @@ test('a read of the store moves the open entries of a removed sender that learnt
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
   files.set(`${STATE}/store/successors/killed`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
-  const id = openEntry(files, 'killed', 'operator')
+  const id = openEntry(files, 'killed', 'done')
   await readSessions(dollar)
   const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
   expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch: next', 'killed'])
@@ -546,7 +546,7 @@ test('a read of the store moves the open entries of a removed sender that learnt
 test('a liveness read that fails does not close the entry of a row it keeps', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'], psFails: 'exit' })
   await writeSession(dollar, 'kept', { role: 'orchestrator', name: 'Orch: kept', pid: '502' })
-  const id = openEntry(files, 'kept', 'operator')
+  const id = openEntry(files, 'kept', 'done')
   await readSessions(dollar)
   expect(statusOf(files, id)).toBe('open')
 })
@@ -555,7 +555,7 @@ test('a row idle past the stale bound with no pid is removed, and its sender kee
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   const idle = new Date(Date.now() - 2 * 3600000).toISOString()
   await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch: idle', updated_at: idle })
-  const id = openEntry(files, 'idle', 'operator')
+  const id = openEntry(files, 'idle', 'done')
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
   expect(statusOf(files, id)).toBe('open')
@@ -569,7 +569,7 @@ test('a row removed for idleness alone keeps its learnt successor, and its later
   const idle = new Date(Date.now() - 2 * 3600000).toISOString()
   await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch: idle', updated_at: idle })
   files.set(`${STATE}/store/successors/idle`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
-  const id = openEntry(files, 'idle', 'operator')
+  const id = openEntry(files, 'idle', 'done')
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
   expect(files.has(`${STATE}/store/successors/idle`)).toBe(true)
@@ -581,7 +581,7 @@ test('a row removed for idleness alone keeps its learnt successor, and its later
 test('an entry moved to a successor between the read and the withdraw is not overwritten', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
-  const id = openEntry(files, 'killed', 'operator')
+  const id = openEntry(files, 'killed', 'done')
   const path = `${ROUND}/${id}.json`
   const read = dollar.fs.read
   let reads = 0
@@ -607,8 +607,8 @@ test('an entry naming no session, or from another machine, stays open though a r
     const listed = await list(dir)
     return dir === SESSIONS ? [...listed, { name: '', kind: 'file' }] : listed
   }
-  const unnamed = openEntry(files, 'x', 'operator', { session: '' })
-  const remote = openEntry(files, 'far', 'operator', { origin: { machine: 'Elsewhere', address: 'x' } })
+  const unnamed = openEntry(files, 'x', 'done', { session: '' })
+  const remote = openEntry(files, 'far', 'done', { origin: { machine: 'Elsewhere', address: 'x' } })
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/far`)).toBe(false)
   expect(statusOf(files, unnamed)).toBe('open')

@@ -86,7 +86,8 @@
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
 # An entry is closed with the hooks module's `settle` tool (hooks/question.ts), which writes the
-# answer, records the consent and sends the answer to its sender in the same call.
+# answer, records the consent and sends a question asked with `ask` its answer in the same call; the
+# close of a closing proposal sends nothing.
 # round-archive moves each entry file of <state>/round/ settled over a day ago — closed, answered
 # or withdrawn, at its answer's time (else its start), its delivery absent or delivered — into
 # <state>/round/archive/, a withdrawn one into <state>/round/archive/withdrawn/ (created when
@@ -635,8 +636,8 @@ cmd_round() {
         # Grouped by sender, the groups by their earliest wait, each in the order its waits began.
         def grouped: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
-        # The round order (hooks/round.ts openEntries), the operator ruling of 2026-10-31 (6.2): the
-        # urgent first, then the others, each level grouped by sender.
+        # The round order, the operator ruling of 2026-10-31 (6.2): the urgent first, then the
+        # others, each level grouped by sender.
         def ordered: group_by(if .urgent == true then 0 else 1 end) | map(grouped) | add // [];
         # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
         def gone: if (.origin | type) == "object" then $remote[.from] == null

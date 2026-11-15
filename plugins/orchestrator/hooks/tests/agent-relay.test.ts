@@ -585,7 +585,7 @@ test("an orchestrator's long turn is never held to the agents' limit", async () 
   const chains = mounted()
   const fx = fake({ name: ORCH, role: 'orchestrator' })
   fx.files.set(`${STATE}/coordinator.json`, JSON.stringify({ name: 'Coord: ops' }))
-  const long = `${'o'.repeat(VERDICT_LIMIT * 2)}\n\n**Question 1 of 1**\n_Subject_ : x\n- **A** : a\n- **B** : b\nwaiting: operator — blocks: x`
+  const long = `${'o'.repeat(VERDICT_LIMIT * 2)}\n\nwaiting: done`
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(long))
   const said = fx.sent.map(s => s.text).join('\n') + [...fx.files.values()].join('\n')
   expect(said).toContain('o'.repeat(VERDICT_LIMIT * 2))

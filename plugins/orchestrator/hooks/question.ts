@@ -2,19 +2,18 @@
 // The `ask` tool: a question to the operator made by one call, its fields flat (the host once dropped a
 // nested field), validated against the method's question format
 // (plugins/method/skills/lifecycle/references/questions.md) and stored as its own object in the
-// round, `round/<id>.json`, with a format version that tells it from the entries the relay writes
-// out of a turn's text (round.ts). The id is the module's, given at creation; each call is one
+// round, `round/<id>.json`, with a format version that tells it from the closing proposals the relay
+// writes (round.ts). The id is the module's, given at creation; each call is one
 // object, settled and delivered on its own. The module writes the question block into the
 // transcript itself, so the model does not write it. Any main session that keeps a list asks with
 // it: an orchestrator, a coordinator, an auditor; an agent asks the session that launched it.
-// The old path, a block written in the turn's text, stays as it is beside it.
 //
 // The `settle` tool closes a question by its id, here: its one closure function writes every close
 // of a round question, the object `ask` stored or the relay's entry (settle.ts decides what it
-// writes), then records the consent it asked, sends the answer to its asker at once when another
-// session settles it, and records the work the answer asks as a to-do of the asker. It replaces
-// `answered-by-message` and `coordinator.sh round-close`; the relay's other closures (the pane, the
-// prompt typed in the asker's tab, its turn's end) stay as they are until the text path goes.
+// writes), then records the consent it asked, sends the answer of a question asked with `ask` to its
+// asker at once when another session settles it, and records the work the answer asks as a to-do of
+// the asker. The pane, the words typed in the asker's tab and its session's end close through the
+// same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
 import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
@@ -23,8 +22,8 @@ import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
-import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
+import { closesItself, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
+import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
@@ -263,21 +262,24 @@ async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (
 }
 
 /** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. Answers the objects withdrawn. */
-export async function withdrawAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, why: string, now: Date = new Date()): Promise<Asked[]> {
+export async function withdrawAsked($: Held, session: string, why: string, now: Date = new Date()): Promise<Asked[]> {
   return withdrawWhere($, entry => entry.sender.session === session, why, now)
 }
 
 /** Questions moved to a successor by its name alone that no session of that name runs: withdrawn by their asker, as its end would. */
-export async function withdrawAskedIds($: Host<'env' | 'fs' | 'process' | 'clock'>, ids: readonly string[], why: string, now: Date = new Date()): Promise<Asked[]> {
+export async function withdrawAskedIds($: Held, ids: readonly string[], why: string, now: Date = new Date()): Promise<Asked[]> {
   return ids.length === 0 ? [] : withdrawWhere($, entry => entry.sender.session === '' && ids.includes(entry.id), why, now)
 }
 
-async function withdrawWhere($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (entry: Asked) => boolean, why: string, now: Date): Promise<Asked[]> {
+async function withdrawWhere($: Held, takes: (entry: Asked) => boolean, why: string, now: Date): Promise<Asked[]> {
   const at = now.toISOString()
-  const withdrawn = await changeAsked($, takes, entry => ({
-    ...entry, status: 'withdrawn', answer: { text: why, by: 'sender', at, settler: entry.sender.name }, seq: entry.seq + 1,
-  }))
-  for (const entry of withdrawn) await logLine($, 'question', `${entry.id} withdrawn by its asker: ${why}`)
+  const withdrawn: Asked[] = []
+  for (const id of await openAskedIds($, takes)) {
+    const done = await closeOwnAsked($, id, takes, at, entry => planWithdrawal(entry as never, why, at, false))
+    if (done === null) continue
+    withdrawn.push(done)
+    await logLine($, 'question', `${id} withdrawn by its asker: ${why}`)
+  }
   return withdrawn
 }
 
@@ -325,24 +327,47 @@ export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 's
  */
 export async function settleClaimed($: Held, kept: readonly string[], now: Date = new Date()): Promise<void> {
   const at = now.toISOString()
-  const answered: Asked[] = []
-  await changeOpenAsked($, await $.session.id(), entry => {
-    if (!entry.claimed) return null
-    const { claimed, ...rest } = entry
-    if (kept.includes(entry.id)) return { ...rest, seq: entry.seq + 1 }
-    const done: Asked = { ...rest, status: 'answered', answer: { text: claimed.typed, by: 'tab', at, settler: entry.sender.name }, seq: entry.seq + 1 }
-    answered.push(done)
-    return done
+  const session = await $.session.id()
+  await changeOpenAsked($, session, entry => {
+    if (!entry.claimed || !kept.includes(entry.id)) return null
+    const { claimed: _claimed, ...rest } = entry
+    return { ...rest, seq: entry.seq + 1 }
   })
-  for (const entry of answered) {
-    await logLine($, 'question', `${entry.id} answered in its asker's tab`)
-    if (!entry.consent) continue
-    const chosen = answersChoice(entry.answer?.text ?? '', entry.choices)
-    if (!chosen || !grants(chosen.text)) {
-      await logLine($, 'question', `the words typed for ${entry.id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
-      continue
-    }
-    await writeConsent($, { ...entry, question: entry.ask } as never, `${chosen.letter} : ${chosen.text}`, 'tab', at)
+  const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
+  for (const id of await openAskedIds($, takes)) {
+    let refused = false
+    const done = await closeOwnAsked($, id, takes, at, entry => {
+      const asked = entry as unknown as Asked
+      const chosen = asked.consent ? answersChoice(asked.claimed?.typed ?? '', asked.choices) : null
+      refused = !!asked.consent && (!chosen || !grants(chosen.text))
+      return planClaimed(entry, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at)
+    })
+    if (done === null) continue
+    await logLine($, 'question', `${id} answered in its asker's tab`)
+    if (refused) await logLine($, 'question', `the words typed for ${id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
+  }
+}
+
+// The ids of the open questions asked here that `takes` selects; a replica is its owner's to close.
+async function openAskedIds($: Host<'env' | 'fs'>, takes: (entry: Asked) => boolean): Promise<string[]> {
+  return (await readAsked($)).filter(entry => entry.status === 'open' && entry.origin === undefined && takes(entry)).map(entry => entry.id)
+}
+
+// One question asked here closed by the module through `closeRound`, read again under its lock and
+// left as it is unless still open and selected by `takes`. A write that fails is one log line, so
+// the others still close. Answers the object closed, or null.
+async function closeOwnAsked($: Held, id: string, takes: (entry: Asked) => boolean, at: string, plan: (entry: Fields) => Plan): Promise<Asked | null> {
+  try {
+    // Its asker closes it: nothing is sent, so the closer's name is never read.
+    const me: Me = { session: await $.session.id(), name: '', role: '' }
+    const closed = await closeRound($, `${await stateDir($)}/round/${id}.json`, current => {
+      const fresh = current === undefined ? null : parseAsked(current)
+      return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh as unknown as Fields)
+    }, me, at)
+    return closed === null || 'error' in closed ? null : closed.plan.entry as unknown as Asked
+  } catch (err) {
+    await logLine($, 'question', `${id} not changed: ${messageOf(err)}`)
+    return null
   }
 }
 
@@ -505,9 +530,8 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
 }
 
 /**
- * The one closure of a round question: the entry read again and written under its lock, then its
- * consent recorded, its asker sent the answer (or the coordinator told, for the relay's entry it was
- * shown), and the work the answer asks added to the asker's list. Answers the tool's reply.
+ * The `settle` tool: the entry closed through `closeRound` as `planAsked` or `planRelayed` decides,
+ * then the work the answer asks added to the asker's list. Answers the tool's reply.
  */
 export async function settle($: Held, request: SettleRequest, now: Date = new Date()): Promise<Answer> {
   const who = await whoAmI($)
@@ -517,40 +541,24 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
-  let plan: Plan | { error: string } = { error: `no entry ${request.id} in the round.` }
+  let closed: Awaited<ReturnType<typeof closeRound>>
   try {
-    await updateOver(storeIo($), path, current => {
+    closed = await closeRound($, path, current => {
       const asked = current === undefined ? null : parseAsked(current)
       const relayed = asked !== null || current === undefined ? null : parseRoundEntry(current)
-      if (asked !== null) plan = planAsked(asked, request, me, at)
-      else if (relayed !== null) plan = planRelayed(relayed, request, me, at, shown)
-      else if (current !== undefined) plan = { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
-      return 'error' in plan ? undefined : `${JSON.stringify(plan.entry)}\n`
-    })
+      if (asked !== null) return planAsked(asked, request, me, at)
+      if (relayed !== null) return planRelayed(relayed, request, me, at, shown)
+      if (current !== undefined) return { error: `${request.id} is no round entry settle can read (half-written, or of another shape): nothing changed.` }
+      return { error: `no entry ${request.id} in the round.` }
+    }, me, at)
   } catch (err) {
     await logLine($, 'question', `${request.id} not settled: ${messageOf(err)}`)
     return refuse(`${request.id} could not be written (${messageOf(err)}); nothing changed, settle it again.`)
   }
-  const done = plan as Plan | { error: string }
-  if ('error' in done) return refuse(done.error)
-  const said = [`Settled ${request.id}: ${String(done.entry['status'])}.`]
-  if (done.consentBy !== null) {
-    const question = typeof done.entry['ask'] === 'string' ? done.entry['ask'] : done.entry['question']
-    const missed = await writeConsent($, { ...done.entry, question }, request.text, done.consentBy, at)
-    if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
-  }
-  if (done.relayed) await forgetRelayed($, done.entry)
-  if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }])
-  if (done.deliver === 'pending') {
-    await deliverInTurn($)
-    said.push(`The answer goes to ${done.asker.name} now.`)
-  }
-  if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
-  if (done.deliver === 'remote') {
-    const refused = await sendReply($, request.id)
-    said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
-  }
-  if (done.deliver !== 'remote' && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
+  if (closed === null) return refuse(`no entry ${request.id} in the round.`)
+  if ('error' in closed) return refuse(closed.error)
+  const done = closed.plan
+  const said = [`Settled ${request.id}: ${String(done.entry['status'])}.`, ...closed.said]
   if (request.work !== null) {
     const own = done.asker.session === me.session
     const made = await callTodo($, { action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)
@@ -573,32 +581,54 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
   const me: Me = { session: await $.session.id(), name: who?.name ?? "the coordinator's pane", role: who?.role ?? 'coordinator' }
   const path = `${await stateDir($)}/round/${id}.json`
   const at = now.toISOString()
-  let answered = null as Asked | null
   try {
-    await updateOver(storeIo($), path, current => {
+    const closed = await closeRound($, path, current => {
       const entry = current === undefined ? null : parseAsked(current)
-      if (entry === null || entry.status !== 'open' || entry.claimed) return undefined
-      // A replica's answer goes to its owner, which applies it: its seq stays the owner's.
-      answered = entry.origin !== undefined
-        ? { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, delivery: { state: 'pending', at, attempts: 0 } }
-        : { ...entry, status: 'answered', answer: { text: said, by: 'pane', at, settler: me.name }, seq: entry.seq + 1 }
-      return `${JSON.stringify(answered)}\n`
-    })
+      return entry === null ? null : planPane(entry as unknown as Fields, said, me, at)
+    }, me, at, () => logLine($, 'question', `${id} answered in the pane`))
+    return closed === null || 'error' in closed ? null : closed.plan.entry as unknown as Asked
   } catch (err) {
     await logLine($, 'question', `${id} not answered from the pane: ${messageOf(err)}`)
     return null
   }
-  const done = answered as Asked | null
+}
+
+/**
+ * The one closure of a round entry (design §4.3), whoever closes it — `settle`, the pane, the words
+ * typed in its asker's tab, its session's end: the entry read again and written under its lock as
+ * `decide` plans it (null leaves it), `written` run once it is, then its consent recorded, the
+ * relay's fingerprint forgotten, the coordinator here told, the answer sent to its asker or to its
+ * owner's machine, and the object pushed to a coordinator on another machine. Answers the plan and
+ * what its steps said, the refusal, or null; a write that fails throws.
+ */
+export async function closeRound(
+  $: Held, path: string, decide: (current: string | undefined) => Plan | { error: string } | null, me: Me, at: string,
+  written?: () => Promise<void>,
+): Promise<{ plan: Plan; said: string[] } | { error: string } | null> {
+  let plan: Plan | { error: string } | null = null
+  await updateOver(storeIo($), path, current => {
+    plan = decide(current)
+    return plan === null || 'error' in plan ? undefined : `${JSON.stringify(plan.entry)}\n`
+  })
+  const done = plan as Plan | { error: string } | null
   if (done === null) return null
-  await logLine($, 'question', `${id} answered in the pane`)
-  if (done.origin !== undefined) {
-    await sendReply($, id)
-    return done
+  if ('error' in done) return { error: done.error }
+  await written?.()
+  const said: string[] = []
+  if (done.consentBy !== null) {
+    const question = typeof done.entry['ask'] === 'string' ? done.entry['ask'] : done.entry['question']
+    const missed = await writeConsent($, { ...done.entry, question } as never, done.consentText, done.consentBy, at)
+    if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
   }
-  if (done.consent) await writeConsent($, { ...done, question: done.ask } as never, said, 'pane', at)
-  const asker = { session: done.sender.session, name: done.sender.name, remote: false }
-  await deliverSettled($, path, { entry: done, asker, deliver: 'now', consentBy: 'pane', relayed: false, told: false }, me, at)
-  return done
+  if (done.relayed) await forgetRelayed($, done.entry as never)
+  if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }] as never)
+  if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
+  if (done.deliver === 'remote') {
+    const refused = await sendReply($, String(done.entry['id']))
+    said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
+  }
+  if (done.deliver !== 'remote' && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
+  return { plan: done, said }
 }
 
 // The answer sent to its asker at once — its session while it has a row here (two sessions may share
@@ -650,7 +680,7 @@ export function register(on: On<Held>): void {
           + 'subject (a few words), context (two to six sentences: the stake, what is known), question (one sentence ending in « ? »), '
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
-          + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as declare_wait takes them, and offers choice_a "Accorder", choice_b "Refuser". '
+          + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as its kind needs, and offers choice_a "Accorder", choice_b "Refuser". '
           + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -737,7 +767,7 @@ export function registerSettle(on: On<Held>): void {
       await $.tool.register({
         name: SETTLE_TOOL,
         isDeferred: false,
-        description: 'Closes a question of the round by its id, and sends the answer to its asker at once. '
+        description: 'Closes a question of the round by its id; one asked with ask is sent its answer at once. '
           + 'outcome: `answered-here` (he answered in this tab; answer: his words or letter), `answered-by-message` (his answer to your own question reached you by a message; answer, and author: that session), '
           + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker. '
           + 'For an orchestrator, a coordinator or an auditor.',

@@ -1,5 +1,5 @@
 // hooks/wait.ts
-// The declared wait: `declare_wait({kind, blocks, question})`, the structured act by which a turn says
+// The declared wait: `declare_wait({kind, blocks})`, the structured act by which a turn says
 // what will wake it, read by the stop gate in place of the wording of the turn's last line
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
 // it: the next turn's start makes it stale, and a stale one is never read.
@@ -9,9 +9,8 @@
 // the declaration spells (waitLine), written last in the message every later reader of the
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
-import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { entryQuestions, fencedLines, numberOfLine, openFence, outsideFences, parseChoices, questionShape, type QuestionField } from '../core/method.ts'
 import { logLine } from './module-io.ts'
 import { holdsDone } from './unattended.ts'
 import { holdsTodos } from './todo.ts'
@@ -22,123 +21,28 @@ type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clo
 
 export const WAIT_TOOL = 'declare_wait'
 
+// Why an operator wait is refused with no question of the session's open.
+export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'
+
 // What `blocks` may hold: one line, short enough to be a reason and not a report.
 export const BLOCKS_MAX = 300
 
 const KIND_NEEDS: Record<WaitKind, string> = {
-  operator: 'the question the operator must answer and what it blocks',
-  tool: 'what is watched: the command, monitor or subagent you started in the background',
+  operator: 'what the questions asked with `ask` block',
   done: '',
   deferred: 'the deferred items: their count (« 3 items ») or their ids',
 }
 
-// Why an operator wait is refused with no question block: the call itself must carry it.
-export const QUESTION_MISSING =
-  'An operator wait carries the question he must answer: pass in `question` the full `**Question i of N**` block '
-  + '(`_Subject_ :`, `_Context_ :`, `_Question_ :`, `_Choices_ :`, `_Free answer_ :`, `_Recommendation_ :`, in his language; '
-  + 'method:lifecycle, references/questions.md), or ask it first with `ask` and declare the wait without `question`. A heading alone is no block. If you ask him nothing, declare another kind.'
-
-// The question of an operator wait, validated with the reader the stop gate uses: a numbered block.
-function checkQuestion(question: unknown): { question: string } | { error: string } {
-  if (typeof question !== 'string' || question.trim() === '') return { error: QUESTION_MISSING }
-  const asked = entryQuestions({ question: outsideFences(question), choices: [], recommendation: null }).filter(part => part.number !== null)
-  if (asked.length === 0) return { error: `question holds no question block. ${QUESTION_MISSING}` }
-  return { question: question.trim() }
-}
-
-const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
-
-// Each question block a text shows outside its fences, by its content with its whitespace flattened:
-// its numbering, its labelled fields, its choices and its recommendation with the lines that argue it.
-function blockKeys(text: string): string[] {
-  return entryQuestions({ question: outsideFences(text), choices: [], recommendation: null }).flatMap(part => {
-    const { choices } = parseChoices(part.question)
-    const shape = questionShape(part.question, choices)
-    if (!shape?.number) return []
-    const fields = shape.fields.map(field => `${flat(field.label)}: ${flat(field.text)}`)
-    const listed = choices.map(choice => `${choice.letter}: ${flat(choice.text)}`)
-    return [[flat(shape.number), ...fields, ...listed, recommendationOf(part.question, shape.recommendation)].join('\n')]
-  })
-}
-
-// The recommendation of a block, flattened: its line and the lines below it up to a blank one or the
-// machine line, the argument questionShape does not keep. The last line holding its label and its text is its own.
-function recommendationOf(question: string, recommendation: QuestionField | null): string {
-  if (recommendation === null) return ''
-  const lines = question.split('\n')
-  const at = lines.findLastIndex(line => line.includes(recommendation.label) && line.includes(recommendation.text))
-  if (at < 0) return flat(`${recommendation.label}: ${recommendation.text}`)
-  const end = lines.findIndex((line, i) => i > at && (line.trim() === '' || /^\s*waiting\s*:/.test(line)))
-  return flat(`${recommendation.label}: ${lines.slice(at, end < 0 ? lines.length : end).join(' ')}`)
-}
-
-// The question block an operator wait holds that the message does not show: appended above the line.
-// The call's question is authoritative: a block in the message is the declared one only when its
-// content matches it, whitespace and line breaks aside. A block of the message that bears the
-// numbering of a declared one is that question worded another way, and is dropped for it
-// (withoutRestated), so a question is shown once. A block of another numbering is another question,
-// kept beside it.
-function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
-  if (wait.kind !== 'operator' || !wait.question) return null
-  if (flat(outsideFences(message)).includes(flat(wait.question))) return null
-  const shown = blockKeys(message)
-  const declared = blockKeys(wait.question)
-  return declared.length > 0 && declared.every(key => shown.includes(key)) ? null : wait.question
-}
-
-// The numberings the question blocks of a text bear, outside its fences.
-function numberings(text: string): Set<string> {
-  const inside = fencedLines(text)
-  return new Set(text.split('\n').flatMap((line, i) => {
-    const number = inside[i] ? null : numberOfLine(line)
-    return number === null ? [] : [flat(number)]
-  }))
-}
-
-// The message less the question blocks that bear the numbering of a declared block: from its
-// numbering line to the next numbering line, or for the last block to the end of its recommendation's
-// lines, never past the machine line. The text around them stays.
-function withoutRestated(message: string, declared: string): string {
-  const taken = numberings(declared)
-  const lines = message.split('\n')
-  const inside = fencedLines(message)
-  const heads = lines.flatMap((line, i) => (inside[i] || numberOfLine(line) === null ? [] : [i]))
-  const dropped = new Set<number>()
-  heads.forEach((head, k) => {
-    if (!taken.has(flat(numberOfLine(lines[head] ?? '') ?? ''))) return
-    const next = heads[k + 1]
-    const end = next ?? blockEnd(lines, head)
-    for (let i = head; i < end; i++) dropped.add(i)
-  })
-  return lines.filter((_, i) => !dropped.has(i)).join('\n')
-}
-
-// Where the last block of a message ends, from its numbering line: the line after its recommendation's
-// argument, else the machine line or the end of the text.
-function blockEnd(lines: readonly string[], head: number): number {
-  const machine = lines.findIndex((line, i) => i > head && /^\s*waiting\s*:/.test(line))
-  const limit = machine < 0 ? lines.length : machine
-  const block = lines.slice(head, limit).join('\n')
-  const { choices } = parseChoices(block)
-  const recommendation = questionShape(block, choices)?.recommendation ?? null
-  if (recommendation === null) return limit
-  const at = lines.findLastIndex((line, i) => i >= head && i < limit && line.includes(recommendation.label) && line.includes(recommendation.text))
-  if (at < 0) return limit
-  const end = lines.findIndex((line, i) => i > at && i < limit && line.trim() === '')
-  return end < 0 ? limit : end
-}
-
 // The tool's input, validated: the declaration, or why it is none. `asked` holds the session's own
-// open questions asked with `ask` (question.ts): an operator wait without `question` waits on them,
-// its blocks theirs when it names none.
+// open questions asked with `ask` (question.ts): an operator wait waits on them, its blocks theirs
+// when it names none, and is refused with none open.
 export function parseDeclaration(input: unknown, asked: readonly { id: string; blocks: string }[] = []): { wait: DeclaredWait } | { error: string } {
-  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; question?: unknown; consent_kind?: unknown; consent_repo?: unknown; consent_pr?: unknown; consent_env?: unknown }
+  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; consent_kind?: unknown; consent_repo?: unknown; consent_pr?: unknown; consent_env?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
   }
   const kind = e.kind as WaitKind
   if (e.blocks !== undefined && typeof e.blocks !== 'string') return { error: 'blocks is a string' }
-  if (e.question !== undefined && kind !== 'operator') return { error: 'only an operator wait carries a question' }
   if (e.urgent !== undefined && typeof e.urgent !== 'boolean') return { error: 'urgent is true or false' }
   if (e.urgent === true && kind !== 'operator') return { error: 'only an operator wait is urgent' }
   const given = Object.fromEntries([['kind', e.consent_kind], ['repo', e.consent_repo], ['pr', e.consent_pr], ['env', e.consent_env]].filter(([, value]) => value !== undefined))
@@ -148,18 +52,14 @@ export function parseDeclaration(input: unknown, asked: readonly { id: string; b
   if (asksConsent && consent === undefined) {
     return { error: `consent is consent_kind with consent_repo (owner/name): "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env (${DEPLOY_ENVS.join(', ')})` }
   }
-  const onAsked = kind === 'operator' && e.question === undefined && asked.length > 0
+  if (kind === 'operator' && asked.length === 0) return { error: ASK_FIRST }
   const named = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
-  const blocks = named === '' && onAsked ? asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
+  const blocks = named === '' && kind === 'operator' ? asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
   if (kind === 'done') return { wait: { kind, blocks: '' } }
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
-  if (onAsked) {
-    return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}), asked: asked.map(question => question.id) } }
-  }
-  const question = kind === 'operator' ? checkQuestion(e.question) : null
-  if (question && 'error' in question) return question
-  return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}), ...(question ? { question: question.question } : {}) } }
+  if (kind !== 'operator') return { wait: { kind, blocks } }
+  return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}), asked: asked.map(question => question.id) } }
 }
 
 // The declarations of one session, by turn: a declaration is current only in the turn that
@@ -193,37 +93,12 @@ export class Declarations {
   }
 }
 
-// The declarations of this session's main thread, which the relay reads too: the subject a
-// question asks consent on rides with its round entry (supervision.ts).
+// The declarations of this session's main thread, which the turn's end reads too (question.ts).
 export const DECLARATIONS = new Declarations()
 
-// The subject the current turn's operator question asks consent on, or null.
-export function declaredConsent(declarations: Declarations = DECLARATIONS): ConsentSubject | null {
-  const wait = declarations.current()
-  return wait?.kind === 'operator' ? wait.consent ?? null : null
-}
-
-// Whether the current turn's operator wait waits on questions asked with `ask`: then it enters no
-// entry of the relay's (supervision.ts relayTurnEnd), and the stop gate asks no block of its text.
-export function declaredAsked(declarations: Declarations = DECLARATIONS): boolean {
-  const wait = declarations.current()
-  return wait?.kind === 'operator' && (wait.asked?.length ?? 0) > 0
-}
-
-// The message with the declared question in it unless it shows a block of the same content: the pane, the round entry
-// and the gate read the question from the call, whatever the prose around it says.
-export function withDeclaredQuestion(message: string, wait: DeclaredWait | null): string {
-  const missing = wait === null ? null : questionMissingFrom(message, wait)
-  if (missing === null) return message
-  // A message that ends inside a code fence has it closed first: the block would else be quoted text.
-  const fence = openFence(message)
-  const closed = fence === null ? message : `${message.replace(/\s+$/, '')}\n${fence}`
-  return `${withoutRestated(closed, missing).replace(/\s+$/, '')}\n\n${missing}`
-}
-
-// The message as the gate and the turn's end read it: the declaration's question, then its line written last.
+// The message as the gate and the turn's end read it: the declaration's line written last.
 export function withDeclaredWait(message: string, wait: DeclaredWait | null): string {
-  return wait === null ? message : `${withDeclaredQuestion(message, wait).replace(/\s+$/, '')}\n\n${waitLine(wait)}`
+  return wait === null ? message : `${message.replace(/\s+$/, '')}\n\n${waitLine(wait)}`
 }
 
 // The session's own open questions asked with `ask`, in the order asked; none when they cannot be read.
@@ -248,11 +123,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         isDeferred: false,
         description: 'Declares what will wake this session once its turn ends, before ending the turn: '
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
-          + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
+          + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
-          + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env; its choices are the two lines `- **Accorder** : …` and `- **Refuser** : …`, and his answer is then recorded as that consent. '
-          + 'An `operator` wait waits on the questions this session asked with `ask`, or carries in `question` the whole `**Question i of N**` block. '
+          + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env. '
+          + 'An `operator` wait waits on the questions this session asked with `ask`. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
           type: 'object',
@@ -260,7 +135,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             kind: { type: 'string', enum: [...WAIT_KINDS] },
             blocks: { type: 'string', maxLength: BLOCKS_MAX },
             urgent: { type: 'boolean' },
-            question: { type: 'string' },
             consent_kind: { type: 'string', enum: [...CONSENT_KINDS] },
             consent_repo: { type: 'string' },
             consent_pr: { type: 'integer' },
@@ -321,8 +195,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const handed = withDeclaredWait(String(e.answer ?? ''), wait)
     const result = await next({ ...e, answer: handed })
     // The line is the readers' beneath, never shown: a text the chain left as handed is the answer's own.
-    // The question the call carried stays in what is shown: it is what the operator is asked.
-    return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: withDeclaredQuestion(String(e.answer ?? ''), wait) } : result
+    return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: String(e.answer ?? '') } : result
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)

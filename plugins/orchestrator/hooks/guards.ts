@@ -24,8 +24,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { DECLARATIONS, declaredAsked, type Declarations } from './wait.ts'
-import { operatorWaitRefusal, turnQuestionReader } from './one-question.ts'
+import { ASK_FIRST, DECLARATIONS, type Declarations } from './wait.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -33,14 +32,12 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, endsOnHandOver, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, MACHINE_LINE, blocksNothing,
 } from './stop-gate.ts'
 import { machineLine } from '../core/method.ts'
-import { moduleDirOf } from './module-log.ts'
 import { launcherOf } from '../core/orchestration.ts'
-import { pendingQuestion, unansweredRefusal, ownWaitOpen, type WaitRead } from './unanswered-question.ts'
-import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
-import type { RoundEntry } from './round.ts'
+import { coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
+import { readAsked } from './question.ts'
 import { MODE_DIALOG_DENY, WAITED_ON_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
 import { handsOver, unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
@@ -244,22 +241,14 @@ async function transcriptHasAnswer($: any, path: string): Promise<boolean> {
   return line !== null
 }
 
-// Whether this turn already put the operator a question, in a text it wrote or in a declared wait's
-// call (turnQuestionReader): the last message that only names the wait is then no unasked one. A
-// transcript that cannot be read has asked nothing the gate can know.
-async function askedThisTurn($: any, path: string, until: number): Promise<boolean> {
-  if (!path) return false
-  const reader = turnQuestionReader()
-  await scanTail(
-    async (p: string) => (await $.fs.stat(p)).size,
-    (p: string, index: number) => readBlock($, p, index, Math.max(1, until - Date.now())),
-    path,
-    reader.matches,
-  )
-  return reader.asked()
+// An operator wait the turn did not declare on questions asked with `ask`: its line, blocking
+// something, asks him nothing he can answer.
+function undeclaredOperatorWait(message: string, declarations: Declarations): boolean {
+  const line = machineLine(message)
+  return declarations.current()?.kind !== 'operator' && !!MACHINE_LINE.exec(line)?.[1] && !blocksNothing(line)
 }
 
-// How many times a re-fired stop is refused again for an operator wait with no question block.
+// How many times a re-fired stop is refused again for an operator wait with no question asked.
 export const REFIRED_REFUSALS = 2
 
 // `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
@@ -287,7 +276,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   let spawnedMark: string | null | undefined = undefined
   // The last prompt the operator typed in this session, keyed by its id like the memos
   // above: the tier map's guard stands aside when it names the map or a tier.
-  // Its time answers the session's own question when no coordinator runs (ownWaitOpen).
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
   // The refusals a re-fired stop has paid this turn for an operator wait with no question, by
   // session id: a fresh stop starts the count over, REFIRED_REFUSALS ends it (never an endless loop).
@@ -526,12 +514,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       // At most one refusal per turn (stop_gate.py:653-654): the host re-fires the stop
       // with the marker set, and the gate steps aside before it reads anything — but for an
-      // operator wait that still holds no question block, read off the message alone: that one
-      // is refused again, within REFIRED_REFUSALS (below).
+      // operator wait still not declared on questions asked with `ask`: that one is refused
+      // again, within REFIRED_REFUSALS (below).
       const refired = Boolean(e.stop_hook_active)
-      // A wait on questions asked with `ask` shows its blocks in the chat, not in the message: no block is asked of it.
-      const onAsked = declaredAsked(declarations)
-      if (refired && (onAsked || operatorWaitRefusal(String(e.last_assistant_message ?? '')) === null)) return next(e)
+      const unasked = undeclaredOperatorWait(String(e.last_assistant_message ?? ''), declarations)
+      if (refired && !unasked) return next(e)
       const sessionId = String(e.session_id ?? '')
       if (!refired) unaskedRefusals.delete(sessionId)
       // The scope first, from the session itself: the launcher's listing is a call to
@@ -569,41 +556,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {
         if (role !== 'orchestrator') return next(e)
-        if (await askedThisTurn($, transcript, until)) return next(e)
-        return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, String(e.last_assistant_message ?? ''), until) ?? next(e)
+        return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, until) ?? next(e)
       }
       if (role === 'coordinator') return next(e)
-      // An orchestrator ending on a wait for the operator puts him a question: read off the message too.
-      const unasked = onAsked ? null : operatorWaitRefusal(String(e.last_assistant_message ?? ''))
-      if (unasked !== null && !(await askedThisTurn($, transcript, until))) {
+      // An orchestrator ending on a wait for the operator puts him a question asked with `ask`.
+      if (unasked) {
         await logLine($, 'guards', 'stop gate: an operator wait with no question')
-        return refuse(unasked)
+        return refuse(ASK_FIRST)
       }
       const state = await stateDir($)
-      // A question still on the operator stays open in the round until he answers it, its answer
-      // waking the session, and is not repeated in later messages; with no coordinator, the
-      // session's own operator wait is that question. Read off the round and the wait file within
-      // the deadline, unless the session handed over, or ends on its last word `handed over`: its
-      // successor holds the questions.
+      // A question asked with `ask` still open stays in the round until he answers it, its answer
+      // waking the session; unless the session handed over, or ends on its last word `handed over`:
+      // its successor holds the questions.
       const message = String(e.last_assistant_message ?? '')
-      let pending: Awaited<ReturnType<typeof pendingQuestion>> = null
-      let ownOpen = false
+      let questionOpen = false
       if (sessionId !== '' && handedOverIn !== sessionId && !isEnding() && !endsOnHandOver(message)) {
-        const typedAt = lastTyped?.sessionId === sessionId ? lastTyped.at : null
-        const read = await quietly($, async () => {
-          const entries = await roundEntries($, state)
-          const wait = await waitRead($, sessionId)
-          const own = !(await coordinatorAddress($)) && ownWaitOpen(sessionId, entries, wait, typedAt)
-          return { pending: pendingQuestion(sessionId, entries, wait), own }
-        }, until, { pending: null, own: false })
-        pending = read.pending
-        ownOpen = read.own
-        const unshown = unansweredRefusal(message, pending)
-        if (unshown !== null) {
-          // Measured, not refused: a refusal made the turn rewrite the whole block each time. The pane
-          // keeps the question visible, and the log counts the turns that left it out.
-          await logLine($, 'guards', `stop gate: warn question-unshown (${pending?.entry?.id ?? pending?.blocks ?? '?'})`)
-        }
+        questionOpen = await quietly($, async () => (await readAsked($)).some(entry => entry.status === 'open' && entry.sender.session === sessionId), until, false)
       }
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
@@ -626,13 +594,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const entries = chainEntries(String(chain))
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
+      // An idle agent whose pull request merged is delivered; one whose pull request is open
+      // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
+      const awaitingMerge: string[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
-        if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) {
-          delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
-        }
+        if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
+        if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
       }
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
@@ -647,28 +617,23 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return table
       }
       const background = ownBackground(await processes(), pid)
-      // Without the host pid no process can be told as the session's own: a true tool line
-      // is accepted rather than refused as « nothing runs », which sends the turn back to a false operator wait.
-      const hostUnread = !pid
-      if (hostUnread) await logLine($, 'guards', 'stop gate: host pid unread: the process table could not be tied to this session')
+      if (!pid) await logLine($, 'guards', 'stop gate: host pid unread: the process table could not be tied to this session')
       const wake = checkWake({
-        agents, resident, delivered, background, hostUnread,
-        // The host's own list of the session's work in flight: the tool line's reliable reading.
+        agents, resident, delivered, background, awaitingMerge,
+        // The host's own list of the session's work in flight, the reliable reading of what will wake it.
         tasks: hostTasks(e.background_tasks, e.session_crons),
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
         declared: declarations.current(),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
-        questionOpen: pending !== null || ownOpen,
+        questionOpen,
       })
       if (wake !== null && typeof wake === 'object' && 'blocks' in wake) {
         // The release the machine line grants, logged as the shell gate logged it — the
         // figures that say whether the gate earns its cost are read there.
         await logLine($, 'guards', `stop gate: check1 blocks ${wake.blocks}`)
-      } else if (wake !== null && typeof wake === 'object' && 'tool' in wake) {
-        await logLine($, 'guards', wake.notRunning ? `stop gate: warn tool-not-running ${wake.tool}` : `stop gate: check1 tool ${wake.tool}`)
       } else if (wake !== null && typeof wake === 'object' && 'warn' in wake) {
-        // Measured, not refused: these three reminders cost a turn each and mostly turned out wrong.
+        // Measured, not refused: these reminders cost a turn each and mostly turned out wrong.
         await logLine($, 'guards', `stop gate: warn ${wake.warn}${wake.detail === '' ? '' : ` ${wake.detail}`}`)
       } else if (wake === 'read-what-is-left') {
         // The done line: the facts are read only now, as the shell gate read them lazily.
@@ -788,15 +753,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 }
 
 // A re-fired stop (the host sets stop_hook_active after a refusal) of an orchestrator whose message still
-// ends on an operator wait with no question block: refused again, REFIRED_REFUSALS times, then let through
+// ends on an operator wait with no question asked: refused again, REFIRED_REFUSALS times, then let through
 // (null) with one log line and a notice to its coordinator that it waits on the operator without asking him.
 // The notice runs under the gate's deadline: a coordinator that never answers never holds the stop.
-async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>, sessionId: string, name: string, message: string, until: number): Promise<{ block: string } | null> {
+async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>, sessionId: string, name: string, until: number): Promise<{ block: string } | null> {
   const paid = paidBySession.get(sessionId) ?? 0
   if (paid < REFIRED_REFUSALS) {
     paidBySession.set(sessionId, paid + 1)
     await logLine($, 'guards', `stop gate: an operator wait with no question, refused again (${paid + 1} of ${REFIRED_REFUSALS})`)
-    return refuse(operatorWaitRefusal(message) ?? '')
+    return refuse(ASK_FIRST)
   }
   paidBySession.delete(sessionId)
   await logLine($, 'guards', `stop gate: an operator wait with no question let through after ${REFIRED_REFUSALS} more refusals (${name})`)
@@ -806,7 +771,7 @@ async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>
     const told = left <= 0 ? null : await withDeadline((async () => {
       const coordinator = await coordinatorAddress($)
       if (!coordinator) return 'no coordinator to tell that an orchestrator waits on the operator with no question'
-      const sent = await sendToCoordinator($, coordinator.to, `[module] ${name} ended its turn waiting on the operator with no question block, after ${REFIRED_REFUSALS + 1} refusals: he was not asked anything. Ask it of ${name}, or ask him for it.`)
+      const sent = await sendToCoordinator($, coordinator.to, `[module] ${name} ended its turn waiting on the operator with no question asked with \`ask\`, after ${REFIRED_REFUSALS + 1} refusals: he was not asked anything. Ask it of ${name}, or ask him for it.`)
       return sent?.isDelivered ? '' : `the notice to the coordinator was not delivered: ${sent?.reason ?? 'no answer'}`
     })(), left)
     if (told === null || isDegradedPass(told)) await logLine($, 'guards', 'stop gate: the notice to the coordinator did not finish within the deadline')
@@ -930,26 +895,6 @@ async function hostStatuses($: any, ttys: readonly string[], until: number): Pro
 function runUntil($: any, argv: readonly string[], until: number, cwd?: string): Promise<any> {
   const timeoutMs = Math.max(1, until - Date.now())
   return $.process.run(argv, cwd ? { timeoutMs, cwd } : { timeoutMs })
-}
-
-// Every entry of the round on this machine (supervision.ts readRound's reading, $ never crossing
-// an import): a file that does not parse, or a temporary one, is no entry; no directory, none.
-async function roundEntries($: any, state: string): Promise<RoundEntry[]> {
-  const dir = `${state}/round`
-  const listed: readonly { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
-  const entries: RoundEntry[] = []
-  for (const file of listed) {
-    if (!file || file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
-    const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
-    if (entry) entries.push(entry)
-  }
-  return entries
-}
-
-// The session's wait file in the module's store (supervision.ts storeOf), or none.
-async function waitRead($: any, sessionId: string): Promise<WaitRead | null> {
-  const store = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
-  return parseWaitRecord(String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => '')))
 }
 
 // A quiet read's fallback shape.

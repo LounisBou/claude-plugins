@@ -73,22 +73,21 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // --- the declared wait (hooks/wait.ts) ----------------------------------------------------------
 
 // What a turn may declare will wake it, by `declare_wait({kind, blocks})`: a question for the
-// operator, a command or monitor of its own, every goal met, or only deferred work left.
-export const WAIT_KINDS = ['operator', 'tool', 'done', 'deferred'] as const
+// operator, every goal met, or only deferred work left. A command, monitor, subagent or agent of
+// its own is read by the gate itself (checkWake), never declared.
+export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const
 export type WaitKind = typeof WAIT_KINDS[number]
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
-// consent: the subject an operator question asks his consent on (core's consent-record.ts); his
-// answer to it in the round is then written as that subject's consent record.
-// question: the full `**Question i of N**` block an operator wait puts him, carried by the call itself.
-// asked: the ids of the questions asked with `ask` (question.ts) an operator wait waits on, in place of `question`.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; question?: string; asked?: string[] }
+// consent: the subject an operator question asks his consent on (core's consent-record.ts), which the
+// audit trail names.
+// asked: the ids of the questions asked with `ask` (question.ts) an operator wait waits on.
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; asked?: string[] }
 
 // The one machine line a declaration spells: the form the gate's checks read a declared wait in.
 // It is never taught: the model declares, and a line it writes itself decides nothing.
 export function waitLine(wait: DeclaredWait): string {
   switch (wait.kind) {
     case 'operator': return `waiting: operator${wait.urgent ? ' (urgent)' : ''} — blocks: ${wait.blocks}`
-    case 'tool': return `waiting: tool — ${wait.blocks}`
     case 'deferred': return `waiting: deferred — ${wait.blocks}`
     case 'done': return 'waiting: done'
   }
@@ -105,19 +104,15 @@ const OTHER_FITS = 'If only an irreversible or outward act waits for the operato
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
 const runningFits = (what: readonly string[]) =>
-  `${what.join(', ')} runs in the background: declare a tool wait naming what is watched.`
+  `${what.join(', ')} runs in the background: declare no wait, its end wakes you.`
 function fits(busy: boolean, running: readonly string[]): string {
   if (running.length > 0) return runningFits(running)
   return busy ? BUSY_FITS : OTHER_FITS
 }
 // A turn that declared no wait with nothing in flight, no agent busy and no notice awaited.
 const NOTHING = 'Nothing will wake you: nothing of yours runs in the background and no agent of yours is busy. '
-  + 'Launch what you announced (an agent, or a command with run_in_background, then declare a tool wait on it), '
+  + 'Launch what you announced (an agent, or a command with run_in_background: its end wakes you, with no wait to declare), '
   + `or declare the wait that fits. ${OTHER_FITS} ${DECLARE}`
-// A tool wait with nothing of the session's own in flight: no end and no event will come to wake it.
-const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: a tool wait fits only while '
-  + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or declare the wait that fits. '
-  + `${OTHER_FITS} ${DECLARE}`
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
   'Your wait on the operator blocks nothing: that wait is for a question he must answer. '
   + `${fits(busy, running)} ${DECLARE}`
@@ -181,9 +176,6 @@ export function deferredIds(line: string): string | null {
   return matched ? matched[1].trim() : null
 }
 export const URGENT_LINE = /^waiting:\s*operator\s*\(urgent\)/i
-// A wait on a command or monitor the session itself started in the background and that
-// still runs: its end or its events wake the session, and nobody else is asked anything.
-export const TOOL_LINE = /^waiting:\s*tool\s*(?:—|–|--|-)\s*(.+)$/i
 // A wait on the operator whose reason blocks nothing: no question for him, so no wait on him.
 const OPERATOR_LINE = /^waiting:\s*operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.*)$/i
 // A reason that blocks nothing: empty, `n/a`, `-`, or one whose first word is `nothing` or
@@ -438,8 +430,8 @@ export type Held = { case: string; reason: string }
 // on the very answer the block names; and a ci-watch this session started, still
 // running (`watching`), whose exit wakes it as an agent's idle notice would — and since,
 // any command or monitor it started in the background and that still runs (`background`,
-// what each runs): a monitor's events wake it too. Such a turn ends on no line, or on
-// `waiting: tool — <what is watched>`, which the gate refuses when nothing of it runs.
+// what each runs): a monitor's events wake it too. Such a turn declares no wait: the gate
+// reads what runs, and `declare_wait` is for the operator's question and the ending alone.
 //
 // The loop this ends: only a ci-watch counted, so a turn waiting on a monitor was refused
 // every stop until it ended on a wait for the operator, and every monitor event woke a turn
@@ -453,14 +445,18 @@ export type Held = { case: string; reason: string }
 // will wake it — its successor's « takeover confirmed » will.
 //
 // A question of the session's still open in the round (`questionOpen`) wakes it too, by its
-// answer: a turn that advanced other work meanwhile ends on no line, or on its tool line, with
-// nothing else in flight, and never puts the question again.
+// answer: a turn that advanced other work meanwhile ends on no line, with nothing else in
+// flight, and never puts the question again.
 //
-// The tool line is decided first on the host's own word (`tasks`, hostTasks above): what the
-// host holds in flight for the session is what will wake it, and a tool line with none of it,
-// no process of its own, no watch, no subscription and no busy agent is refused. The process
-// table walked by parent chain only adds work: alone it missed real waits and refused them, so
-// when the host gives no task list the line passes and the caller logs it, as before.
+// An idle agent of its own whose pull request is open (`awaitingMerge`, by label) is not stood
+// down: the executor lives until its pull request merges and receives the kept findings. The log
+// names it apart (`awaiting-merge`), never among the idle agents, until the done line reads it. An
+// open pull request is no wake source: with nothing else armed (no subscription, no watch, no task
+// of the host, no open question), the turn ends on « nothing will wake you » like any other.
+//
+// « Nothing will wake you » is decided on the host's own word (`tasks`, hostTasks above): what
+// the host holds in flight for the session is what will wake it. The process table walked by
+// parent chain only adds work; when the host gives no task list the ending is only logged.
 export function checkWake(facts: {
   agents: readonly OwnAgent[]
   resident: boolean
@@ -471,10 +467,10 @@ export function checkWake(facts: {
   watching?: boolean
   background?: readonly string[]
   awaiting?: boolean
-  hostUnread?: boolean
+  awaitingMerge?: readonly string[]
   tasks?: readonly string[] | null
   questionOpen?: boolean
-}): Held | { blocks: string } | { tool: string; notRunning?: true } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
+}): Held | { blocks: string } | { warn: 'idle-delivered' | 'idle-agents' | 'awaiting-merge' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
   // The wait is the one the turn declared, spelled as its line: the model's own last line decides nothing.
   const last = facts.declared ? waitLine(facts.declared) : ''
   const matched = MACHINE_LINE.exec(last)
@@ -487,43 +483,37 @@ export function checkWake(facts: {
   if (matched && matched[1]) return { blocks: matched[1] }
   // Before every other release: neither a busy agent beside it nor a running watch lifts it.
   if (facts.delivered.length > 0) {
-    // Measured, not refused: the log keeps who was idle with its pull request open or merged.
+    // Measured, not refused: the log keeps who was idle with its pull request merged.
     return { warn: 'idle-delivered', detail: facts.delivered.join(', ') }
-  }
-  const tool = TOOL_LINE.exec(last)
-  if (tool) {
-    if (facts.tasks !== undefined && facts.tasks !== null) {
-      // A session that handed over is woken by its successor's « takeover confirmed », as at its other endings.
-      // A question still open in the round is answered later: the answer wakes the session.
-      if (facts.tasks.length > 0 || running.length > 0 || facts.watching || facts.awaiting || busy || facts.handedOver || facts.questionOpen) return { tool: tool[1].trim() }
-      return { case: 'tool-not-running', reason: TOOL_NOT_RUNNING }
-    }
-    if (running.length > 0 || facts.watching || facts.hostUnread) return { tool: tool[1].trim() }
-    // Measured, not refused: the parent-chain detection of the session's own processes is too
-    // fragile to be a gate, so the line passes and the caller logs that nothing was seen running.
-    return { tool: tool[1].trim(), notRunning: true }
   }
   if (busy) return null
   if (facts.watching || running.length > 0) return null
   if (facts.awaiting) return null
   if (matched || deferredIds(last) !== null) return 'read-what-is-left'
-  if (facts.agents.length > 0) {
-    return { warn: 'idle-agents', detail: facts.agents.map(a => a.label).join(', ') }
+  // The executor waits for its kept findings and its merge: no stand-down asked of it.
+  const merging = facts.awaitingMerge ?? []
+  const idle = facts.agents.filter(a => !merging.includes(a.label))
+  if (idle.length > 0) {
+    return { warn: 'idle-agents', detail: idle.map(a => a.label).join(', ') }
   }
+  // The executor's open pull request wakes nothing by itself: it is logged apart only when
+  // something else will wake the session, and otherwise the ending is judged like any other.
+  const waking = (): null | { warn: 'awaiting-merge'; detail: string } =>
+    merging.length > 0 ? { warn: 'awaiting-merge', detail: merging.join(', ') } : null
   // A question still open in the round: its answer wakes the session.
-  if (facts.questionOpen) return null
+  if (facts.questionOpen) return waking()
   if (facts.resident) {
     // An idle resident agent waits on a background command of its own, and that
     // command wakes it as a running turn would: something will wake the orchestrator.
-    return null
+    return waking()
   }
-  if (facts.handedOver) return null
-  // Refused on the host's own list of work in flight, as the tool line is; a host that sends none is only logged.
+  if (facts.handedOver) return waking()
+  // Refused on the host's own list of work in flight; a host that sends none is only logged.
   if (facts.tasks !== undefined && facts.tasks !== null) {
-    if (facts.tasks.length > 0) return null
+    if (facts.tasks.length > 0) return waking()
     return { case: 'nothing-will-wake', reason: NOTHING }
   }
-  return { warn: 'nothing-will-wake', detail: '' }
+  return waking() ?? { warn: 'nothing-will-wake', detail: '' }
 }
 
 // How long a subscription to a peer's idle notice counts as something that will wake the

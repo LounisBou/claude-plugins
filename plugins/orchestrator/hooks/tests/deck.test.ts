@@ -384,6 +384,36 @@ test('writeDeck writes deck.json in one rename, with the store, the remote rows 
   expect([...fx.files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
 })
 
+// A question asked with `ask` is its own object in the round, not a relay entry: the deck counts it
+// all the same, open and urgent, and its stamp is the oldest start.
+test('writeDeck counts the questions asked with ask in the round, open and urgent', async () => {
+  const fx = fake()
+  const asked = {
+    v: 2, id: 'q-s-orch-1', sender: { session: 's-orch', name: 'Orch: belt', role: 'orchestrator', machine: 'bench-mac' },
+    subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which merges first?',
+    choices: [], recommended: null, why: null, blocks: 'phase 3', status: 'open', at: '2020-01-01T00:00:00.000Z', answer: null, seq: 1, urgent: true,
+  }
+  fx.files.set(`${STATE}/round/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  fx.files.set(`${STATE}/round/q-s-orch-2.json`, JSON.stringify({ ...asked, id: 'q-s-orch-2', status: 'answered' }) + '\n')
+  await writeDeck(fx.dollar)
+  const deck = JSON.parse(fx.files.get(DECK)!)
+  expect([deck.round.open, deck.round.urgent, deck.round.oldest_since]).toEqual([2, 1, asked.at])
+})
+
+test('writeDeck leaves out a question asked with ask that his prompt in its asker\'s tab claimed', async () => {
+  const fx = fake()
+  const asked = {
+    v: 2, id: 'q-s-orch-1', sender: { session: 's-orch', name: 'Orch: belt', role: 'orchestrator', machine: 'bench-mac' },
+    subject: 'merge order', context: 'Two pull requests touch one file.', ask: 'Which merges first?',
+    choices: [], recommended: null, why: null, blocks: 'phase 3', status: 'open', at: '2020-01-01T00:00:00.000Z', answer: null, seq: 1, urgent: true,
+    claimed: { typed: 'A', at: '2020-01-01T00:01:00.000Z' },
+  }
+  fx.files.set(`${STATE}/round/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  await writeDeck(fx.dollar)
+  const deck = JSON.parse(fx.files.get(DECK)!)
+  expect([deck.round.open, deck.round.urgent]).toEqual([1, 0])
+})
+
 test('writeDeck writes nothing when the deck is not news', async () => {
   const fx = fake()
   await writeDeck(fx.dollar)

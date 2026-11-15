@@ -85,7 +85,6 @@ Verified against the repository. The design reuses each piece named here before 
 
 | Loop | What it learns | How |
 |---|---|---|
-| Routing calibration (`plugins/orchestrator/skills/model-routing/references/calibration.md`) | which model and effort pair serves a class of work | harvest merged pull requests, bench, calibrate, `generalize`, `export`; tables read by **scope precedence**: project, profile (`profile-<language>-<kind>.json`), global, shipped default (`defaults/README.md`); an export is the operator's to commit |
 | Explore, freeze, promote (`dispatch-record.ts:810-826`) | whether a cheaper pair holds for a class | computed from the record's rounds and escapes |
 | Succession notes (decision 0007) | judgment worth keeping across generations | each note promoted into an artifact or dropped at the next generation, never carried |
 | « Directives follow decisions » (`plugins/orchestrator/skills/orchestrator/SKILL.md:64`) | rulings into directives | by the orchestrator's prose, not by code |

@@ -131,9 +131,6 @@ export function reportStatus(report: string): { status: StatusWord; reason: stri
 /** A lettered choice of a question, `A` to `E`. */
 export type Choice = { letter: string; text: string }
 
-/** What a question is read from: its text, and the choices and recommendation it recorded. */
-export type QuestionSource = { question: string; choices: readonly Choice[]; recommendation: string | null }
-
 // A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`.
 const CHOICE = /^\s*[-*]\s+\*\*([A-Z])\*\*\s*(?:[:.)]|—|–|-)\s*(.+?)\s*$/
 // The recommendation's line, read by its shape: an italic label, `_Recommendation_ : A`, then a
@@ -174,149 +171,19 @@ export function parseChoices(question: string): { choices: Choice[]; recommendat
   return readChoices(questionParts(question)[0] ?? '')
 }
 
-/**
- * The question as a pane shows it above its choices: the whole text, less the choice lines and the
- * recommendation's line when the choices were read, since the pane draws them below.
- */
-export function questionBody(entry: Pick<QuestionSource, 'question' | 'choices'>): string {
-  if (entry.choices.length === 0) return entry.question.trim()
-  const lines = entry.question.split('\n')
-  const start = blockStart(lines)
-  return lines.filter((line, i) => i < start || (!CHOICE.test(line) && !RECOMMENDATION.test(line))).join('\n').trim()
-}
-
-// A field of a question in the decide shape, `_<label>_ : <text>`, the label in the operator's
-// language and read by its shape alone. The colon may have spaces around it or none: one with a
-// space before it is drawn « label : text », one without « label: text ».
-const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
 // The sender's own numbering: a line wholly bold holding two numbers, a word before the first and
 // a word or a slash between them, `**Question 5 of 6**`; `**Version 1.2**` is no numbering.
 const NUMBER = /^\s*\*\*([^*\n\d]*\p{L}[^*\n\d]*\d+[^*\n\d]*[\p{L}/][^*\n\d]*\d+[^*\n]*)\*\*\s*$/u
-// A field after the choices whose text starts with a lone choice letter: the recommendation.
-const NAMES_LETTER = /^\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
-
-/** The sender's numbering a line holds (`Question 1 of 2`), or null: the line is no numbering. */
-export function numberOfLine(line: string): string | null {
-  return NUMBER.exec(line)?.[1]?.trim() ?? null
-}
 
 /**
  * The questions of a text, one text each: a turn may ask several in the decide shape, each under
  * its own numbering line (`**Question 3 of 4**`, in the sender's language). Two such lines or more
- * split the text before each, the first question keeping what precedes its own (the previous
- * answer's record, which questionShape drops). One line or none: the text whole.
+ * split the text before each, the first question keeping what precedes its own. One line or none:
+ * the text whole.
  */
-export function questionParts(question: string): string[] {
+function questionParts(question: string): string[] {
   const lines = question.split('\n')
   const heads = lines.flatMap((line, i) => (NUMBER.test(line) ? [i] : []))
   if (heads.length < 2) return [question]
   return heads.map((head, k) => lines.slice(k === 0 ? 0 : head, heads[k + 1] ?? lines.length).join('\n').trimEnd())
-}
-
-/**
- * One question as a pane presents it: its own text, the sender's numbering, its choices and its
- * recommendation. An entry of one question keeps what it recorded; one of several reads each
- * question's from its own text.
- */
-export type QuestionPart = { question: string; number: string | null; choices: Choice[]; recommendation: string | null }
-
-export function entryQuestions(entry: QuestionSource): QuestionPart[] {
-  const parts = questionParts(entry.question)
-  const read = parts.length < 2
-    ? [{ question: entry.question, choices: [...entry.choices], recommendation: entry.recommendation }]
-    : parts.map(part => ({ question: part, ...readChoices(part) }))
-  return read.map(part => ({
-    question: part.question,
-    number: questionShape(part.question, part.choices)?.number ?? null,
-    choices: part.choices,
-    recommendation: part.recommendation,
-  }))
-}
-
-export type QuestionField = { label: string; separator: string; text: string }
-export type QuestionShape = { number: string | null; fields: QuestionField[]; recommendation: QuestionField | null }
-
-/**
- * A question in the decide shape as a pane draws it: the sender's numbering, its labelled fields in
- * the order written (a field runs on until a blank line, the next field or a choice; an empty one
- * is a heading) and its recommendation, the first field after the choices that names one of them.
- * Nothing else of the turn is kept: what comes before the numbering line (the previous answer's
- * record), lines no field holds, anything after the recommendation. A question with no labelled
- * field before its choices is in an older shape: null, and the pane draws its body whole
- * (questionBody).
- */
-export function questionShape(question: string, choices: readonly Choice[]): QuestionShape | null {
-  const lines = question.split('\n')
-  const header = lines.findIndex(line => NUMBER.test(line))
-  const choiceAt = (line: string) => choices.length > 0 && CHOICE.test(line)
-  const lastChoice = lines.reduce((last, line, i) => (i > header && choiceAt(line) ? i : last), -1)
-  const fields: QuestionField[] = []
-  let recommendation: QuestionField | null = null
-  let current: QuestionField | null = null
-  for (let i = header + 1; i < lines.length; i++) {
-    const line = lines[i] ?? ''
-    if (choiceAt(line)) {
-      current = null
-      continue
-    }
-    const field = FIELD.exec(line)
-    if (field) {
-      const read = { label: (field[1] ?? '').trim(), separator: /^\s/.test(field[2] ?? '') ? ' : ' : ': ', text: field[3] ?? '' }
-      if (lastChoice >= 0 && i > lastChoice) {
-        const letter = NAMES_LETTER.exec(read.text)?.[1]
-        if (letter && choices.some(choice => choice.letter === letter)) {
-          recommendation = read
-          break
-        }
-        current = null
-        continue
-      }
-      fields.push(read)
-      current = read
-      continue
-    }
-    if (line.trim() === '') current = null
-    else if (current) current.text = current.text === '' ? line.trim() : `${current.text}\n${line.trim()}`
-  }
-  if (fields.length === 0) return null
-  return { number: header >= 0 ? NUMBER.exec(lines[header] ?? '')?.[1]?.trim() ?? null : null, fields, recommendation }
-}
-
-// ── The code fences ──────────────────────────────────────────────────────────
-
-/**
- * The message without its fenced code blocks (``` or ~~~, the closing fence of the opening one's
- * marker and at least its length; one never closed runs to the end), the text the rules count
- * blocks in: a numbering line quoted as an example is no question.
- */
-export function outsideFences(message: string): string {
-  return scanFences(message).kept.join('\n')
-}
-
-/** The fence a message ends inside, or null: the marker that opened a block never closed. */
-export function openFence(message: string): string | null {
-  return scanFences(message).fence
-}
-
-function scanFences(message: string): { kept: string[]; fence: string | null; inside: boolean[] } {
-  const kept: string[] = []
-  const inside: boolean[] = []
-  let fence: string | null = null
-  for (const line of message.split('\n')) {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null
-    if (fence === null) {
-      if (marker !== null) fence = marker
-      else kept.push(line)
-      inside.push(marker !== null)
-    } else {
-      inside.push(true)
-      if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null
-    }
-  }
-  return { kept, fence, inside }
-}
-
-/** Whether each line of the message is a fence line or inside a fenced block: the lines outsideFences drops. */
-export function fencedLines(message: string): boolean[] {
-  return scanFences(message).inside
 }

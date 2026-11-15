@@ -4,8 +4,8 @@
 // once when another session settles it, its consent recorded, the work its answer asks recorded as a
 // to-do of the asker; and the relay's entry closed by its own sender as the answered tool closed it.
 import { expect, test } from 'claude-code/testing'
-import { askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
-import { parseSettle, type SettleRequest } from '../settle.ts'
+import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
+import { parseSettle, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
 import { waitKey } from '../supervision.ts'
 import { entryFingerprint, type RoundEntry } from '../round.ts'
@@ -254,10 +254,10 @@ test('an answer that asks work records it as a to-do of the asker, in its list, 
   expect(m.sent.length).toBe(2)
 })
 
-// --- an entry the relay wrote --------------------------------------------------------------------
+// --- a closing proposal the relay wrote --------------------------------------------------------------------
 
 const relayed = (over: Record<string, unknown> = {}) => ({
-  id: 'r-1', from: ASKER, session: 's-ask', kind: 'operator', since: '2026-11-14T14:00:00.000Z', blocks: 'phase 3',
+  id: 'r-1', from: ASKER, session: 's-ask', kind: 'done', since: '2026-11-14T14:00:00.000Z', blocks: null,
   question: '**Question 1 of 1**', choices: [], recommendation: null, status: 'open', at: '2026-11-14T14:00:00.000Z', answer: null, ...over,
 })
 
@@ -289,24 +289,87 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   const open = relayed({ id: 'r-2' })
   m.files.set(`${ROUND}/r-2.json`, JSON.stringify(open))
   const wait = `${MODULE}/store/${waitKey('s-ask')}`
-  m.files.set(wait, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(open as RoundEntry) }))
+  m.files.set(wait, JSON.stringify({ waiting: 'done', relayed: entryFingerprint(open as RoundEntry) }))
   await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
 })
 
-test('the coordinator closes a relay\'s entry from another machine: closed with its delivery pending and no answer stamp, as the remote answers are, then sent once', async () => {
+test('the coordinator closes a relay\'s entry, of this machine or of another, and sends its sender nothing', async () => {
   const m = machine()
-  m.files.set(`${ROUND}/r-far.json`, JSON.stringify(relayed({ id: 'r-far', session: 's-far', from: 'Orch: far', origin: { machine: 'box-2' } })))
-  const closes: any[] = []
-  const write = m.coordinator.fs.write
-  m.coordinator.fs.write = async (p: string, text: string) => {
-    if (p.startsWith(`${ROUND}/r-far.json`)) closes.push(JSON.parse(text))
-    return write(p, text)
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed()))
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ id: 'r-2', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })))
+  const here = await settle(m.coordinator, request('r-1', { text: 'B' }), AT)
+  const there = await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
+  expect([here.result, there.result]).toEqual(['Settled r-1: closed.', 'Settled r-2: closed.'])
+  expect([entryOf(m, 'r-1').status, entryOf(m, 'r-2').status]).toEqual(['closed', 'closed'])
+  expect(m.sent).toEqual([])
+})
+
+// An operator entry of an older release left in the round: the round's wake withdraws it with a
+// notice to its sender (pane.test.ts); the coordinator's settle neither closes it nor sends.
+test('the coordinator\'s settle of an open operator entry of an older release is refused, sends nothing, and leaves it open', async () => {
+  const m = machine()
+  const older = relayed({ id: 'r-3', kind: 'operator', blocks: 'phase 3' })
+  const remote = relayed({ id: 'r-4', kind: 'operator', blocks: 'phase 3', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })
+  m.files.set(`${ROUND}/r-3.json`, JSON.stringify(older))
+  m.files.set(`${ROUND}/r-4.json`, JSON.stringify(remote))
+  for (const id of ['r-3', 'r-4']) {
+    const refused = await settle(m.coordinator, request(id, { text: 'B' }), AT)
+    expect(refused.result).toBe(`${id} is an operator question of an older release: the round withdraws it and tells its sender to ask it with ask; nothing to settle.`)
   }
-  await settle(m.coordinator, request('r-far', { text: 'B' }), AT)
-  const close = closes[0]
-  expect([close.status, close.answer.text, close.answer.by]).toEqual(['closed', 'B', 'coordinator'])
-  expect([close.delivery.state, close.delivery.attempts, 'answerAt' in close.delivery]).toEqual(['pending', 0, false])
-  expect([entryOf(m, 'r-far').delivery.state, entryOf(m, 'r-far').delivery.attempts]).toEqual(['sent', 1])
+  expect([entryOf(m, 'r-3'), entryOf(m, 'r-4')]).toEqual([older, remote])
+  expect(m.sent).toEqual([])
+})
+
+// --- the planners every module close goes through (closeRound) ----------------------------------------
+
+const ME = { session: 's-coord', name: COORD, role: 'coordinator' }
+const object = (over: Record<string, unknown> = {}) => ({
+  v: 2, id: 'q-1', sender: { session: 's-ask', name: ASKER, role: 'orchestrator', machine: 'box-1' }, subject: 's', context: 'c', ask: 'a',
+  choices: [{ letter: 'A', text: 'yes' }], recommended: 'A', why: null, blocks: 'b', status: 'open', at: 'T0', answer: null, seq: 3, ...over,
+})
+
+test('the pane\'s plan: an open question answered and sent to its asker now, a replica sent to its owner, its seq the owner\'s; none closed or claimed', () => {
+  expect(planPane(object({ status: 'answered' }), 'A : yes', ME, 'T1')).toBeNull()
+  expect(planPane(object({ claimed: { typed: 'B', at: 'T1' } }), 'A : yes', ME, 'T1')).toBeNull()
+  const here = planPane(object(), 'A : yes', ME, 'T1')!
+  expect(here).toMatchObject({ deliver: 'now', consentBy: 'pane', consentText: 'A : yes', relayed: false, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
+  expect(here.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A : yes', by: 'pane', at: 'T1', settler: COORD } })
+  const origin = { machine: 'box-2', address: 'bridge:peer' }
+  const there = planPane(object({ origin }), 'A : yes', ME, 'T1')!
+  expect(there).toMatchObject({ deliver: 'remote', consentBy: null })
+  expect(there.entry).toMatchObject({ status: 'answered', seq: 3, origin, delivery: { state: 'pending', at: 'T1', attempts: 0 } })
+})
+
+test('the tab\'s plan: the claim goes, his words the answer by the tab, its consent from the choice they name only', () => {
+  const claimed = object({ claimed: { typed: 'A', at: 'T1' } })
+  const granted = planClaimed(claimed, 'A : yes', 'T2')
+  expect('claimed' in granted.entry).toBe(false)
+  expect(granted.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A', by: 'tab', at: 'T2', settler: ASKER } })
+  expect(granted).toMatchObject({ deliver: null, consentBy: 'tab', consentText: 'A : yes', relayed: false, told: false })
+  expect(planClaimed(claimed, null, 'T2')).toMatchObject({ consentBy: null, consentText: '' })
+})
+
+test('the withdrawal\'s plan: a question asked with ask withdrawn by its asker; the relay\'s entry withdrawn, or closed when the coordinator here was shown it', () => {
+  const asked = planWithdrawal(object(), 'ended', 'T1', true)
+  expect(asked.entry).toMatchObject({ status: 'withdrawn', seq: 4, answer: { text: 'ended', by: 'sender', at: 'T1', settler: ASKER } })
+  expect(asked).toMatchObject({ deliver: null, consentBy: null, relayed: false, told: false })
+  const quiet = planWithdrawal(relayed(), 'ended', 'T1', false)
+  expect(quiet.entry).toMatchObject({ status: 'withdrawn', answer: { text: 'ended', by: 'sender', at: 'T1' } })
+  expect(quiet).toMatchObject({ relayed: true, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
+  expect(planWithdrawal(relayed(), 'ended', 'T1', true).entry).toMatchObject({ status: 'closed', answer: { text: 'withdrawn: ended' } })
+  expect(planWithdrawal(relayed({ origin: { machine: 'box-2', address: 'bridge:peer' } }), 'ended', 'T1', false).asker.remote).toBe(true)
+})
+
+// The pane's answer goes through closeRound, which pushes a question to a coordinator on another
+// machine: the pane is the coordinator's own, so nothing but the answer is sent.
+test('the pane\'s answer to a question asked here sends its asker the answer and pushes nothing', async () => {
+  const m = machine()
+  m.files.set(`${MODULE}/coordinator.json`, JSON.stringify({ name: COORD, tty: '/dev/ttys009' }))
+  const id = await asked(m)
+  m.sent.length = 0
+  await answerAskedFromPane(m.coordinator, id, 'B : acme/app#2 first', AT)
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'pane' } })
+  expect(m.sent.map(s => s.text)).toEqual([expect.stringMatching(/^\[module\] The operator answered your question/)])
 })

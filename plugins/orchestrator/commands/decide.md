@@ -62,7 +62,7 @@ What the question blocks goes on as `method:lifecycle` says, on the recommended 
 exception it names, waiting. A partial or ambiguous answer gets ONE clarifying line, not a new
 question.
 Everything else goes on: agents' reports and idle notices are acted on as they arrive, and
-such a turn ends on `kind: "tool"`, or no wait, the open question waking you with its answer.
+such a turn ends on no wait, the open question waking you with its answer.
 The question stays open in the round, not repeated in later messages. A
 fact that changes a question still to come updates it before it is presented.
 
