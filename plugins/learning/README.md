@@ -7,8 +7,9 @@ repository; the event's contract is `packages/core/src/learning.ts`.
 ## Commands
 
 - `/learning:health`: the journals under `${CLAUDE_CONFIG_DIR:-~/.claude}` (each plugin's
-  `<plugin>/journal/`) over the contract's window: refusals per guard code, findings by severity,
-  answers and escapes, and the files that are not events of the contract. One more section only
+  `<plugin>/journal/`) over the contract's window: refusals per guard code, findings by severity
+  (the norms agents' own severities, error, warning and info, on a line of their own, read from the
+  event's code `norms.<agent>.<severity>`), answers and escapes, and the files that are not events of the contract. One more section only
   prints, and refuses nothing: the guard codes with refusals in the journals and none in the window,
   one line each (code, plugin, days since the last refusal), proposed for removal. The hooks module answers it from
   `skills/learning/scripts/health.ts`; the markdown command runs the same script where the module
@@ -45,12 +46,43 @@ skill is `skills/retrospective/SKILL.md`, and its only writes go through
   `merged` or `ineffective` with the remedy's pull request, `rejected` with the ruling.
 - `start --config <dir>`: starts the session, headless (`claude -p`, its output in
   `<dir>/learning/retrospective.log`), when at least three candidates wait and none was started in
-  the last 24 hours. implement runs it at the end of the turn that ran `implement:close`.
+  the last 24 hours. implement runs it at the end of the turn that ran `implement:close`, the
+  orchestrator at the end of a turn that declared a `done` wait, each only where
+  `learning@lounisbou` is enabled.
 
-A candidate waits when it has no state, or when it was rejected or left unresolved and its events
-have since doubled. The states, the scopes, the rungs, the thresholds and the validator are core's
+A candidate waits when it has no state, when it was rejected or left unresolved and its events
+have since doubled, or when its remedy proved ineffective. The states, the scopes, the rungs, the thresholds and the validator are core's
 (`CANDIDATE_STATE_CONTRACT`, `RETROSPECTIVE_CONTRACT`, `readCandidateState`). Opening a remedy's pull
-request, a guard shipped in warn, the check after it lands and forgetting are not built.
+request is not built: the remedy's pull request is the retrospective's act, recorded by `mark`.
+
+## The outcomes of the guards in warn
+
+`skills/learning/scripts/outcomes.ts --config <dir>` is a report, and changes nothing. A guard in
+warn lets a call through and leaves an escape under its code, the refusal it would have made as its
+evidence. For each pull request those escapes name, it asks the forge (`gh pr view --json
+mergedAt,commits`): a commit after the first would-be refusal and before the merge makes it right, a
+merge with none wrong, neither yet open. Per code it prints the tally and the phase core gives it:
+`warn`, `ready to enforce` (nine in ten of at least five decided, `isEnforceable`; for a learned
+guard, `guardPhase`, which also needs its remedy merged), or `proved wrong, proposed for removal`
+(five decided and under that precision, `provedWrong`). A learned guard is a candidate's state whose
+remedy is a guard; its escapes are under its candidate's code. Raising a guard to enforce, or
+removing it, is a pull request.
+
+## Forget and check
+
+`skills/learning/scripts/forget.ts --config <dir>`, with no model and no forge:
+
+- a merged remedy is checked once a window (30 days) has passed since its merge: its candidate's
+  signature must fall to half of its count over the window before the merge; otherwise the state is
+  moved to `ineffective`, the candidate reopens for the retrospective, and the remedy is proposed for
+  removal (`afterLanding`);
+- a learned guard with no event under its code over two windows is proposed for removal
+  (`isSilentGuard`).
+
+The proposals are printed; a removal is a pull request. The rules and their thresholds are core's
+(`FORGET_CONTRACT`). A prompt rule's removal reads its ablation (`npm run ablation`,
+`evals/outcome/README.md`). The rules are tested on fixtures; their proof on live data needs two
+windows of journals.
 
 ## What the report holds
 

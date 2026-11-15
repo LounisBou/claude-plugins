@@ -104,6 +104,18 @@ test('summarize counts the window\'s events by kind, refusals by code and findin
   assert.deepEqual(s.kinds, { refusal: 3, finding: 2, answer: 1, escape: 1 })
   assert.deepEqual(s.refusals, [['github.ready.missing-review', 2], ['github.ready.missing-e2e', 1]])
   assert.deepEqual(s.findings, { critical: 1, important: 2 })
+  assert.deepEqual(s.norms, { error: 0, warning: 0, info: 0 })
+})
+
+test('summarize counts the norms agents\' findings by the severity their code names, and render says them', () => {
+  const norms = (code: string, random: string, plugin = 'norms') => event(plugin, 1, { kind: 'finding', source: { plugin, code } }, random)
+  const s = summarize([{ plugin: 'norms', unreadable: 0, events: [
+    norms('norms.variable-naming.error', '00000001'), norms('norms.magic-values.error', '00000002'), norms('norms.documentation.warning', '00000003'),
+    norms('norms.test-coverage.info', '00000004'), norms('norms.agent.unknown', '00000005'), norms('other.agent.error', '00000006', 'other'),
+    event('norms', 1, { source: { plugin: 'norms', code: 'norms.push.error' } }, '00000007'),
+  ] }], NOW)
+  assert.deepEqual(s.norms, { error: 2, warning: 1, info: 1 })
+  assert.match(render(s), /^norms findings: 2 error, 1 warning, 1 info$/m)
 })
 
 test('summarize puts the edge of the window inside it, and keeps refusal codes in order of count then name', () => {

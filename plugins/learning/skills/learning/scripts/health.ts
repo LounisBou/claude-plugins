@@ -4,7 +4,7 @@
 //
 // <dir> is the host's configuration directory; each plugin's journal is <dir>/<plugin>/journal
 // (core/learning.ts). The report counts what the journals hold: refusals per guard code,
-// findings by severity, answers and escapes, and the guard codes that refused before the window
+// findings by severity (the norms agents' own severities apart), answers and escapes, and the guard codes that refused before the window
 // and not in it. It prints, and refuses nothing.
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
@@ -52,7 +52,14 @@ export interface Summary {
   /** Guard codes whose last refusal is older than the window, longest silent first, then by name. */
   readonly silent: readonly SilentGuard[]
   readonly findings: Readonly<Record<'critical' | 'important', number>>
+  /** The norms agents' findings by the severity they reported, read from the event's code (`norms.<agent>.<severity>`). */
+  readonly norms: Readonly<Record<NormsSeverity, number>>
 }
+
+/** The severities a norms agent reports; the contract's finding pointer holds none of them, the code does. */
+export const NORMS_SEVERITIES = ['error', 'warning', 'info'] as const
+type NormsSeverity = (typeof NORMS_SEVERITIES)[number]
+const isNormsSeverity = (value: string | undefined): value is NormsSeverity => NORMS_SEVERITIES.some(s => s === value)
 
 function parseFile(path: string): LearningEvent | AuditEvent | undefined {
   try {
@@ -97,6 +104,7 @@ export function summarize(journals: readonly Journal[], now: number): Summary {
   const codes = new Map<string, number>()
   const last = new Map<string, { readonly plugin: string; readonly ms: number }>()
   const findings = { critical: 0, important: 0 }
+  const norms = { error: 0, warning: 0, info: 0 }
   let events = 0
   let older = 0
   let audit = 0
@@ -115,6 +123,8 @@ export function summarize(journals: readonly Journal[], now: number): Summary {
       kinds[e.kind]++
       if (e.kind === 'refusal') codes.set(e.source.code, (codes.get(e.source.code) ?? 0) + 1)
       for (const pointer of e.evidence) if (pointer.type === 'finding') findings[pointer.severity]++
+      const severity = e.source.code.split('.').at(-1)
+      if (e.kind === 'finding' && e.source.plugin === 'norms' && isNormsSeverity(severity)) norms[severity]++
     }
   }
   const refusals = [...codes].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
@@ -122,7 +132,7 @@ export function summarize(journals: readonly Journal[], now: number): Summary {
     .filter(([code]) => !codes.has(code))
     .map(([code, { plugin, ms }]) => ({ code, plugin, days: Math.floor((now - ms) / DAY_MS) }))
     .sort((a, b) => b.days - a.days || (a.code < b.code ? -1 : 1))
-  return { plugins: journals.length, events, older, audit, unreadable: journals.reduce((n, j) => n + j.unreadable, 0), kinds, refusals, silent, findings, folded: journals.reduce((n, j) => n + (j.folded ?? 0), 0) }
+  return { plugins: journals.length, events, older, audit, unreadable: journals.reduce((n, j) => n + j.unreadable, 0), kinds, refusals, silent, findings, norms, folded: journals.reduce((n, j) => n + (j.folded ?? 0), 0) }
 }
 
 /** The report, in lines. */
@@ -134,6 +144,7 @@ export function render(s: Summary): string {
     'refusals per code:',
     ...(s.refusals.length === 0 ? ['  none'] : s.refusals.map(([code, count]) => `  ${code.padEnd(40)} ${count}`)),
     `findings: ${s.findings.critical} critical, ${s.findings.important} important`,
+    `norms findings: ${NORMS_SEVERITIES.map(severity => `${s.norms[severity]} ${severity}`).join(', ')}`,
     `silent guards, proposed for removal (no refusal in the ${LEARNING_WINDOW_DAYS} days):`,
     ...(s.silent.length === 0 ? ['  none'] : s.silent.map(g => `  ${g.code.padEnd(40)} ${g.plugin} ${g.days} days silent`)),
   ]

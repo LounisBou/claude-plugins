@@ -11,7 +11,7 @@
 // left unresolved and its events have since doubled (`isDue`). The session `start` launches is
 // another one, headless: it wrote none of the pull requests it reads.
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -63,6 +63,24 @@ export function stateOf(config: string, signature: string): CandidateState | str
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
   }
+}
+
+/** Every state kept under the configuration directory, by file name; a file that is not one is said on `err` and left out. */
+export function readStates(config: string, err: (line: string) => void): CandidateState[] {
+  const dir = candidateStateDir(config)
+  if (!existsSync(dir)) return []
+  const states: CandidateState[] = []
+  for (const file of readdirSync(dir).filter(name => name.endsWith('.json')).sort()) {
+    let state: CandidateState | string
+    try {
+      state = readCandidateState(JSON.parse(readFileSync(join(dir, file), 'utf8')))
+    } catch (error) {
+      state = error instanceof Error ? error.message : String(error)
+    }
+    if (typeof state === 'string') err(`learning: the state ${file} cannot be read, so it is left out: ${state}`)
+    else states.push(state)
+  }
+  return states
 }
 
 /** The candidates of the journals at `now` and those among them that wait; a state file that cannot be read keeps its candidate out, and is said. */
@@ -123,7 +141,7 @@ export function digest(found: Waiting): string {
   ].join('\n')
 }
 
-function keep(config: string, state: CandidateState): void {
+export function keep(config: string, state: CandidateState): void {
   writeAtomic(join(candidateStateDir(config), candidateStateFile(state.signature)), `${JSON.stringify(state)}\n`)
 }
 
