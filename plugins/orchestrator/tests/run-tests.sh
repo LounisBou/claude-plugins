@@ -10875,10 +10875,9 @@ check "the README calls the map the last fallback and states pick's order" "yes|
   "$(spells "$ROOT/README.md" 'The map is the last fallback, not the default')|$(tr '\n' ' ' < "$ROOT/README.md" | tr -s ' ' | grep -qF 'the project'"'"'s table, its profile'"'"'s, the global one, the shipped defaults, and only then the tier table' && echo yes || echo no)"
 
 
-# The re-announcement of a successor's address lives once, in step 3 of its own brief (rule 19
-# of the rules review, removed from the rulebook).
-check "the rulebook no longer orders a routine idle-notice subscription, and the succession brief re-announces the new address" "0|yes" \
-  "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator')"
+# A successor does not re-announce its address: the module routes the agents' messages.
+check "the rulebook no longer orders a routine idle-notice subscription" "0" \
+  "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")"
 
 fi
 

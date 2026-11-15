@@ -22,7 +22,7 @@ Read the spec, the plan, the repository's own instructions (its quality gate, it
 - E2E as the pull request's check plan requires; the report carries `E2E: <test path(s)> — <command> — passed` or `E2E: none — <reason>`, never the description.
 - The quality gate runs on the final head, its exit code read; a scoped run covers the tests of every file touched, and a signature, constructor or service change runs the full gate.
 - Every command runs synchronously in its tool call; a long suite under `set -o pipefail`, piped to `tail`, with `timeout: 600000`. Never end a turn waiting for a run.
-- Kill only what you started, by the pid you wrote to a file; never `pkill`, `killall` or `kill $(pgrep …)`. Delete what you built; scratch lives in your host's scratchpad.
+- Kill only what you started, by the pid you wrote to a file; never `pkill`, `killall` or `kill $(pgrep …)`. Scratch lives in your host's scratchpad and stays there; anything else you built is removed by its literal path, never through a shell variable.
 - No writing or reviewing delegates: read-only search subagents and your self-review's `orchestrator:lens` readers only.
 - No force-push, merge, configuration change or other branch without STOP-and-ask. Push with one bare command, `git push -u origin {{BRANCH}}`.
 - The repository's rules point at its policy; where they contradict a directive of your host, say so and stop.

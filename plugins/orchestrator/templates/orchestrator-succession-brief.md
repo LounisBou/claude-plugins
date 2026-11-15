@@ -10,18 +10,17 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must
 
 ## Your first task, in this exact order
 
-**Woken from a pause**: step 2 finds no agent, step 3 is void — no « takeover confirmed », nothing to close.
+**Woken from a pause**: step 2 is void — no « takeover confirmed », nothing to close.
 
 1. The Project line's goals; only when it lists open or deferred goals, in `{{SCRIPTS}}`, `dispatch-record.sh goals {{DISPATCH_RECORD}} status | grep -v '| met |'`. The open rows below are the work, each at level 1.
-2. `ListAgents`. Tell each live implementer (`{{AGENT_NAME_PATTERN}}`) YOUR EXACT `ListAgents` NAME AND REFERENCE as the new orchestrator, and your predecessor's, asking nothing back, and subscribe to its idle notice (`notify_when_idle: true`). Delete no checkout before you know its row.
-3. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing. Before the close, `list` still shows its row on that tty, not `self`. Close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof:
+2. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" with `notify_when_idle: true`, the phrase alone on the first line, and wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing. Before the close, `list` still shows its row on that tty, not `self`. Close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof:
    ```
    {{LAUNCHER}} {{CLOSE_VERB}} --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
    Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell.
-4. Each open question below by its entry, `<id>.json` under the state directory's `round/`: open under this session, leave it; answered or closed, apply its answer; absent, withdrawn or open under another session, ask it again verbatim at the end of this turn.
-5. Announce in one message: state inherited, agents re-identified, predecessor closed, the open rows with no agent, the questions kept or asked again, the `goals met=m/n … open=…` line, and two figures on one line, « first turn » and « at takeover confirmed »: the `context_tokens` of `<config dir>/claude-orchestrator/measure/<session id>.json` (`printenv CLAUDE_CODE_SESSION_ID`; `CLAUDE_CONFIG_DIR`, `~/.claude` when empty) read at the first tool call after each of those turns; missing, say so. END THE TURN.
-6. Your next turn dispatches every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue.
+3. Each open question below by its entry, `<id>.json` under the state directory's `round/`: open under this session, leave it; answered or closed, apply its answer; absent, withdrawn or open under another session, ask it again verbatim at the end of this turn.
+4. Announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the `goals met=m/n … open=…` line, and two figures on one line, « first turn » and « at takeover confirmed »: the `context_tokens` of `<config dir>/claude-orchestrator/measure/<session id>.json` (`printenv CLAUDE_CODE_SESSION_ID`; `CLAUDE_CONFIG_DIR`, `~/.claude` when empty) read at the first tool call after each of those turns; missing, say so. END THE TURN.
+5. Your next turn dispatches every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue.
 
 # Source
 
