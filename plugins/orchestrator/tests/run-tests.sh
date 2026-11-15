@@ -3237,8 +3237,8 @@ code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     try:
-        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
-                     '--trust', '--no-verify'])
+        m.cmd_spawn(m.args_from_line('spawn', ['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
+                     '--trust', '--no-verify']))
     except SystemExit as exc:
         code = exc.code or 0
 print(code)
@@ -5679,7 +5679,7 @@ ia.terminal_for = lambda tty: Accepting()
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
 try:
-    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout'])
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout']))
 except SystemExit as exc:
     print('exit %s' % exc.code)
 else:
@@ -5916,7 +5916,7 @@ ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
@@ -6221,9 +6221,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if mode == 'rotate':
-            ia.cmd_rotate(['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light'])
+            ia.cmd_rotate(ia.args_from_line('rotate', ['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light']))
         else:
-            ia.cmd_close(['--tty', tty] + sys.argv[3:])
+            ia.cmd_close(ia.args_from_line('close', ['--tty', tty] + sys.argv[3:]))
 except SystemExit as e:
     code = e.code
 print('exit=%s' % code)
@@ -6556,7 +6556,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_spawn(["--dir", workdir, "--prompt", "p"] + argv)
+        ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p"] + argv))
 except SystemExit as e:
     code = e.code
 def chain(name):
@@ -6650,12 +6650,12 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if scenario in ("survivor", "closed"):
-            ia.cmd_close(["--tty", "/dev/ttys901", "--keep-checkout"])
+            ia.cmd_close(ia.args_from_line('close', ["--tty", "/dev/ttys901", "--keep-checkout"]))
         elif scenario in ("stranger", "mine"):
-            ia.cmd_move(["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"])
+            ia.cmd_move(ia.args_from_line('move', ["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"]))
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
-                         + (["--right-of", "self"] if scenario == "beside" else []))
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
+                         + (["--right-of", "self"] if scenario == "beside" else [])))
 except SystemExit as e:
     code = e.code
 def chain():
@@ -6748,9 +6748,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if argv[:1] == ["list"]:
-            ia.cmd_list([])
+            ia.cmd_list(None)
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--no-verify"] + argv)
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--no-verify"] + argv))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -6896,7 +6896,7 @@ ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
 check "a takeover hands the predecessor's agents to the successor and removes the predecessor's chain" \
   "1|tmux:/s:@2,tmux:/s:@4|absent" \
   "$(printf '%s' "$res" | grep -c '^took window 0')|$(jq -r .tab_id "$TKSTATE/chains/ttys967.jsonl" | paste -sd, -)|$([ -e "$TKSTATE/chains/ttys966.jsonl" ] && echo present || echo absent)"
@@ -7528,7 +7528,7 @@ def interrupted(argv):
     """The close interrupted: by the keyboard, or by a signal this probe sends itself."""
     calls.append("cmd_close")
     if mode == "sent-interrupt":
-        ia.KILL_SENT.add(argv[1])
+        ia.KILL_SENT.add(argv.tty)
     if mode in ("sigterm", "sighup"):
         signal.raise_signal(signal.SIGTERM if mode == "sigterm" else signal.SIGHUP)
     raise KeyboardInterrupt()
@@ -7553,11 +7553,11 @@ elif mode == "nohup":
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     ia.cmd_close = refused_seeing_hangup
 elif mode in ("sent-gone", "sent-there"):
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv.tty))
 elif mode == "raises":
     ia.cmd_close = raises
 elif mode == "vanished":
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv.tty))
 else:
     ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: refused late"))
 class Out(io.StringIO):
@@ -7565,7 +7565,7 @@ class Out(io.StringIO):
     def flush(self):
         if mode == "closed-pipe" and "closed 1 session" in self.getvalue():
             raise BrokenPipeError(32, "Broken pipe")
-rotate = ["--old-tty", "/dev/ttys901", "--dir", "/x", "--title", "T", "--tier", "light"]
+rotate = ["--old-tty", "/dev/ttys901", "--dir", "/", "--title", "Agent: t", "--tier", "light", "--prompt", "p"]
 if len(sys.argv) > 3:
     rotate = ["--old-tty", "/dev/ttys901", "--dir", sys.argv[3], "--title", "Agent: two",
               "--tier", "light", "--prompt", "p"]
@@ -7576,13 +7576,13 @@ if mode.startswith("pipe-"):
     os.close(r)
     os.dup2(w, 1)
     os.close(w)
-    ia.cmd_rotate(rotate)
+    ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 handlers = [signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
 out, err = Out(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_rotate(rotate)
+        ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -7915,7 +7915,7 @@ sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 ia.cmd_spawn = lambda *a, **k: print("spawned")
 try:
-    ia.cmd_rotate(["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"])
+    ia.cmd_rotate(ia.args_from_line('rotate', ["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"]))
 except SystemExit as e:
     print("exit=%s" % e.code)
 PYEOF
@@ -7995,7 +7995,7 @@ def asked(*args, **kwargs):
     sys.exit(3)
 for method in ('chain_state', 'can_place', 'create', 'find', 'identity'):
     setattr(ia.ITERM, method, asked)
-ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
+ia.cmd_spawn(ia.args_from_line('spawn', sys.argv[3:]))" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
 OUTREFUSED="spawn: refused: this session is an orchestrator ('Orch: rev') outside its home session"
 out=$(outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
 check "an orchestrator not yet moved home (named by --orchestrator, its rename pending) is refused, and iTerm2 is never asked" "1|1|none" \
@@ -8425,7 +8425,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home(["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"])
+        ia.cmd_home(ia.args_from_line('home', ["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8543,8 +8543,8 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home_release(["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
-                             "--pane-tty", "/dev/ttys961", "--resumed", resumed])
+        ia.cmd_home_release(ia.args_from_line('home-release', ["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
+                             "--pane-tty", "/dev/ttys961", "--resumed", resumed]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8701,7 +8701,7 @@ code = 0
 argv = json.loads(sys.argv[5])
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.COMMANDS[argv[0]](argv[1:])
+        ia.COMMANDS[argv[0]](ia.args_from_line(argv[0], argv[1:]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
