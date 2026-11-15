@@ -29,6 +29,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { readText, writeAtomic } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
@@ -250,8 +251,11 @@ export function notInstalled(brief: string, env: Env, now: Date): string {
     const sha = typeof entry?.gitCommitSha === 'string' ? entry.gitCommitSha : ''
     if (!/^[0-9a-f]{7,40}$/.test(sha)) return ''
     const dates = execFileSync('git', ['-C', worktree, 'log', '--first-parent', '-m', '--merges', '--format=%cI', `${sha}..origin/main`, '--', 'plugins/orchestrator'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).split('\n').filter(line => line !== '')
-    const oldest = Date.parse(dates[dates.length - 1] ?? '')
-    if (dates.length === 0 || Number.isNaN(oldest)) return dates.length === 0 ? '0 merged PRs not installed' : ''
+    if (dates.length === 0) return '0 merged PRs not installed'
+    // The log walks the history, not the dates: the oldest merge is the earliest of them all.
+    const times = dates.map(line => Date.parse(line))
+    if (times.some(Number.isNaN)) return ''
+    const oldest = Math.min(...times)
     return `${dates.length} merged PRs not installed, oldest ${Math.max(0, Math.round((now.getTime() - oldest) / 3_600_000))} h`
   } catch {
     return ''
@@ -294,6 +298,9 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
   return body.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
+/** The successor's reference beside these scripts: an installed copy may lack it, and its pointer is then left as it is. */
+const successorReference = fileURLToPath(new URL('../references/succession-successor.md', import.meta.url))
+
 /**
  * The takeover's reading steps of a standing brief, in the form the template gives them now. A
  * standing brief is kept from one generation to the next and only its Live state is rewritten, so
@@ -302,7 +309,7 @@ export function rewrite(brief: string, lines: ReadonlyMap<string, string>, gener
  * rulings file read by `grep -v` on its entries for one open item, the goals without their met
  * rows, the checkouts of the brief's own project; a brief already lean is left as it is.
  */
-export function leanSteps(brief: string, rulings: string): { readonly text: string; readonly refreshed: number; readonly left: number } {
+export function leanSteps(brief: string, rulings: string, successor = true): { readonly text: string; readonly refreshed: number; readonly left: number } {
   const project = /^# Orchestrator succession brief — (.+)$/m.exec(brief)?.[1]?.trim() ?? ''
   // A title that is no `owner/name` or `name` (spaces, parentheses) is no argument of a command: that step is left alone.
   // The replacement strings read `$` as a pattern: a path carrying one is escaped.
@@ -314,7 +321,8 @@ export function leanSteps(brief: string, rulings: string): { readonly text: stri
     ] as [RegExp, string]]),
     [/(dispatch-record\.sh goals [^`\n]* status)`, read whole\./, "$1 | grep -v '| met |'`."],
     ...(!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/.test(project) ? [] : [[/Then `workspace\.sh list`:/, `Then \`workspace.sh list ${project}\`:`] as [RegExp, string]]),
-    [/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'],
+    // The pointer moves only where the successor reference is installed beside these scripts; else it stays, and is counted.
+    ...(successor ? [[/`references\/lifecycle\.md`, « Succession — the successor »/, '`references/succession-successor.md`, « Succession — the successor »'] as [RegExp, string]] : []),
   ]
   let text = brief
   let refreshed = 0
@@ -439,7 +447,7 @@ export function main(argv: readonly string[], env: Env, io: Io, now: () => Date 
     return 2
   }
   const files = prunedFilesOf(written, env['HOME'] ?? '')
-  const lean = leanSteps(written, files.rulings)
+  const lean = leanSteps(written, files.rulings, existsSync(successorReference))
   writeAtomic(request.brief, lean.text)
   if (lean.refreshed > 0) io.err(`succession: ${lean.refreshed} reading step(s) of the brief brought to the template's lean form\n`)
   if (lean.left > 0) io.err(`succession: ${lean.left} reading step(s) of the brief still follow an older template (whole rulings, whole goals, every checkout or the lifecycle.md pointer): word them as templates/orchestrator-succession-brief.md does\n`)

@@ -320,6 +320,13 @@ test('leanSteps brings the reading orders of a standing brief to the template\'s
   assert.ok(leanSteps(STALE, 'none').text.includes('Read the rulings file WHOLE'))
 })
 
+test('leanSteps leaves the lifecycle pointer where the successor reference is not installed, and counts it as left', () => {
+  const kept = leanSteps(STALE, '/b/rulings.md', false)
+  assert.ok(kept.text.includes('`references/lifecycle.md`, « Succession — the successor »'), 'the pointer is kept')
+  assert.equal(kept.refreshed, 3)
+  assert.equal(kept.left, 1)
+})
+
 test('live brings a stale standing brief\'s reading steps to the lean form and says so, a lean one silently', () => {
   const w = world()
   const rulings = join(dir, 'rulings.md')
@@ -384,6 +391,42 @@ test('notInstalled counts the merged pull requests touching the plugin since the
   assert.equal(notInstalled(w.brief, { ...w.env, CLAUDE_CONFIG_DIR: join(dir, 'nowhere') }, w.merged), '', 'no install record')
   writeFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: 'a'.repeat(40) }] } }))
   assert.equal(notInstalled(w.brief, w.env, w.merged), '', 'a commit the repository does not hold')
+})
+
+test('notInstalled counts two merged pull requests and reads the age of the older one', () => {
+  const w = installedWorld()
+  const repo = /worktree `([^`]+)`/.exec(w.brief)?.[1] ?? ''
+  const base = (JSON.parse(readFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), 'utf8')) as { plugins: Record<string, { gitCommitSha: string }[]> }).plugins['orchestrator@acme']?.[0]?.gitCommitSha ?? ''
+  const older = '2026-11-14T06:00:00Z'
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: older, GIT_AUTHOR_DATE: older } }).trim()
+  git('checkout', '-q', '-b', 'older', base)
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'c'), 'c')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'older feature')
+  git('checkout', '-q', 'main')
+  git('merge', '-q', '--no-ff', '-m', 'Merge pull request #0', 'older')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  // The newer merge is at 10:00, the older one at 06:00: the age is taken from the older, read at 15:00.
+  assert.equal(notInstalled(w.brief, w.env, new Date(w.merged.getTime() + 5 * 3_600_000)), '2 merged PRs not installed, oldest 9 h')
+})
+
+test('notInstalled reads zero when the installed commit is the tip of origin/main', () => {
+  const w = installedWorld()
+  const repo = /worktree `([^`]+)`/.exec(w.brief)?.[1] ?? ''
+  const tip = execFileSync('git', ['-C', repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: tip }] } }))
+  assert.equal(notInstalled(w.brief, w.env, w.merged), '0 merged PRs not installed')
+})
+
+test('live says on stderr when a reading step it cannot rewrite still follows an older template', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, '# Rulings\n')
+  const lean = readFileSync(TEMPLATE, 'utf8').replaceAll('{{PROJECT}}', 'belt').replaceAll('{{RULINGS_FILE}}', rulings)
+  writeFileSync(w.brief, lean.replace(`1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`, '1. Read the rulings file WHOLE, then the rulebook and THIS brief.'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.equal(w.err.length, 1)
+  assert.match(w.err[0] ?? '', /^succession: 1 reading step\(s\) of the brief still follow an older template/)
 })
 
 test('live writes the not-installed line into the Live state when it is known', () => {
