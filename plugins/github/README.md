@@ -338,6 +338,12 @@ written is one line in the transcript, and the call still goes through.
 | `github.writing.rule` | carries a text that breaks a writing rule |
 | `github.ready.no-record` | merges or takes out of draft a pull request that misses only records absent at its head |
 
+A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
+`hooks/observe.ts`): `github.ready.held` (the Ready gate), `github.auto-merge.*` and `github.auto-deploy.*`
+(the lists and their tools), `github.deploy.unlisted`, `github.records.delete`, `github.exemption.delete`,
+`github.net.blocked`, and `github.record.*` for each refusal of `mcp__github__record`. A refusal that only
+asks for a missing or malformed argument writes none.
+
 ## Tests
 
 Two suites, both offline — no network, no account:
