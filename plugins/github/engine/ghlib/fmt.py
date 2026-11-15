@@ -212,16 +212,18 @@ def _thread_summary(obj):
     items = json.loads(_threads(obj, False))
     if not items:
         return "No open review threads."
-    lines = ["| thread | file | line | author |", "|---|---|---|---|"]
+    # The first comment's author with their association to the repository (OWNER, MEMBER, COLLABORATOR...).
+    lines = ["| thread | file | line | author | association |", "|---|---|---|---|---|"]
     for thread in items:
         first = ((thread.get("comments") or {}).get("nodes") or [{}])[0]
         lines.append(
-            "| %s | %s | %s | %s |"
+            "| %s | %s | %s | %s | %s |"
             % (
                 thread.get("id", "?"),
                 thread.get("path", "?"),
                 thread.get("line", "?"),
                 (first.get("author") or {}).get("login", "?"),
+                first.get("authorAssociation") or "?",
             )
         )
     return "\n".join(lines)

@@ -65,7 +65,7 @@ exits 3 naming the request's uuid if the merge fails or times out. Other errors 
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-threads` | `<pr>` | Open review threads as a table (`thread-summary`); `--json`: all of them (GraphQL) |
+| `pr-threads` | `<pr>` | Open review threads as a table (`thread-summary`: thread, file, line, first author and their `authorAssociation`); `--json`: all of them (GraphQL), each comment with `authorAssociation` |
 | `pr-comments` | `<pr>` | A line per inline review comment (`review-comments`); `--json`: the comments, paginated |
 | `pr-issue-comments` | `<pr>` | General PR comments as a table (`issue-comments-summary`); `--json`: the comments, paginated |
 | `pr-reviews` | `<pr>` | A line per review (`reviews-summary`); `--json`: the review bodies, paginated |
