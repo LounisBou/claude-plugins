@@ -25,7 +25,7 @@
 // A guard whose own code fails lets the call through: the markdown still states every rule.
 // The push question is the exception: when nobody can be asked, the forced push is refused.
 
-import { gitSubcommand, innerLine, readCommands, simpleCommands, unwrapPath } from '../core/shell.ts'
+import { gitSubcommand, innerLine, readCommands, simpleCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 import { isSpawned } from '../core/env.ts'
 import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
 import { observed } from './observe.ts'
@@ -108,13 +108,32 @@ function deletes(argv: readonly string[]): boolean {
   return argv.some(a => a === '-delete') || (argv.some(a => ['-exec', '-execdir', '-ok', '-okdir'].includes(a)) && argv.some(a => DELETER_WORD.test(a)))
 }
 
-// The argv of every command the line runs, a wrapper written with its directory (`/usr/bin/env rm`) skipped
-// and the line a shell or eval runs from a string read again, at any depth. Throws when it cannot be read.
+// Whether a shell reads its commands from its standard input (no -c, no script file), whatever feeds it.
+const readsStdin = (shell: ShellCommand): boolean => stdinLines({ ...shell, stdin: ['-'] }).length > 0
+
+// A command name that only an expansion gives (`$x`, `rm$IFS`): the line does not say what runs. A directory
+// that is expanded (`"$ROOT/scripts/resolve_base.sh"`) names its program all the same. A word a substitution
+// gives is not among the argv, so a command holding one that does not read (`$(echo rm) x`) is read the same way.
+const computedName = (word: string | undefined): boolean => /[$`]/.test(baseOf(word))
+
+/*
+ * The argv of every command the line runs: a wrapper written with its directory (`/usr/bin/env rm`) and
+ * busybox skipped, the line a shell or eval runs from a string read again, and so are the lines a shell
+ * is fed on its standard input (`echo 'rm x' | sh`, `sh <<< "rm x"`), at any depth. Throws when the line
+ * cannot be read: a brace expansion past its limit, a command named by an expansion, a shell fed by a
+ * program whose output the line does not show (`cat f | sh`).
+ */
 function unwrapped(command: string): string[][] {
   return readCommands(command).flatMap((cmd): string[][] => {
-    const { argv } = unwrapPath(cmd.argv)
+    const past = unwrapPath(cmd.argv).argv
+    const argv = baseOf(past[0]) === 'busybox' ? past.slice(1) : past
+    if (computedName(argv[0]) || (cmd.substitutions.length > 0 && !reads(argv))) throw new RangeError('a command named by an expansion')
     const inner = innerLine(argv)
-    return inner === undefined ? [[...argv]] : unwrapped(inner)
+    if (inner !== undefined) return unwrapped(inner)
+    const shell = { ...cmd, argv }
+    const fed = stdinLines(shell)
+    if (fed.length === 0 && cmd.piped.length > 0 && readsStdin(shell)) throw new RangeError('a shell fed by a program')
+    return [[...argv], ...fed.flatMap(unwrapped)]
   })
 }
 
@@ -145,7 +164,7 @@ const HIDING = /^(.*\/)?(env|xargs|parallel)$/
 // A variable assigned on the line (`FOO=1 git push`, `export GIT_CONFIG_COUNT=1; git push`): git reads
 // GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n and GIT_CONFIG_PARAMETERS, which can turn a
 // plain push into a forced one without a word of it on the line.
-const ASSIGNMENT = /(^|[\s;&|(){}`])[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=|\$\{[A-Za-z_][A-Za-z0-9_]*:?=/
+const ASSIGNMENT = /(^|[\s;&|(){}`'"])[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=|\$\{[A-Za-z_][A-Za-z0-9_]*:?=/
 
 // Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push,
 // and so does a configuration given on the line (`git -c remote.origin.push=+HEAD push`).
@@ -157,7 +176,8 @@ function isPlainArgv(argv: readonly string[], at: number): boolean {
 /*
  * Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
  * core's shell reader: each command of a list or a pipe, wrappers and assignments skipped, `eval`
- * and `sh -c` read again at any depth, a wrapper written with its directory (`/usr/bin/env git push`)
+ * and `sh -c` read again at any depth, and so is what a shell is fed on its standard input
+ * (`echo 'git push -f' | sh`), a wrapper written with its directory (`/usr/bin/env git push`)
  * read through. A push whose words or environment the line does not show (a command substitution
  * among them, a variable assigned on the line, `env`, a wrapper such as xargs that feeds it) is not
  * plain. Throws when the line cannot be read.
@@ -165,13 +185,15 @@ function isPlainArgv(argv: readonly string[], at: number): boolean {
 function pushes(command: string): boolean[] {
   const assigned = ASSIGNMENT.test(command)
   return readCommands(command).flatMap((cmd): boolean[] => {
-    const shown = cmd.substitutions.length === 0 && !assigned
     const { argv, wrappers } = unwrapPath(cmd.argv)
+    const shown = cmd.substitutions.length === 0 && !assigned && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper))
     const inner = innerLine(argv)
-    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper)))
+    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown)
+    // The lines a shell is fed on its standard input are commands of the line.
+    const fed = stdinLines({ ...cmd, argv }).flatMap(pushes).map((plain) => plain && shown)
     const at = gitSubcommand(argv)?.at
-    if (at === undefined || argv[at] !== 'push') return []
-    return [shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper)) && isPlainArgv(argv, at)]
+    if (at === undefined || argv[at] !== 'push') return fed
+    return [shown && isPlainArgv(argv, at), ...fed]
   })
 }
 

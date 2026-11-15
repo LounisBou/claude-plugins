@@ -73,7 +73,8 @@ mechanical work the markdown would otherwise hand the model:
   whole, with a variable set before it, behind `env`, a substitution or xargs, or
   with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
   `rm`, `rmdir`, `unlink` or `find -delete` (or `find -exec` of one), and a shell line the reader
-  cannot read, are refused. The rules read the line,
+  cannot read are refused, which includes a shell fed by a program (`cat f | sh`) and a command
+  named by an expansion (`$x f`); what a shell is fed in the line itself (`echo 'rm x' | sh`) is read. The rules read the line,
   not the repository: a push whose words are plain but whose git configuration forces it (a
   `remote.<name>.push` refspec set in an earlier call) is noted, not asked.
 - The walkthrough is armed by the typed command or by the main loop's Skill tool
