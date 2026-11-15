@@ -389,6 +389,9 @@ check_colour() {
 check_colour "a fresh count stays yellow" "$(deck_state fresh_colour "$(deck_text 3 0 5)")" $'\033[0;33m' "✋ 3"
 check_colour "a stale count is dimmed" "$(deck_state stale_colour "$(deck_text 3 0 240)")" $'\033[2m' "✋ 3?"
 check_colour "a stale urgent count is red" "$(deck_state stale_red "$(deck_text 3 1 240)")" $'\033[0;31m' "✋ 3?"
+check_colour "a fresh urgent count is red" "$(deck_state fresh_red "$(deck_text 3 2 5)")" $'\033[0;31m' "✋ 3 (2 urgent)"
+check_colour "the coloured count is closed by a reset" "$(deck_state stale_reset "$(deck_text 3 1 240)")" $'\033[0;31m' "✋ 3? (1 urgent)"$'\033[0m'
+check_deck "a deck stamped a little ahead, within the bound, still counts as fresh" "$(deck_state ahead "$(deck_text 3 0 -100)")" "plain │ ✋ 3"
 check_deck "a deck stamped ten minutes ahead is no live file: nothing" "$(deck_state future "$(deck_text 3 1 -600)")" "plain"
 check_deck "no deck file shows nothing" "$WORK/state-missing" "plain"
 check_deck "a deck caught mid-write shows nothing" "$(deck_state torn "$(deck_text 3 1 5 | head -c 40)")" "plain"
