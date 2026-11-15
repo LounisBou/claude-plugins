@@ -65,28 +65,27 @@ test('an orchestrator\'s acceptance is written through github\'s record tool, ea
   expect(out).toEqual({ result: `${WRITTEN}\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128` })
 })
 
-// github's line repeats the detail the orchestrator just wrote: the tool's answer names it instead
-// of carrying it back (measured: a quarter of the tool's output), the record's path line kept whole.
-test('the detail github echoes back is named, never carried back', async () => {
+// github's gate line repeats what the orchestrator just wrote: the tool's answer says the verdict
+// of the gate, « Ready at <head> » or what is missing, after the record's path line the audit reads.
+test('the gate\'s verdict is said in a few words: Ready at its head, or what is missing, never the review\'s own words', async () => {
   const detail = 'set aside: a.ts:3 — naming only; b.ts — out of the phase\'s scope'
-  const echoed = `/cfg/records/x/review.json\ngithub: acme/thing#128 Ready at 0123456: review accepted by the orchestrator (${detail}), passed E2E and green CI hold at its head.`
+  const echoed = `/cfg/records/x/review.json\ngithub: acme/thing#128 Ready at 0123456: review accepted by the orchestrator (${detail}), no norms check needed (check plan: a small fix), passed E2E and green CI hold at its head.`
   const fx = fake('Orch: belt [a1b2c3]', { result: echoed })
-  const out = await handler()(fx.dollar, ACCEPTED)
-  expect(out.result.split('\n').slice(0, 2)).toEqual([
-    '/cfg/records/x/review.json',
-    'github: acme/thing#128 Ready at 0123456: review accepted by the orchestrator (the detail sent), passed E2E and green CI hold at its head.',
-  ])
-  const failed = fake('Orch: belt', { result: 'github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, two to fix' })
-  const said = await handler()(failed.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' })
-  expect(said.result.split('\n')[0]).toBe('github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, the detail sent')
+  expect((await handler()(fx.dollar, ACCEPTED)).result.split('\n').slice(0, 2)).toEqual(['/cfg/records/x/review.json', 'Ready at 0123456'])
+  const failed = fake('Orch: belt', { result: 'github: acme/thing#128 not Ready yet at 0123456. Missing: review: fail at 0123456 by orchestrator, two to fix, e2e: no record at 0123456, CI still running' })
+  expect((await handler()(failed.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' })).result.split('\n')[0])
+    .toBe('Not Ready at 0123456. Missing: review: fail at 0123456, e2e: no record at 0123456, CI still running')
+  const accepted = fake('Orch: belt', { result: `github: acme/thing#128 not Ready yet at 0123456. review accepted by the orchestrator (${detail}). Missing: e2e: no record at 0123456` })
+  expect((await handler()(accepted.dollar, ACCEPTED)).result).toBe('Not Ready at 0123456. Missing: e2e: no record at 0123456\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128')
+  const again = fake('Orch: belt', { result: 'github: acme/thing#128 back to draft, then Ready at 0123456: a clean review, passed E2E and green CI hold at its head.' })
+  expect((await handler()(again.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0]).toBe('back to draft, then Ready at 0123456')
 })
 
-test('only the echo is named: a detail found elsewhere, absent, or never sent leaves the answer, and a refusal, whole', async () => {
-  const line = '/cfg/records/x/Ready.json\ngithub: acme/thing#128 Ready at 0123456: a clean review, passed E2E and green CI hold at its head.'
-  const short = fake('Orch: belt', { result: line })
-  expect((await handler()(short.dollar, { pr: 128, verdict: 'pass', detail: 'Ready' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
-  const bare = fake('Orch: belt', { result: line })
-  expect((await handler()(bare.dollar, { pr: 128, verdict: 'pass' })).result.split('\n').slice(0, 2).join('\n')).toBe(line)
+test('a github line of another shape is left whole, its echo of the detail named; a refusal comes back whole', async () => {
+  const other = '/cfg/records/x/review.json\ngithub: acme/thing#128: no review record carried to 0123456: two to fix by orchestrator, two to fix'
+  const fx = fake('Orch: belt', { result: other })
+  expect((await handler()(fx.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' })).result.split('\n').slice(0, 2))
+    .toEqual(['/cfg/records/x/review.json', 'github: acme/thing#128: no review record carried to 0123456: two to fix by orchestrator, the detail sent'])
   const refused = fake('Orch: belt', { deny: 'github: refused, two to fix by orchestrator, two to fix' })
   expect(await handler()(refused.dollar, { pr: 128, verdict: 'fail', detail: 'two to fix' }))
     .toEqual({ result: 'github: refused, two to fix by orchestrator, two to fix', isError: true })
@@ -272,20 +271,21 @@ test('given its record and row, the verdict writes the gate\'s record, then leve
   expect(head).toEqual({ argv: ['git', 'rev-parse', 'HEAD'], init: { cwd: '/work/thing', timeoutMs: 10000 } })
   expect(record.argv).toEqual([
     'bash', '/plugins/orch-root/skills/orchestrator/scripts/dispatch-record.sh', 'verdict', '/b/record.jsonl', '4',
-    '--head', '0123456789abcdef0123456789abcdef01234567', '--result', 'fail', '--words', 'two to fix', '--findings', '/b/review-128.md',
+    '--head', '0123456789abcdef0123456789abcdef01234567', '--result', 'fail', '--words', 'two to fix', '--findings', '/b/review-128.md', '--reviewed',
   ])
   expect(record.init).toEqual({
     env: { CLAUDE_CODE_SESSION_ID: 's-one', HOME, PATH: '/usr/bin:/bin', CLAUDE_CONFIG_DIR: '/cfg', ORCHESTRATOR_STATE_DIR: '/state' },
     timeoutMs: 10000,
   })
-  expect(out).toEqual({ result: `${WRITTEN}\n${ROUNDS}\nrow 4: fail — two to fix — findings: /b/review-128.md` })
+  // The row's line is said in the gate's line, once: the verdict it took, never its words or its findings path.
+  expect(out).toEqual({ result: `${WRITTEN} · row 4: fail\n${ROUNDS}` })
 })
 
 test('an acceptance\'s few words count its set-asides, never their words', async () => {
   const fx = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: none\n', stderr: '' })
   await handler()(fx.dollar, { ...ACCEPTED, record: '/b/record.jsonl', row: 4 })
   const argv = fx.runs.find((r) => r.argv[2] === 'verdict')!.argv
-  expect(argv.slice(argv.indexOf('--result'))).toEqual(['--result', 'accepted', '--words', '2 point(s) set aside'])
+  expect(argv.slice(argv.indexOf('--result'))).toEqual(['--result', 'accepted', '--words', '2 point(s) set aside', '--reviewed'])
 })
 
 test('a row the record refuses is a warning on the verdict\'s success, never an error, so the audit keeps the verdict', async () => {
@@ -360,5 +360,5 @@ test('a row run that throws is a warning on the verdict\'s success', async () =>
 test('a warning of a row written comes back with its line', async () => {
   const fx = rowFake({ exitCode: 0, stdout: 'row 4: fail — two to fix — findings: none\n', stderr: 'WARNING: verdict: row 4 has no review recorded: recording the verdict anyway\n' })
   expect(await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 }))
-    .toEqual({ result: `${WRITTEN}\n${ROUNDS}\nrow 4: fail — two to fix — findings: none\nWARNING: verdict: row 4 has no review recorded: recording the verdict anyway` })
+    .toEqual({ result: `${WRITTEN} · row 4: fail\n${ROUNDS}\nWARNING: verdict: row 4 has no review recorded: recording the verdict anyway` })
 })

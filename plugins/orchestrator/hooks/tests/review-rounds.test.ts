@@ -83,12 +83,28 @@ for (const [verdict, extra] of [
     const fx = fake()
     const out = await handler()(fx.dollar, { ...VERDICT, verdict, ...extra })
     expect(roundsOf(fx.files)).toEqual({ 1: 1, 2: 1 })
-    expect(out).toEqual({ result: `${WRITTEN}\nrounds: row 2 of ${RECORD} raised to 1` })
+    expect(out).toEqual({ result: `${WRITTEN} · row 2 round 1` })
     // The row's other fields and the ledger line stay as they were.
     expect(rowsOf(fx.files)[1]).toEqual({ id: 2, class: 'feat', tier: 'standard', rounds: 1, state: 'open', verdict: '', label: 'acme/app#12' })
     expect(rowsOf(fx.files)[2]).toEqual(JSON.parse(LEDGER))
   })
 }
+
+// The field answer, measured on the orchestrator's own transcript: a path line, a gate line of 300
+// to 600 characters, the count, the row and a warning. It is the path line and ONE line now.
+test('a verdict that names its row answers the path line and one line: the gate\'s verdict, the row, the round', async () => {
+  const detail = 'set aside: a.ts — naming only'
+  const gate = `/cfg/records/acme/app/${HEAD}/review.json\ngithub: acme/app#12 Ready at 0123456: review accepted by the orchestrator (${detail}), no norms check needed (check plan, 2026-11-15: a small fix), no E2E needed (check plan, 2026-11-15: hook logic covered) and green CI hold at its head.`
+  const fx = fake({ answer: { result: gate } })
+  const base = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: object) => (String(argv[1] ?? '').endsWith('/dispatch-record.sh')
+    ? { exitCode: 0, stdout: 'row 2: accepted — 1 point(s) set aside — findings: /b/review-12.md\n', stderr: '' }
+    : base(argv, init))
+  const out = await handler()(fx.dollar, { ...VERDICT, verdict: 'accepted', set_asides: [{ point: 'a.ts', reason: 'naming only' }], detail: '', record: RECORD, row: 2, findings: '/b/review-12.md' })
+  expect(out.result).toBe(`/cfg/records/acme/app/${HEAD}/review.json\nReady at 0123456 · row 2: accepted, round 1`)
+  expect(out.result.length).toBeLessThan(gate.length / 2)
+  expect(rowsOf(fx.files)[1]?.rounds).toBe(1)
+})
 
 test('a second verdict on the pull request counts a second round', async () => {
   const fx = fake()
@@ -141,13 +157,13 @@ test('a row `dispatch-record.sh review` recorded at this head is counted by the 
   const fx = fake({ rows: line({ id: 2, label: 'acme/app#12', rounds: 0, review: { head: HEAD, norms: '', at: 't' } }) + '\n' })
   const out = await handler()(fx.dollar, VERDICT)
   expect(roundsOf(fx.files)).toEqual({ 2: 1 })
-  expect(out.result).toBe(`${WRITTEN}\nrounds: row 2 of ${RECORD} raised to 1`)
+  expect(out.result).toBe(`${WRITTEN} · row 2 round 1`)
 })
 
 test('the repository omitted is read from the checkout\'s origin, and unknown it is said', async () => {
   const { repo: _repo, ...bare } = VERDICT
   const fx = fake()
-  expect((await handler()(fx.dollar, bare)).result).toContain('row 2 of')
+  expect((await handler()(fx.dollar, bare)).result).toContain('row 2 round 1')
   expect(roundsOf(fx.files)).toEqual({ 1: 1, 2: 1 })
   const none = fake({ origin: null })
   const out = await handler()(none.dollar, bare)
@@ -201,14 +217,14 @@ test('a verdict that names its row raises that row, not the other row whose labe
   const fx = fake({ rows })
   const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 42 })
   expect(roundsOf(fx.files)).toEqual({ 42: 1, 46: 0, 47: 0 })
-  expect(out.result).toContain(`rounds: row 42 of ${RECORD} raised to 1`)
+  expect(out.result).toContain('row 42 round 1')
 })
 
 test('a verdict that names a row whose label names no pull request raises it, with no "none raised" line', async () => {
   const fx = fake({ rows: line({ id: 5, label: 'a label naming none' }) + '\n' })
   const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 5 })
   expect(roundsOf(fx.files)).toEqual({ 5: 1 })
-  expect(out.result).toContain(`rounds: row 5 of ${RECORD} raised to 1`)
+  expect(out.result).toContain('row 5 round 1')
   expect(out.result).not.toContain('none raised')
 })
 
@@ -216,7 +232,7 @@ test('a verdict that names a row the record does not hold falls to the row that 
   const fx = fake()
   const out = await handler()(fx.dollar, { ...VERDICT, ...NAMED, row: 99 })
   expect(roundsOf(fx.files)).toEqual({ 1: 1, 2: 1 })
-  expect(out.result).toContain(`rounds: row 2 of ${RECORD} raised to 1`)
+  expect(out.result).toContain('row 2 round 1')
 })
 
 test('with no row named, the repository of a label is read whatever its case, and a prefix or another repository is no match', async () => {

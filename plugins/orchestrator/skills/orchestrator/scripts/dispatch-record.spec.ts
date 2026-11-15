@@ -241,6 +241,27 @@ test('verdict: the row carries the verdict, its few words and the findings index
   assert.equal((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], undefined)
 })
 
+test('verdict --reviewed is itself the review at its head: it records the head when none is, and warns of nothing', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'clean', '--reviewed']), '0|row 1: pass — clean — findings: none\n|')
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z',
+    verdict: { head: 'abc1234', result: 'pass', words: 'clean', findings: null, rounds: 0, at: '2026-11-08T10:11:12Z' },
+  })
+  // A review the row already holds is kept, as are its correction round and its other fields.
+  await cli(['fixed', r, '1', '--head', 'def5678'])
+  await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', 'ok', '--reviewed'])
+  const kept = rows()[0]?.['review'] as Record<string, unknown>
+  assert.equal(kept['head'], 'abc1234')
+  assert.deepEqual(kept['fixed'], { head: 'def5678', at: '2026-11-08T10:11:12Z' })
+  // Without the flag the warning stays: a person who forgot `review` is told.
+  const second = await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(second.startsWith('0|2'), true)
+  assert.match(await cli(['verdict', r, '2', '--head', 'abc1234', '--result', 'pass', '--words', 'clean']), /row 2 has no review recorded/)
+})
+
 test('surface and audit', async () => {
   await withGoals()
   const r = rec()
