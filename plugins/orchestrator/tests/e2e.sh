@@ -245,8 +245,8 @@ if [ -n "$me" ]; then
       "$(printf '%s' "$AUD" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$aud_out" | tail -2 | tr '\n' ' ')")"
     pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
     pos_aud=$(bash "$AGENT" list | grep -n "$AUD" | cut -d: -f1)
-    check "the auditor landed immediately left of its caller" "$((pos_me - 1))" "$pos_aud"
-    check "and the caller moved one place right" "$((pos_aud + 1))" "$pos_me"
+    check "the auditor landed immediately right of its caller, the orchestrator it audits" "$((pos_me + 1))" "$pos_aud"
+    check "and the caller stayed where it was, at the place before the auditor's" "$((pos_aud - 1))" "$pos_me"
     aud_title=$(bash "$AGENT" list | grep "$AUD" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)
     bash "$AGENT" close --tty "$AUD" --expect-title "$aud_title" >/dev/null 2>&1
     check "the auditor probe closes by its tty, title guard held" "0" "$?"

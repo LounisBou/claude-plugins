@@ -3224,10 +3224,11 @@ check "no anchor at all is refused, naming all three forms" "1|1" \
 check "--leftmost moves a tab out of the caller's chain too, with the warning naming it" "0|1" \
   "$(mv_ --tty /dev/ttys901 --leftmost >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost | grep -c "^move: warning: /dev/ttys901 is not in this session's chain: moved anyway$")"
 
-# An AUDITOR is neither a successor nor an agent (§52). It is placed immediately LEFT of
-# its caller, the chain ignored — on the caller's model and under remote control under its
-# own title; but it takes no chain and joins none: the orchestrator it audits keeps its
-# agents, and the auditor is nobody's agent. Its title is REQUIRED and reads
+# An AUDITOR is neither a successor nor an agent (§52). It is placed immediately RIGHT of
+# the orchestrator it audits (its caller, or the tab --of names), the chain ignored — on the
+# caller's model and under remote control under its own title; but it takes no chain and
+# joins none: the orchestrator it audits keeps its agents, and the auditor is nobody's agent.
+# Its title is REQUIRED and reads
 # `Audit: <subject>`, a shape refused everywhere but under --auditor.
 AUDSTATE="$WORK/audstate"; AUDCFG="$WORK/audcfg"
 # The auditor inherits the caller's model from the measure file, and that file is the
@@ -3249,8 +3250,21 @@ check "and without the setting that turns remote control off" "0" "$(printf '%s'
 check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
 check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
   "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
-check "an auditor sits on the LEFT of its caller; a successor and a plain anchor stay RIGHT" "left|right|right" \
+check "an auditor sits on the RIGHT of the orchestrator it audits, as a successor and a plain anchor do" "right|right|right" \
   "$(printf '%s' "$AUDOUT" | sed -n 's/^side=//p')|$(aud --title 'Orch: f' --successor | sed -n 's/^side=//p')|$(aud --title 'Agent: x' --right-of self | sed -n 's/^side=//p')"
+# The audited orchestrator is the caller, or the tab --of names; a coordinator is no orchestrator.
+AUDCOORDPS="$WORK/ps-audcoord.txt"; printf '/dev/ttys900 claude --name Coord: c\n' > "$AUDCOORDPS"
+audc() { ORCHESTRATOR_PS_TABLE="$AUDCOORDPS" aud "$@"; }
+check "an auditor given --of anchors on that tab, on its right, in no chain" "1|right|none" \
+  "$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | grep -c '^anchor=/dev/ttys555$')|$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^side=//p')|$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^chain=//p')"
+check "--of self is the caller's own tab, as no --of is" "1" \
+  "$(aud --auditor --of self --title 'Audit: tm' | grep -c '^anchor=self$')"
+check "--of is an auditor's: refused without --auditor, and refused when it names no tty" "1|1|1|1" \
+  "$(aud --of /dev/ttys555 --title 'Agent: x' >/dev/null 2>&1; echo $?)|$(aud --of /dev/ttys555 --title 'Agent: x' | grep -c -- '--of names the orchestrator an auditor audits')|$(aud --auditor --of nowhere --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(aud --auditor --of nowhere --title 'Audit: tm' | grep -c -- "--of names the audited orchestrator's tty")"
+check "a coordinator's auditor must name the orchestrator it audits: refused with no --of, and with its own tab" "1|1|1" \
+  "$(audc --auditor --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(audc --auditor --title 'Audit: tm' | grep -c "the coordinator's own tab is not an orchestrator's")|$(audc --auditor --of /dev/ttys900 --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
+check "and with --of an orchestrator's tab it is launched, right of that tab" "0|1|right" \
+  "$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' | grep -c '^anchor=/dev/ttys555$')|$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^side=//p')"
 check "where a plain spawn from the same caller anchors after its last agent" "1" \
   "$(aud --title 'Agent: x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
 check "a chain is appended to by an agent, handed over by a successor, left alone by an auditor" "append|transfer|none" \
@@ -3286,7 +3300,7 @@ check "an auditor given a model without an effort is refused" "1" \
 # An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
 # a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
 # immediately right of the caller (so, once the predecessor's tab is closed, in the auditor's
-# own place left of its orchestrator), runs on the caller's model under remote control, and
+# own place right of its orchestrator), runs on the caller's model under remote control, and
 # takes and hands no chain: an auditor has none, and written into one it would anchor an
 # orchestrator's next agent.
 PSAUDTAB="$WORK/ps-audit-succ.txt"
@@ -3333,11 +3347,11 @@ import iterm_agent as m
 AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
 def rows(*order):
     return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
-RIGHT = rows('/dev/ttys800', AUD, CALLER, '/dev/ttys901')
+RIGHT = rows('/dev/ttys800', CALLER, AUD, '/dev/ttys901')
 WRONG = rows(AUD, '/dev/ttys800', CALLER, '/dev/ttys901')
 OTHER_WINDOW = [m.row_for(2, 1, AUD, 't', None, False, False), m.row_for(1, 2, CALLER, 't', None, False, False)]
-HIDDEN = [m.row_for(1, 1, AUD, 't', None, False, False), m.row_for(1, 2, '/dev/ttys777', 't', None, False, False),
-          m.row_for(1, 2, CALLER, 't', None, False, True)]  # the caller is a hidden pane of tab 2
+HIDDEN = [m.row_for(1, 1, '/dev/ttys777', 't', None, False, False), m.row_for(1, 1, CALLER, 't', None, False, True),
+          m.row_for(1, 2, AUD, 't', None, False, False)]  # the audited orchestrator is a hidden pane of tab 1
 scenario = sys.argv[1]
 reads, moves = [], []
 if scenario == 'placed': seq = [RIGHT]
@@ -3350,7 +3364,7 @@ elif scenario == 'elsewhere': seq = [OTHER_WINDOW, OTHER_WINDOW]
 else:
     seq = None
 if seq is None:
-    print(m.placed_left_of({'window': OTHER_WINDOW, 'hidden': HIDDEN}[scenario], AUD, CALLER))
+    print(m.placed_right_of({'window': OTHER_WINDOW, 'hidden': HIDDEN}[scenario], AUD, CALLER))
     sys.exit(0)
 def read():
     reads.append(1)
@@ -3361,11 +3375,11 @@ def move(tty, anchor):
 line, code = m.settle_auditor(read, move, AUD, CALLER)
 print('%d|%d|%s|%d|%s' % (len(reads), len(moves), ','.join('%s>%s' % t for t in moves), code, line))
 " "$1"; }
-check "an auditor already immediately left of its caller is read once and moved never" "1|0||0|" "$(settle placed)"
-check "a misplaced auditor is moved --left-of its caller, then read again, and nothing is said" \
+check "an auditor already immediately right of its orchestrator is read once and moved never" "1|0||0|" "$(settle placed)"
+check "a misplaced auditor is moved right of its orchestrator, then read again, and nothing is said" \
   "2|1|/dev/ttys950>/dev/ttys900|0|" "$(settle repaired)"
 check "an auditor still misplaced after one move is said on one line naming both ttys and the remedy, exit 1" \
-  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately right of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys900" \
   "$(settle stuck)"
 check "a listing that cannot be read is said unverified, with the way to read it, and the session stays" \
   "1|0||1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
@@ -3374,18 +3388,18 @@ check "a listing lost after the move is unverified too, not reported as misplace
   "2|1|/dev/ttys950>/dev/ttys900|1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
   "$(settle unread-after-move)"
 check "a move the terminal cannot serve says its API is not available, and offers no move command" \
-  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900, and could not be moved because the terminal's API is not available; read iterm-agent.sh list and move the tab by hand only if it is misplaced" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately right of /dev/ttys900, and could not be moved because the terminal's API is not available; read iterm-agent.sh list and move the tab by hand only if it is misplaced" \
   "$(settle unserved)"
 check "an auditor in another window than its caller says so, since a move cannot cross windows" \
   "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is in another window than its orchestrator on /dev/ttys900; see iterm-agent.sh list" \
   "$(settle elsewhere)"
-check "the same tab number in another window is not left of the caller" "False" "$(settle window)"
-check "a caller that is a hidden pane is placed by its tab: the auditor in the tab before it counts" "True" \
+check "the same tab number in another window is not right of the orchestrator" "False" "$(settle window)"
+check "an orchestrator that is a hidden pane is placed by its tab: the auditor in the tab after it counts" "True" \
   "$(settle hidden)"
 
 # The move finds its anchor by ANY pane of a tab, as the anchor probe does, and never across
-# windows: a caller in a split tab whose current pane is another pane is still in its tab.
-mvleft() { "$py" -c "
+# windows: an orchestrator in a split tab whose current pane is another pane is still in its tab.
+mvright() { "$py" -c "
 import asyncio, sys
 sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
@@ -3403,17 +3417,17 @@ class API:
     def __init__(self, app): self.app = app
     async def async_get_app(self, connection): return self.app
 AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
-split = T('c', CALLER, '/dev/ttys777')  # the caller's pane is hidden: another pane is current
+split = T('c', CALLER, '/dev/ttys777')  # the orchestrator's pane is hidden: another pane is current
 if sys.argv[1] == 'split':
-    w = W('w1', T('a', AUD), T('b', '/dev/ttys800'), split); api = API(App(w))
+    w = W('w1', T('a', AUD), T('b', '/dev/ttys800'), split, T('d', '/dev/ttys801')); api = API(App(w))
 else:
     w = W('w1', T('a', AUD), T('b', '/dev/ttys800')); api = API(App(w, W('w2', split)))
-asyncio.run(m.move_left_of(api, None, AUD, CALLER))
+asyncio.run(m.move_right_of(api, None, AUD, CALLER))
 print(w.set)
 " "$1"; }
-check "an auditor moves immediately before a caller whose current pane is another pane of its tab" \
-  "['b', 'a', 'c']" "$(mvleft split)"
-check "a caller in another window moves nothing: a move does not cross windows" "None" "$(mvleft window)"
+check "an auditor moves immediately after an orchestrator whose current pane is another pane of its tab" \
+  "['b', 'c', 'a', 'd']" "$(mvright split)"
+check "an orchestrator in another window moves nothing: a move does not cross windows" "None" "$(mvright window)"
 
 # The wiring is a decision of its own: the repair is called, the line goes to STDOUT, the tty
 # is printed whatever the repair did, and the exit follows. The suite drives `cmd_spawn`
@@ -3430,11 +3444,19 @@ import iterm_agent as m
 AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
 def rows(*order):
     return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
-RIGHT = rows('/dev/ttys800', AUD, CALLER)
+RIGHT = rows('/dev/ttys800', CALLER, AUD)
 WRONG = rows(AUD, '/dev/ttys800', CALLER)
 scenario = sys.argv[1]
+WRONG_HOME = rows(AUD, '/dev/ttys800', '/dev/ttys004')
 readings = {'misplaced': [WRONG, WRONG], 'unread': ['boom'], 'move-fails': [WRONG, RIGHT],
-            'api-less': [WRONG, WRONG], 'broken': [['wx/t1 | /dev/ttys950 | t | n']]}[scenario]
+            'api-less': [WRONG, WRONG], 'broken': [['wx/t1 | /dev/ttys950 | t | n']],
+            'home': [WRONG_HOME, WRONG_HOME]}[scenario]
+if scenario == 'home':
+    # The caller is an orchestrator of a home session: its own tty is a pane, and the tab
+    # that shows the server runs the tmux client on /dev/ttys004.
+    class Done: returncode = 0; stdout = '/dev/ttys004\n'
+    m.in_home_session = lambda: True
+    m.tmux_call = lambda args, env=None: Done()
 reads = []
 def next_reading():
     reads.append(1)
@@ -3446,6 +3468,8 @@ def stub_run(fn):
     if fn.__name__ == 'probe': return True
     if fn.__name__ == 'go': return AUD
     if fn.__name__ == 'rows': return next_reading()
+    if fn.__name__ == 'ids': return ('sess-aud', 'tab-aud')
+    if fn.__name__ == 'owner': return 'S-ME'
     if scenario == 'move-fails': raise RuntimeError('set_tabs refused')
 m.run = stub_run
 m.as_spawn = lambda command: AUD
@@ -3461,7 +3485,9 @@ with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') a
 print(code)
 " "$1"; }
 check "a misplaced auditor: the line on stdout, the tty still printed, exit 1" "1|1|1" \
-  "$(spawn_aud misplaced)|$(grep -c 'is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+  "$(spawn_aud misplaced)|$(grep -c 'is not immediately right of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+check "an orchestrator of a home session is audited from the tab that shows it, not from its pane" "1|1" \
+  "$(spawn_aud home)|$(grep -c 'is not immediately right of /dev/ttys004; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys004' "$WORK/aud-spawn.out")"
 check "a listing that cannot be read: one line on stderr, the unverified line, the tty printed, exit 1" "1|1|1|1" \
   "$(spawn_aud unread)|$(grep -c 'could not be read: the listing failed' "$WORK/aud-spawn.err")|$(grep -c "the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
 check "an exception in the move: one line on stderr, the tty printed, the second reading decides" "0|1|1|0" \
@@ -3470,6 +3496,12 @@ check "a repair that itself breaks: one line on stderr, the unverified line, the
   "$(spawn_aud broken)|$(grep -c 'could not be settled' "$WORK/aud-spawn.err")|$(grep -c 'is unverified' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
 check "the API-less rung: no placement warning on stderr, the API-not-available line, the tty, exit 1" "1|0|1|1" \
   "$(spawn_aud api-less applescript)|$(grep -c 'cannot place a tab' "$WORK/aud-spawn.err")|$(grep -c "could not be moved because the terminal's API is not available" "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+# The launch records the auditor as its launcher's, by the app's session id, so that `move`
+# can repair a place that came out wrong; the record is read back, then removed so the
+# refusals below meet a stranger's auditor.
+check "a spawned auditor is recorded under its tty with the app's session id and its launcher" "1|1" \
+  "$(grep -c '"launcher": "S-ME"' "$AUDSTATE/auditors/ttys950.json")|$(grep -c '"session": "sess-aud"' "$AUDSTATE/auditors/ttys950.json")"
+rm -rf "$AUDSTATE/auditors"
 
 # `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
 # read by its NAME in the process table, so a stale chain entry naming it moves nothing.
@@ -3498,6 +3530,16 @@ check "--force moves it leftmost too, and says so" "0|1" \
 check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
 check "an auditor places its own tab" "1" \
   "$(AUDSELF=/dev/ttys950 audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')"
+# The launcher that placed an auditor repairs its place without --force; another session still
+# needs it, and a record naming no launcher opens nothing.
+mkdir -p "$AUDSTATE/auditors"
+printf '{"tty": "/dev/ttys950", "session": "sess-aud", "launcher": "S-ME"}\n' > "$AUDSTATE/auditors/ttys950.json"
+check "an auditor its own launcher placed is moved without --force, and not called forced" "0|1|0" \
+  "$(audmv --tty /dev/ttys950 --right-of /dev/ttys900 >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')|$(audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c 'forced')"
+printf '{"tty": "/dev/ttys950", "session": "sess-aud", "launcher": "S-OTHER"}\n' > "$AUDSTATE/auditors/ttys950.json"
+check "an auditor another session placed is still refused" "1|1" \
+  "$(audmv --tty /dev/ttys950 --right-of /dev/ttys900 >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c "move: refused: /dev/ttys950 is an auditor's tab")"
+rm -rf "$AUDSTATE/auditors"
 
 # The COORDINATOR sits above every orchestrator on the machine. Its own successor is
 # neither an auditor nor an agent: it lands at the FIRST place of the caller's window (not
@@ -3938,8 +3980,8 @@ check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0"
 # it to the lint as created later, and the lint exempts exactly it — a second absent path in
 # the same brief is still a finding.
 AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
-check "the auditor writes nothing but its report, and the operator closes its tab" "1|1" \
-  "$(grep -c 'commit, no push, no comment, no label, no merge' "$AUDBRIEF")|$(grep -c 'He closes this tab' "$AUDBRIEF")"
+check "the auditor writes nothing but its report" "1" \
+  "$(grep -c 'commit, no push, no comment, no label, no merge' "$AUDBRIEF")"
 # An auditor kept on past its report may succeed (§9.4): §2 lets it write the succession brief
 # besides the report and message its own successor and predecessor only, and nothing else; §4
 # names the template and the spawn line, which the launcher runs as an auditor's succession.
@@ -3949,8 +3991,8 @@ check "the audit brief still forbids every other file, a commit, a push and any 
 # audit brief for a pointer to the succession template's « Standing context », which carries
 # them once: the copy, the spawn line in full, the operator told, the handshake.
 AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
-check "and carries the succession: a pointer to the template's steps, the launcher, the operator told" "1|1|1|0" \
-  "$(grep -c 'the « Standing context » of `{{SUCCESSION_TEMPLATE}}`' "$AUDBRIEF")|$(grep -c 'the launcher being `{{ITERM_AGENT_SH}}`' "$AUDBRIEF")|$(grep -c 'He closes this tab' "$AUDBRIEF")|$(grep -c -- '--successor --inherit-model' "$AUDBRIEF")"
+check "and carries the succession: a pointer to the template's steps, the launcher" "1|1|0" \
+  "$(grep -c 'the « Standing context » of `{{SUCCESSION_TEMPLATE}}`' "$AUDBRIEF")|$(grep -c 'the launcher being `{{ITERM_AGENT_SH}}`' "$AUDBRIEF")|$(grep -c -- '--successor --inherit-model' "$AUDBRIEF")"
 check "the succession template carries the copy and the spawn line in full" "1|1" \
   "$(grep -c 'SUCCESSION_TEMPLATE}}. beside the report' "$AUDSUCCTPL")|$(grep -c -- '--successor --permission-mode auto --prompt "Read and execute ' "$AUDSUCCTPL")"
 # The predecessor tells the operator BEFORE it hands over, as /orchestrator-succeed orders it:
@@ -7420,8 +7462,8 @@ check "an auditor's wake of an orchestrator is refused with a message naming the
 printf '/dev/ttys900 claude\n' > "$WORK/ps-unnamed.txt"
 check "an auditor whose name cannot be read is refused all the same, by the marker its launch exports" "1|1|0" \
   "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch: x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent: x' | grep -c 'ORCHESTRATOR_AUDITOR')"
-check "an auditor's spawn stays out of the chain and left of its caller, a woken orchestrator's out of the chain" "1|1|1" \
-  "$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^chain=none$')"
+check "an auditor's spawn stays out of the chain and right of its caller, a woken orchestrator's out of the chain" "1|1|1" \
+  "$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^side=right$')|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^chain=none$')"
 NEUTRALPS="$WORK/ps-neutralcaller.txt"; AGENTPS="$WORK/ps-agentcaller.txt"
 printf '/dev/ttys900 claude --name Audit neutre : f\n' > "$NEUTRALPS"
 printf '/dev/ttys900 claude --name Agent: f\n' > "$AGENTPS"

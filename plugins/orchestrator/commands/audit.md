@@ -31,19 +31,22 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    - the report: `<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
    repair any other finding before the spawn.
-3. **Spawn**, beside this tab:
+3. **Spawn**, beside the audited orchestrator: this session, or the one the brief names,
+   with `--of <its tty>` (from `iterm-agent.sh list`) added to the line below:
 
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit: <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately left of this one; it joins no chain. The auditor
-   never closes this tab.
+   `--auditor` places the tab immediately right of the audited orchestrator's; it joins no
+   chain. The auditor never closes this tab.
    On a non-zero exit, run the `move` the line on stdout prints and never relaunch; on
    « unverified » or « API is not available », read `list` and move the tab only if misplaced.
 4. **The spawn's success line is its proof**, read once.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
-   own work: the auditor messages nobody but an orchestrator he orders it to, ends by itself,
-   and the operator closes its tab; a successor closes its predecessor's.
+   own work: the auditor messages nobody but an orchestrator he orders it to, and ends by itself.
+6. **Close its tab yourself** once the auditor has delivered its report and you have relayed
+   its verdict to the operator: `iterm-agent.sh close --tty <its tty> --expect-title "Audit: <subject>"`.
+   It stays open only on his word.
 
 $ARGUMENTS

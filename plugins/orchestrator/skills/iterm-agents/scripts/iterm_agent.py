@@ -61,6 +61,7 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 )
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 CHAINS_DIR = os.path.join(STATE_DIR, "chains")
+AUDITORS_DIR = os.path.join(STATE_DIR, "auditors")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
 
 
@@ -2058,6 +2059,45 @@ def audit_name_on(tty):
     return None
 
 
+def auditor_record_path(tty):
+    return os.path.join(AUDITORS_DIR, os.path.basename(tty) + ".json")
+
+
+def auditor_record_write(tty, session, launcher):
+    """Remember that `launcher` placed the auditor whose app session is `session` on `tty`.
+
+    An auditor is in no chain, so nothing else says whose placement a tab is: the record is
+    what lets `move` repair the place of an auditor its own launcher made, and still refuse
+    a stranger's. The app's session id is the identity: a tty is recycled minutes after a
+    close, and the record of a closed auditor must not open a later session on it."""
+    os.makedirs(AUDITORS_DIR, exist_ok=True)
+    path = auditor_record_path(tty)
+    tmp = "%s%s%d-%s" % (path, STORE["temporary_mark"], os.getpid(), uuid.uuid4().hex[:8])
+    try:
+        with open(tmp, "x") as fh:
+            json.dump({"tty": tty, "session": session, "launcher": launcher}, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def auditor_placed_by(tty, session, launcher):
+    """Whether the auditor on `tty` is one `launcher` placed. `session` None is a dry run,
+    which has no app to ask: the record is then read on the tty alone."""
+    try:
+        with open(auditor_record_path(tty)) as fh:
+            record = json.load(fh)
+    except Exception:
+        return False
+    if not isinstance(record, dict) or not launcher or record.get("launcher") != launcher:
+        return False
+    return session is None or (bool(session) and record.get("session") == session)
+
+
 def coord_name_on(tty):
     """The name of the session on a tty when it is the coordinator's, None otherwise.
 
@@ -2332,21 +2372,21 @@ def tab_of_row(rows, tty):
     return None
 
 
-def placed_left_of(rows, tty, anchor):
-    """True when `tty`'s tab is the one immediately before `anchor`'s, in the same window."""
+def placed_right_of(rows, tty, anchor):
+    """True when `tty`'s tab is the one immediately after `anchor`'s, in the same window."""
     mine, theirs = tab_of_row(rows, tty), tab_of_row(rows, anchor)
-    return bool(mine and theirs and mine[0] == theirs[0] and mine[1] == theirs[1] - 1)
+    return bool(mine and theirs and mine[0] == theirs[0] and mine[1] == theirs[1] + 1)
 
 
-def settle_auditor(read, move, auditor, caller):
+def settle_auditor(read, move, auditor, audited):
     """Read the real tab order, repair once, read again: (line, exit code).
 
-    The auditor lands immediately left of its caller by construction when the terminal's API
-    answers, and nowhere in particular when it does not (§52); a launch reported as done
-    with the tab elsewhere is the operator finding it by hand. So the order is READ, and a
-    wrong one is repaired by the launcher's own move, never by a relaunch. Still wrong
-    after that, the line names both ttys and the remedy, and the session stays: an auditor
-    that runs misplaced is moved, not killed.
+    The auditor lands immediately right of the orchestrator it audits by construction when
+    the terminal's API answers, and nowhere in particular when it does not (§52); a launch
+    reported as done with the tab elsewhere is the operator finding it by hand. So the order
+    is READ, and a wrong one is repaired by the launcher's own move, never by a relaunch.
+    Still wrong after that, the line names both ttys and the remedy, and the session stays:
+    an auditor that runs misplaced is moved, not killed.
 
     `read` returns None when it could not read, and the line then says what was NOT read —
     an order nobody saw is not an order found wrong. `move` returns False when the terminal
@@ -2354,24 +2394,24 @@ def settle_auditor(read, move, auditor, caller):
     rows = read()
     if rows is None:
         return unverified_line(auditor), 1
-    if placed_left_of(rows, auditor, caller):
+    if placed_right_of(rows, auditor, audited):
         return "", 0
-    served = move(auditor, caller)
+    served = move(auditor, audited)
     rows = read()
     if rows is None:
         return unverified_line(auditor), 1
-    if placed_left_of(rows, auditor, caller):
+    if placed_right_of(rows, auditor, audited):
         return "", 0
-    mine, theirs = tab_of_row(rows, auditor), tab_of_row(rows, caller)
+    mine, theirs = tab_of_row(rows, auditor), tab_of_row(rows, audited)
     if mine and theirs and mine[0] != theirs[0]:
         return ("spawn: the auditor on %s is in another window than its orchestrator on %s; "
-                "see iterm-agent.sh list" % (auditor, caller)), 1
+                "see iterm-agent.sh list" % (auditor, audited)), 1
     if served is False:
-        return ("spawn: the auditor on %s is not immediately left of %s, and could not be "
+        return ("spawn: the auditor on %s is not immediately right of %s, and could not be "
                 "moved because the terminal's API is not available; read iterm-agent.sh list "
-                "and move the tab by hand only if it is misplaced" % (auditor, caller)), 1
-    return ("spawn: the auditor on %s is not immediately left of %s; repair it with: "
-            "iterm-agent.sh move --tty %s --left-of %s" % (auditor, caller, auditor, caller)), 1
+                "and move the tab by hand only if it is misplaced" % (auditor, audited)), 1
+    return ("spawn: the auditor on %s is not immediately right of %s; repair it with: "
+            "iterm-agent.sh move --tty %s --right-of %s" % (auditor, audited, auditor, audited)), 1
 
 
 def unverified_line(auditor):
@@ -2379,14 +2419,14 @@ def unverified_line(auditor):
             "check with: iterm-agent.sh list" % auditor)
 
 
-async def move_left_of(iterm2, connection, tty, anchor):
-    """Put `tty`'s tab immediately before `anchor`'s in their window, on a fresh app: the
+async def move_right_of(iterm2, connection, tty, anchor):
+    """Put `tty`'s tab immediately after `anchor`'s in their window, on a fresh app: the
     window object a caller holds is a cached copy (§14). Silent when either is not in one
     window, which the caller's next reading turns into the sentence.
 
-    The anchor is found the way `anchor_position` finds it, by any of its panes: a caller in
-    a split tab whose current pane is another one is still in its tab, and `tty_of` reads
-    only the current pane."""
+    The anchor is found the way `anchor_position` finds it, by any of its panes: an
+    orchestrator in a split tab whose current pane is another one is still in its tab, and
+    `tty_of` reads only the current pane."""
     app = await iterm2.async_get_app(connection)
     win, tab, _ = await find_tab(app, tty)
     if tab is None:
@@ -2395,12 +2435,56 @@ async def move_left_of(iterm2, connection, tty, anchor):
     if target is None or target_win.window_id != win.window_id or target.tab_id == tab.tab_id:
         return
     tabs = [t for t in win.tabs if t.tab_id != tab.tab_id]
-    tabs.insert([t.tab_id for t in tabs].index(target.tab_id), tab)
+    tabs.insert([t.tab_id for t in tabs].index(target.tab_id) + 1, tab)
     await win.async_set_tabs(tabs)
 
 
-def repair_auditor_place(auditor, caller, term=None):
+def launcher_identity(term, own):
+    """Who a session is, for the record of an auditor it placed: a pane of a home session is
+    named by its tmux pane, any other caller by the app's session id on its tty. The same
+    reading on both sides, the spawn that writes the record and the move that reads it."""
+    return tmux_owner() or (term.owner(own) if own else "")
+
+
+def home_tab_tty(term):
+    """The tty of the iTerm2 tab that shows the caller's home session: the tmux client
+    attached to its server, the one the app has a tab for. "" when none can be read.
+
+    An orchestrator in a home session runs in window 0 of its server, and that pane's tty is
+    no tab of the app's: the tab the operator sees, and the auditor must sit right of, is the
+    one running the server's client."""
+    try:
+        done = tmux_call(["list-clients", "-t", HOME_SESSION, "-F", "#{client_tty}"])
+    except TmuxError:
+        return ""
+    if done.returncode != 0:
+        return ""
+    for tty in done.stdout.split():
+        if term.find(tty):
+            return tty
+    return ""
+
+
+def remember_auditor(term, auditor, launcher_tty):
+    """Record that this session placed the auditor on `auditor`, for `move`'s guard. Nothing
+    in here may end the launch: the session is up. A record that cannot be written is said on
+    stderr in one line, and `move` then asks for --force, as it always did."""
+    try:
+        session, _ = term.identity(auditor, fresh=True)
+        launcher = launcher_identity(term, launcher_tty)
+        if not (session and launcher):
+            print("spawn: the auditor on %s could not be recorded as yours (no session id "
+                  "read), so move will ask for --force to place it" % auditor, file=sys.stderr)
+            return
+        auditor_record_write(auditor, session, launcher)
+    except Exception as exc:
+        print("spawn: the auditor on %s could not be recorded as yours: %s"
+              % (auditor, " ".join(str(exc).split()) or type(exc).__name__), file=sys.stderr)
+
+
+def repair_auditor_place(auditor, audited, term=None):
     """§52: read the listing `list` prints, repair with the launcher's own move, read again.
+    `audited` is the orchestrator's tty, the tab the auditor must sit immediately right of.
 
     Nothing in here may end the launch: the session is up and its tty is what the caller
     reads next. A reading or a move that fails, for whatever reason, is said on stderr in
@@ -2424,7 +2508,7 @@ def repair_auditor_place(auditor, caller, term=None):
 
     def move(tty, anchor):
         try:
-            term.move_left_of(tty, anchor)
+            term.move_right_of(tty, anchor)
         except SystemExit:
             return False
         except Exception as exc:
@@ -2432,7 +2516,7 @@ def repair_auditor_place(auditor, caller, term=None):
         return True
 
     try:
-        return settle_auditor(read, move, auditor, caller)
+        return settle_auditor(read, move, auditor, audited)
     except Exception as exc:
         note("the auditor's place on %s could not be settled" % auditor, exc)
         return unverified_line(auditor), 1
@@ -2536,8 +2620,8 @@ class Terminal:
         """Put the session on `tty` beside `anchor` (or first); its new position."""
         raise NotImplementedError
 
-    def move_left_of(self, tty, anchor):
-        """Put the session on `tty` immediately before `anchor`'s, quietly."""
+    def move_right_of(self, tty, anchor):
+        """Put the session on `tty` immediately after `anchor`'s, quietly."""
         raise NotImplementedError
 
 
@@ -2768,9 +2852,9 @@ class ItermTerminal(Terminal):
             return idx
         return run(go)
 
-    def move_left_of(self, tty, anchor):
+    def move_right_of(self, tty, anchor):
         return served_by("move", {"api": lambda: run(
-            lambda iterm2, connection: move_left_of(iterm2, connection, tty, anchor))})
+            lambda iterm2, connection: move_right_of(iterm2, connection, tty, anchor))})
 
 
 ITERM = ItermTerminal()
@@ -3125,8 +3209,8 @@ class TmuxTerminal(Terminal):
         die("move: the window %s was moved %s %s, and is no longer in the session's listing"
             % (source.window, "after" if right else "before", target.window))
 
-    def move_left_of(self, tty, anchor):
-        self.move(tty, anchor, False, False)
+    def move_right_of(self, tty, anchor):
+        self.move(tty, anchor, True, False)
 
 
 _chosen = {}
@@ -4579,6 +4663,7 @@ def spawn_parser():
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
     p.add_argument("--auditor", action="store_true", default=False)
+    p.add_argument("--of", default="")
     p.add_argument("--coordinator-successor", dest="coordinator_successor",
                     action="store_true", default=False)
     p.add_argument("--resident", action="store_true", default=False)
@@ -4732,19 +4817,23 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                 "session reads '%s': an agent never opens an orchestrator"
                 % (caller[:40] or "no name"))
     if args.auditor:
-        # An auditor is placed, named and reached ONE way (§52): immediately left of its
-        # caller, `Audit: <subject>`, remote control on. Each of these would quietly replace
-        # one of those terms with the launcher's default, so each is refused rather than obeyed.
-        # Its pair is --model and --effort together, or neither (the caller's).
+        # An auditor is placed, named and reached ONE way (§52): immediately right of the
+        # orchestrator it audits, `Audit: <subject>`, remote control on. Each of these would
+        # quietly replace one of those terms with the launcher's default, so each is refused
+        # rather than obeyed. Its pair is --model and --effort together, or neither (the
+        # caller's). The orchestrator it audits is the caller, or the one --of names.
         for flag, given in (("--successor", args.successor), ("--right-of", args.right_of),
                             ("--left-of", args.left_of), ("--title-free", args.title_free),
                             ("--tier", args.tier),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
-                    "left of its caller, reads \"Audit: <subject>\", runs on the pair given "
-                    "with --model and --effort, else on its caller's, and comes up under "
-                    "remote control" % flag)
+                    "right of the orchestrator it audits (its caller, or the one --of names), "
+                    "reads \"Audit: <subject>\", runs on the pair given with --model and "
+                    "--effort, else on its caller's, and comes up under remote control" % flag)
+        if args.of and args.of != "self" and not args.of.startswith("/dev/"):
+            die("spawn: refused: --of names the audited orchestrator's tty (/dev/ttysNNN) or "
+                "self, got '%s'" % args.of)
         if bool(args.model) != bool(args.effort):
             die("spawn: refused: an auditor takes --model and --effort together, or neither "
                 "(the caller's pair): half a pair is a guess at the other half")
@@ -4754,6 +4843,9 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
             die("spawn: refused: an auditor's title reads \"Audit: <subject>\", the subject "
                 "at most 25 characters and neither starting nor ending with a space, got '%s'"
                 % args.title)
+    elif args.of:
+        die("spawn: refused: --of names the orchestrator an auditor audits; it is an "
+            "auditor's, with --auditor")
     elif args.title.startswith(AUDIT_ROLE) or AUDIT_NAME_SHAPE.match(args.title):
         die("spawn: refused: an audit title is an auditor's; spawn it with --auditor, which "
             "places it beside you, keeps it out of every chain and brings it up under remote "
@@ -4925,10 +5017,16 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
         # ignored, and it takes the chain with it once its session can be read (§34).
         side, anchor = "right", "self"
     elif args.auditor:
-        # An auditor is placed immediately LEFT of this session, the chain ignored, and
-        # takes nothing with it (§52) — the operator's layout: the auditor beside its
-        # orchestrator on the left, agents and successor on the right.
-        side, anchor = "left", "self"
+        # An auditor is placed immediately RIGHT of the orchestrator it audits, the chain
+        # ignored, and takes nothing with it (§52) — the operator's layout: the auditor
+        # directly beside its orchestrator, ahead of that orchestrator's agents. That
+        # orchestrator is the caller, or the one --of names: a coordinator launching an audit
+        # an orchestrator proposed is no orchestrator, and its own tab is not where the
+        # auditor belongs.
+        side, anchor = "right", args.of or "self"
+        if anchor in ("self", own) and own and (coord_name_on(own) or registered_coord_on(own)):
+            die("spawn: refused: the coordinator's own tab is not an orchestrator's: an "
+                "auditor it launches takes --of <the audited orchestrator's tty>")
     elif args.wake or args.open_:
         side, anchor = "right", "self"
     elif args.coordinator_successor:
@@ -4949,6 +5047,10 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     # agent joins its caller's chain and only a successor takes it, and only those two may be
     # windows of a home session.
     term = None if DRY_RUN else terminal(agent=effect in ("append", "transfer"))
+    if args.auditor and anchor == "self" and term is not None and in_home_session():
+        # An orchestrator of a home session is shown by a tab of its own, not by the pane it
+        # runs in: the auditor sits right of THAT tab, the one the operator reads.
+        anchor = home_tab_tty(term) or "self"
     if term is ITERM and effect == "append":
         # An orchestrator's agents are windows of its home session. Spawned from its tab
         # before the move into its home, at the end of the turn that named it, they stayed
@@ -5172,9 +5274,10 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     # soon as its tab exists, and said on stdout, where the orchestrator reads the launch.
     misplaced = 0
     if args.auditor:
-        line, misplaced = repair_auditor_place(new_tty, own, term)
+        line, misplaced = repair_auditor_place(new_tty, anchor or own, term)
         if line:
             print(line)
+        remember_auditor(term, new_tty, own)
 
     if args.verify:
         await_host(new_tty, args.dir, launch_epoch, made, "spawn")
@@ -5770,7 +5873,7 @@ def cmd_move(argv):
         anchor = own
     if not args.leftmost and anchor == args.tty:
         die("move: --tty and its anchor are the same session")
-    def guard(is_ours):
+    def guard(is_ours, launched):
         """A session the caller did not launch is not its to place. An orchestrator that
         had never measured its own tty read the listing, took the last tab for its own and
         moved a stranger's session out from between itself and its agents; the script
@@ -5778,7 +5881,8 @@ def cmd_move(argv):
 
         An auditor's tab, and the coordinator's, are read first, by their NAME: each is in
         no chain, so each is nobody's to place but its own session's, whatever a stale chain
-        entry on its tty says (§52)."""
+        entry on its tty says (§52). An auditor the caller itself launched is the exception:
+        the launch recorded it, and the caller that placed it is the one that repairs it."""
         coord = ((coord_name_on(args.tty) or registered_coord_on(args.tty))
                  if args.tty != own else None)
         if coord:
@@ -5790,6 +5894,10 @@ def cmd_move(argv):
             return
         audit = audit_name_on(args.tty) if args.tty != own else None
         if audit:
+            if launched():
+                # The auditor's own launcher placed it, and a place that comes out wrong is
+                # repaired by that launcher's move (§52): the refusal is for a stranger's.
+                return
             if not args.force:
                 die("move: refused: %s is an auditor's tab ('%s'), not this session's to "
                     "place (pass --force to move it anyway)" % (args.tty, audit))
@@ -5806,7 +5914,8 @@ def cmd_move(argv):
         # No app, so no session id and no tab id: the dry run reads the chain the way the
         # rest of the dry run does, on ORCHESTRATOR_SELF_ID and the tty.
         guard(args.tty == own
-              or args.tty in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)])
+              or args.tty in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)],
+              lambda: auditor_placed_by(args.tty, None, SELF_ID))
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
@@ -5815,7 +5924,8 @@ def cmd_move(argv):
     owned = term.owns(args.tty, own)
     if owned is None:
         die("move: no session found on %s" % args.tty)
-    guard(owned)
+    guard(owned, lambda: auditor_placed_by(args.tty, term.identity(args.tty)[0],
+                                           launcher_identity(term, own)))
     idx = term.move(args.tty, anchor, bool(args.right_of), args.leftmost)
     print("moved %s to position %s" % (args.tty, idx))
 

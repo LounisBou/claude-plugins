@@ -95,7 +95,7 @@ hold an answer back to make someone wait.
 
 ## Relaying questions to the operator
 
-After his yes to an audit an orchestrator proposed, you launch it; with no coordinator, the proposer does.
+After his yes to an audit an orchestrator proposed, you launch it, `--of` the proposer's tty; with no coordinator, the proposer does. Its report delivered and its verdict relayed, you close its tab (`close --tty <its tty> --expect-title "Audit: <subject>"`), unless he keeps it.
 
 The operator's order: he has one interface for questions, and it is you. While you run,
 every orchestrator sends you each question meant for him — its own arbitrations, and its
