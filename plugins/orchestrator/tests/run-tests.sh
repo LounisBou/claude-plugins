@@ -5505,11 +5505,9 @@ check "succession prunes the state file and archives the finished journal" "yes|
 check "the predecessor's prune says live archives the settled round" "yes" \
   "$(spells "$ORCH_REFS/succession-predecessor.md" "and archives the round's entries settled over a day ago")"
 # Rule 201: the successor's first task points at its brief's steps 3 to 5 rather than repeating
-# them. Rule 203: move_send refuses a checkout that is not clean and pushed on its own
-# (hooks/tests/moving.test.ts « a dirty or an unpushed checkout refuses the move »). Rule 207
-# merged the rotation steps; its « his go once per machine » sentence is out, on the operator's
+# them. Rule 207 merged the rotation steps; its « his go once per machine » sentence is out, on the operator's
 # ruling (2026-11-04, « A »: restore 2, 5, 6 and 7, remove 1, 3 and 4).
-check "the succession files point at the succession brief's steps, leaves the checkout check to the move, and carries no approval sentence" "no|no|no|no" \
+check "the succession files point at the succession brief's steps and carry no approval sentence" "no|no|no|no" \
   "$(spells "$ORCH_REFS/succession-predecessor.md" "waits for ever) and subscribe to each one's idle notice")|$(spells "$ORCH_REFS/succession-predecessor.md" "never on the host's idle notice, which reaches a working session only when its own turn ends")|$(spells "$ORCH_REFS/pause-opening-move.md" 'your checkouts clean and pushed')|$(spells "$ORCH_REFS/pause-opening-move.md" 'macOS Automation approval')"
 # A successor confirmed its takeover at 75k to 97k tokens because step 1 ordered the spec, the plan,
 # the runbook, the state file and the briefs directory read whole. At takeover it needs what is live,
@@ -5695,7 +5693,7 @@ check "the template points at the lifecycle for the measure, the wait and the cl
   "$(spells "$SUCC" '`references/succession-successor.md`, « Succession — the successor »')|$(grep -qx "### Succession — the successor" "$ORCH_REFS/succession-successor.md" && echo yes || echo no)"
 # The successor reads its own file of the succession, never the predecessor's.
 check "the references split the succession by role, the successor's file at most 3,000 characters" "1|1|1|yes" \
-  "$(grep -cx '### Succession — the predecessor' "$ORCH_REFS/succession-predecessor.md")|$(grep -cx '### Succession — the successor' "$ORCH_REFS/succession-successor.md")|$(grep -cx '### Pause, opening and move' "$ORCH_REFS/pause-opening-move.md")|$(n=$(wc -c < "$ORCH_REFS/succession-successor.md" | tr -d ' '); [ "$n" -gt 0 ] && [ "$n" -le 3000 ] && echo yes || echo no)"
+  "$(grep -cx '### Succession — the predecessor' "$ORCH_REFS/succession-predecessor.md")|$(grep -cx '### Succession — the successor' "$ORCH_REFS/succession-successor.md")|$(grep -cx '### Pause and opening' "$ORCH_REFS/pause-opening-move.md")|$(n=$(wc -c < "$ORCH_REFS/succession-successor.md" | tr -d ' '); [ "$n" -gt 0 ] && [ "$n" -le 3000 ] && echo yes || echo no)"
 check "review and briefs split « Review on evidence » and « Standing rules » into subsections" "yes|yes" \
   "$(awk '/^## Review on evidence$/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/review-verdict.md")|$(awk '/^## Standing rules/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/standing-rules.md")"
 # A successor runs on its predecessor's live pair by --successor alone: the succession line
@@ -10838,29 +10836,6 @@ check "the drop runs only on his yes, after the turn ends" "1" \
   "$([ "$(grep -n 'END THE TURN' "$SLCMD" | head -1 | cut -d: -f1)" -lt "$(grep -n 'coordinator.sh drop --name' "$SLCMD" | head -1 | cut -d: -f1)" ] 2>/dev/null && echo 1 || echo 0)"
 check "the README lists the sleeping command" "yes" "$(spells "$ROOT/README.md" '| `/orchestrator-sleeping` |')"
 
-# Moving an orchestrator between machines, on the operator's word: the coordination section, its
-# trust anchor, the lifecycle bullet, the succession note and the design paragraph.
-check "the coordination skill moves an orchestrator on his order, after opening and before its limits" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "## Moving an orchestrator")|$([ "$(grep -n '^## Opening an orchestrator$' "$COORDSKILL" | cut -d: -f1)" -lt "$(grep -n '^## Moving an orchestrator$' "$COORDSKILL" | cut -d: -f1)" ] 2>/dev/null && [ "$(grep -n '^## Moving an orchestrator$' "$COORDSKILL" | cut -d: -f1)" -lt "$(grep -n '^## Your limits$' "$COORDSKILL" | cut -d: -f1)" ] 2>/dev/null && echo yes || echo no)"
-check "a receiver opens an arrival only on the order the coordinator relayed for that name" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "The coordinator relays the operator's order to the receiver BEFORE the send, and a receiver opens an arrival only when the coordinator relayed that order for that name; files that arrived without it are left unopened and reported.")|$(flat_has "$COORDSKILL" "calling \`move_send\` again with the same arguments")"
-check "the lifecycle moves an orchestrator on his word, sending and receiving" "yes|yes" \
-  "$(flat_has "$ORCH_REFS/pause-opening-move.md" "**A move, on the operator's word.**")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "only on the relayed order for that name")"
-check "an orchestrator that arrived by a move re-verifies every checkout from git first" "yes|yes" \
-  "$(flat_has "$SUCC" "**Arrived by a move**: first re-verify each checkout from git")|$(flat_has "$ORCH_REFS/succession-successor.md" "re-verify each checkout from git first: clone or fetch, branch and head against your record")"
-check "the design describes the move's messages and its two notices" "yes|yes|yes" \
-  "$(flat_has "$ROOT/docs/design.md" "A move is carried by marked messages")|$(flat_has "$ROOT/docs/design.md" "the address pinned at the first answer")|$(flat_has "$ROOT/docs/design.md" "the only text a model reads")"
-check "an orchestrator that moved itself replies on the outcome, to the session that relayed the order" "yes|yes" \
-  "$(flat_has "$ORCH_REFS/pause-opening-move.md" "acknowledged, you first reply \`moved <receiver> brief=<the brief path the notice gives>\` to the session that relayed the order, then you end")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "failed, you reply \`move-failed <reason>\` to it and end nothing")"
-check "the coordinator closes a moved orchestrator's tab on its moved reply and tells a move-failed reason to the operator" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "you close its tab on its \`moved\` reply")|$(flat_has "$COORDSKILL" "a \`move-failed\` reply is told to the operator through your round, with its reason")"
-check "the receiver tells the arrived session it arrived by a move, once it is verified running" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "send it ONE message saying that it arrived by a move from the origin the notice names, so that it first re-verifies each checkout from git")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "send it ONE message saying that it arrived by a move from the origin the notice names, so that it first re-verifies each checkout from git")"
-check "the design paragraph on a move cites the coordination skill for the trust anchor and carries its order's date" "yes|yes|no" \
-  "$(flat_has "$ROOT/docs/design.md" "the order the coordinator relayed for that name (the coordination skill's « Moving an orchestrator » in \`skills/coordination/SKILL.md\`)")|$(flat_has "$ROOT/docs/design.md" "an orchestrator is moved from one machine to another: his order of 2026-10-16")|$(flat_has "$ROOT/docs/design.md" "(section 9.5 above), which a manifest cannot supply")"
-check "the coordination section names the move tools in full at their first mention" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "messages (\`mcp__orchestrator__move_send\`, which only")|$(flat_has "$COORDSKILL" "(the title guard, \`mcp__orchestrator__end_session\` where the host refuses)")"
-
 # Remote rows: the rows the hooks module received from orchestrators on other machines, read
 # beside the same local sessions. A fresh row is listed in each wait form; a stale one, one a
 # local session names and a temporary file are passed over; a malformed file is unread (exit 2).
@@ -11609,28 +11584,27 @@ leanl() { lean "$@" | sed -n 's/^launch=//p'; }
 leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-config|mcp-config|permission-mode) /'; }
 leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
-LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
 # The tools only an orchestrator calls: an implementer agent is never given them.
 LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
-check "an agent loses the five unused tools, the three that move an orchestrator and the four only an orchestrator calls" "$LEANBASE $LEANMOVE $LEANAGENT" \
+check "an agent loses the five unused tools and the four only an orchestrator calls" "$LEANBASE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
-check "an orchestrator loses the five and the four servers it never calls, and keeps the three" "$LEANBASE $LEANORCH" \
+check "an orchestrator loses the five and the four servers it never calls, and keeps the four" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
-check "a title of no role is read as an agent's: it loses all twelve" "$LEANBASE $LEANMOVE $LEANAGENT" \
+check "a title of no role is read as an agent's: it loses all nine" "$LEANBASE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
-check "an auditor loses the five and the three, and keeps the four only an orchestrator calls" "$LEANBASE $LEANMOVE" \
+check "an auditor loses the five and keeps the four only an orchestrator calls" "$LEANBASE" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
-check "--keep-tool brings one of the four back to an agent" "$LEANBASE $LEANMOVE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
+check "--keep-tool brings one of the four back to an agent" "$LEANBASE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
   "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
-check "the coordinator's successor keeps the three" "$LEANBASE" \
+check "the coordinator's successor keeps the four" "$LEANBASE" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
-check "a successor keeps the three and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
+check "a successor keeps the four and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
-check "a woken orchestrator and an opened one keep the three and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
+check "a woken orchestrator and an opened one keep the four and lose the four servers" "$LEANBASE $LEANORCH|$LEANBASE $LEANORCH" \
   "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
   "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__cloudflare,mcp__bugs-bot,mcp__norms,mcp__implement$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
@@ -11642,13 +11616,13 @@ check "with the account's connectors the removed set is followed by the mode" "1
   "$(mcpd --account-connectors --mcp none | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* ReportFindings .* --permission-mode ')"
 
 # The two options.
-check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
+check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANAGENT" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact | leanset)"
-check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE $LEANAGENT 'Bash(git push:*)'" \
+check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANAGENT 'Bash(git push:*)'" \
   "$(leanl --title 'Agent: x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
-check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE $LEANAGENT WebSearch|1" \
+check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANAGENT WebSearch|1" \
   "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
-check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT WebSearch" \
+check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
 check "--keep-tool brings back one server an orchestrator loses by default, and an agent never loses them" "$LEANBASE mcp__cloudflare mcp__bugs-bot mcp__implement|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool mcp__norms | leanset)|$(leanl --title 'Agent: x' | leanset | grep -c mcp__norms)"
@@ -11660,7 +11634,7 @@ check "an empty name is refused for either option, before any tab exists" "1|1|1
   "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
-check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT|$LEANBASE $LEANMOVE $LEANAGENT WebSearch|$LEANBASE $LEANMOVE $LEANAGENT WebSearch" \
+check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANAGENT|$LEANBASE $LEANAGENT WebSearch|$LEANBASE $LEANAGENT WebSearch" \
   "$(leanl --title 'Agent: x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent: x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent: x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
@@ -11674,7 +11648,7 @@ check "rotate passes both options to the replacement it launches" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent: rotated.')"
 check "rotate refuses an empty name and the same name on both, before it spawns anything" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool '' >/dev/null 2>&1; echo $?)|$(leanrot --old-tty /dev/ttys901 --keep-tool X --drop-tool X >/dev/null 2>&1; echo $?)"
-check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE $LEANAGENT" \
+check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANAGENT" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool 'Artifact ' | sed -n 's/^launch=//p' | leanset)"
 
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
@@ -11725,8 +11699,7 @@ import json, sys
 def att(**a):
     return json.dumps({"type": "attachment", "attachment": a}, ensure_ascii=False)
 tools = [{"name": "Bash", "description": "run", "schema": {}},
-         {"name": "Artifact", "description": "x" * 200, "schema": {}},
-         {"name": "mcp__orchestrator__move_send", "description": "move", "schema": {}}]
+         {"name": "Artifact", "description": "x" * 200, "schema": {}}]
 lines = [
     att(type="prompt_snapshot", systemPrompt=["s"]),
     att(type="prompt_snapshot", systemPrompt=["s"], tools=tools),
@@ -11745,12 +11718,10 @@ check "a loaded tool is one row: kind, name, characters, tokens at 0.2215 each, 
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | Bash ')"
 check "the heaviest loaded tool comes first, with every role that loses it" "loaded | Artifact | $ARTCHARS | $("$py" -c "print(int(round($ARTCHARS * 0.2215)))") | Orch,Coord,Audit,Agent" \
   "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded' | head -1)"
-check "a move tool names the two roles whose default removes it" "1" \
-  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__move_send | [0-9]* | [0-9]* | Audit,Agent$')"
 check "a tool only an orchestrator calls names the one role whose default removes it" "1" \
   "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__declare_wait | [0-9?]* | [0-9?]* | Agent$')"
-check "a removed name the transcript lacks is listed with ? for what it cannot say" "loaded | SendFeedback | ? | ? | Orch,Coord,Audit,Agent|loaded | mcp__orchestrator__end_session | ? | ? | Audit,Agent" \
-  "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | SendFeedback ')|$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | mcp__orchestrator__end_session ')"
+check "a removed name the transcript lacks is listed with ? for what it cannot say" "loaded | SendFeedback | ? | ? | Orch,Coord,Audit,Agent" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | SendFeedback ')"
 check "a removed name that is deferred stays a deferred row, with its roles, and is not listed twice" "deferred | Workflow | 8 | 2 | Orch,Coord,Audit,Agent|0" \
   "$(printf '%s\n' "$TOOLSOUT" | grep '^deferred | Workflow ')|$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | Workflow ')"
 check "a deferred name that is not removed shows no role" "deferred | CronCreate | 10 | 2 | -" \

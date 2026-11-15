@@ -135,10 +135,11 @@ the marketplace is pointed at it: a new session reads the new directory, a runni
 one it loaded. `--rollback` points back at the commit installed before; `--status` prints the
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
 Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
-`deploy.ts --status` fails is refused before `current` moves), its errors kept in a log:
+`deploy.ts --status` fails is refused before `current` moves), its output and errors kept in a
+log, which every run writes to, no-op runs included:
 
 ```
-*/5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >/dev/null 2>>~/.claude/deploys/lounisbou/deploy.log
+*/5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >>~/.claude/deploys/lounisbou/deploy.log 2>&1
 ```
 
 The last failure is also kept in `installed.json` until a run succeeds, and `--status` prints it.

@@ -23,7 +23,7 @@ VERIFY each « Live state » item on the artifacts, ONE named command each, outp
 
 ## Your first task, in this exact order
 
-**Woken from a pause**: step 3 finds no agent, step 4 is void — no « takeover confirmed », nothing to close. **Arrived by a move**: first re-verify each checkout from git. Your prompt says which.
+**Woken from a pause**: step 3 finds no agent, step 4 is void — no « takeover confirmed », nothing to close.
 
 Measure, wait and close: `references/succession-successor.md`, « Succession — the successor ».
 
