@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, projectOf, renamedTo, repositoryOf, roleOf,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, originOf, projectOf, renamedTo, repositoryOf, roleOf,
   sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, transcriptToolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
@@ -195,9 +195,41 @@ test('agent_spawned and agent_closed: a subagent, its type and model, its first 
     ...HEAD, event: 'agent_spawned', kind: 'subagent', child: 'a1b2c3', subagent_type: 'Explore', model: 'claude-haiku-5-5',
     requested_model: 'haiku', background: false, provider: 'engine', description: 'Explore the store',
   })
-  assert.deepEqual(agentClosed(AT, S, 'a1b2c3', AT - 2000, F('turn.complete.child')), {
-    ...HEAD, event: 'agent_closed', kind: 'subagent', child: 'a1b2c3', duration_ms: 2000, reason: 'answer',
+  assert.deepEqual(agentClosed(AT, S, 'a1b2c3', { run: 1, since: AT - 2000 }, F('turn.complete.child')), {
+    ...HEAD, event: 'agent_closed', kind: 'subagent', child: 'a1b2c3', run: 1, duration_ms: 2000, reason: 'answer',
   })
+})
+
+test('agent_closed: a later run is counted from its own start, or by the host\'s figure when that start was not seen', () => {
+  const child = F('turn.complete.child') as Record<string, unknown>
+  assert.deepEqual([agentClosed(AT, S, 'a1b2c3', { run: 2, since: AT - 300 }, child)['run'], agentClosed(AT, S, 'a1b2c3', { run: 2, since: AT - 300 }, child)['duration_ms']], [2, 300])
+  const unseen = agentClosed(AT, S, 'a1b2c3', { run: 3 }, { ...child, durationMs: 4200 })
+  assert.deepEqual([unseen['run'], unseen['duration_ms']], [3, 4200])
+  // A child whose spawn the module did not see: a close with no rank.
+  const unknown = agentClosed(AT, S, 'a1b2c3', {}, { ...child, durationMs: 70 })
+  assert.deepEqual(['run' in unknown, unknown['duration_ms']], [false, 70])
+})
+
+test('origin: the launcher\'s orchestrator and tier, on every event the collector buffers', () => {
+  assert.deepEqual(originOf('Orch: billing [a1b2c3]', 'Deep'), { parent: 'Orch: billing [a1b2c3]', tier: 'deep' })
+  assert.deepEqual(originOf(undefined, undefined), {})
+  assert.deepEqual(originOf('  ', 'not a tier!'), {})
+  const c = new Collector()
+  c.setOrigin(originOf('Orch: billing [a1b2c3]', 'standard'))
+  c.push(firstTurn(AT, S, undefined, undefined))
+  c.setTitle('Agent: store')
+  // A launched session's spawn keeps the child's own tier beside the tier this session was launched on.
+  c.push(...toolEvents(AT, S, { tool: 'Bash', command: 'iterm-agent.sh spawn --title "Agent: x" --tier light' }, F('result.ok'), undefined, 1))
+  const lines = c.drain().trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  assert.deepEqual(lines.map(l => [l['event'], l['parent'], l['launch_tier'], l['tier']]), [
+    ['first_turn', 'Orch: billing [a1b2c3]', 'standard', undefined],
+    ['tool_call', 'Orch: billing [a1b2c3]', 'standard', undefined],
+    ['agent_spawned', 'Orch: billing [a1b2c3]', 'standard', 'light'],
+  ])
+  assert.equal(CUTS['parent'], 80)
+  const plain = new Collector()
+  plain.push(firstTurn(AT, S, undefined, undefined))
+  assert.equal(plain.drain().includes('parent'), false)
 })
 
 test('roles from titles; projects from directories; MCP names', () => {
@@ -230,9 +262,25 @@ test('Collector: buffers until drained, flags the flush threshold, pairs checks 
   assert.equal(c.takeCheck(undefined), undefined)
   c.spawned('a', 5)
   c.spawned(undefined, 6)
-  assert.equal(c.closing('a'), 5)
-  assert.equal(c.closing('a'), undefined)
-  assert.equal(c.closing(undefined), undefined)
+  c.runStarted('a', 7)
+  assert.deepEqual(c.closing('a'), { run: 1, since: 5 })
+})
+
+test('Collector: each run of a subagent is ranked from its spawn; a later run starts at its first turn', () => {
+  const c = new Collector()
+  c.spawned('a', 5)
+  c.runStarted('a', 6)
+  assert.deepEqual(c.closing('a'), { run: 1, since: 5 })
+  // Sent a message, the child runs again: two turn starts, the first is the run's.
+  c.runStarted('a', 50)
+  c.runStarted('a', 60)
+  assert.deepEqual(c.closing('a'), { run: 2, since: 50 })
+  // A run whose start was not seen keeps its rank and has no start.
+  assert.deepEqual(c.closing('a'), { run: 3 })
+  // A child spawned before the module loaded: no rank.
+  c.runStarted('b', 70)
+  assert.deepEqual(c.closing('b'), { since: 70 })
+  assert.deepEqual(c.closing('b'), {})
 })
 
 const SHA = '0123456789abcdef0123456789abcdef01234567'

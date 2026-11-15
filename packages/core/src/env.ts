@@ -6,6 +6,10 @@
 export const ENV = {
   /** Set by the orchestrator's launcher in every session it spawns. */
   spawned: 'ORCHESTRATOR_SPAWNED',
+  /** Set by the launcher in a session spawned with `--orchestrator`: the name of the orchestrator it reports to. */
+  reportsTo: 'ORCHESTRATOR_REPORTS_TO',
+  /** Set by the launcher in a session spawned with `--tier`: the capability tier it was launched on. */
+  tier: 'ORCHESTRATOR_TIER',
   /** A checkout of the github plugin that wins over the host's install record. */
   githubRoot: 'CLAUDE_GITHUB_ROOT',
   /** The context gate as a percentage of the window, and as a number of tokens. */

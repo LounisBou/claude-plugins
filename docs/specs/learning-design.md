@@ -1,10 +1,11 @@
 # The learning system — design
 
-**Status: proposal for the next version; the operator has answered questions 4 and 9.**
-They answered « A » to each on 2026-11-14, and questions 5 to 8, 10 and 11 resume under the
-condition stated after question 11. The design is decided or scheduled only as the answers say;
-the current program does not build it. One part is built
-ahead of the answers, small and undoable: the learning event contract of phase L2
+**Status: the operator has answered questions 4 and 9.**
+They answered « A » to each on 2026-11-14, and questions 5 to 8, 10 and 11 are taken at their
+recommendation. The design is decided or scheduled only as the answers say;
+the program builds it (« Questions 5 to 8, 10 and 11 » below). Built on `main`: the plugins'
+journals, `plugins/learning` with `/learning:health` and the distiller's candidates
+(`skills/learning/scripts/distil.ts`), and the learning event contract of phase L2
 (`packages/core/src/learning.ts`), whose window, retention and count are the operator's answer to
 question 9 (a window of 30 days, journals kept 90 days and at most 6,000 events a plugin).
 The event's kinds and fields are version 1's list, open to additions as new versions (an audit
@@ -18,8 +19,7 @@ match that evidence and should stay: code first, and a prompt rule only by displ
 improve task success, Gloaguen et al. 2026, arXiv:2602.11988); the session that learns is never the session
 that worked; only code-computed grades decide.
 
-For the version after `program-design.md`, whose priorities, conventions and constraints govern
-it; nothing here is built by the current program. Paths are relative to the repository root;
+`program-design.md`'s priorities, conventions and constraints govern it. Paths are relative to the repository root;
 line numbers are at `main` `5a78a08`.
 
 ## Why
@@ -313,8 +313,8 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   check-run failures per pull request (the forge), cost per pull request where a dispatch record
   maps sessions to it, eval pass rate from the last baselines it is given. No model turn
   (conventions, « Code decides »), no new field in `deck.json` (program non-goal 3).
-- **Canary.** Before the cutover, the `next` profile is the canary (`migration.md`). After it,
-  question 8.
+- **Canary.** Question 8: the `next` profile that was to be one before the cutover was left
+  (`migration.md`).
 
 ### 8. Safeguards
 

@@ -27,6 +27,7 @@ import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type Rem
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
+import { RECORDS_DIR } from '../core/orchestration.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
@@ -35,7 +36,7 @@ import { openFor, todoCounts, whoAmI } from './todo.ts'
 import { todoFile, todoName } from './todo-format.ts'
 
 // The nouns the commands hold.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'clock'>
 
 // The bound on this file's reads — the same convention the supervision domain
 // inherited from the guards: well inside the time a command's answer owns, so
@@ -241,7 +242,7 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
 // that itself loses the race is said as unreadable rather than as absent.
 async function progressText($: Held): Promise<string> {
   const id = await $.session.id()
-  const registry = `${await stateDir($)}/records/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+  const registry = `${await stateDir($)}/${RECORDS_DIR}/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
   const bound = await readBoundMs($)
   const listed = await withDeadline(() => $.fs.read(registry).catch(() => ''), bound)
   if (isDegradedPass(listed)) {

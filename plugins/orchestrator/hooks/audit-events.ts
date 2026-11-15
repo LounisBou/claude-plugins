@@ -7,12 +7,9 @@
 // wait's `blocks` never enter one.
 import {
   auditEvent, learningEvent, prRefsOf, type AuditEvent, type Decision, type Edge, type EventInput, type Facts, type FindingSeverity,
-  type LearningEvent, type Verdict, type WaitKind as JournalWaitKind,
+  type LearningEvent, type Verdict,
 } from '../core/learning.ts'
-
-// The kinds a turn declares (stop-gate.ts WAIT_KINDS); the journal's contract still names `tool`,
-// which past journals carry.
-type WaitKind = Exclude<JournalWaitKind, 'tool'>
+import type { WaitKind } from '../core/orchestration.ts'
 
 export const PLUGIN = 'orchestrator'
 

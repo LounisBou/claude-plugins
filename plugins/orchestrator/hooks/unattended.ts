@@ -9,10 +9,14 @@ import {
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
-import { launcherOf } from '../core/orchestration.ts'
+import { launcherOf, RECORDS_DIR } from '../core/orchestration.ts'
 import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
+import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
+
+// The nouns a reading holds.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 
 // The bound of one reading: the forge's lists, the launcher's, the records and the archive writes.
 export const UNATTENDED_BOUND_MS = 20_000
@@ -53,18 +57,18 @@ export function unattendedRefusal(line: string): string {
 
 export const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
 
-export async function readOr($: any, path: string): Promise<string> {
+export async function readOr($: Host<'fs'>, path: string): Promise<string> {
   return String(await $.fs.read(path).catch(() => ''))
 }
 
 // The records a session registered (`<state>/records/<id>`, one path a line).
-async function registered($: any, state: string, sessionId: string): Promise<string[]> {
-  return (await readOr($, `${state}/records/${safe(sessionId)}`)).split('\n').map(line => line.trim()).filter(Boolean)
+export async function registered($: Host<'fs'>, state: string, sessionId: string): Promise<string[]> {
+  return (await readOr($, `${state}/${RECORDS_DIR}/${safe(sessionId)}`)).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
 // The lines of the records a session registered, each with its record and its text; `own` keeps only
 // those its orchestration owns, as the stop gate reads them.
-async function linesOf($: any, records: readonly string[], own?: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
+async function linesOf($: Host<'fs'>, records: readonly string[], own?: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
   const read: { path: string; text: string; lines: LedgerLine[] }[] = []
   for (const path of records) {
     if (own !== undefined && !isOwnRecord(ownerOf(await readOr($, `${path}.owner`)), own)) continue
@@ -83,7 +87,7 @@ function claims(line: LedgerLine, sessionLive: boolean, now: number): boolean {
 }
 
 // The pull requests the other orchestrators on this machine record, while their claim is alive: theirs to attend.
-async function othersClaims($: any, state: string, sessionId: string, now: number): Promise<Set<string>> {
+async function othersClaims($: Held, state: string, sessionId: string, now: number): Promise<Set<string>> {
   const store = await storeOf($)
   const entries: { name: string; kind: string }[] = await $.fs.list(`${store}/sessions`).catch(() => [])
   const others: { name: string; row: SessionRow }[] = []
@@ -106,14 +110,14 @@ async function othersClaims($: any, state: string, sessionId: string, now: numbe
 
 // Moves lines to the archive beside their record: the archive written first, so a move cut short
 // leaves the line in both, never in neither.
-async function archive($: any, path: string, lines: readonly LedgerLine[]): Promise<void> {
+async function archive($: Held, path: string, lines: readonly LedgerLine[]): Promise<void> {
   const io = storeIo($)
   await updateOver(io, archiveOf(path), current => withArchived(current ?? '', lines, new Date()))
   await updateOver(io, path, current => withoutLines(current ?? '', lines.map(line => prKey(line.repo, line.pr))))
 }
 
 // The reading of an orchestrator session; null for any other session.
-export async function readUnattended($: any, sessionId: string, now: number = Date.now()): Promise<Reading | null> {
+export async function readUnattended($: Held, sessionId: string, now: number = Date.now()): Promise<Reading | null> {
   const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
   if (row?.role !== 'orchestrator' || !row.name) return null
   const state = await stateDir($)
@@ -140,7 +144,7 @@ export async function readUnattended($: any, sessionId: string, now: number = Da
       try {
         await archive($, record.path, ended)
       } catch (err) {
-        await logLine($, 'unattended', `archive of ${record.path} failed: ${(err as Error).message}`)
+        await logLine($, 'unattended', `archive of ${record.path} failed: ${messageOf(err)}`)
       }
     }
     kept.push(...record.lines.filter(line => !ended.includes(line)))
@@ -169,20 +173,20 @@ export async function readUnattended($: any, sessionId: string, now: number = Da
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
-export async function boundedReading($: any, sessionId: string): Promise<Reading | null> {
+export async function boundedReading($: Held, sessionId: string): Promise<Reading | null> {
   try {
     const done = await withDeadline(readUnattended($, sessionId), UNATTENDED_BOUND_MS)
     if (!isDegradedPass(done)) return done
     await logLine($, 'unattended', `the reading did not finish within ${UNATTENDED_BOUND_MS} ms`)
   } catch (err) {
-    await logLine($, 'unattended', `the reading failed: ${(err as Error).message}`)
+    await logLine($, 'unattended', `the reading failed: ${messageOf(err)}`)
   }
   return null
 }
 
 // What the declared wait asks before it takes a done or a deferred: the refusal while a pull request
 // is unattended, else null. Handed to wait.ts by register.ts.
-export async function holdsDone($: any, wait: DeclaredWait): Promise<string | null> {
+export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
   const reading = await boundedReading($, await $.session.id())
   return reading !== null && reading.list.length > 0 ? unattendedRefusal(unattendedLine(reading.list, []) ?? '') : null
@@ -191,11 +195,11 @@ export async function holdsDone($: any, wait: DeclaredWait): Promise<string | nu
 // The lines each turn end leaves for the next turn's context, by session.
 const pending = new Map<string, string[]>()
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Held>): void {
   // The lines the last reading of each session had: a line met again is no news, the pane and the
   // refusal of a done still carry it, so the context says only what changed since the turn before.
   const lastRead = new Map<string, string[]>()
-  on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.complete', {}, async ($, e, next) => {
     if (e.agentId) return next(e)
     try {
       const sessionId = await $.session.id()
@@ -211,16 +215,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread })
       }
     } catch (err) {
-      await logLine($, 'unattended', (err as Error).message)
+      await logLine($, 'unattended', messageOf(err))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'unattended', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // The line the last turn end left, said once beside the next prompt.
-  on('prompt.submit', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('prompt.submit', {}, async ($, e, next) => {
     try {
       const sessionId = await $.session.id()
       const said = pending.get(sessionId)
@@ -229,10 +233,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return next({ ...e, context: [...(e.context ?? []), ...said] })
       }
     } catch (err) {
-      await logLine($, 'unattended', (err as Error).message)
+      await logLine($, 'unattended', messageOf(err))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, 'unattended', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })

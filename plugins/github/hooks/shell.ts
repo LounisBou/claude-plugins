@@ -25,7 +25,8 @@ const ENGINE_VALUED = new Set([
 // stdin, which the command line does not show: it is no call read here.
 export type EngineCall = {
   command: string
-  repo?: string
+  // Present and undefined when `--repo` ends the words with no value.
+  repo?: string | undefined
   positionals: string[]
   opts: Array<[string, string | undefined]>
 }
@@ -36,14 +37,15 @@ export function engineStart(argv: string[]): number | undefined {
   let k = 0
   if (PYTHON.test(argv[0] ?? '')) {
     k = 1
-    while (k < argv.length && argv[k].startsWith('-')) k += PYTHON_VALUED.has(argv[k]) ? 2 : 1
+    while (k < argv.length && (argv[k] ?? '').startsWith('-')) k += PYTHON_VALUED.has(argv[k] ?? '') ? 2 : 1
   }
   const script = argv[k] ?? ''
   if (ENGINE_SCRIPT.test(script)) return k + 1
   let first: string | undefined
   for (let j = k + 1; j < argv.length && first === undefined; j++) {
-    if (ENGINE_GLOBAL_VALUED.has(argv[j])) j++
-    else if (!argv[j].startsWith('-')) first = argv[j]
+    const word = argv[j] ?? ''
+    if (ENGINE_GLOBAL_VALUED.has(word)) j++
+    else if (!word.startsWith('-')) first = word
   }
   if (k > 0 && SCRIPT_VARIABLE.test(script) && first !== undefined && ENGINE_SUBCOMMAND.test(first)) return k + 1
   return undefined
@@ -57,7 +59,7 @@ export function engineWords(words: string[]): EngineCall | undefined {
   const call: EngineCall = { command: '', positionals: [], opts: [] }
   let optionsEnded = false
   for (let j = 0; j < words.length; j++) {
-    const word = words[j]
+    const word = words[j] ?? ''
     if (word === '--' && !optionsEnded) {
       optionsEnded = true
       continue
@@ -93,7 +95,7 @@ export function engineCall(argv: string[]): EngineCall | undefined {
 // The value the last setting of an engine option gives, or undefined.
 export function engineOption(call: EngineCall, flag: string): string | undefined {
   const set = call.opts.filter(([f]) => f === flag)
-  return set.length > 0 ? set[set.length - 1][1] : undefined
+  return set.length > 0 ? set[set.length - 1]?.[1] : undefined
 }
 
 export function engineFlag(call: EngineCall, flag: string): boolean {

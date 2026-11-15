@@ -256,25 +256,23 @@ fmt_tokens() {
   if [ "$1" -ge 1000 ]; then printf '%dk' $(( $1 / 1000 )); else printf '%d' "$1"; fi
 }
 
-# The orchestration's contract, core's orchestration.ts as data: where the measure files lie.
+# Core's contracts as data: where the measure files lie (orchestration.ts) and the prefixes of
+# the session names (names.ts).
 case ${BASH_SOURCE[0]} in */*) here=${BASH_SOURCE[0]%/*} ;; *) here=. ;; esac
 contract="$here/../core/orchestration.json"
 
 # The session's context gate, in tokens: the figure the orchestrator's module writes in the
 # session's measure file at each turn, so the bar shows the gate the session is held to.
 # Prints nothing without a measure file.
-# The gate only applies to orchestration sessions: they are named "Orch: …",
-# "Agent: …", "Audit: …" or "Coord: …", or "Orch : …" in the former shape that
-# sessions started before the change still carry.
+# The gate only applies to orchestration sessions: a name of one of core's prefixes, a blank
+# before its colon or none.
 ctx_gate_tokens() {
   local name=${session_name#\"} dir file
-  case "$name" in
-    "Orch:"*|"Agent:"*|"Audit:"*|"Coord:"*|"Orch :"*|"Agent :"*|"Audit :"*|"Coord :"*) ;;
-    *) return 0 ;;
-  esac
   case "$session_id" in ''|*[!A-Za-z0-9_-]*) return 0 ;; esac
   [ -f "$contract" ] || return 0
-  dir=$(jq -r '.measure | "\(.module_dir)/\(.dir)"' "$contract" 2>/dev/null) || return 0
+  dir=$(jq -r --arg name "$name" --slurpfile names "$here/../core/names.json" 'select($names[0].roles | keys
+    | any(. as $w | $name | startswith($w + ":") or startswith($w + " :"))) | .measure | "\(.module_dir)/\(.dir)"' "$contract" 2>/dev/null) || return 0
+  [ -n "$dir" ] || return 0
   file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$dir/$session_id.json"
   [ -f "$file" ] || return 0
   jq -r '.gate_tokens // empty' "$file" 2>/dev/null
