@@ -291,6 +291,18 @@ test('a line no prompt has said yet is kept across turn ends, while it still hol
   expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
 })
 
+test('a line owed by a turn end whose prompt has not come yet is dropped by the quiet turn end that follows', async () => {
+  const handlers = mounted()
+  const { dollar: owing } = world()
+  const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
+  // The memory is shared by the file's tests: a prompt empties whatever an earlier one left owed.
+  await handlers['prompt.submit'](owing, { text: 'first' }, (x: any) => x)
+  // A turn end leaves its line owed, no prompt is submitted, then a quiet turn end: the line stopped holding.
+  await handlers['turn.complete'](owing, { reason: 'answer' }, (x: unknown) => x)
+  await handlers['turn.complete'](quiet, { reason: 'answer' }, (x: unknown) => x)
+  expect((await handlers['prompt.submit'](quiet, { text: 'go' }, (x: any) => x)).context).toBe(undefined)
+})
+
 test('a turn end with nothing unattended leaves no line', async () => {
   const { dollar } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   const handlers = mounted()

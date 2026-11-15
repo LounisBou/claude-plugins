@@ -602,19 +602,26 @@ function verdict(ctx: Context, id: string, args: readonly string[]): void {
   if (words === '') die(ctx, 'verdict: --words "<a few words>" is required')
   if (words.includes('\n') || words.length > VERDICT_WORDS_MAX) die(ctx, `verdict: --words is one line of at most ${VERDICT_WORDS_MAX} characters: the findings stay in their index`)
   if (findings !== '' && !findings.startsWith('/')) die(ctx, `verdict: --findings is the absolute path of the review's findings index, got: ${findings}`)
-  const unreviewed = text(or(field(rowOf(ctx, id)['review'], 'head'), '')) === ''
+  const reviewedHead = text(or(field(rowOf(ctx, id)['review'], 'head'), ''))
+  const unreviewed = reviewedHead === ''
+  // `--reviewed`: the verdict is the review of its head (the review tool's), so a row whose review
+  // is of another head, or of none, gets a review at this one, as `review` would write it.
+  const replaced = reviewed && reviewedHead !== head
   if (unreviewed && !reviewed) warn(ctx, `verdict: row ${id} has no review recorded: recording the verdict anyway`)
   const at = stamp(ctx)
   rewrite(ctx, id, r => {
     const held = field(r, 'review')
     const object = typeof held === 'object' && held !== null && !Array.isArray(held) ? (held as Row) : {}
-    // `--reviewed`: the verdict is the review of its head (the review tool's), so a row with none gets it.
-    if (unreviewed && reviewed) Object.assign(object, { head, norms: '', at })
+    // The review of another head is replaced whole: its correction round answered that head, not this one.
+    if (replaced) {
+      for (const key of Object.keys(object)) delete object[key]
+      Object.assign(object, { head, norms: '', at })
+    }
     // The rounds the row counted when the verdict fell: a pass at 1 is a first-pass success.
     object['verdict'] = { head, result, words, findings: findings === '' ? null : findings, rounds: asNumber(r['rounds']), at }
     r['review'] = object
   })
-  if (unreviewed && reviewed) noteStep(ctx, 'review', id, 'review', 'end', head)
+  if (replaced) noteStep(ctx, 'review', id, 'review', 'end', head)
   say(ctx, `row ${id}: ${result} — ${words} — findings: ${findings || 'none'}`)
 }
 

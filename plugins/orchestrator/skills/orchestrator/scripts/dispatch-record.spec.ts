@@ -250,12 +250,20 @@ test('verdict --reviewed is itself the review at its head: it records the head w
     head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z',
     verdict: { head: 'abc1234', result: 'pass', words: 'clean', findings: null, rounds: 0, at: '2026-11-08T10:11:12Z' },
   })
-  // A review the row already holds is kept, as are its correction round and its other fields.
-  await cli(['fixed', r, '1', '--head', 'def5678'])
-  await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', 'ok', '--reviewed'])
+  // A review the row already holds at the verdict's head is kept, as is its correction round.
+  await cli(['fixed', r, '1', '--head', 'abc1234'])
+  await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'accepted', '--words', 'ok', '--reviewed'])
   const kept = rows()[0]?.['review'] as Record<string, unknown>
   assert.equal(kept['head'], 'abc1234')
-  assert.deepEqual(kept['fixed'], { head: 'def5678', at: '2026-11-08T10:11:12Z' })
+  assert.deepEqual(kept['fixed'], { head: 'abc1234', at: '2026-11-08T10:11:12Z' })
+  // A review of another head is the review of an earlier round: the verdict replaces it, its correction round with it.
+  await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', 'ok', '--reviewed'])
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'def5678', norms: '', at: '2026-11-08T10:11:12Z',
+    verdict: { head: 'def5678', result: 'accepted', words: 'ok', findings: null, rounds: 1, at: '2026-11-08T10:11:12Z' },
+  })
+  const again = await cli(['fixed', r, '1', '--head', '9990000'])
+  assert.doesNotMatch(again, /already has its correction round/)
   // Without the flag the warning stays: a person who forgot `review` is told.
   const second = await cli(['open', r, '--class', 'c', '--tier', 'deep'])
   assert.equal(second.startsWith('0|2'), true)
@@ -495,6 +503,25 @@ test('a row\'s life is written to the journal: each step with its time, its reco
     assert.ok(parseJournalEvent(event), JSON.stringify(event))
   }
   assert.ok(!JSON.stringify(d.events).includes('secret'))
+})
+
+test('a verdict --reviewed is the review of its head: it leaves the review step in the journal, the head with it', async () => {
+  await withGoals()
+  const d = journaled()
+  const head = 'd'.repeat(40)
+  const none = { repo: null, pr: null, head: null }
+  await cli(['open', rec(), '--class', 'feature', '--tier', 'deep'], d)
+  d.events.length = 0
+  // A row with no review: the verdict records the head and says so.
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean', '--reviewed'], d)
+  assert.deepEqual(factsOf(d.events), [
+    ['step', 'orchestrator.dispatch.review', { step: 'review', edge: 'end', record: 'p/r.jsonl', row: 1, result: null }, { ...none, head }],
+  ])
+  // Without the flag, or with the review already at that head, the verdict says no review step.
+  d.events.length = 0
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean', '--reviewed'], d)
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean'], d)
+  assert.deepEqual(d.events, [])
 })
 
 test('a row is linked to the sessions that worked it, its pull request and the goals it met, by names alone', async () => {
