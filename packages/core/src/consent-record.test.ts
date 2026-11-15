@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, leadingChoice, namesOtherSubject, opensChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
   v: 1, subject: { kind: 'e2e-waiver', repo: 'Owner/name', pr: 7 }, entry: 's1-abc',
   question: 'Waive E2E on name#7?', answer: 'yes, no E2E for this one, 2026-11-08', by: 'pane', at: '2026-11-08T00:00:00Z',
 }
+
+const SUBJECT = { kind: 'e2e-waiver' as const, repo: 'Acme/App', pr: 7 }
+const LEADING = { subject: SUBJECT }
 
 describe('consent records', () => {
   it('reads a record that keeps the contract', () => {
@@ -38,6 +41,96 @@ describe('consent records', () => {
     assert.equal(consentAnswer('a : waive it on name#7', choices), 'waive it on name#7')
     assert.equal(consentAnswer('C', choices), '')
     assert.equal(consentAnswer('  go without it  ', choices), 'go without it')
+  })
+
+  it('takes a plain confirmation after « Accorder » for the choice, so that it grants', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const answer of ['Accorder, merci', 'accorder et fusionner', 'ACCORDER — go !', 'Accorder. Merci, vas-y', 'Accorder pour acme/app#7', 'Accorder #7 merci']) {
+      assert.equal(consentAnswer(answer, choices, LEADING), 'Accorder', answer)
+    }
+    for (const answer of ['Accorder, merci', 'accorder et fusionner', 'ACCORDER — go !', 'Accorder pour acme/app#7', 'Accorder #7 merci']) {
+      assert.equal(grants(consentAnswer(answer, choices, LEADING)), true, answer)
+      assert.equal(grants(consentAnswer(answer, choices)), false, answer)
+    }
+    for (const answer of ['Accorderai', 'Accorderé', 'Accordée', 'je dis Accorder', 'peut-être']) assert.equal(consentAnswer(answer, choices, LEADING), answer, answer)
+  })
+
+  it('records nothing for an answer that adds a limit, a condition, a question or another subject after « Accorder »: any word outside a plain confirmation', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }, { letter: 'C', text: 'Accorder sous conditions' }]
+    for (const answer of [
+      "Accorder la dispense et fusionner. Valable jusqu'au 16/11/2026 12h00", 'Accorder uniquement pour la PR 32', 'Accorder seulement le e2e', 'Accorder après la revue',
+      'Accorder quand la CI est verte', 'Accorder pendant une heure', 'Accorder, attends mon feu vert', 'Accorder, wait for me', 'Accorder, annule', 'Accorder, stop',
+      'Accorder, ne fais rien', 'Accorder; refuse', 'Accorder, par contre refuse le deploy', 'Accorder: refuse tout', 'Accorder ?', 'Accorder pas', 'Accorder jamais',
+      'Accorder: non', 'Accorder ou refuser', 'Accorder (A) Refuser', 'Accorder (A) (B)', 'Accorder (B)', 'Accorder, mais pas avant lundi', 'Accorder sauf si la CI casse',
+      'Accorder, sous conditions', 'Accorder pour acme/other#32', 'Accorder acme/other', 'Accorder pour #8 seulement', 'Accorder acme/app#77',
+    ]) {
+      assert.equal(leadingChoice(answer, choices, SUBJECT), undefined, answer)
+      assert.equal(consentAnswer(answer, choices, LEADING), '', answer)
+    }
+    assert.equal(leadingChoice('Accorder sous conditions, merci', choices, SUBJECT)?.letter, 'C')
+    assert.equal(leadingChoice('yes or no', [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'yes' }], SUBJECT), undefined)
+    assert.equal(opensChoice('Accorder, mais', choices), true)
+    assert.equal(opensChoice('peut-être', choices), false)
+  })
+
+  it('takes the limit of an exemption\'s answer that is the limit of the question, the same instant read in Paris time, and no other: its words kept whole', () => {
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'Acme/App' }
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    const sentence = "Accorder la dispense de app et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
+    const asked = (until: string) => `Exempt acme/app from E2E until ${until}?`
+    const given = (answer: string, question: string) => consentAnswer(answer, choices, { subject: exemption, question })
+    assert.equal(given(sentence, asked('2026-11-16T11:00:00Z')), sentence)
+    assert.equal(given("Accorder, valable jusqu'au 16/11/2026 11:00 UTC", asked('2026-11-16T11:00:00Z')), "Accorder, valable jusqu'au 16/11/2026 11:00 UTC")
+    assert.equal(given("Accorder jusqu'au 2026-11-16T11:00:00Z, merci", asked('2026-11-16T11:00:00Z')), "Accorder jusqu'au 2026-11-16T11:00:00Z, merci")
+    assert.equal(given("Accorder jusqu'au 16/07/2026 12h00 heure de Paris", asked('2026-07-16T10:00:00Z')), "Accorder jusqu'au 16/07/2026 12h00 heure de Paris")
+    for (const until of ['2026-11-16T12:00:00Z', '2026-11-16T10:00:00Z', '2026-11-17T11:00:00Z']) assert.equal(given(sentence, asked(until)), '', until)
+    assert.equal(given(sentence, 'Exempt acme/app from E2E?'), '')
+    assert.equal(given(sentence.replace('de app', 'de lib/other'), asked('2026-11-16T11:00:00Z')), '')
+    assert.equal(given(sentence.replace('jusqu\'au 16/11/2026 12h00', 'jusqu\'au 16/11/2026'), asked('2026-11-16T11:00:00Z')), '')
+    assert.equal(given(`${sentence} Seulement le e2e`, asked('2026-11-16T11:00:00Z')), '')
+  })
+
+  it('takes no limit of an answer for a kind that expires nothing, even the question\'s own', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    const sentence = "Accorder, valable jusqu'au 16/11/2026 12h00 heure de Paris"
+    const question = 'Allow it until 2026-11-16T11:00:00Z?'
+    for (const subject of [{ kind: 'e2e-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'norms-waiver' as const, repo: 'Acme/App', pr: 7 }, { kind: 'auto-merge' as const, repo: 'Acme/App' }, { kind: 'auto-deploy' as const, repo: 'Acme/App', env: 'prod' as const }]) {
+      assert.equal(consentAnswer(sentence, choices, { subject, question }), '', subject.kind)
+    }
+    assert.equal(consentAnswer('Accorder, merci', choices, { subject: { kind: 'auto-merge' as const, repo: 'Acme/App' }, question }), 'Accorder')
+  })
+
+  it('names another pull request or repository in the words, not the subject\'s own', () => {
+    for (const typed of ['pour acme/other#32', 'acme/other', 'acme/app#8', '#8', 'pour #70']) assert.equal(namesOtherSubject(typed, SUBJECT), true, typed)
+    for (const typed of ['pour acme/app#7', 'Acme/App', '#7', 'merci', "jusqu'au 16/11/2026"]) assert.equal(namesOtherSubject(typed, SUBJECT), false, typed)
+    assert.equal(namesOtherSubject('acme/app#7 et acme/lib', SUBJECT), true)
+    assert.equal(namesOtherSubject('acme/app and #7', { kind: 'auto-merge', repo: 'acme/app' }), true)
+  })
+
+  it('takes any words after « Refuser » for a refusal: it never widens a consent', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const answer of ['Refuser, pas ce soir', 'Refuser — merci', 'refuser (A)', 'Refuser pour acme/other#32']) {
+      assert.equal(consentAnswer(answer, choices, LEADING), 'Refuser', answer)
+      assert.equal(grants(consentAnswer(answer, choices, LEADING)), false, answer)
+    }
+  })
+
+  it('files a record from an answer opening with the choice only by the coordinator or the pane, never by a tab, and none for a limit', () => {
+    const fields = { subject: SUBJECT, entry: 's-1', question: 'Waive E2E?', choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], at: '2026-11-10T00:00:00Z', answer: 'Accorder, et fusionne' }
+    for (const by of ['coordinator', 'pane'] as const) assert.equal(consentRecordOf({ ...fields, by })?.answer, 'Accorder', by)
+    assert.equal(consentRecordOf({ ...fields, by: 'tab' })?.answer, 'Accorder, et fusionne')
+    for (const by of ['coordinator', 'pane'] as const) assert.equal(consentRecordOf({ ...fields, by, answer: 'Accorder jusqu\'au 16/11' }), undefined, by)
+    assert.equal(consentRecordOf({ ...fields, by: 'tab', answer: 'Accorder jusqu\'au 16/11' })?.answer, 'Accorder jusqu\'au 16/11')
+  })
+
+  it('takes a choice pressed as its text then its letter in parentheses for its text, so that it grants', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.equal(consentAnswer('Accorder (A)', choices), 'Accorder')
+    assert.equal(consentAnswer(' accorder  (a) ', choices), 'Accorder')
+    assert.equal(consentAnswer('Refuser (B)', choices), 'Refuser')
+    assert.equal(grants(consentAnswer('Accorder (A)', choices)), true)
+    assert.equal(consentAnswer('Accorder (B)', choices), 'Accorder (B)')
+    assert.equal(answersChoice('Accorder (A)', choices)?.letter, 'A')
   })
 
   it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {
@@ -127,6 +220,7 @@ describe('words typed in the sender\'s own tab', () => {
       assert.deepEqual(answersChoice(typed, choices), waive, typed)
     }
     for (const typed of ['b', 'B : run the e2e', 'RUN THE E2E']) assert.deepEqual(answersChoice(typed, choices), run, typed)
+    for (const typed of ['waive it, docs only (A)', 'Waive it, docs only (a)', 'waive it, docs only  ( A )']) assert.deepEqual(answersChoice(typed, choices), waive, typed)
   })
 
   it('is no answer when it is anything else', () => {
@@ -134,6 +228,7 @@ describe('words typed in the sender\'s own tab', () => {
       '', 'C', 'C)', 'yes', 'go on with phase 2',
       'do not waive it, docs only', 'I say WAIVE IT, docs only, thanks', 'ok: waive it, docs only',
       'B waive it, docs only', 'B : waive it, docs only', 'A run the E2E', 'A - but not yet', 'A, but check the diff first', 'A go', 'a) yes',
+      'waive it, docs only (B)', 'run the E2E (A)', 'yes (A)', '(A)',
     ]) assert.equal(answersChoice(typed, choices), undefined, typed)
     assert.equal(answersChoice('anything', []), undefined)
   })
