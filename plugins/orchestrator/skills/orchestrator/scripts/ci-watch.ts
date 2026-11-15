@@ -7,6 +7,8 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { ENV } from '../../../core/env.ts'
+import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
@@ -161,6 +163,8 @@ export interface Deps {
   readonly now: () => number
   /** The draft guard classifier beside this script. */
   readonly draftGuard: string
+  /** The github plugin's `pr-gate` of the pull request, as JSON: the one reading of what CI the head still awaits. */
+  readonly gate: (repo: string, pr: string) => Promise<Ran>
   /** Takes the watch's start and end for the audit trail (lib/audit.ts); none, nothing is written. */
   readonly journal?: Journal
 }
@@ -189,6 +193,28 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     const ran = await deps.run(['python3', deps.draftGuard, name, pr, ...args], { stderr: 'pipe' })
     if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft_guard.py failed')
     return chomp(ran.stdout)
+  }
+
+  // Whether the head's CI is still to come, as the github plugin's gate counts it: its result is
+  // PENDING and a check runs (a required check not yet reported being one), or the gate could not
+  // read the checks the base requires (`unverified`: green cannot be told), or it speaks of another
+  // head than the one watched. A head with a third-party check alone (a secret scanner) answers yes
+  // until the repository's own run has registered.
+  const awaitsCi = async (name: string, head: string): Promise<boolean> => {
+    const ran = await deps.gate(name, pr)
+    if (ran.status !== 0) throw unread(pr, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
+    interface Gate { readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown } }
+    let gate: Gate | null = null
+    try {
+      gate = JSON.parse(ran.stdout) as Gate | null
+    } catch {
+      // As an answer with no `ci`: refused below.
+    }
+    const ci = gate?.ci
+    if (typeof ci?.result !== 'string' || typeof ci.running !== 'number') throw unread(pr, 'pr-gate failed: an answer with no ci result')
+    // A verdict of another head is none: the head is read again before the gate is asked once more.
+    if (typeof gate?.head === 'string' && gate.head.toLowerCase() !== head.toLowerCase()) return true
+    return ci.result === 'PENDING' && (ci.running > 0 || (Array.isArray(ci.unverified) && ci.unverified.length > 0))
   }
 
   const failingNames = async (): Promise<string> =>
@@ -380,7 +406,15 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       }
       continue
     }
-    if (!waited) break
+    if (!waited) {
+      // Every run listed is done and the checks passed: green only once the gate awaits no more CI.
+      // The head may move meanwhile, and the bound is the one a run is waited for within.
+      if (!(await awaitsCi(resolved, current.head))) break
+      if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
+      await sleep()
+      current = await reread(first)
+      continue
+    }
     waited = false
     code = await checksWatch(current.draft, true)
     current = await reread(first)
@@ -465,7 +499,24 @@ function noteWait(deps: Deps, env: Env, options: Options, result: string | null,
     { subject: { repo: options.repo ?? null, pr: Number(options.pr), head: fullHead(head ?? undefined) } })
 }
 
+/**
+ * The github plugin's `pr-gate` of a pull request as JSON, run from the plugin's own engine: found
+ * where the host installed it (the install record, or the override that names a checkout), never a
+ * path built by hand. The plugin missing is a read that failed, said with what to install.
+ */
 /* node:coverage ignore next 10 */
+async function readGate(repo: string, pr: string): Promise<Ran> {
+  let root: string
+  try {
+    root = locatePlugin('github', ['lounisbou'], process.env, { override: ENV.githubRoot })
+  } catch (error) {
+    if (!(error instanceof NotInstalled)) throw error
+    return { status: 1, stdout: '', stderr: `${error.message} (${error.fix})\n` }
+  }
+  return run(['python3', join(root, 'engine', 'gh.py'), '--repo', repo, 'pr-gate', pr, '--json'], { stderr: 'pipe' })
+}
+
+/* node:coverage ignore next 11 */
 if (isEntry(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2), process.env, {
     run,
@@ -473,6 +524,7 @@ if (isEntry(import.meta.url)) {
     sleep: seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000)),
     now: () => Date.now(),
     draftGuard: join(dirname(fileURLToPath(import.meta.url)), 'draft_guard.py'),
+    gate: readGate,
     journal: scriptJournal(process.env, () => new Date(), line => processIo.err(`${line}\n`)),
   })
 }

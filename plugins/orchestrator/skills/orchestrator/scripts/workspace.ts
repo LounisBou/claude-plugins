@@ -6,7 +6,8 @@
 //                                                              temporary directory of the path when no live process uses it
 //   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
 //                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete")
-//   workspace.sh list                                          one line per checkout under the root (a pin reads HEAD … pinned)
+//   workspace.sh list [<repo>]                                 one line per checkout under the root (a pin reads HEAD … pinned);
+//                                                              given a repository (its name or `owner/name`), only its checkouts
 //
 // Root: ORCHESTRATOR_WORKSPACES, else ~/dev/workspaces. A checkout lives at
 // <root>/<basename of the source>/<name>.
@@ -765,9 +766,18 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
   await removeHostTmp(ctx, [real, logical])
 }
 
-export async function list(ctx: Context): Promise<void> {
-  if (!isDir(ctx.root)) return
-  for (const d of checkoutDirs(ctx.root)) {
+export async function list(ctx: Context, argv: readonly string[] = []): Promise<void> {
+  if (argv.length > 1) throw new Refused('list: usage: list [<repo>]')
+  // A repository reads as its directory's name: `owner/name` and `name` name the same checkouts.
+  let repo = basename((argv[0] ?? '').replace(/\/+$/, ''))
+  const dirs = isDir(ctx.root) ? checkoutDirs(ctx.root) : []
+  // A name no checkout directory carries (a clone kept under another name) lists everything, said, so that « no line » never reads as « no checkout ».
+  if (repo !== '' && !dirs.some(d => basename(dirname(d)) === repo)) {
+    say(ctx, `list: no directory ${repo} under ${ctx.root}; every checkout follows`)
+    repo = ''
+  }
+  for (const d of dirs) {
+    if (repo !== '' && basename(dirname(d)) !== repo) continue
     if (!present(join(d, '.git'))) continue
     const br = chomp((await git(ctx, d, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout)
     const head = chomp((await git(ctx, d, ['rev-parse', '--short', 'HEAD'])).stdout)
@@ -1150,7 +1160,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     else if (cmd === 'pin') await pin(ctx, rest)
     else if (cmd === 'delete') await remove(ctx, rest)
     else if (cmd === 'sweep') await sweep(ctx, rest)
-    else if (cmd === 'list') await list(ctx)
+    else if (cmd === 'list') await list(ctx, rest)
     else throw new Refused(`unknown command: ${cmd}`)
   } catch (error) {
     if (!(error instanceof Refused)) throw error

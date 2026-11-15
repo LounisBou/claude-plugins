@@ -294,3 +294,30 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
 })
+
+test('the coordinator closes a relay\'s entry, of this machine or of another, and sends its sender nothing', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed()))
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ id: 'r-2', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })))
+  const here = await settle(m.coordinator, request('r-1', { text: 'B' }), AT)
+  const there = await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
+  expect([here.result, there.result]).toEqual(['Settled r-1: closed.', 'Settled r-2: closed.'])
+  expect([entryOf(m, 'r-1').status, entryOf(m, 'r-2').status]).toEqual(['closed', 'closed'])
+  expect(m.sent).toEqual([])
+})
+
+// An operator entry of an older release left in the round: the round's wake withdraws it with a
+// notice to its sender (pane.test.ts); the coordinator's settle neither closes it nor sends.
+test('the coordinator\'s settle of an open operator entry of an older release is refused, sends nothing, and leaves it open', async () => {
+  const m = machine()
+  const older = relayed({ id: 'r-3', kind: 'operator', blocks: 'phase 3' })
+  const remote = relayed({ id: 'r-4', kind: 'operator', blocks: 'phase 3', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })
+  m.files.set(`${ROUND}/r-3.json`, JSON.stringify(older))
+  m.files.set(`${ROUND}/r-4.json`, JSON.stringify(remote))
+  for (const id of ['r-3', 'r-4']) {
+    const refused = await settle(m.coordinator, request(id, { text: 'B' }), AT)
+    expect(refused.result).toBe(`${id} is an operator question of an older release: the round withdraws it and tells its sender to ask it with ask; nothing to settle.`)
+  }
+  expect([entryOf(m, 'r-3'), entryOf(m, 'r-4')]).toEqual([older, remote])
+  expect(m.sent).toEqual([])
+})

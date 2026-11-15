@@ -14,7 +14,7 @@ import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { parseConsentRecord } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
-import { ASK_MARKER as OLD_ASK_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, parseAsk as parseOldAsk } from '../remote-round.ts'
+import { ASK_MARKER as OLD_ASK_MARKER, Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, parseAsk as parseOldAsk, ackLine as oldAckLine, askLine as oldAskLine, parseAck as parseOldAck, parseAnswer as parseOldAnswer } from '../remote-round.ts'
 
 // The lines this release writes between machines: the event line (remote-round.ts), read back here
 // as the four lines it replaced, so each case below says what it said of them.
@@ -1231,6 +1231,75 @@ test('the ask goes in the event line and in the old ask line beside it, the same
   expect(old.to).toBe(q.to)
   expect(parseOldAsk(old.text)).toEqual(parseAsk(q.text))
 })
+
+test('a coordinator of an older release enters the ask from its old line, and its old acknowledgment clears the pending ask', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+  const asked = parseOldAsk(oldAsks(sender)[0].text)!.entry
+  // An older coordinator has no event branch: the old line is the one it enters.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', oldAsks(sender)[0].text))
+  const [entry] = entries(coordinator)
+  expect([entries(coordinator).length, entry.id, entry.origin]).toEqual([1, asked.id, { machine: 'unknown', address: SENDER_AT }])
+  const [ack] = coordinator.sent.filter(s => s.to === SENDER_AT)
+  expect(ack.text).toBe(oldAckLine(asked.id, asked.since))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ack.text))
+  expect([waitOf(sender).pending, waitOf(sender).relayed_id]).toEqual([null, asked.id])
+})
+
+// An older machine's question, asked by its machine line: this release enters none, whichever
+// line carries it. It is refused, logged, and answered by that line, so its sender is told to
+// ask it with ask, its wait cleared there, never acknowledged as entered.
+for (const line of ['event', 'old'] as const) {
+  test(`an operator question from an older machine (${line} line) is entered nowhere, logged, and answered to its sender to ask it again`, async () => {
+    const chains = mounted()
+    const coordinator = coordinatorMachine()
+    const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:01.000Z')
+    const text = line === 'event' ? qAskLine(asked, 'm-old') : oldAskLine(asked, 'm-old')
+    const result = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', text))
+    expect(typeof result.consumed).toBe('string')
+    expect(result.text).toBeUndefined()
+    expect(entries(coordinator)).toEqual([])
+    expect(coordinator.logged.filter(l => l.endsWith(`| receive: an operator question from m-old refused, its release asks by its machine line: ${asked.id}`)).length).toBe(1)
+    const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT)
+    expect(sentBack.length).toBe(1)
+    expect(parseQAck(sentBack[0].text)).toBeNull()
+    expect(parseOldAck(sentBack[0].text)).toBeNull()
+    const answer = line === 'event' ? (() => { const q = parseQ(sentBack[0].text); return q?.event.kind === 'answer' ? { id: q.id, ...q.event } : null })() : parseOldAnswer(sentBack[0].text)
+    expect([answer?.id, answer?.since]).toEqual([asked.id, asked.since])
+    expect(answer?.readable).toContain('Ask it again with the ask tool.')
+  })
+}
+
+for (const first of ['event', 'old'] as const) {
+  test(`this release's coordinator enters the ask from the first of its two lines (${first}), acks that one, and ignores the duplicate by its id and start`, async () => {
+    const chains = mounted()
+    const sender = fake({ remote: true })
+    const coordinator = coordinatorMachine()
+    await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+    const [q] = asks(sender)
+    const [old] = oldAsks(sender)
+    const [one, two] = first === 'event' ? [q, old] : [old, q]
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
+    const [entry] = entries(coordinator)
+    const path = `${ROUND}/${entry.id}.json`
+    // A mark only the first writing carries: a second writing would erase it.
+    coordinator.files.set(path, JSON.stringify({ ...entry, marked: true }) + '\n')
+    const ignored = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
+    expect(typeof ignored.consumed).toBe('string')
+    expect(ignored.text).toBeUndefined()
+    expect(entries(coordinator).length).toBe(1)
+    expect((JSON.parse(coordinator.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
+    expect(entry.origin).toEqual({ machine: 'unknown', address: SENDER_AT, ...(first === 'event' ? { line: 'q' } : {}) })
+    const sentBack = coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)
+    expect(sentBack).toEqual([first === 'event' ? ackLine(entry.id, entry.since) : oldAckLine(entry.id, entry.since)])
+    // The same pair sent again, its acknowledgment lost: the line the entry came by is acked again, the other still ignored.
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', one.text))
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', two.text))
+    expect(coordinator.sent.filter(s => s.to === SENDER_AT).map(s => s.text)).toEqual([sentBack[0], sentBack[0]])
+  })
+}
 
 // --- a question asked with ask, its coordinator on another machine (remote-asked.ts) ------------
 

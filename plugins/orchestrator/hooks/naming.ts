@@ -9,7 +9,6 @@
 // turn's completion runs the rename — the same transcript entry a typed /rename
 // writes, the one every name walk reads.
 import { launcherOf } from '../core/orchestration.ts'
-import { endsAfterMove } from './moving.ts'
 import { messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
@@ -23,9 +22,7 @@ export const RENAME_TOOL = 'rename_session'
 // The end: the successor closes its predecessor's tab, and where the host
 // refuses that close — a tab the plugin did not open — it asks the predecessor
 // to end its own session instead, which no refusal reaches: the run is the
-// module's. A session the launcher opened is closable by its successor, and sees this
-// tool only for the one case where it may end itself: its own move to another machine
-// was acknowledged (moving.ts).
+// module's. A session the launcher opened is closed by its successor and never sees this tool.
 export const END_TOOL = 'end_session'
 
 // The names a session takes for itself: the two roles a session the operator
@@ -109,8 +106,7 @@ export function register(on: On<Held>): void {
   // A session the launcher opened — an agent, a review session, a successor —
   // carries the name it was launched with, and never sees the rename tool: a review
   // session's subagent once renamed its agent « Coord: norms check… », a
-  // second coordinator every listing then counted. It sees the end tool alone, which
-  // it may use only once its own move was acknowledged.
+  // second coordinator every listing then counted. It sees neither tool.
   on('session.start', {}, async ($, e, next) => {
     try {
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
@@ -126,14 +122,14 @@ export function register(on: On<Held>): void {
           },
         })
       }
-      await $.tool.register({
-        name: END_TOOL,
-        isDeferred: false,
-        description: spawned
-          ? 'Ends this session when the current turn ends. Only for an orchestrator whose move to another machine was acknowledged by the receiving module.'
-          : 'Ends this session when the current turn ends. Only for an orchestrator or a coordinator that has handed over and whose successor asks it to end its session.',
-        inputSchema: { type: 'object', properties: {} },
-      })
+      if (!spawned) {
+        await $.tool.register({
+          name: END_TOOL,
+          isDeferred: false,
+          description: 'Ends this session when the current turn ends. Only for an orchestrator or a coordinator that has handed over and whose successor asks it to end its session.',
+          inputSchema: { type: 'object', properties: {} },
+        })
+      }
     } catch (err) {
       // A start never fails on the tool: the session runs, unnamed by itself.
       await logLine($, 'naming', `rename tool not registered: ${messageOf(err)}`)
@@ -174,7 +170,7 @@ export function register(on: On<Held>): void {
 
   on('tool.call', { tool: `mcp__orchestrator__${END_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
-    if (await $.env.get('ORCHESTRATOR_SPAWNED') && !endsAfterMove()) {
+    if (await $.env.get('ORCHESTRATOR_SPAWNED')) {
       return { result: 'this session was opened by the launcher; its successor closes its tab', isError: true }
     }
     ending = true

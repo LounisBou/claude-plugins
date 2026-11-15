@@ -44,8 +44,8 @@ import {
 } from './remote-row.ts'
 import {
   askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
-  parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
-  qAskLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
+  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -1167,7 +1167,10 @@ async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Pro
 async function wakeForDue($: any): Promise<void> {
   const store = await readStore($)
   const local = store.rows
-  const relayed = (await readRound($)).map(found => found.entry)
+  const round = await readRound($)
+  await withdrawOlder($, round)
+  // An operator entry of an older release is withdrawn above, never told nor due.
+  const relayed = round.map(found => found.entry).filter(entry => entry.kind === 'done')
   // The questions asked with `ask`, told and due as the relay's entries are, read through them only;
   // one claimed by his prompt in its asker's tab has left the pane, and is neither told nor due
   // until that turn's end, while its id stays one the round holds.
@@ -1190,6 +1193,38 @@ async function wakeForDue($: any): Promise<void> {
     return
   }
   await addIds($, await wokenPath($), due.map(entry => entry.id), id => present.has(id))
+}
+
+// The words an older release's operator question is refused or withdrawn with: this release
+// enters none, no pane draws one, and its sender is told to ask it with ask.
+export function olderQuestionText(id: string, done: 'not entered' | 'withdrawn'): string {
+  return `Your question ${id} was ${done}: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`
+}
+
+// Each open operator entry of an older release still in the round, read in the coordinator's own
+// session: withdrawn, by the coordinator, then its sender told — a session of this machine by a
+// message, one of another machine by an answer on the line its ask came by, which clears its
+// wait there. Written before it is told, so a notice is never sent twice; a notice not delivered,
+// or a failure, is one log line.
+async function withdrawOlder($: any, round: readonly { path: string; entry: RoundEntry }[]): Promise<void> {
+  for (const { path, entry } of round) {
+    if (entry.kind !== 'operator' || entry.status !== 'open') continue
+    try {
+      const at = new Date().toISOString()
+      const text = olderQuestionText(entry.id, 'withdrawn')
+      const answer: RoundAnswer = { text: `withdrawn: ${text}`, by: 'coordinator', at }
+      const written = await changeEntry($, path, fresh => !fresh || fresh.status !== 'open' || fresh.kind !== 'operator' ? null : { ...fresh, status: 'withdrawn', answer })
+      if (!written) continue
+      await logLine($, 'supervision', `round: an operator question of an older release withdrawn: ${entry.id}`)
+      const origin = entry.origin
+      const sent = origin
+        ? await $.session.send({ to: origin.address, text: (origin.line === 'q' ? qAnswerLine : answerLine)(entry.id, entry.since, 'withdrawn', at, text) })
+        : await $.session.send({ to: { sessionId: entry.session }, text: `[module] ${text}` })
+      if (!sent?.isDelivered) await logLine($, 'supervision', `round: the withdrawal of ${entry.id} was not delivered: ${sent?.reason ?? 'no answer'}`)
+    } catch (err) {
+      await logLine($, 'supervision', `round: ${entry.id}: ${(err as Error).message}`)
+    }
+  }
 }
 
 // The entries the coordinator's conversation was told of, `<state>/round-told.json`, a JSON list
@@ -1719,7 +1754,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: RoundEntry[] = []
       let pending = 0
-      // The open questions asked with `ask` (question.ts), drawn from their fields under the round's card.
+      // The open questions asked with `ask` (question.ts), drawn from their fields.
       let asked: Asked[] = []
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
@@ -2083,7 +2118,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 const RELAY_BOUND_MS = 5000
 
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
-// coordinator and an auditor do, as one rule for the turn's end and the prompt.
+// coordinator and an auditor do, as one rule for every turn's end.
 export function entersRound(role: string | null): boolean {
   return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
 }
@@ -2316,7 +2351,7 @@ export async function isOrchestratorSession($: any, sessionId: string): Promise<
 // holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
 // pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
 // of its wait and withdraws nothing. The same withdrawal closes every open entry of a session
-// that is superseded by its new question, that ended, or that handed over (`current` null).
+// that ended, or that handed over (`current` null).
 // `current` is the id of the entry this turn's wait has, kept open; `why` the withdrawal's answer
 // text; `kept` the entries left open besides. An entry the
 // coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
@@ -2580,15 +2615,10 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
 }
 
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
-// session alone, one that passes every check is entered in the round with where it came from, its
-// session's older entries superseded as a local one's are, and acknowledged to its sender. The same
-// entry sent again, its wait's start unchanged, is never entered twice, whatever became of it
-// since: it is acknowledged again, its first acknowledgment having been lost, and an open one takes
-// the urgent mark it now carries or not, as a local wait asked again does. The same wait asked
-// again once answered is a new ask, of a new start (receiveAnswer). That rule keeps the choices of
-// the wait's text too: a note without choices under the same wait has the same id and the same
-// start (roundEntryId reads no question under a wait that blocks something), so it never replaces
-// the entry, as keptChoices keeps a local one's. Anything else is one log line.
+// session alone, one that passes every check is entered in the round with where it came from, and
+// acknowledged to its sender. The same entry sent again, its wait's start unchanged, is never
+// entered twice, whatever became of it since: it is acknowledged again, its first acknowledgment
+// having been lost. Anything else is one log line.
 async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
@@ -2601,6 +2631,19 @@ async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof p
     if (await ownRole($) !== 'coordinator') {
       await logLine($, 'supervision', `receive: a remote question reached a session that is no coordinator: ${asked.entry.id}`)
       return { consumed: 'orchestrator: a remote question for no coordinator, dropped' }
+    }
+    // An older machine's question, asked by its machine line: this release enters none, no pane
+    // would draw it. It is answered by the line it came by, which clears the sender's wait and
+    // tells its model to ask it with ask; never acknowledged as entered.
+    if (asked.entry.kind !== 'done') {
+      await logLine($, 'supervision', `receive: an operator question from ${asked.machine} refused, its release asks by its machine line: ${asked.entry.id}`)
+      step = 'the refusal'
+      const at = new Date().toISOString()
+      const readable = olderQuestionText(asked.entry.id, 'not entered')
+      const line = byEvent ? qAnswerLine : answerLine
+      const sent = await $.session.send({ to: from, text: line(asked.entry.id, asked.entry.since, 'refused', at, readable) })
+      if (!sent?.isDelivered) await logLine($, 'supervision', `receive: the refusal of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+      return { consumed: 'orchestrator: a remote operator question of an older release, refused' }
     }
     step = 'the entry read'
     const path = roundPath(await stateDir($), asked.entry.id)
@@ -2873,8 +2916,9 @@ export async function writeDeck($: any): Promise<void> {
   const deck = deckOf({
     machine: await machineOf($), now, local, chains, prs,
     remote: await readRemoteRows($),
-    // The relay's entries and the questions asked with `ask`, each its own object in the round.
-    round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).map(askedAsEntry)],
+    // The relay's entries and the questions asked with `ask`, each its own object in the round; one
+    // his prompt claimed in its asker's tab is gone from the round, as the pane and the wake read it.
+    round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).filter(entry => !entry.claimed).map(askedAsEntry)],
     sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
     gate: await gateEnv($),
   })

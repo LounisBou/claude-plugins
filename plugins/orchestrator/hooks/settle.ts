@@ -109,6 +109,8 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
   }
   if (me.role !== 'coordinator') return { error: `${request.id} is ${asker.name}'s question: only it, or the coordinator, settles it.` }
   if (entry['status'] === 'closed') return { error: `${request.id} is closed already: nothing to settle.` }
+  // An operator entry of an older release: the round's wake withdraws it with a notice to its sender.
+  if (entry['kind'] === 'operator' && open) return { error: `${request.id} is an operator question of an older release: the round withdraws it and tells its sender to ask it with ask; nothing to settle.` }
   if (request.outcome === 'answered-by-message') return { error: 'an answer that reached you by message settles your own question only; his answer in your tab is answered-here.' }
   // A withdrawal keeps its evidence beside the text: its sender is told it was withdrawn, never that he answered.
   const answer = request.outcome === 'withdrawn'
