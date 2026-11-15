@@ -97,13 +97,15 @@ lives in the github plugin (`plugins/github/engine/REFERENCE.md`).
 skills cannot do without it: under `claude -p` or an older host it does not load,
 and every skill keeps its own route.
 
-- **The Iron Rules, held.** While `start-review` or `process-comments` runs, a code
+- **The Iron Rules, watched.** While `start-review` or `process-comments` runs, a code
   change waits for the user's own `fix` (process-comments: `1` or `3`, or an
   alias carrying `fix`), a publication on the PR for `post now`, a resolve in
-  process-comments for `1` or `4`, and `git push` for `push`. A refused call tells
-  the model which word lifts it. The walkthrough's own files under
-  `/tmp/claude-pr-review-*` are never refused. A review is never submitted with
-  an event other than `COMMENT`.
+  process-comments for `1` or `4`, and `git push` for `push`. A call made without the
+  word goes through, and the journal (`<config>/pr-review/journal/`) keeps one `escape`
+  line under the rule's code. Only the irreversible stays refused: a forced or
+  deleting push, until the user allows it when asked, and a deleted comment. The
+  walkthrough's own files under `/tmp/claude-pr-review-*` are never noted. A review
+  submitted with an event other than `COMMENT` is noted as well.
 - **Never a trap.** `end review` typed by the user, an interrupted turn (Esc), a
   `/clear` and the skill's own closing line each end those rules at once.
   `auto-fix-loop` is autonomous and runs under none of them.
@@ -113,8 +115,8 @@ and every skill keeps its own route.
   runs — answering the open items, the counts, the tier and the line to announce.
 - **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
   findings and fix log, held outside the model's memory. While a loop runs and
-  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop is refused once,
-  naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
+  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop goes through
+  and the journal keeps one line. Any prompt the user types, or an interrupted turn, ends that watch.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
   plugin's ready guard. The verdict is computed, not reported: during a pass, each

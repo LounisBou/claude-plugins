@@ -1,6 +1,6 @@
 // hooks/tests/policy.test.ts
 // The Iron Rules as decisions, with no engine: which words grant what, and
-// which calls a walkthrough refuses. The false-positive cases the pull request
+// which calls a walkthrough notes or refuses. The false-positive cases the pull request
 // lists are each pinned here, in both directions: a refusal the user may find
 // strict, and a grant the matcher gives more loosely than the skill means.
 import { expect, test } from 'claude-code/testing'
@@ -64,81 +64,103 @@ test('the scratch directory is never a code change, unless a path climbs out of 
   expect(scratchDirOf('/repo/a.ts')).toBeUndefined()
 })
 
-test('no walkthrough and auto-fix-loop refuse nothing', () => {
+// What a walkthrough does with a call: refused (an irreversible act), or let through and noted under
+// the stable code the journal holds it by.
+const refused = (v: ReturnType<typeof decide>) => (v?.irreversible ? v.reason : null)
+const noted = (v: ReturnType<typeof decide>) => (v && !v.irreversible ? v.code : null)
+
+test('no walkthrough and auto-fix-loop find nothing', () => {
   for (const call of [edit('/repo/a.ts'), gh('pr-comment', { pr: 1 }), bash('git push')]) {
     expect(decide(null, call, '')).toBeNull()
     expect(decide('auto-fix-loop', call, '')).toBeNull()
   }
 })
 
-test('start-review: an edit outside the scratch directory waits for fix and the deny names it', () => {
-  const reason = decide('start-review', edit('/repo/a.ts'), 'go ahead')
-  expect(reason).toContain('"fix"')
-  expect(reason).toContain('end review')
+test('start-review: an edit outside the scratch directory without fix is noted, never refused', () => {
+  const v = decide('start-review', edit('/repo/a.ts'), 'go ahead')
+  expect(noted(v)).toBe('pr-review.edit.ungranted')
+  expect(refused(v)).toBeNull()
+  expect(v?.reason).toContain('"fix"')
   expect(decide('start-review', edit('/repo/a.ts'), 'fix')).toBeNull()
   expect(decide('start-review', { tool: 'Write', file_path: '/tmp/claude-pr-review-3/comment-1.md', content: 'x' }, '')).toBeNull()
-  expect(decide('start-review', { tool: 'NotebookEdit', notebook_path: '/repo/n.ipynb', new_source: 'x' }, 'next')).toContain('"fix"')
+  expect(noted(decide('start-review', { tool: 'NotebookEdit', notebook_path: '/repo/n.ipynb', new_source: 'x' }, 'next'))).toBe('pr-review.edit.ungranted')
 })
 
-test('start-review: publication waits for post now, the pending review needs no word, reads always pass', () => {
-  expect(decide('start-review', gh('pr-comment', { pr: 1, body: 'x' }), 'post')).toContain('"post now"')
+test('start-review: publication without post now is noted, the pending review needs no word, reads always pass', () => {
+  expect(noted(decide('start-review', gh('pr-comment', { pr: 1, body: 'x' }), 'post'))).toBe('pr-review.publish.ungranted')
   expect(decide('start-review', gh('pr-comment', { pr: 1, body: 'x' }), 'post now')).toBeNull()
   expect(decide('start-review', gh('review-submit', { pr: 1, event: 'COMMENT', comments: [] }), 'post now')).toBeNull()
-  expect(decide('start-review', gh('review-submit', { pr: 1, event: 'COMMENT', comments: [] }), 'post')).toContain('post now')
+  expect(noted(decide('start-review', gh('review-submit', { pr: 1, event: 'COMMENT', comments: [] }), 'post'))).toBe('pr-review.publish.ungranted')
   expect(decide('start-review', gh('review-pending-create', { pr: 1, comments: [] }), '')).toBeNull()
   expect(decide('start-review', gh('review-pending-add', { pr: 1 }), 'next')).toBeNull()
   expect(decide('start-review', gh('review-pending', { pr: 1 }), '')).toBeNull()
   expect(decide('start-review', gh('pr-get'), '')).toBeNull()
 })
 
-test('start-review: a review is never submitted with an event other than COMMENT, post now or not', () => {
+test('start-review: a review submitted with an event other than COMMENT is noted, post now or not', () => {
   for (const event of ['APPROVE', 'REQUEST_CHANGES']) {
-    expect(decide('start-review', gh('review-submit', { pr: 1, event }), 'post now')).toContain('never submitted')
+    const v = decide('start-review', gh('review-submit', { pr: 1, event }), 'post now')
+    expect(noted(v)).toBe('pr-review.review-event.not-comment')
+    expect(refused(v)).toBeNull()
   }
 })
 
-test('start-review: replies, resolutions and comment edits wait for post now', () => {
-  for (const command of ['thread-reply', 'thread-resolve', 'comment-resolve', 'comment-edit', 'comment-delete']) {
-    expect(decide('start-review', gh(command, { thread_id: 'T' }), 'yes')).toContain(command)
+test('start-review: replies, resolutions and comment edits without post now are noted; a deleted comment is refused', () => {
+  for (const command of ['thread-reply', 'thread-resolve', 'comment-resolve', 'comment-edit']) {
+    const v = decide('start-review', gh(command, { thread_id: 'T' }), 'yes')
+    expect(noted(v)).toBe('pr-review.reply.ungranted')
+    expect(v?.reason).toContain(command)
   }
+  const deleted = decide('start-review', gh('comment-delete', { node_id: 'C' }), 'yes')
+  expect(deleted?.code).toBe('pr-review.comment-delete.ungranted')
+  expect(refused(deleted)).toContain('comment-delete')
+  expect(decide('start-review', gh('comment-delete', { node_id: 'C' }), 'post now')).toBeNull()
 })
 
-test('process-comments: resolve waits for option 1 or 4, replies wait for post now', () => {
-  expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), '3')).toContain('1 or 4')
+test('process-comments: resolve without option 1 or 4 and a reply without post now are noted; a deleted comment is refused', () => {
+  expect(noted(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), '3'))).toBe('pr-review.resolve.ungranted')
   expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), '1')).toBeNull()
   expect(decide('process-comments', gh('comment-resolve', { node_id: 'IC' }), '4')).toBeNull()
-  expect(decide('process-comments', gh('thread-reply', { thread_id: 'T', body: 'x' }), '1')).toContain('never posted')
+  expect(noted(decide('process-comments', gh('thread-reply', { thread_id: 'T', body: 'x' }), '1'))).toBe('pr-review.reply.ungranted')
   expect(decide('process-comments', gh('thread-reply', { thread_id: 'T', body: 'x' }), 'post now')).toBeNull()
   expect(decide('process-comments', gh('pr-issue-comments', { pr: 1 }), '')).toBeNull()
+  expect(refused(decide('process-comments', gh('comment-delete', { node_id: 'C' }), '1'))).toContain('comment-delete')
 })
 
-test('both walkthroughs ask the user before a push; words in a prompt grant none', () => {
+test('a push that rewrites nothing is noted; a forced or deleting push asks the user; words in a prompt grant none', () => {
   for (const skill of ['start-review', 'process-comments'] as const) {
-    expect(pushQuestion(skill, bash('git push origin main'))).toContain('push now?')
+    for (const plain of ['git push', 'git push origin main', 'git push -u origin HEAD', 'git -C /repo push --tags', 'git push origin HEAD:refs/heads/x', 'git add a && git push origin x']) {
+      expect(pushQuestion(skill, bash(plain))).toBeNull()
+      expect(noted(decide(skill, bash(plain), 'push'))).toBe('pr-review.push.ungranted')
+    }
+    for (const forced of ['git push -f', 'git push --force origin main', 'git push --force-with-lease', 'git push origin +main', 'git push origin :old', 'git push --delete origin old', 'git push --mirror', 'git push -fu origin x', 'git push origin $BRANCH', 'git status; git push --force', 'eval "git push -f"']) {
+      expect(pushQuestion(skill, bash(forced))).toContain('forced push now?')
+      expect(decide(skill, bash(forced), 'push')).toBeNull()
+    }
     expect(pushQuestion(skill, bash('git commit -F /tmp/claude-pr-review-1/commit-1.msg -- a.ts'))).toBeNull()
     expect(decide(skill, bash('git commit -F /tmp/claude-pr-review-1/commit-1.msg -- a.ts'), 'commit')).toBeNull()
   }
-  expect(pushQuestion('auto-fix-loop', bash('git push'))).toBeNull()
-  expect(pushQuestion(null, bash('git push'))).toBeNull()
+  expect(pushQuestion('auto-fix-loop', bash('git push -f'))).toBeNull()
+  expect(pushQuestion(null, bash('git push -f'))).toBeNull()
 })
 
-test('the resolver route is refused only while the github tool is listed', () => {
+test('the resolver route is noted only while the github tool is listed', () => {
   const call = bash('GH_ROOT=$(python3 "/p/scripts/resolve_github.py") || exit 1')
-  expect(decide('start-review', call, '', true)).toContain('mcp__github__gh')
+  expect(noted(decide('start-review', call, '', true))).toBe('pr-review.resolver-route.listed')
   expect(decide('start-review', call, '', false)).toBeNull()
 })
 
 // False positives the pull request lists. Strict side: words a user may mean as
-// consent that the skills define as no consent; each is refused, and the reason
+// consent that the skills define as no consent; each is noted, and the reason
 // names the word that lifts it.
-test('false positive (strict): consent in other words is refused, naming the word', () => {
+test('false positive (strict): consent in other words is noted, naming the word', () => {
   for (const words of ['please apply it', 'go ahead', 'yes', 'do it', 'sounds good', 'agreed']) {
-    expect(decide('start-review', edit('/repo/a.ts'), words)).toContain('"fix"')
-    expect(decide('process-comments', edit('/repo/a.ts'), words)).toContain('1 or 3')
+    expect(decide('start-review', edit('/repo/a.ts'), words)?.reason).toContain('"fix"')
+    expect(decide('process-comments', edit('/repo/a.ts'), words)?.reason).toContain('1 or 3')
   }
-  expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'publish it')).toContain('"post now"')
-  expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'close the thread')).toContain('1 or 4')
-  expect(pushQuestion('start-review', bash('git push'))).toContain('push now?')
+  expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'publish it')?.reason).toContain('"post now"')
+  expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'close the thread')?.reason).toContain('1 or 4')
+  expect(pushQuestion('start-review', bash('git push -f'))).toContain('forced push now?')
 })
 
 // A grant is the command an answer starts with: a word in a negation, an aside or

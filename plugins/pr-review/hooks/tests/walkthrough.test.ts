@@ -3,6 +3,7 @@
 // prompt grants, the deny reaches the model in the tool's place, and every
 // release (end review, an interrupted turn, the closing line, /clear) lifts them.
 import { expect, test } from 'claude-code/testing'
+import { observedAs, watchJournal } from './journal.ts'
 
 const composer = { kind: 'composer' } as const
 
@@ -32,50 +33,71 @@ test('with no walkthrough running, an edit goes through', async ($, on) => {
   expect(ran).toContain('Edit')
 })
 
-test('start-review refuses an edit until the user says fix, then lets it through', async ($, on) => {
+test('start-review lets an edit through before fix and notes it once; after fix it notes nothing', async ($, on) => {
   const ran = engine(on)
+  const journal = watchJournal(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await say($, 'makes sense')
-  const refused: any = await $.tool.call(editCall)
-  expect(String(refused.deny ?? refused.text)).toContain('"fix"')
-  expect(ran).not.toContain('Edit')
-  await say($, 'fix')
-  const done: any = await $.tool.call(editCall)
-  expect(done.deny).toBeUndefined()
+  const let_through: any = await $.tool.call(editCall)
+  expect(let_through.deny).toBeUndefined()
   expect(ran).toContain('Edit')
+  expect(journal().length).toBe(1)
+  expect(journal()[0]).toMatchObject(observedAs('pr-review.edit.ungranted'))
+  await say($, 'fix')
+  await $.tool.call(editCall)
+  expect(journal().length).toBe(1)
 })
 
-test('the words typed before the skill started grant nothing', async ($, on) => {
+test('the words typed before the skill started grant nothing: the edit is noted', async ($, on) => {
   const ran = engine(on)
+  const journal = watchJournal(on)
   await say($, '/pr-review:start-review and fix everything')
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
-  const refused: any = await $.tool.call(editCall)
-  expect(String(refused.deny ?? refused.text)).toContain('"fix"')
-  expect(ran).not.toContain('Edit')
+  const out: any = await $.tool.call(editCall)
+  expect(out.deny).toBeUndefined()
+  expect(ran).toContain('Edit')
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.edit.ungranted'])
 })
 
-test('a prompt the user did not type takes back the last grant', async ($, on) => {
+test('a prompt the user did not type takes back the last grant: the edit is noted again', async ($, on) => {
   const ran = engine(on)
+  const journal = watchJournal(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await say($, 'fix')
+  await $.tool.call(editCall)
+  expect(journal()).toEqual([])
   await $.prompt.submit({ text: 'a background task finished', wait: false, origin: { kind: 'task-notification' } })
-  const refused: any = await $.tool.call(editCall)
-  expect(String(refused.deny ?? refused.text)).toContain('"fix"')
-  expect(ran).not.toContain('Edit')
+  const out: any = await $.tool.call(editCall)
+  expect(out.deny).toBeUndefined()
+  expect(ran).toEqual(['Edit', 'Edit'])
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.edit.ungranted'])
 })
 
-test('start-review: pr-comment waits for post now', async ($, on) => {
+test('start-review: a pr-comment before post now goes through and is noted once', async ($, on) => {
   const ran = engine(on)
+  const journal = watchJournal(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await say($, 'post')
-  const refused: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 3, body: 'x' } } as any)
-  expect(String(refused.deny ?? refused.text)).toContain('"post now"')
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 3, body: 'x' } } as any)
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.publish.ungranted'])
   await say($, 'post now')
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 3, body: 'x' } } as any)
-  expect(ran).toEqual(['mcp__github__gh:pr-comment'])
+  expect(ran).toEqual(['mcp__github__gh:pr-comment', 'mcp__github__gh:pr-comment'])
+  expect(journal().length).toBe(1)
 })
 
-test('process-comments: a git push asks the user; only their Allow lets it through', async ($, on) => {
+test('start-review: a deleted comment is refused whatever the user said but post now', async ($, on) => {
+  const ran = engine(on)
+  const journal = watchJournal(on)
+  await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
+  await say($, 'yes')
+  const refused: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'comment-delete', args: { node_id: 'C' } } as any)
+  expect(String(refused.deny ?? refused.text)).toContain('comment-delete')
+  expect(ran).toEqual([])
+  expect(journal()).toEqual([])
+})
+
+test('process-comments: a plain git push goes through and is noted; a forced push asks the user, only their Allow lets it through', async ($, on) => {
   const replies = ['Deny', 'Allow']
   const asked: string[] = []
   // The host's question reaches the chain as an AskUserQuestion call, answered before the engine.
@@ -85,15 +107,22 @@ test('process-comments: a git push asks the user; only their Allow lets it throu
     return { result: { questions: e.questions, answers: { [question]: replies.shift() } } }
   })
   const ran = engine(on)
+  const journal = watchJournal(on)
   await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
-  // « push » in the user's words grants nothing: the host's question decides.
+  // « push » in the user's words grants nothing: a plain push goes through, and is noted.
   await say($, 'push')
-  const refused: any = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)
-  expect(String(refused.deny ?? refused.text)).toContain('unless the user allows it when asked')
-  expect(ran).toEqual([])
   await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)
   expect(ran).toEqual(['Bash'])
+  expect(asked).toEqual([])
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.push.ungranted'])
+  // A forced push is the user's to allow.
+  const refused: any = await $.tool.call({ tool: 'Bash', command: 'git push --force origin HEAD' } as any)
+  expect(String(refused.deny ?? refused.text)).toContain('unless the user allows it when asked')
+  expect(ran).toEqual(['Bash'])
+  await $.tool.call({ tool: 'Bash', command: 'git push --force origin HEAD' } as any)
+  expect(ran).toEqual(['Bash', 'Bash'])
   expect(asked.length).toBe(2)
+  expect(journal().length).toBe(1)
 })
 
 test('end review lifts the rules at once', async ($, on) => {
@@ -138,12 +167,14 @@ test('auto-fix-loop replaces a walkthrough and edits freely', async ($, on) => {
   expect(ran).toEqual(['Edit'])
 })
 
-test('the resolver route is refused while the github tool is listed', async ($, on) => {
+test('the resolver route goes through while the github tool is listed, and is noted', async ($, on) => {
   const ran = engine(on, { listed: ['mcp__github__gh'] })
+  const journal = watchJournal(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
-  const refused: any = await $.tool.call({ tool: 'Bash', command: 'python3 "/p/scripts/resolve_github.py"' } as any)
-  expect(String(refused.deny ?? refused.text)).toContain('mcp__github__gh')
-  expect(ran).toEqual([])
+  const out: any = await $.tool.call({ tool: 'Bash', command: 'python3 "/p/scripts/resolve_github.py"' } as any)
+  expect(out.deny).toBeUndefined()
+  expect(ran).toEqual(['Bash'])
+  expect(journal()).toMatchObject([observedAs('pr-review.resolver-route.listed')])
 })
 
 test('the resolver route stays open where the github tool is not listed', async ($, on) => {

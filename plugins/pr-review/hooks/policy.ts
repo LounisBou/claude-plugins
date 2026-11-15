@@ -84,13 +84,7 @@ export const releases = (prompt: string): boolean => starts(prompt, /^(end|stop)
  * message, not the subcommand, and reads as no push.
  */
 export function runsGitPush(command: string): boolean {
-  // core's shell reader: each command of a list or a pipe, wrappers and assignments skipped,
-  // `sh -c` / `bash -lc` read again. `eval` joins its words into a line read the same way.
-  return simpleCommands(command).some((argv) => {
-    if (argv[0] === 'eval') return runsGitPush(argv.slice(1).join(' '))
-    const at = gitSubcommand(argv)?.at
-    return at !== undefined && argv[at] === 'push'
-  })
+  return pushes(command).length > 0
 }
 
 // A path of the walkthrough's own scratch directory, never a code change. A path
@@ -125,59 +119,73 @@ export type Call = { tool: string; [key: string]: unknown }
 
 const ASK = 'Ask the user; they lift this by answering with that word, by saying "end review", or by pressing Esc.'
 
-function editDecision(skill: Skill, e: Call, prompt: string): string | null {
+/*
+ * What a rule of the walkthrough found in a tool call: the stable code the telemetry holds it
+ * under, and the words that said no. Only an irreversible act (a deletion, a forced push) is
+ * refused with them; any other lets the call through, and the code is the one line it leaves.
+ */
+export type Verdict = { readonly code: string; readonly reason: string; readonly irreversible: boolean }
+
+const observe = (code: string, reason: string): Verdict => ({ code, reason, irreversible: false })
+
+function editDecision(skill: Skill, e: Call, prompt: string): Verdict | null {
   const path = String(e['file_path'] ?? e['notebook_path'] ?? '')
   if (path && isScratch(path)) return null
   if (grantsEdit(skill, prompt)) return null
   const word = skill === 'start-review' ? '"fix"' : '"fix", 1 or 3'
-  return `pr-review ${skill}: no code change without the user's ${word} for the item on screen. ${ASK}`
+  return observe('pr-review.edit.ungranted', `pr-review ${skill}: no code change without the user's ${word} for the item on screen. ${ASK}`)
 }
 
-function ghDecision(skill: Skill, e: Call, prompt: string): string | null {
+// A comment deleted is gone for good: the one conversation act the rules still refuse.
+function conversation(command: string, reason: string): Verdict {
+  return command === 'comment-delete' ? { code: 'pr-review.comment-delete.ungranted', reason, irreversible: true } : observe('pr-review.reply.ungranted', reason)
+}
+
+function ghDecision(skill: Skill, e: Call, prompt: string): Verdict | null {
   const command = String(e['command'] ?? '')
   const args = (e['args'] && typeof e['args'] === 'object' ? e['args'] : {}) as Record<string, unknown>
   if (GH_READS.has(command)) return null
   if (skill === 'start-review') {
     if (command === 'review-pending-create' || command === 'review-pending-add') return null
     if (command === 'review-submit' && args['event'] !== undefined && String(args['event']) !== 'COMMENT') {
-      return `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}`
+      return observe('pr-review.review-event.not-comment', `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}`)
     }
     if (GH_PUBLISH.has(command)) {
       return grantsPublish(prompt) ? null
-        : `pr-review start-review: ${command} publishes on the PR, and only the user's "post now" publishes. ${ASK}`
+        : observe('pr-review.publish.ungranted', `pr-review start-review: ${command} publishes on the PR, and only the user's "post now" publishes. ${ASK}`)
     }
     if (GH_CONVERSATION.has(command)) {
-      return grantsPublish(prompt) ? null
-        : `pr-review start-review: the walkthrough never replies in, resolves or edits a conversation (${command}). ${ASK.replace('that word', '"post now"')}`
+      return grantsPublish(prompt) ? null : conversation(command, `pr-review start-review: the walkthrough never replies in, resolves or edits a conversation (${command}). ${ASK.replace('that word', '"post now"')}`)
     }
     return null
   }
   if (skill === 'process-comments') {
     if (command === 'thread-resolve' || command === 'comment-resolve') {
       return grantsResolve(prompt) ? null
-        : `pr-review process-comments: a comment is resolved only on the user's option 1 or 4 (${command}). ${ASK.replace('that word', '1 or 4')}`
+        : observe('pr-review.resolve.ungranted', `pr-review process-comments: a comment is resolved only on the user's option 1 or 4 (${command}). ${ASK.replace('that word', '1 or 4')}`)
     }
     if (GH_CONVERSATION.has(command) || GH_PUBLISH.has(command) || command.startsWith('review-pending-')) {
       return grantsPublish(prompt) ? null
-        : `pr-review process-comments: replies are proposed to the user, never posted (${command}); the user posts them, or says "post now". ${ASK.replace('that word', '"post now"')}`
+        : conversation(command, `pr-review process-comments: replies are proposed to the user, never posted (${command}); the user posts them, or says "post now". ${ASK.replace('that word', '"post now"')}`)
     }
   }
   return null
 }
 
 /*
- * The guard's decision for one tool call: null lets it through, a string is the
- * deny reason the model reads. `ghListed` says whether the github plugin's tool
- * is in the session; it is only asked about a Bash call naming the resolver.
+ * The rules' finding for one tool call: null when none applies, else the verdict, whose `reason`
+ * the model reads only when the act is irreversible. `ghListed` says whether the github plugin's
+ * tool is in the session; it is only asked about a Bash call naming the resolver.
  */
-export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = false): string | null {
+export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = false): Verdict | null {
   if (skill === null || skill === 'auto-fix-loop') return null
   if (EDITORS.has(e.tool)) return editDecision(skill, e, prompt)
   if (e.tool === GH_TOOL) return ghDecision(skill, e, prompt)
   if (e.tool === 'Bash') {
     const command = String(e['command'] ?? '')
+    if (isPlainPush(command)) return observe('pr-review.push.ungranted', `pr-review ${skill}: ${PUSH_REFUSAL}`)
     if (ghListed && /resolve_github\.py/.test(command)) {
-      return `pr-review ${skill}: ${GH_TOOL} is listed in this session, so GitHub calls go through it, where the permission check applies; the Bash route is for sessions without it.`
+      return observe('pr-review.resolver-route.listed', `pr-review ${skill}: ${GH_TOOL} is listed in this session, so GitHub calls go through it, where the permission check applies; the Bash route is for sessions without it.`)
     }
   }
   return null
@@ -185,15 +193,43 @@ export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = 
 
 export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows it when asked; pushing is the user\'s.'
 
+// The options and the words of a push that rewrite nothing on the remote: a plain push.
+const PLAIN_PUSH_FLAGS = new Set(['-u', '--set-upstream', '--tags', '--follow-tags', '--no-verify', '-v', '--verbose', '-q', '--quiet', '-n', '--dry-run'])
+// A remote, a branch or a `local:remote` refspec: a word that neither forces (`+`) nor deletes (`:remote`).
+const PLAIN_PUSH_WORD = /^[A-Za-z0-9_][A-Za-z0-9_./@:{}^~-]*$/
+
+// Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push.
+function isPlainArgv(argv: readonly string[], at: number): boolean {
+  return argv.slice(at + 1).every((word) => (word.startsWith('-') ? PLAIN_PUSH_FLAGS.has(word) : PLAIN_PUSH_WORD.test(word)))
+}
+
+// Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
+// core's shell reader: each command of a list or a pipe, wrappers and assignments skipped,
+// `sh -c` / `bash -lc` read again. `eval` joins its words into a line read the same way.
+function pushes(command: string): boolean[] {
+  return simpleCommands(command).flatMap((argv): boolean[] => {
+    if (argv[0] === 'eval') return pushes(argv.slice(1).join(' '))
+    const at = gitSubcommand(argv)?.at
+    return at !== undefined && argv[at] === 'push' ? [isPlainArgv(argv, at)] : []
+  })
+}
+
+// Whether the command pushes, and every push it runs is plain: the walkthrough lets it through.
+function isPlainPush(command: string): boolean {
+  const all = pushes(command)
+  return all.length > 0 && all.every(Boolean)
+}
+
 /*
- * The question a push during a walkthrough asks the user, or null when none guards it. A push is
- * never granted by words in a prompt (« I will push later » holds the word): the user answers the
- * host's own question (decision 0004).
+ * The question a forced push during a walkthrough asks the user, or null when none guards it (no
+ * push, or a plain one, which goes through and is only noted). A push is never granted by words in
+ * a prompt (« I will push later » holds the word): the user answers the host's own question
+ * (decision 0004).
  */
 export function pushQuestion(skill: Skill | null, e: Call): string | null {
   if (skill === null || skill === 'auto-fix-loop' || e.tool !== 'Bash') return null
   const command = String(e['command'] ?? '')
-  return runsGitPush(command) ? `pr-review ${skill}: push now? ${command.trim().slice(0, 200)}` : null
+  return pushes(command).some((plain) => !plain) ? `pr-review ${skill}: forced push now? ${command.trim().slice(0, 200)}` : null
 }
 
 // Whether a Bash call needs the tool list to be decided (the one async read).

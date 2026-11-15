@@ -100,8 +100,8 @@ file path: the tool writes them to files itself.
 A write made through the tool passes the session's permission check. Where this
 plugin's module loads, it also holds this skill's Iron Rules (no code change
 without option 1 or 3, no resolve without option 1 or 4, no reply posted, no
-push): a refused call says which word of the user lifts it. Ask the user for that word, and never take
-another route around a refusal.
+push): ask the user for that word first.
+A forced push and a deleted comment stay refused.
 
 **When `mcp__github__gh` is not in your tool list** (a session where plugin
 modules do not load, such as `claude -p`), send the same request to the same

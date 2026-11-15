@@ -1,19 +1,19 @@
 // hooks/loop.ts
-// auto-fix-loop's state held by the module, and its two exit conditions held
-// by a Stop gate. The skill reports each pass to the loop tool; the tool says
+// auto-fix-loop's state held by the module, and its two exit conditions watched
+// at the Stop event. The skill reports each pass to the loop tool; the tool says
 // which findings are new, counts the passes and says when the loop is over.
-// While a loop runs and neither exit condition has been met, a stop is refused
-// once, with the pass it stands at.
+// While a loop runs and neither exit condition has been met, a stop goes through
+// and leaves one line in the journal.
 //
-// Never a trap: the gate refuses at most once per stop (the host re-fires it
-// with stop_hook_active set, and the gate steps aside), and any prompt the user
-// types, an interrupted turn or a /clear ends the loop's hold.
+// Never a trap: the stop is never refused, and any prompt the user types, an
+// interrupted turn or a /clear ends the loop's watch.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
-import { READER_DENY, REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
+import { observed } from './observe.ts'
+import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -180,19 +180,15 @@ function unknownSeverity(): string {
   return silent.length > 0 ? `severity unknown: no findings block from ${silent.join(', ')}` : 'severity unknown: no review agent\'s findings block was read'
 }
 
-// The Stop gate's reason, or null to let the stop through.
+// The code of the stop the loop would once have held, or null when the stop is plain.
 // A pass whose agents still run in the background ends its turn: their hand-back wakes the session.
 // An agent that handed back no block runs no more: until `findings` has it asked again, nothing
-// would wake the session, and the stop is held.
-export function stopReason(stopHookActive: boolean): string | null {
+// would wake the session. The stop goes through either way, and the journal keeps one line.
+export function stopCode(stopHookActive: boolean): string | null {
   if (stopHookActive || !loop.isActive) return null
-  if (loop.isReviewing && loop.blockless.size > 0) {
-    return `pr-review auto-fix-loop: pass ${loop.pass}/${loop.maxPasses}, and ${loop.blockless.size} review agent(s) handed back no findings block: `
-      + 'call mcp__pr-review__loop findings, which says how to ask them again.'
-  }
+  if (loop.isReviewing && loop.blockless.size > 0) return 'pr-review.stop.reader-blockless'
   if (loop.isReviewing && loop.awaiting.size > 0) return null
-  return `pr-review auto-fix-loop: pass ${loop.pass}/${loop.maxPasses}, and the last review reported ${loop.lastFindings} finding(s). `
-    + `The loop ends only on a review with no Critical or Important finding or after pass ${loop.maxPasses}: call mcp__pr-review__loop begin_pass and run the review again.`
+  return 'pr-review.stop.loop-open'
 }
 
 export function releaseLoop(): void {
@@ -480,7 +476,7 @@ export function register(on: any): void {
   // Each agent a review pass launches carries the findings-block request in its own prompt, and
   // its answer is read. The hook never changes the call's input: the host's auto mode reviews the
   // call before the hooks run, and refuses one a hook rewrote. A reader whose prompt lacks the
-  // request is denied, its message naming the text to end the prompt with; the session issues it again.
+  // request runs all the same, and leaves one line in the journal; it hands back no block.
   // The host may run the agent in the background: core's record of the launch then names the
   // agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
@@ -488,7 +484,7 @@ export function register(on: any): void {
   // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing || !isReader(e.subagent_type)) return next(e)
-    if (!carriesRequest(String(e.prompt ?? ''))) return { deny: READER_DENY }
+    if (!carriesRequest(String(e.prompt ?? ''))) await observed($, 'pr-review.reader.no-request')
     const reader = typeof e.subagent_type === 'string' && e.subagent_type !== '' ? e.subagent_type : DEFAULT_AGENT
     let answer: any
     try {
@@ -581,7 +577,8 @@ export function register(on: any): void {
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
 
   on('classic.Stop', async ($: any, e: any, next: any) => {
-    const reason = stopReason(Boolean(e.stop_hook_active))
-    return reason ? { block: reason } : next(e)
+    const code = stopCode(Boolean(e.stop_hook_active))
+    if (code) await observed($, code)
+    return next(e)
   }).catch(async (_$: any, e: any, next: any) => next(e))
 }
