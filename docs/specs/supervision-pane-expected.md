@@ -45,3 +45,7 @@ l'endroit où j'y réponds. »
 
 Answered in any one of these places, the question is answered everywhere: it leaves the pane, the
 coordinator's conversation is told it is settled, and the asking orchestrator receives the answer.
+
+Open, against his description: a question its sender marks urgent is also due in the coordinator's
+conversation while the pane is open (`isDue`, `plugins/orchestrator/hooks/round.ts`). His words do not
+speak of urgency; the code keeps the exception until he says.

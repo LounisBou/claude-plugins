@@ -151,9 +151,13 @@ describe('lookup and clear', () => {
     assert.deepEqual(parseRecord('{'), { name: '', tty: '', pid: '' })
   })
 
-  it('refuses a subcommand it does not hold', () => {
+  it('refuses a subcommand it does not hold, and no subcommand with the usage', () => {
     const f = fixture()
-    assert.equal(main(f.ctx, ['facts']), 1)
-    assert.deepEqual(f.err, ['coordinator: not a ported subcommand: facts'])
+    assert.equal(main(f.ctx, ['bogus']), 1)
+    assert.equal(main(f.ctx, []), 1)
+    assert.deepEqual(f.err, [
+      'coordinator: unknown subcommand: bogus (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round or round-archive)',
+      'coordinator: usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-archive} ... (see header)',
+    ])
   })
 })
