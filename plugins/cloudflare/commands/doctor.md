@@ -1,6 +1,7 @@
 ---
 description: Check python3, the accounts found, each account's token and its permissions, and the local Caddy
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
+disable-model-invocation: true
 ---
 
 Run `${CLAUDE_PLUGIN_ROOT}/install.sh --check` and report its output to the user
