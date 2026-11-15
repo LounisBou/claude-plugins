@@ -54,7 +54,7 @@ words.
    has stalled: read its tree. Real load on a shared machine is stopped at once.
 7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you
    dispatch. An agent past the gate gets no new phase: rotate it.
-8. **Kill what you start, delete what you build, prove it with `ps` and `ls`.** No date or hour is typed from memory: paste
+8. **Kill what you start, delete what you build.** No date or hour is typed from memory: paste
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What

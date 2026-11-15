@@ -23,14 +23,14 @@ and no file written (this brief aside) — the exchange with your predecessor ex
    over ». Until then it forwards you what still reaches it. Five minutes without « handed
    over »: read its screen with the launcher's `screen --tty {{PREDECESSOR_TTY}}`, and go on
    only on a prompt with nothing in flight.
-4. **Close its tab, and prove it.** The launcher's `list` must still show an `Audit:` session
+4. **Close its tab.** The launcher's `list` must still show an `Audit:` session
    on {{PREDECESSOR_TTY}} that is not yours. Then:
 
    ```
    {{ITERM_AGENT_SH}} close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"
    ```
 
-   `ps -t <that tty without /dev/>` shows no host CLI, and `ListAgents` no longer lists it.
+   Its `closed 1 session` line is the proof.
 5. **Tell the operator** in one line: you took over from `{{PREDECESSOR}}`, its tab is closed,
    and what is still owed him.
 

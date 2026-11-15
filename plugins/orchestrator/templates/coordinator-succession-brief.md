@@ -23,7 +23,7 @@ word on a point outranks this brief and the rulebook both.
    over ». Until then it forwards you what still reaches it. Five minutes without « handed
    over »: read its screen with the launcher's `screen --tty {{PREDECESSOR_TTY}}`, and go on
    only on a prompt with nothing in flight.
-4. **CLOSE ITS TAB, and prove it.** The operator's standing order: you ALWAYS close your
+4. **CLOSE ITS TAB.** The operator's standing order: you ALWAYS close your
    predecessor, one the launcher did not open (the first coordinator, started by hand)
    included, and nothing is asked of him. The launcher's `list` must still show a session on
    {{PREDECESSOR_TTY}} that is not `self`, named `Coord:`. Then:
@@ -33,12 +33,11 @@ word on a point outranks this brief and the rulebook both.
    ```
 
    A predecessor the launcher did not open: pass the title
-   `list` printed for it as `--expect-title` instead. Where the host refuses the close,
-   message `{{PREDECESSOR}}` « call
+   `list` printed for it as `--expect-title` instead. Its `closed 1 session` line is the
+   proof. Where the host refuses the close, message `{{PREDECESSOR}}` « call
    mcp__orchestrator__end_session »: the module ends its session when its turn ends;
-   then tell the operator in one line that its tab holds only a shell. The proof is the tty,
-   never `list`: `verify --tty {{PREDECESSOR_TTY}}` fails,
-   `ps -t <that tty without /dev/>` shows no host CLI, and `ListAgents` no longer lists it.
+   prove that end on its tty, `verify --tty {{PREDECESSOR_TTY}}` failing, then tell the
+   operator in one line that its tab holds only a shell.
 5. **THEN register**, under your name exactly as `ListAgents` printed it:
 
    ```
