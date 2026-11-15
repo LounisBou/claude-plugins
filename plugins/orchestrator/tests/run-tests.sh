@@ -5370,8 +5370,8 @@ check "review and briefs split « Review on evidence » and « Standing rules »
   "$(awk '/^## Review on evidence$/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/review-verdict.md")|$(awk '/^## Standing rules/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/standing-rules.md")"
 # A successor runs on its predecessor's live pair by --successor alone: the succession line
 # types no --inherit-model, which would read as a choice the successor's pair depends on.
-check "the succession line types --successor without --inherit-model" "0|0|yes|yes" \
-  "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/succession-predecessor.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt '"'"'Load the skill orchestrator:orchestrator with the argument "<your mode>", then run <scripts>/succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty> and execute what it prints.'"'"'`' && echo yes || echo no)|$(spells "$ORCH_REFS/succession-predecessor.md" 'with that prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
+check "the succession line types --successor without --inherit-model" "0|0|yes" \
+  "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/succession-predecessor.md")|$(spells "$ORCH_REFS/succession-predecessor.md" 'with that prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
 # The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
 # `Question i of N` block is several hundred characters, and a Live state already brings the
 # brief near the limit, so the cap would refuse the very handover the field exists for.

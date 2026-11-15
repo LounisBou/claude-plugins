@@ -46,7 +46,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const record = join(briefs, 'dispatch-record.jsonl')
   writeFileSync(record, over.rows ?? [
     JSON.stringify({ id: 1, label: 'SCHEMA: tables', state: 'closed' }),
-    JSON.stringify({ id: 2, label: 'API: routes', state: 'open' }),
+    JSON.stringify({ id: 2, label: 'API: routes', state: 'open', note: 'Dispatched: Agent: api' }),
     JSON.stringify({ id: 3, label: 'UI: pages', state: 'open', deferred: 'ruling 4' }),
     JSON.stringify({ id: 4, label: 'DOCS: guide', state: 'open', blocker: 'row 1 closed', note: 'start from the old guide' }),
     JSON.stringify({ id: 5, label: 'PERF: cache', state: 'open', blocker: 'PR acme/app#12 merged' }),
@@ -116,7 +116,7 @@ test('the Live state: the open rows at level 1, their owners by agent, ruling or
   const w = world()
   assert.equal(w.run(), 0)
   const text = w.text()
-  assert.match(text, /- Rows open \(id, label, what remains\): open=2 label=API: routes; deferred=3 label=UI: pages ruling=ruling 4; open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide; open=5 label=PERF: cache blocker=PR acme\/app#12 merged; open=6 label=LINT: rules blocker=row 2 closed\n/)
+  assert.match(text, /- Rows open \(id, label, what remains\): open=2 label=API: routes note=Dispatched: Agent: api; deferred=3 label=UI: pages ruling=ruling 4; open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide; open=5 label=PERF: cache blocker=PR acme\/app#12 merged; open=6 label=LINT: rules blocker=row 2 closed\n/)
   assert.match(text, /- Row owners: 2 api; 3 ruling; 4 READY NOT STARTED; 5 READY NOT STARTED; 6 blocked: row 2 closed\n/)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/app#12 en cours \(agent Agent: pr\)\n/)
   assert.match(text, /- Agents running \(name and reference, brief path\): Agent: api\n/)
@@ -238,13 +238,13 @@ test('ownersOf: a row whose until has passed reads READY NOT STARTED, a row on a
   assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT)), ['1 READY NOT STARTED', '2 blocked: measure p95 under 300 ms'])
 })
 
-test('ownersOf names each open row\'s live agent by its label word, a deferred row\'s ruling, its fallen or standing blocker, and flags a row with none recorded', () => {
+test('ownersOf names each open row\'s live agent as its note names it, a deferred row\'s ruling, its fallen or standing blocker, and flags a row with none recorded', () => {
   const rows = [
-    { id: '1', line: '', label: 'TAKEOVERLEAN: a takeover reads less', blocker: 'none' },
-    { id: '2', line: '', label: 'QREDESIGN PR4: remove the old path' },
+    { id: '1', line: '', label: 'TAKEOVERLEAN: a takeover reads less', blocker: 'none', note: 'Dispatched: Agent: takeoverlean (ttys004)' },
+    { id: '2', line: '', label: 'QREDESIGN PR4: remove the old path', note: 'Dispatched to Agent: qredesign-removal-2, then rotated' },
     { id: '3', line: '', label: 'AUDIT: nobody works it' },
     { id: '4', line: '', label: 'LATER: parked', ruling: 'ruling 9', blocker: 'none' },
-    { id: '5', line: '', label: 'A: one letter names nothing' },
+    { id: '5', line: '', label: 'AB: its label word is an agent\'s name, which owns nothing' },
     { id: '6', line: '', label: 'READY: nobody on it', blocker: 'none' },
     { id: '7', line: '', label: 'WAIT: on a pull request', blocker: 'PR acme/app#3 merged' },
     { id: '8', line: '', label: 'GONE: its forge is unreachable', blocker: 'PR acme/app#4 merged' },
@@ -255,6 +255,24 @@ test('ownersOf names each open row\'s live agent by its label word, a deferred r
     '1 takeoverlean', '2 qredesign-removal-2', '3 NO OWNER', '4 ruling', '5 NO OWNER', '6 READY NOT STARTED', '7 blocked: PR acme/app#3 merged', '8 blocker unread: PR acme/app#4 merged',
   ])
   assert.deepEqual(ownersOf({ rows: [rows[5] ?? { id: '', line: '' }], prs: [], agents: [], questions: [] }), ['6 blocker unread: none'])
+})
+
+test('ownersOf reads the agent a row was dispatched to from its note: a live agent holds its row whatever its label, a shared label word gives no row to another agent', () => {
+  // The takeover of 2026-11-15: two rows worked by live agents read READY NOT STARTED, and a third went to the wrong agent.
+  const rows = [
+    { id: '35', line: '', label: 'geo-git-flow: bloc d\'état après chaque étape', blocker: 'row 49 closed', note: 'Dispatched 2026-11-15T11:40Z: Agent: ggf P17 status block (ttys004, deep), branch feat/step-status-block' },
+    { id: '51', line: '', label: 'P10 staging mobile builds (Android preview)', blocker: 'row 49 closed', note: 'Dispatched 2026-11-15T11:40Z: Agent: ggf P10 Android preview (ttys002, standard)' },
+    { id: '57', line: '', label: 'ggf: systemdRestarts switched to per-unit restarts', blocker: 'row 56 closed' },
+    { id: '58', line: '', label: 'ggf: P1 cleanup', blocker: 'none', note: 'Dispatched: Agent: ggf P1 (ttys009), stood down' },
+  ]
+  const agents = ['Agent: ggf P17 status block', 'Agent: ggf P10 Android preview', 'Agent: ggf P1x']
+  const fallen = () => 'fallen' as const
+  assert.deepEqual(ownersOf({ rows, prs: [], agents, questions: [] }, fallen), [
+    '35 ggf P17 status block', '51 ggf P10 Android preview', '57 READY NOT STARTED', '58 DISPATCHED, NO LIVE AGENT',
+  ])
+  // A name is matched whole: « ggf P1 » in a note is not « ggf P17 status block », nor the reverse.
+  assert.deepEqual(ownersOf({ rows: [rows[3] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P17 status block'], questions: [] }, fallen), ['58 DISPATCHED, NO LIVE AGENT'])
+  assert.deepEqual(ownersOf({ rows: [rows[0] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P1'], questions: [] }, fallen), ['35 DISPATCHED, NO LIVE AGENT'])
 })
 
 test('todoStray reads the open items only, each row they name once against the record', () => {
@@ -286,6 +304,18 @@ test('the open questions asked with ask are printed as their block made from the
     '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
     '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
   ].join('\n'))
+})
+
+test('the successor\'s prompt names no script directory of the predecessor: it runs the takeover from its own copy of the plugin, which the takeover prints as the one every script is in', () => {
+  // The succession of 2026-11-15 loaded the new skill and ran every script of the predecessor's copy, 116 commits older.
+  const succeed = readFileSync(join(import.meta.dirname, '..', '..', '..', 'commands', 'succeed.md'), 'utf8')
+  const prompt = /--prompt '([^']*)'/.exec(succeed)?.[1] ?? ''
+  assert.ok(prompt.includes('succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>'), prompt)
+  assert.ok(prompt.includes('in the base directory that skill load printed'), prompt)
+  assert.ok(!/<scripts>|CLAUDE_PLUGIN_ROOT|\/skills\/orchestrator\/scripts/.test(prompt), prompt)
+  const w = world()
+  assert.equal(w.run(), 0)
+  assert.ok(w.text().includes(`Every script below is in \`${import.meta.dirname}\`, the copy this takeover ran from.`))
 })
 
 test('fill leaves a placeholder it has no value for; the template is the plugin\'s fixed text', () => {
@@ -420,7 +450,7 @@ test('a short repository name two known repositories share names no pull request
     JSON.stringify({ id: 3, label: 'LONG: recorded longer than the forge', state: 'open', review: { head: 'f'.repeat(40) } }),
     JSON.stringify({ id: 4, label: 'TINY: too short to tell', state: 'open', review: { head: 'ddd' } }),
     JSON.stringify({ id: 5, label: 'SURFACE: named there', state: 'open', surface: { kind: 'x', pr: 'acme/flow#6' } }),
-    JSON.stringify({ id: 6, label: 'AGENT: api has it', state: 'open', surface: { kind: 'x', pr: 'acme/flow#6' } }),
+    JSON.stringify({ id: 6, label: 'AGENT: api has it', state: 'open', note: 'Dispatched: Agent: agent', surface: { kind: 'x', pr: 'acme/flow#6' } }),
   ].join('\n') + '\n'
   const deck = deckOf([orchestrator(NAME, 'acme/flow', [], ['Agent: agent'])])
   const w = world({ rows, deck, round: [], todo: '' })
