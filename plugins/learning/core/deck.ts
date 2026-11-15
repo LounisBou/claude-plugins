@@ -83,6 +83,11 @@ const deck = shape<Deck>({
   usage_basis: shape<Deck['usage_basis']>({ currency: one('USD'), prices: one('api-list-equivalent'), timezone: one('Europe/Paris') }),
 })
 
+/** Whether a value is a period's usage as the deck holds it: a session row carries one. */
+export function isDeckUsage(value: unknown): value is DeckUsage {
+  return usage(value)
+}
+
 /** The deck a file's text holds, or null: no JSON (a file caught mid-write), another version, or a field of another shape. */
 export function parseDeck(fileText: string): Deck | null {
   try {

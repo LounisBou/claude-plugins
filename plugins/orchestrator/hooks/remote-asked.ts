@@ -21,8 +21,8 @@ type Replica = NonNullable<Asked['replica']>
 
 // The nouns the pushes and the replies hold: the supervision's.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui'>
-// What a push alone holds: its caller in question.ts has no more.
-type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock'>
+// What a push alone holds: the send to the coordinator (supervision.ts sendToCoordinator) needs the session.
+type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session'>
 
 async function pathOf($: Pushing, id: string): Promise<string> {
   return `${await stateDir($)}/${ROUND_DIR}/${id}.json`
