@@ -331,7 +331,8 @@ echo "== open questions: the deck's round =="
 
 # The orchestrator publishes deck.json under its state directory and rewrites it at least once a
 # minute; the status line shows the round's open count while the file is fresh. A file stamped more
-# than three minutes ago (core's deck-reader.json) is a frozen one and shows nothing.
+# than three minutes ago (core's deck-reader.json) is a stale one: it still shows its last count,
+# marked « ? » and dimmed, urgent ones red, so the operator sees what was open when it froze.
 Q_ONLY=$(config_with SHOW_DIRECTORY=1 SHOW_BRANCH=0 SHOW_PR=0 SHOW_MODEL=0 SHOW_SESSION_NAME=0 \
   SHOW_CONTEXT=0 SHOW_USAGE=0 SHOW_LINES_CHANGED=0)
 Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
@@ -365,7 +366,29 @@ check_deck "no open question shows nothing" "$(deck_state none "$(deck_text 0 0 
 check_deck "open questions show their count" "$(deck_state open "$(deck_text 3 0 5)")" "plain │ ✋ 3"
 check_deck "urgent ones are told apart" "$(deck_state urgent "$(deck_text 3 2 5)")" "plain │ ✋ 3 (2 urgent)"
 check_deck "a deck written two minutes ago still counts" "$(deck_state fresh "$(deck_text 1 0 120)")" "plain │ ✋ 1"
-check_deck "a deck written four minutes ago is frozen: nothing" "$(deck_state stale "$(deck_text 3 1 240)")" "plain"
+check_deck "a deck written four minutes ago is stale: its last count, marked" "$(deck_state stale "$(deck_text 3 0 240)")" "plain │ ✋ 3?"
+check_deck "a stale deck keeps its urgent ones apart" "$(deck_state stale_urgent "$(deck_text 3 1 240)")" "plain │ ✋ 3? (1 urgent)"
+check_deck "a stale deck with nothing open shows nothing" "$(deck_state stale_none "$(deck_text 0 0 240)")" "plain"
+
+# Colours of the deck segment, read raw: the fresh count keeps its colour, the stale one is dimmed
+# (red once urgent), the marked « ? » is what tells it from a live count.
+deck_raw() {
+  printf '%s' "$Q_PAYLOAD" | ORCHESTRATOR_STATE_DIR="$1" STATUSBAR_CONFIG="$Q_ONLY" bash "$SCRIPT"
+}
+check_colour() {
+  local name="$1" state="$2" sequence="$3" token="$4"
+  if deck_raw "$state" | grep -qF "$sequence$token"; then
+    printf '  ok   %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n' "$name"
+    printf '       expected %s before %s\n' "$(printf '%s' "$sequence" | od -c | head -1)" "$token"
+    printf '       actual:  %s\n' "$(deck_raw "$state" | tr '\n' '⏎')"
+    fail=$((fail + 1))
+  fi
+}
+check_colour "a fresh count stays yellow" "$(deck_state fresh_colour "$(deck_text 3 0 5)")" $'\033[0;33m' "✋ 3"
+check_colour "a stale count is dimmed" "$(deck_state stale_colour "$(deck_text 3 0 240)")" $'\033[2m' "✋ 3?"
+check_colour "a stale urgent count is red" "$(deck_state stale_red "$(deck_text 3 1 240)")" $'\033[0;31m' "✋ 3?"
 check_deck "a deck stamped ten minutes ahead is no live file: nothing" "$(deck_state future "$(deck_text 3 1 -600)")" "plain"
 check_deck "no deck file shows nothing" "$WORK/state-missing" "plain"
 check_deck "a deck caught mid-write shows nothing" "$(deck_state torn "$(deck_text 3 1 5 | head -c 40)")" "plain"
