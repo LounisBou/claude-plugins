@@ -3,11 +3,9 @@
 // the name the walk read, the repository of the working directory — written by
 // this file's own session.measure handler and removed by its session.end, one
 // file per key under the module's state root. The supervision pane below reads
-// the same rows, opened when the person types /orchestrator-supervision — never on
-// a start: the operator wants nothing placed
-// on screen unasked — and in a coordinator, by the module itself once, at the end
-// of its first turn while the coordinator's record names one: his ruling of
-// 2026-10-18, unless he closed it: his close outlives a succession (pane-choice.json). In a
+// the same rows, opened on the person's word alone (/orchestrator-supervision or the
+// supervision tool's `open`) — never by the module itself, on a start, a turn, a wake or a
+// succession: what he closed stays closed, there being nothing that opens it again. In a
 // coordinator session it lists the orchestrators, and under them
 // the first question of its round (round.ts); in an orchestrator session,
 // that orchestrator's own agents, read from the launcher's chain and the host's
@@ -190,10 +188,6 @@ const PANE_ROLES_ONLY = 'The supervision pane opens in a coordinator session («
 // is any number no honest fill reaches, added to the fill so the order stays
 // one comparison.
 const GATE_URGENCY_FLOOR = 1000
-
-// The pane opened once in this session, by the module or by the command: kept by the host in
-// $.state (types/index.d.ts), so a reload of the module does not open it again.
-const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 
 // How often a coordinator's session reads its round for questions just due, urgent or with
 // the pane closed meanwhile, rather than at the operator's next word. A one-shot clock, armed
@@ -837,7 +831,7 @@ async function openPane($: any, pane: PaneMemory, role: 'coordinator' | 'orchest
   pane.roundSeen = null
   pane.ticker?.cancel()
   pane.ticker = $.clock.every(PANE_ROUND_POLL_MS, () => paneTick($, pane))
-  if (role === 'coordinator') await recordPaneOpen($, pid).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
+  if (role === 'coordinator') await recordPaneOpen($, pid, tty).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
   return placed
 }
 
@@ -882,21 +876,22 @@ async function closeShown($: any, pane: PaneMemory): Promise<void> {
 }
 
 // The coordinator's pane as `coordinator.sh round` reads it, `<state>/pane.json`: the session
-// whose pane is open and its host pid, the script holding the pane open while that pid lives.
-// Without it every question is due in the tab at once, there being no pane to answer it in.
-export type PaneRecord = { session: string; pid: string; at: string }
+// whose pane is open, its host pid and the tty of its tab, the script holding the pane open while
+// that pid still runs a session on that tty. Without it every question is due in the tab at once,
+// there being no pane to answer it in.
+export type PaneRecord = { session: string; pid: string; tty?: string | null; at: string }
 
 async function panePath($: any): Promise<string> {
   return `${await stateDir($)}/pane.json`
 }
 
 // A pane whose pid is unknown is not recorded: a record naming none is no pane to the script.
-async function recordPaneOpen($: any, pid: string | null): Promise<void> {
+async function recordPaneOpen($: any, pid: string | null, tty: string | null): Promise<void> {
   if (!pid) {
     await logLine($, 'supervision', 'pane: no host pid read for this session; the pane is not recorded open')
     return
   }
-  const record: PaneRecord = { session: await $.session.id(), pid, at: new Date().toISOString() }
+  const record: PaneRecord = { session: await $.session.id(), pid, ...(tty ? { tty } : {}), at: new Date().toISOString() }
   await writeAtomic($, await panePath($), JSON.stringify(record) + '\n')
 }
 
@@ -916,68 +911,53 @@ async function recordPaneClosed($: any): Promise<void> {
   if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
 }
 
-// The coordinator's pane as he left it, `<state>/pane-choice.json`: `{"pane":"open"|"closed","at"}`,
-// written by his word alone (the command, the tool, his ✕) and kept in the state directory, not
-// in the host's state of one session, so a successor coordinator reads it and leaves the pane as he
-// left it. Without it the successor's first turn opened the pane he had closed (he reads the
-// supervision on his phone, where an open pane is unseen). A file absent or unreadable is no
-// choice: the pane then opens at the first turn, as before.
-export type PaneChoice = { pane: 'open' | 'closed'; at: string }
-
-async function paneChoicePath($: any): Promise<string> {
-  return `${await stateDir($)}/pane-choice.json`
-}
-
-// A file that cannot be read is none, the host's read throwing the same for an absent file. A
-// file read that holds no choice (corrupt, truncated, another shape) is none too, but said in the
-// log: the pane then opens against what he may have chosen.
-async function readPaneChoice($: any): Promise<PaneChoice['pane'] | null> {
-  let text: string
-  try {
-    text = String(await $.fs.read(await paneChoicePath($)))
-  } catch {
-    return null
-  }
-  try {
-    const choice = JSON.parse(text) as Partial<PaneChoice> | null
-    if (choice?.pane === 'open' || choice?.pane === 'closed') return choice.pane
-  } catch { /* said below */ }
-  await logLine($, 'supervision', 'pane: pane-choice.json holds no choice; the pane is opened as without one')
-  return null
-}
-
-// His word kept, for a coordinator's pane only: an orchestrator's is never opened on its own, and
-// its command must not move the coordinator's choice. True when there is nothing to keep or it is
-// kept; false after one log line when it could not be, and the command and the tool then say so
-// in their answer, so that he knows the next coordinator may open the pane again.
-async function keepPaneChoice($: any, role: string | null, pane: PaneChoice['pane']): Promise<boolean> {
-  if (role !== 'coordinator') return true
-  try {
-    const choice: PaneChoice = { pane, at: new Date().toISOString() }
-    await writeAtomic($, await paneChoicePath($), JSON.stringify(choice) + '\n')
-    return true
-  } catch (err) {
-    await logLine($, 'supervision', `pane: the choice could not be kept: ${(err as Error).message}`)
-    return false
-  }
-}
-
-const CHOICE_NOT_KEPT = ' His choice could not be kept: the next coordinator may open the pane again (the module\'s log says why).'
-
 // The coordinator's pane as `coordinator.sh round` judges it (its pane_open): a record naming a
-// pid that runs, whichever session wrote it. A record absent, unreadable or naming no pid is no
-// pane, and so is one whose pid the machine's listing does not hold, or a listing that failed,
-// as the script's own ps failing is.
+// pid that still runs a session, whichever session wrote it. A record absent, unreadable or naming
+// no pid is no pane, and so is one whose pid the machine's listing does not hold, or holds as
+// exiting or a zombie, or on another tty than the record's (a host whose tab was closed stays
+// listed for days under the terminal's session-keeping daemon: runsLive's rule), or a listing that
+// failed, as the script's own ps failing is.
 async function paneIsOpen($: any): Promise<boolean> {
   let pid: string
+  let tty: string | null = null
   try {
-    pid = String((JSON.parse(String(await $.fs.read(await panePath($)))) as { pid?: unknown })?.pid ?? '')
+    const record = JSON.parse(String(await $.fs.read(await panePath($)))) as { pid?: unknown; tty?: unknown } | null
+    pid = String(record?.pid ?? '')
+    if (typeof record?.tty === 'string') tty = record.tty
   } catch {
     return false
   }
-  if (!/^\d+$/.test(pid)) return false
-  const alive = livePids(await $.process.run(['ps', '-A', '-o', 'pid='], { timeoutMs: 5000 }).catch(() => null))
-  return alive?.has(pid) ?? false
+  const argv = livePidsArgv([pid])
+  if (!argv) return false
+  const alive = livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null))
+  return alive !== null && runsLive(alive, pid, tty)
+}
+
+// A record that says open while this host shows no such pane is removed: the pane went with no
+// close of the module's (the host's own, a tab or a session gone, a clear that gave the session
+// another id), and a record left behind held every question back from the tab for as long as the
+// host process lived. Only the record this session or this host wrote is judged, another live
+// coordinator's is its own; a host that cannot say which panes it shows leaves the record, said in
+// the log. Read at each wake, each turn and each start, so that `coordinator.sh round` never reads
+// a pane that is not there.
+async function reconcilePaneRecord($: any): Promise<void> {
+  let record: { session?: unknown; pid?: unknown } | null
+  try {
+    record = JSON.parse(String(await $.fs.read(await panePath($))))
+  } catch {
+    return
+  }
+  if (!record || typeof record !== 'object') return
+  try {
+    if (await paneShown($)) return
+    const own = record.session === await $.session.id() || String((await recordedCoordinator($))?.pid ?? '') === String(record.pid ?? '')
+    if (!own) return
+    const done = await $.process.run(['rm', '-f', await panePath($)], { timeoutMs: 5000 }).catch(() => null)
+    if (!done || done.exitCode !== 0) await logLine($, 'supervision', `pane: the record ${await panePath($)} could not be removed`)
+    else await logLine($, 'supervision', 'pane: the record said open while the host shows no pane; removed')
+  } catch (err) {
+    await logLine($, 'supervision', `pane: the record could not be checked: ${(err as Error).message}`)
+  }
 }
 
 // The entries the coordinator was woken for, `<state>/round-woken.json`, a JSON list of ids: in
@@ -1215,6 +1195,7 @@ async function shownAsked($: any, withdrawn: readonly Asked[], why: string): Pro
 // the host took it: a submit that fails or is dropped is tried again at the next reading. The
 // ids kept are those the round still holds, so the list never outgrows it.
 async function wakeForDue($: any): Promise<void> {
+  await reconcilePaneRecord($)
   const store = await readStore($)
   const local = store.rows
   const round = await readRound($)
@@ -1311,21 +1292,13 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
   }
 }
 
-// A coordinator's pane opens by itself, the operator's ruling of 2026-10-18: at the end of the
-// first turn its role reads `coordinator` while the coordinator's record names one. Once per
-// session — the flag is the host's, so neither a reload nor a later turn opens it again, and a
-// pane he closed, with the command, the tool or its ✕, stays closed, in a successor session too
-// (pane-choice.json).
-// True when the session is the recorded coordinator's, which arms its round's wake.
-async function openOnFirstTurn($: any, pane: PaneMemory): Promise<boolean> {
+// The pane is never opened here: it opens on his word alone (the command, the tool). What the end
+// of a turn does for a coordinator is check the pane's record against the host (reconcilePaneRecord)
+// and report whether the session is the recorded coordinator's, which arms its round's wake.
+async function atTurnEnd($: any): Promise<boolean> {
   const self = await recordedCoordinator($)
   if (!self) return false
-  if ((await $.state.get(PANE_OPENED)).value) return true
-  await $.state.set(PANE_OPENED, true)
-  // A successor starts with no flag of its own: the pane he closed stays closed.
-  if (await readPaneChoice($) === 'closed') return true
-  const panes: readonly { id: string }[] = await $.ui.panes()
-  if (!panes.some(open => open.id === PANE_ID)) await openPane($, pane, 'coordinator', self.tty, self.pid)
+  await reconcilePaneRecord($)
   return true
 }
 
@@ -1389,7 +1362,10 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
     try {
       const self = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
       if (isDegradedPass(self)) await logLine($, 'supervision', `round wake: did not finish within ${RELAY_BOUND_MS} ms`)
-      else if (self) armWake($, wake)
+      else if (self) {
+        await reconcilePaneRecord($)
+        armWake($, wake)
+      }
     } catch (err) {
       await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
     }
@@ -1581,7 +1557,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (!e.agentId) await showTurnEnd($)
     try {
       if (!e.agentId) {
-        const done = await withDeadline(openOnFirstTurn($, pane), RELAY_BOUND_MS)
+        const done = await withDeadline(atTurnEnd($), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `pane: did not finish within ${RELAY_BOUND_MS} ms`)
         else if (done) armWake($, wake)
       }
@@ -1599,6 +1575,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A turn starts: the session works again, and a wait its row carried is over.
   on('turn.start', {}, async ($: any, e: any, next: (e: any) => any) => {
     if (!e.agentId) await showTabState($, 'busy')
+    // The model's turn may run `coordinator.sh round`, which reads the pane's record: a record of a
+    // pane that is gone is dropped before it does.
+    if (!e.agentId) await reconcilePaneRecord($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
     try {
       const sessionId = await $.session.id()
       const wait = await readWait($, sessionId)
@@ -1722,68 +1701,45 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator-status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
-    // the pane holds no focus), beside the pane's own ✕. Either way the pane is his
-    // from now on: the module no longer opens it on its own.
-    await $.state.set(PANE_OPENED, true)
+    // the pane holds no focus), beside the pane's own ✕.
     if (await paneShown($)) {
       await closeShown($, pane)
-      const kept = await keepPaneChoice($, role, 'closed')
-      return { text: `Supervision pane closed.${kept ? '' : CHOICE_NOT_KEPT}` }
+      return { text: 'Supervision pane closed.' }
     }
     await openPane($, pane, role, tty, pid)
-    const kept = await keepPaneChoice($, role, 'open')
-    return { text: `Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.${kept ? '' : CHOICE_NOT_KEPT}` }
+    return { text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
   // The same pane on the operator's plain words: the model calls the tool with `open` or
-  // `close` where he types no command. Not a toggle — the word says which — and, like the
-  // command, the pane is his from then on.
+  // `close` where he types no command. Not a toggle — the word says which.
   on('tool.call', { tool: `mcp__orchestrator__${SUPERVISION_TOOL}` }, async ($: any, e: any) => {
     if (e.agentId) return { result: PANE_MAIN_THREAD_ONLY, isError: true }
     if (e.action !== 'open' && e.action !== 'close') return { result: 'action is "open" or "close"', isError: true }
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (role !== 'coordinator' && role !== 'orchestrator') return { result: PANE_ROLES_ONLY, isError: true }
-    await $.state.set(PANE_OPENED, true)
     const shown = await paneShown($)
     if (e.action === 'close') {
       if (shown) await closeShown($, pane)
-      // His word is kept even when the pane was already closed (his ✕ before): a successor reads it.
-      const kept = await keepPaneChoice($, role, 'closed')
-      return { result: `${shown ? 'Supervision pane closed.' : 'The supervision pane is not open.'}${kept ? '' : CHOICE_NOT_KEPT}` }
+      return { result: shown ? 'Supervision pane closed.' : 'The supervision pane is not open.' }
     }
     const placed = shown ? undefined : await openPane($, pane, role, tty, pid)
-    const kept = `${await keepPaneChoice($, role, 'open') ? '' : CHOICE_NOT_KEPT}`
-    if (shown) return { result: `The supervision pane is already open.${kept}` }
-    if (placed && placed.isPlaced === false) return { result: `Supervision pane opened, not drawn yet: ${placed.reason ?? 'no reason given'}.${kept}` }
-    return { result: `Supervision pane opened.${kept}` }
+    if (shown) return { result: 'The supervision pane is already open.' }
+    if (placed && placed.isPlaced === false) return { result: `Supervision pane opened, not drawn yet: ${placed.reason ?? 'no reason given'}.` }
+    return { result: 'Supervision pane opened.' }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: "the supervision pane could not be opened or closed; the module's log says why", isError: true }
   })
 
-  // The pane closed by its ✕ or its key: its clock stops with it.
+  // The pane closed, by its ✕ or its key or by the module: its clock stops with it and its record
+  // goes. Nothing is kept of who closed it: no later start opens it again.
   on('ui.close', { id: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
     stopTicker()
     await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${(err as Error).message}`))
-    // His ✕ or key is his word; a close the host or the module makes is not (the module's own
-    // close is followed by its own keep). The origin of any other close is logged, as is a ✕ whose
-    // role cannot be read, so that a close that was his and went unkept leaves a trace.
-    try {
-      const origin = String(e?.origin?.kind ?? 'none')
-      if (origin !== 'person') {
-        await logLine($, 'supervision', `pane: closed by ${origin}; his choice is not changed`)
-      } else {
-        const role = pane.opened?.role ?? ((await recordedCoordinator($)) ? 'coordinator' : null)
-        if (role === null) await logLine($, 'supervision', 'pane: closed by him, the session is no recorded coordinator; his choice is not kept')
-        else if (!(await keepPaneChoice($, role, 'closed'))) await logLine($, 'supervision', 'pane: his close was not kept')
-      }
-    } catch (err) {
-      await logLine($, 'supervision', `pane: his close could not be read: ${(err as Error).message}`)
-    }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)

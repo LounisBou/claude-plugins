@@ -469,8 +469,6 @@ test('the supervision tool opens and closes the pane the commands toggle, by the
     expect(fx.opened.length).toBe(1)
     expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'Supervision pane closed.' })
     expect(fx.closed).toEqual([{ id: 'supervision' }])
-    // The pane is his from then on, as after the command.
-    expect(fx.state.get('orchestrator/paneOpened')).toBe(true)
   }
   // One pane: opened by the tool, the command closes it, and the reverse.
   const fx = fakeDollar({ launchName: 'Coord: main' })
@@ -494,7 +492,7 @@ test('the supervision tool is refused to a subagent, outside the two roles, and 
     expect(answer.isError).toBe(true)
     expect(answer.result).toContain('a coordinator session (« Coord: … ») or an orchestrator session (« Orch: … ») alone')
     expect(fx.opened).toEqual([])
-    expect(fx.state.get('orchestrator/paneOpened')).toBeUndefined()
+    expect([...fx.state.values()]).toEqual([])
   }
 })
 
@@ -762,7 +760,7 @@ test('a round directory that cannot be listed is one log line and no entry; one 
   expect(fx.written.filter(l => l.includes(`round: cannot list ${ROUND}: EACCES: permission denied`)).length).toBe(1)
 })
 
-// --- the pane opens by itself with the coordinator ----------------------------------------------
+// --- the pane opens on his word alone ------------------------------------------------------------
 
 const firstTurn = { answer: 'Registered.', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }
 
@@ -773,175 +771,106 @@ function coordinatorSession(over: { role?: SessionRow['role']; record?: boolean 
   return fx
 }
 
-test('a coordinator\'s pane opens by itself at the end of its first turn, as the command opens it, once', async () => {
-  const { handlers } = mounted(registerSupervision)
-  const fx = coordinatorSession()
-  expect(await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)).toBe(firstTurn)
-  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
-  expect(fx.timers.map(t => t.ms)).toEqual([2000])
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened.length).toBe(1)
-  expect(fx.timers.length).toBe(1)
-  // Opened by the module, the pane lists what the command's pane lists.
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
-  expect(JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('Orch: low')
-})
-
-test('a pane the operator closed with the command stays closed, the module reloaded or not', async () => {
-  const { handlers } = mounted(registerSupervision)
-  const fx = coordinatorSession()
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(await handlers['command.run'](fx.dollar, supervisionRun)).toEqual({ text: 'Supervision pane closed.' })
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  // A reload starts the module's variables over; the host's $.state keeps the flag.
-  const { handlers: reloaded } = mounted(registerSupervision)
-  await reloaded['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened.length).toBe(1)
-  expect(fx.closed).toEqual([{ id: 'supervision' }])
-})
-
-test('a pane the command opened and closed before the first turn ended is not opened again', async () => {
-  const { handlers } = mounted(registerSupervision)
-  const fx = coordinatorSession()
-  await handlers['command.run'](fx.dollar, supervisionRun)
-  await handlers['command.run'](fx.dollar, supervisionRun)
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened.length).toBe(1)
-})
-
-// --- the pane stays as he left it, through a succession -----------------------------------------
-
 const CHOICE = `${HOME}/.claude/claude-orchestrator/pane-choice.json`
 
-// The successor coordinator: a fresh session (the host's state of one session starts empty, so
-// its paneOpened flag is unset), a fresh module, the machine's files as the predecessor left them.
+// The successor coordinator: a fresh session (the host's state of one session starts empty), a
+// fresh module, the machine's files as the predecessor left them.
 function successorOf(predecessor: Fx): Fx {
   const successor = coordinatorSession()
   for (const [path, text] of predecessor.files) if (!successor.files.has(path)) successor.files.set(path, text)
   return successor
 }
 
-test('a pane he closed with the command stays closed in the successor coordinator', async () => {
+// Everything that can happen to a coordinator's session once the pane was closed: the end of its
+// turns, a start, a reload of the module, and the round's wake. None may open the pane.
+async function everyTrigger(fx: Fx): Promise<void> {
+  const chain = mounted(registerSupervision).handlers
+  const waking = mounted(registerWake).handlers
+  await waking['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  await chain['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await chain['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await chain['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  for (const timer of fx.later.filter(t => t.ms === 30000 && !t.cancelled)) await timer.fn()
+}
+
+test('a coordinator\'s pane is not opened by the end of its first turn, nor by any later one: it opens on his word', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
+  expect(await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)).toBe(firstTurn)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened.length).toBe(1)
+  expect(fx.opened).toEqual([])
+  expect(fx.timers).toEqual([])
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+  // The wake is armed all the same, so his questions reach the tab.
+  expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
+  // Opened by his command, the pane lists what the command's pane lists.
   await handlers['command.run'](fx.dollar, supervisionRun)
-  expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
-  const successor = successorOf(fx)
-  const { handlers: next } = mounted(registerSupervision)
-  await next['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
-  await next['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
-  expect(successor.opened).toEqual([])
-  expect(successor.timers).toEqual([])
-  expect(successor.files.has(PANE_FILE)).toBe(false)
+  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  expect(fx.timers.map(t => t.ms)).toEqual([2000])
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
+  expect(JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('Orch: low')
 })
 
-test('a pane he closed with the tool or with its ✕ stays closed in the successor coordinator', async () => {
+test('a pane he closed, by the command, the tool or his ✕, stays closed through a start, a turn, a reload, a wake and a succession', async () => {
   const { handlers } = mounted(registerSupervision)
-  const byTool = coordinatorSession()
-  await handlers['turn.complete'](byTool.dollar, firstTurn, (x: unknown) => x)
-  await handlers['tool.call'](byTool.dollar, toolCall('close'))
-  const byCross = coordinatorSession()
-  await handlers['turn.complete'](byCross.dollar, firstTurn, (x: unknown) => x)
-  await handlers['ui.close'](byCross.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
-  for (const fx of [byTool, byCross]) {
-    expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
+  const closers: [string, (fx: Fx) => Promise<unknown>][] = [
+    ['the command', fx => handlers['command.run'](fx.dollar, supervisionRun)],
+    ['the tool', fx => handlers['tool.call'](fx.dollar, toolCall('close'))],
+    ['his ✕', async fx => { await fx.dollar.ui.close({ id: 'supervision' }); return handlers['ui.close'](fx.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x) }],
+  ]
+  for (const [, close] of closers) {
+    const fx = coordinatorSession()
+    await handlers['command.run'](fx.dollar, supervisionRun)
+    expect(fx.opened.length).toBe(1)
+    await close(fx)
+    expect(fx.files.has(PANE_FILE)).toBe(false)
+    await everyTrigger(fx)
+    expect(fx.opened.length).toBe(1)
     const successor = successorOf(fx)
-    await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
+    await everyTrigger(successor)
     expect(successor.opened).toEqual([])
+    expect(successor.timers).toEqual([])
+    expect(successor.files.has(PANE_FILE)).toBe(false)
+    expect(successor.files.has(CHOICE)).toBe(false)
   }
 })
 
-test('a close the host makes, or one with no origin, keeps no choice and is logged', async () => {
+test('a pane the command opened is his: the successor, which he has not told, does not open it', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  await handlers['ui.close'](fx.dollar, { id: 'supervision', origin: { kind: 'host' } }, (x: unknown) => x)
-  await handlers['ui.close'](fx.dollar, { id: 'supervision' }, (x: unknown) => x)
-  expect(fx.files.has(CHOICE)).toBe(false)
-  expect(fx.written.some(l => l.includes('closed by host; his choice is not changed'))).toBe(true)
-  expect(fx.written.some(l => l.includes('closed by none; his choice is not changed'))).toBe(true)
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  await handlers['tool.call'](fx.dollar, toolCall('open'))
   const successor = successorOf(fx)
-  await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
-  expect(successor.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  await everyTrigger(successor)
+  expect(successor.opened).toEqual([])
 })
 
-test('an orchestrator\'s command, and his ✕ in a session that is no recorded coordinator, keep no choice', async () => {
+test('a pane the module has no word about, with no close of his on record, is not opened: a missing, torn or foreign choice file opens nothing', async () => {
+  for (const text of [undefined, '{ not json', '{"pane":"x"}', 'null', '{"pane":"open","at":"2026-11-15T07:00:00.000Z"}']) {
+    const fx = coordinatorSession()
+    if (text !== undefined) fx.files.set(CHOICE, text)
+    await everyTrigger(fx)
+    expect(fx.opened).toEqual([])
+  }
+})
+
+test('the command and the tool answer as before in an orchestrator and a coordinator, and keep nothing between sessions', async () => {
   const { handlers } = mounted(registerSupervision)
   const orch = fakeDollar({ launchName: 'Orch: belt' })
   orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
-  await handlers['command.run'](orch.dollar, supervisionRun)
-  await handlers['command.run'](orch.dollar, supervisionRun)
-  await handlers['ui.close'](orch.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
-  expect(orch.files.has(CHOICE)).toBe(false)
-  const none = coordinatorSession({ record: false })
-  // A module that never opened the pane (a reload forgot it) reads the role from the record.
-  const { handlers: reloaded } = mounted(registerSupervision)
-  expect(await reloaded['ui.close'](none.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)).toEqual({ id: 'supervision', origin: { kind: 'person' } })
-  expect(none.files.has(CHOICE)).toBe(false)
-  expect(none.written.some(l => l.includes('no recorded coordinator; his choice is not kept'))).toBe(true)
-})
-
-test('a pane he opened again, by the command or by the tool, opens in the successor', async () => {
-  const { handlers } = mounted(registerSupervision)
-  const byCommand = coordinatorSession()
-  for (let i = 0; i < 3; i++) await handlers['command.run'](byCommand.dollar, supervisionRun)
-  const byTool = coordinatorSession()
-  await handlers['command.run'](byTool.dollar, supervisionRun)
-  await handlers['command.run'](byTool.dollar, supervisionRun)
-  await handlers['tool.call'](byTool.dollar, toolCall('open'))
-  for (const fx of [byCommand, byTool]) {
-    expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('open')
-    const successor = successorOf(fx)
-    await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
-    expect(successor.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
-  }
-})
-
-test('the tool\'s close is his word even when the pane was not open, and the successor leaves it closed', async () => {
-  const { handlers } = mounted(registerSupervision)
+  expect((await handlers['command.run'](orch.dollar, supervisionRun)).text).toContain('Supervision pane opened;')
+  expect(await handlers['command.run'](orch.dollar, supervisionRun)).toEqual({ text: 'Supervision pane closed.' })
   const fx = coordinatorSession()
+  expect((await handlers['command.run'](fx.dollar, supervisionRun)).text).toContain('Supervision pane opened;')
+  expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'Supervision pane closed.' })
   expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
-  expect(JSON.parse(String(fx.files.get(CHOICE))).pane).toBe('closed')
-  const successor = successorOf(fx)
-  await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
-  expect(successor.opened).toEqual([])
+  for (const session of [orch, fx]) expect([...session.files.keys()].some(path => path.includes('pane-choice'))).toBe(false)
 })
 
-test('a choice file that holds no choice opens the pane and says so in the log', async () => {
-  const { handlers } = mounted(registerSupervision)
-  for (const text of ['{ not json', '{"pane":"x"}', 'null']) {
-    const fx = coordinatorSession()
-    fx.files.set(CHOICE, text)
-    await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-    expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
-    expect(fx.written.some(l => l.includes('pane-choice.json holds no choice'))).toBe(true)
-  }
-})
-
-test('a choice that cannot be written leaves the command and the tool answering, and tells him', async () => {
+test('with the pane closed by his word, the successor presents each due question in its tab', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
-  const write = fx.dollar.fs.write
-  fx.dollar.fs.write = async (path: string, text: string) => {
-    if (path.includes('pane-choice')) throw new Error('EACCES: permission denied')
-    return write(path, text)
-  }
-  const opened = await handlers['command.run'](fx.dollar, supervisionRun)
-  expect(opened.text).toContain('Supervision pane opened;')
-  expect(opened.text).toContain('His choice could not be kept')
-  const closed = await handlers['tool.call'](fx.dollar, toolCall('close'))
-  expect(closed.result).toContain('Supervision pane closed.')
-  expect(closed.result).toContain('His choice could not be kept')
-  expect(fx.written.some(l => l.includes('the choice could not be kept'))).toBe(true)
-  expect(fx.closed.length).toBe(1)
-})
-
-test('with the pane left closed by his choice, the successor presents each due question in its tab', async () => {
-  const { handlers } = mounted(registerSupervision)
-  const fx = coordinatorSession()
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await handlers['command.run'](fx.dollar, supervisionRun)
   await handlers['command.run'](fx.dollar, supervisionRun)
   const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(askedOf(asked)) + '\n')
@@ -968,12 +897,13 @@ for (const [label, fx, e] of [
   })
 }
 
-test('a first turn that ends before the first measure wrote the row: the name is walked, and the pane opens', async () => {
+test('a first turn that ends before the first measure wrote the row: the name is walked, the wake armed and no pane opened', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
   fx.files.delete(`${SESSIONS}/s-one`)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  expect(fx.opened).toEqual([])
+  expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
   // A row that names no role is read as it is: the session is no coordinator, nothing opens.
   const { handlers: other } = mounted(registerSupervision)
   const plain = coordinatorSession({ role: null })
@@ -981,25 +911,26 @@ test('a first turn that ends before the first measure wrote the row: the name is
   expect(plain.opened).toEqual([])
 })
 
-test('a first turn that ends with no row in the store: the lookup names the coordinator, and the pane opens once', async () => {
+test('a first turn that ends with no row in the store: the lookup names the coordinator, the wake is armed once and no pane opened', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
   fx.files.delete(`${SESSIONS}/s-one`)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   expect(fx.ran.some(run => run.startsWith('ps -t ttys001'))).toBe(true)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
-  expect(fx.timers.length).toBe(1)
+  expect(fx.opened).toEqual([])
+  expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
 })
 
-test('a coordinator recorded after the first turn: the pane opens at the first turn end that finds it', async () => {
+test('a coordinator recorded after the first turn: the wake is armed at the first turn end that finds it, and no pane opens', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession({ record: false })
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened).toEqual([])
+  expect(fx.later.filter(t => t.ms === 30000)).toEqual([])
   fx.files.set(RECORD, JSON.stringify({ name: 'Coord: main [abc]', tty: '/dev/ttys001' }))
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
+  expect(fx.opened).toEqual([])
 })
 
 // --- the coordinator's pane, readable -----------------------------------------------------------
@@ -1477,10 +1408,10 @@ test('the coordinator\'s pane, once open, is recorded for coordinator.sh round, 
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
 })
 
-test('the pane opened by itself at the first turn is recorded too; an orchestrator\'s pane and another session\'s record are left alone', async () => {
+test('the pane he opened is recorded; an orchestrator\'s pane and another session\'s record are left alone', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await handlers['command.run'](fx.dollar, supervisionRun)
   expect(JSON.parse(String(fx.files.get(PANE_FILE))).session).toBe('s-one')
   const other = JSON.stringify({ session: 's-two', pid: '777', at: '2026-10-24T10:00:00.000Z' }) + '\n'
   fx.files.set(PANE_FILE, other)
@@ -1513,10 +1444,8 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
     fx.files.set(`${SESSIONS}/${e.session}`, JSON.stringify(row({ role: 'orchestrator', name: e.from })) + '\n')
   }
   const { handlers } = mounted(registerSupervision)
-  if (over.paneClosed) {
-    await handlers['command.run'](fx.dollar, supervisionRun)
-    await handlers['command.run'](fx.dollar, supervisionRun)
-  }
+  // The pane is open by his word, unless the test leaves it closed.
+  if (!over.paneClosed) await handlers['command.run'](fx.dollar, supervisionRun)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   const tick = async () => {
     const armed = fx.later.filter(t => t.ms === 30000)
@@ -1613,11 +1542,12 @@ test('a question whose sender has ended wakes nothing, and a session that is no 
   expect(orch.later.filter(t => t.ms === 30000)).toEqual([])
 })
 
-test('the pane opened at the first turn by a row that carries no pid records the pid its walk reads, never none', async () => {
+test('the pane opened by his word, on a row that carries no pid, records the pid its walk reads and its tty, never none', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = coordinatorSession()
-  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  expect(JSON.parse(String(fx.files.get(PANE_FILE))).pid).toBe('501')
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  const record = JSON.parse(String(fx.files.get(PANE_FILE)))
+  expect([record.pid, record.tty]).toEqual(['501', '/dev/ttys001'])
 })
 
 test('a wake the host refuses or that fails is not recorded, and the next reading wakes for it', async () => {
@@ -1708,6 +1638,75 @@ test('a pane record whose pid is not running, or that names none, is no pane; an
   fx.files.set(PANE_FILE, JSON.stringify({ session: 's-two', pid: '777', at: '2026-10-24T10:00:00.000Z' }) + '\n')
   await tick()
   expect(fx.submitted).toEqual([])
+})
+
+// The record of a pane left open in the files while no pane is shown: his tab or the session it was
+// opened in is gone, the pane with it, and `coordinator.sh round` must not read it as open.
+const staleRecord = (over: object = {}) => JSON.stringify({ session: 's-one', pid: '501', tty: '/dev/ttys001', at: '2026-10-24T10:00:00.000Z', ...over }) + '\n'
+
+test('a record that says open while the host shows no pane holds nothing back: the wake presents the question and the record goes', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young], { paneClosed: true })
+  // The pane went with no close of the module's: the host's, and its record stayed.
+  fx.files.set(PANE_FILE, staleRecord())
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+  expect(fx.written.some(l => l.includes('the record said open while the host shows no pane'))).toBe(true)
+})
+
+test('the record of the same host under another session id, a clear that gave it a new one, is judged and removed too', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young], { paneClosed: true })
+  fx.files.set(PANE_FILE, staleRecord({ session: 's-before-the-clear' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+})
+
+test('a record whose pane the host shows, or that another coordinator wrote, is left as it is', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const shown = await wakingCoordinator([young])
+  await shown.tick()
+  expect(shown.fx.submitted).toEqual([])
+  expect(shown.fx.files.has(PANE_FILE)).toBe(true)
+  const other = await wakingCoordinator([young], { paneClosed: true })
+  other.fx.files.set(PANE_FILE, staleRecord({ session: 's-two', pid: '777', tty: null }))
+  await other.tick()
+  expect(other.fx.submitted).toEqual([])
+  expect(other.fx.files.has(PANE_FILE)).toBe(true)
+})
+
+test('a host the machine lists as exiting or a zombie, or on another tty than the record\'s, is no pane: its tab is gone', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const listed = async (listing: string) => {
+    // The pane is shown and its record is the command's: only the machine's listing judges it.
+    const woken = await wakingCoordinator([young])
+    const run = woken.fx.dollar.process.run
+    woken.fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
+      argv[0] === 'ps' && argv[1] === '-A' ? { exitCode: 0, stdout: listing, stderr: '' } : run(argv, init)
+    await woken.tick()
+    return woken.fx.submitted.length
+  }
+  for (const listing of ['  501 ?Es ??\n', '  501 Z ttys001\n', '  501 Ss ttys009\n']) expect(await listed(listing)).toBe(1)
+  // The same host running on the record's tty is a pane.
+  expect(await listed('  501 Ss ttys001\n')).toBe(0)
+})
+
+test('a turn that starts, and a start, drop the record of a pane that is gone before the round is read', async () => {
+  const { fx, handlers } = await wakingCoordinator([], { paneClosed: true })
+  for (const at of ['turn.start', 'session.start']) {
+    fx.files.set(PANE_FILE, staleRecord())
+    if (at === 'turn.start') await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+    else await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+    expect(fx.files.has(PANE_FILE)).toBe(false)
+  }
+  // A host that cannot say which panes it shows leaves the record: unknown is not closed.
+  fx.files.set(PANE_FILE, staleRecord())
+  fx.dollar.ui.panes = async () => { throw new Error('no answer') }
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(fx.files.has(PANE_FILE)).toBe(true)
+  expect(fx.written.some(l => l.includes('the record could not be checked'))).toBe(true)
 })
 
 // --- one readable block -----------------------------------------------------------------------
