@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
+import { ROLES } from '../../../../core/names.ts'
 import { MEASURE_DIR, moduleDirOf, parseMeasure } from '../../../../core/orchestration.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
@@ -102,8 +103,8 @@ interface Session {
 
 const isPlugin = (decider: string | undefined): boolean => decider === 'hook' || (decider ?? '').startsWith('plugin')
 
-/** The roles a refusal is counted under, in the order the report prints them; any other role is `other`. */
-export const REFUSAL_ROLES = ['orchestrator', 'agent', 'coordinator', 'auditor', 'other'] as const
+/** The roles a refusal is counted under, in the order the report prints them: the session names' roles, then `other` for any session of another role or of none. */
+export const REFUSAL_ROLES: readonly string[] = [...Object.values(ROLES), 'other']
 const roleOfRefusal = (role: string | undefined): string => REFUSAL_ROLES.find(r => r === role) ?? 'other'
 const PLUGIN_NAME = new RegExp(LEARNING_CONTRACT.patterns.plugin)
 
@@ -206,13 +207,22 @@ function journalRefusals(config: string, skipped: { n: number }): { plugin: stri
   let plugins: string[]
   try {
     plugins = readdirSync(config)
-  } catch {
+  } catch (error) {
+    // No configuration directory holds no journal; one that cannot be read is a gap the heading counts.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') skipped.n++
     return found
   }
   for (const name of plugins.filter(n => PLUGIN_NAME.test(n))) {
     const dir = journalDir(config, name)
     if (!existsSync(dir)) continue
-    for (const file of readdirSync(dir).filter(f => f.endsWith('.json') && f !== JOURNAL_FOLD_FILE)) {
+    let files: string[]
+    try {
+      files = readdirSync(dir)
+    } catch {
+      skipped.n++
+      continue
+    }
+    for (const file of files.filter(f => f.endsWith('.json') && f !== JOURNAL_FOLD_FILE)) {
       try {
         const event = parseJournalEvent(JSON.parse(readFileSync(join(dir, file), 'utf8')))
         if (event === undefined) skipped.n++
@@ -420,13 +430,11 @@ export function report(input: ReportInput): string[] {
     const key = `${r.plugin} ${r.code}`
     sources.set(key, { plugin: r.plugin, code: r.code, count: (sources.get(key)?.count ?? 0) + 1 })
   }
-  const byPlugin = [...refusals.values()].reduce((n, d) => n + d.plugin, 0)
   out.push('', 'refusals by guard source (the learning journals: plugin and guard code)')
   for (const { plugin, code, count } of [...sources.values()].sort((a, b) => b.count - a.count || (a.plugin + a.code < b.plugin + b.code ? -1 : 1))) {
     out.push(`  ${plugin.padEnd(14)} ${code.padEnd(44)} ${String(count).padStart(5)}`)
   }
   if (sources.size === 0) out.push('  none in the journals for the week')
-  out.push(`  (the journals hold ${[...sources.values()].reduce((n, s) => n + s.count, 0)} of the ${byPlugin} refusals the events count by a plugin; the others carry no code)`)
   out.push('', 'role          refusals  of them by a plugin')
   for (const [role, d] of byRole) out.push(`${role.padEnd(12)}  ${String(d.all).padStart(8)}  ${String(d.plugin).padStart(19)}`)
 
