@@ -11,7 +11,7 @@ Preconditions, verify each before acting:
 - the moment is quiet: no verdict pending, no agent mid-delivery;
 - the state is in its owners (`references/succession-predecessor.md`, « Succession — the predecessor », step 0):
   every planned item and ruling is an open row with its blocker, a judgment on a row is its
-  `note`, each to-do item names its rows, the rulings are marked. No brief is written: the
+  `note`, each to-do item names its rows. No brief is written: the
   successor reads the state through `succession.sh takeover`.
 
 Then:

@@ -39,7 +39,6 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
     ledger('acme/app', 12, 'Agent: pr'),
   ].join('\n') + '\n')
   writeFileSync(`${record}.owner`, `${NAME}\n`)
-  writeFileSync(join(briefs, 'rulings.md'), '# Rulings\n\n- 2026-11-14T09:00:00Z « Keep it short. » — every brief. [standing]\n- 2026-11-14T09:30:00Z « Merge it. » — row 1. [done: acme/app#11]\n- 2026-11-14T09:40:00Z « The docs first. » — row 4. [for: row 4]\n')
   rmSync(join(briefs, 'goals.md'), { force: true })
   if (over.goals !== null) writeFileSync(join(briefs, 'goals.md'), over.goals ?? '# Goals\nspec: /specs/belt.md\nrepo: /w\naim: a belt that holds\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | tables | phase 1 | pr:acme/app#11 |\n| G2 | open | routes | phase 2 | |\n')
   writeFileSync(join(state, 'deck.json'), JSON.stringify(over.deck ?? {
@@ -72,7 +71,7 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
   assert.ok(text.includes('nothing more unless it lists open or deferred goals: then, in'))
   assert.ok(text.includes(`dispatch-record.sh goals ${w.record} status | grep -v '| met |'`))
-  assert.ok(text.includes(`grep -v '\\[for: ' ${join(w.briefs, 'rulings.md')}\``))
+  assert.ok(text.includes(`State directory: \`${w.state}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
   assert.ok(text.includes('`workspace.sh list belt`'))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(text), 'every placeholder filled')
@@ -89,7 +88,7 @@ test('a takeover from the state alone: a state file, an earlier succession brief
     assert.ok(alone.includes(part), `the print holds ${part}`)
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(alone), 'every placeholder filled')
   // What a handover would leave, in the shape of what it would be read for, saying what the state does not. The
-  // record, the rulings, the goals and the owner file are the state itself and stay as they are.
+  // record, the goals and the owner file are the state itself and stay as they are.
   const lie = '- Rows open (id, label, what remains): open=99 label=GHOST\n- Row owners: 99 ghost\n- Agents running (name and reference, brief path): Agent: ghost\n'
   const note = `## Live state\n\n${lie}\n{"id":99,"label":"GHOST","state":"open"}\n[q-99] **Question 1 of 1**\nIs this read?\n`
   const names = ['state.md', 'state-archive.md', 'succession-brief.md', 'succession-brief.prev.md', 'handover.md', 'HANDOVER.md', 'notes.md', 'dispatch-record.jsonl.handover', 'dispatch-record.jsonl.state']
@@ -111,19 +110,7 @@ test('the Live state: the open rows at level 1, their owners by agent, ruling or
   assert.match(text, /- Agents running \(name and reference, brief path\): Agent: api\n/)
   assert.ok(text.includes('[q-2] **Question 1 of 1**\nWhich schema?'))
   assert.ok(!text.includes('q-1') && !text.includes('q-3') && !text.includes('acme/site#7') && !text.includes('Agent: site'))
-  assert.match(w.err.join(''), /^takeover: chars=[0-9]+ rulings_read=[0-9]+ rows=5 ready=2 prs=1 agents=1 questions=1 todo_stray=2 pruned=rulings:1,round:0\n$/)
-})
-
-test('takeover moves a ruling for rows the dispatch record closed, and keeps one for a row still open', () => {
-  const w = world()
-  const rulings = join(w.briefs, 'rulings.md')
-  writeFileSync(rulings, [
-    '- 2026-11-12T10:00:00Z « A » → the schema. [for: row 1]',
-    '- 2026-11-12T11:00:00Z « B » → the api. [for: rows 1, 2]', '',
-  ].join('\n'))
-  assert.equal(w.run(), 0)
-  assert.match(w.err.join(''), / pruned=rulings:1,round:0\n$/)
-  assert.ok(readFileSync(rulings, 'utf8').includes('the api') && !readFileSync(rulings, 'utf8').includes('the schema'))
+  assert.match(w.err.join(''), /^takeover: chars=[0-9]+ rows=5 ready=2 prs=1 agents=1 questions=1 todo_stray=2 pruned=round:0\n$/)
 })
 
 test('takeover archives the round\'s entries settled over a day ago, and counts them in its pruned field', () => {
@@ -135,18 +122,10 @@ test('takeover archives the round\'s entries settled over a day ago, and counts 
     { id: 'q-withdrawn', ...settled, status: 'withdrawn', answer: { text: 'moot', by: 'sender', at: old } },
   ] })
   assert.equal(w.run(), 0)
-  assert.match(w.err.join(''), / pruned=rulings:1,round:2\n$/)
+  assert.match(w.err.join(''), / pruned=round:2\n$/)
   assert.ok(existsSync(join(w.state, 'round', 'archive', 'q-answered.json')))
   assert.ok(existsSync(join(w.state, 'round', 'archive', 'withdrawn', 'q-withdrawn.json')))
   assert.ok(existsSync(join(w.state, 'round', 'q-open.json')))
-})
-
-test('takeover says a supersession it keeps', () => {
-  const w = world()
-  const rulings = join(w.briefs, 'rulings.md')
-  writeFileSync(rulings, '- 2026-11-12T16:00:00Z « C » → x. [superseded: 2026-12-01T00:00:00Z]\n')
-  assert.equal(w.run(), 0)
-  assert.ok(w.err.includes(`succession: ${rulings}: ruling 2026-11-12T16:00:00Z kept: superseded by 2026-12-01T00:00:00Z, which no ruling of the file or its archive opens on\n`))
 })
 
 test('the owner file read in the house shape: a name with its reference still finds its open questions', () => {
@@ -186,14 +165,6 @@ test('the project sheet reads the objective, the spec goals.md names, the open g
   assert.equal(v.run(), 0)
   assert.match(v.text(), /- Project: no goals\.md beside the record\n/)
   assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open=none; installed: 3 merged PRs not installed, oldest 2 h')
-})
-
-test('the rulings carried out move to the archive before the print; the ones for an open row stay, out of what is read', () => {
-  const w = world()
-  assert.equal(w.run(), 0)
-  const rulings = readFileSync(join(w.briefs, 'rulings.md'), 'utf8')
-  assert.ok(!rulings.includes('Merge it.') && rulings.includes('The docs first.'))
-  assert.match(readFileSync(join(w.briefs, 'rulings-archive.md'), 'utf8'), /« Merge it\. »/)
 })
 
 test('the name is the record\'s owner unless given; a record without one, or none at all, is refused', () => {
