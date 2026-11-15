@@ -32,13 +32,13 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
-import { readAsked } from './question.ts'
+import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { unnamedReport } from './relay.ts'
@@ -572,16 +572,24 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const state = await stateDir($)
       // A question asked with `ask` still open stays in the round until he answers it, its answer
       // waking the session; unless the session handed over: its successor holds the questions.
-      let questionOpen = false
+      let opened: { id: string; ask: string }[] = []
       if (sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
-        questionOpen = await quietly($, async () => (await readAsked($)).some(entry => entry.status === 'open' && entry.sender.session === sessionId), until, false)
+        opened = await quietly($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until, [])
       }
+      const questionOpen = opened.length > 0
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
       sweepAtStop = async () => {
         if (swept) return
         swept = true
         await runSweep($, state, root, until)
+      }
+      // A turn's end that copies the block of a question asked in an earlier turn: told once, by its subject.
+      const earlier = opened.filter(entry => !askedThisTurn().includes(entry.id))
+      const restated = restatedQuestions(String(e.last_assistant_message ?? ''), earlier)
+      if (restated.length > 0) {
+        await logLine($, 'guards', `stop gate: restated question ${restated.join(', ')}`)
+        return await letThrough(restatedReason(restated))
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.
