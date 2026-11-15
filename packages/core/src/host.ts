@@ -25,7 +25,12 @@ export type Timer = { cancel(): void }
 
 // A component of a surface, as `ui.resolve` hands it out: from its props to what the host draws.
 export type UiElement = (props: Readonly<Record<string, unknown>>) => unknown
-export type UiElements = { Box: UiElement; Text: UiElement; Button: UiElement; Link: UiElement }
+// `Select` and `Input` are drawn by a surface that has them (not mobile): a caller tests for them.
+export type UiElements = { Box: UiElement; Text: UiElement; Button: UiElement; Link: UiElement; Select?: UiElement; Input?: UiElement }
+
+// A pane as `ui.panes` lists it, and what `ui.open` answers.
+export type UiPane = { id: string; title?: string; isShown?: boolean; isFocused?: boolean; isPlaced?: boolean }
+export type UiOpenResult = { isPlaced: true; reason?: undefined } | { isPlaced: false; reason: string }
 
 export type CommandSpec = { name: string; description: string; argumentHint?: string }
 
@@ -52,7 +57,11 @@ type Nouns = {
     invalidate(event: 'ui.render'): void
     log(text: string): void
     ask(question: string, options?: readonly string[]): Promise<string>
-    open(pane: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }): Promise<unknown>
+    open(pane: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }): Promise<UiOpenResult | undefined>
+    close(pane: { id: string }): Promise<void>
+    panes(): Promise<readonly UiPane[]>
+    focus(args: { requestId: string; key: string }): Promise<unknown>
+    scroll(args: { to: { key: string } | 'end'; in?: string }): Promise<unknown>
     resolve(e: Events['ui.render']): UiElements
   }
   tool: {
@@ -62,7 +71,7 @@ type Nouns = {
   }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
-  clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
+  clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): Timer; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }
@@ -82,7 +91,8 @@ export type Events = {
   'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[] }
   // A peer's delivery; `origin` is the host's own description of where it came from.
   'session.receive': { readonly agentId?: string; readonly origin: unknown; readonly text: string }
-  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean }
+  // `reason` says why the turn ended (`answer` for a turn that answered), `turnId` names it.
+  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean; readonly reason?: string; readonly turnId?: unknown }
   // The settings payload's own fields, as far as the stop gate reads them; the host's lists of the
   // work in flight are read through a validator.
   'classic.Stop': {
@@ -99,8 +109,16 @@ export type Events = {
   // A call of a tool: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
   'ui.close': { readonly id: string }
-  // A surface to draw: the pane `requestId` names, its props as the host gives them.
-  'ui.render': { readonly requestId?: string; readonly props?: { readonly bodyColumns?: number } }
+  // A surface to draw: the pane `requestId` names, its props as the host gives them: its width, its
+  // body's window over the tree (`scroll`), and whether it holds the keys.
+  'ui.render': {
+    readonly requestId?: string
+    readonly props?: { readonly bodyColumns?: number; readonly scroll?: { readonly offset: number; readonly bodyRows: number }; readonly isFocused?: boolean }
+  }
+  // The person moving a pane's window: the tree's height the host measured.
+  'ui.scroll': { readonly requestId?: string; readonly contentRows: number }
+  // The ring moving in a pane: the element it reaches, by its key.
+  'ui.focus': { readonly requestId?: string; readonly element?: string }
 }
 
 // What `next` carries into a `.catch` handler: why the hook failed, and whether the call beneath already ran.
