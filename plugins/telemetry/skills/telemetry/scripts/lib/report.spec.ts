@@ -18,6 +18,8 @@ interface Files {
   measure?: Record<string, unknown>
   archive?: Record<string, unknown>[]
   record?: string[]
+  /** Learning journal files, by `<plugin>/journal/<name>.json`. */
+  journals?: Record<string, unknown>
 }
 
 function scratch(files: Files, work: (config: string, dir: string) => void): void {
@@ -35,6 +37,7 @@ function scratch(files: Files, work: (config: string, dir: string) => void): voi
     ;(files.round ?? []).forEach((r, i) => put(join(module, 'round', `${i}.json`), JSON.stringify(r)))
     ;(files.archive ?? []).forEach((r, i) => put(join(module, 'round', 'archive', `${i}.json`), JSON.stringify(r)))
     for (const [id, m] of Object.entries(files.measure ?? {})) put(join(module, 'measure', `${id}.json`), JSON.stringify(m))
+    for (const [name, body] of Object.entries(files.journals ?? {})) put(join(config, `${name}.json`), typeof body === 'string' ? body : JSON.stringify(body))
     if (files.record !== undefined) {
       put(join(dir, 'record.jsonl'), `${files.record.join('\n')}\n`)
       put(join(module, 'records', S(1)), `${join(dir, 'record.jsonl')}\n${join(dir, 'gone.jsonl')}\n`)
@@ -475,5 +478,70 @@ test('what happened before or after the week is read for the cost baseline only:
     assert.equal(find(out, '5 '), '5 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
     assert.equal(find(out, '  acme/tool#7 '), '  acme/tool#7    30 min  $2.00')
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
+  })
+})
+
+/** A learning journal event of version 1, shaped as the contract writes it; `random` makes its name distinct. */
+const journaled = (at: string, plugin: string, code: string, random: string, kind = 'refusal'): [string, Record<string, unknown>] => {
+  const id = `${at.replace(/[-:]/g, '')}-${random}`
+  return [`${plugin}/journal/${id}`, { v: 1, id, at, kind, source: { plugin, code }, subject: { repo: null, pr: null, head: null }, context: { role: null, mode: null, paths: [], languages: [], session: null }, evidence: [], trust: 'computed' }]
+}
+
+test('refusals by guard source: the week\'s refusals of the learning journals, per plugin and guard code, most first, never one total', () => {
+  const journals = Object.fromEntries([
+    journaled('2026-11-09T10:00:00Z', 'github', 'github.ready.missing-review', '00000001'),
+    journaled('2026-11-10T10:00:00Z', 'github', 'github.ready.missing-review', '00000002'),
+    journaled('2026-11-10T11:00:00Z', 'orchestrator', 'orchestrator.stop.declared-wait', '00000003'),
+    journaled('2026-11-11T11:00:00Z', 'github', 'github.ready.missing-e2e', '00000004'),
+    journaled('2026-11-11T12:00:00Z', 'github', 'github.ready.missing-e2e', '00000005'),
+    journaled('2026-11-11T13:00:00Z', 'github', 'github.ready.missing-e2e', '00000006'),
+    // Out of the week or not a refusal: the evening of the 14th UTC is the 15th in Paris, the 7th is before the week, a finding is no refusal.
+    journaled('2026-11-14T23:30:00Z', 'github', 'github.ready.missing-review', '00000007'),
+    journaled('2026-11-07T10:00:00Z', 'github', 'github.ready.missing-review', '00000008'),
+    journaled('2026-11-10T10:00:00Z', 'norms', 'norms.check.open-finding', '00000009', 'finding'),
+  ])
+  scratch({ journals, events: [ev('2026-11-10T10:00:00Z', 'tool_call', S(1), { outcome: 'refused', decided_by: 'plugin:github' })] }, config => {
+    writeFileSync(join(config, 'github', 'journal', 'folded.json'), '[]')
+    writeFileSync(join(config, 'github', 'journal', 'torn.json'), '{')
+    const out = lines(config)
+    const at = out.indexOf('refusals by guard source (the learning journals: plugin and guard code)')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 5).map(l => l.trim().split(/\s+/)), [
+      ['github', 'github.ready.missing-e2e', '3'],
+      ['github', 'github.ready.missing-review', '2'],
+      ['orchestrator', 'orchestrator.stop.declared-wait', '1'],
+      ['(the', 'journals', 'hold', '6', 'of', 'the', '1', 'refusals', 'the', 'events', 'count', 'by', 'a', 'plugin;', 'the', 'others', 'carry', 'no', 'code)'],
+    ])
+    assert.match(lines(config)[0] ?? '', / \(1 unreadable event lines or files left out\)$/)
+  })
+  scratch({}, config => {
+    assert.ok(lines(config).includes('  none in the journals for the week'))
+  })
+})
+
+test('refusals by role: the five roles, each with its refusals and those of a plugin, a role the report does not name counted as other', () => {
+  const refused = (ts: string, session: string, role: string | undefined, decider: string): Record<string, unknown> => ev(ts, 'tool_call', session, { outcome: 'refused', decided_by: decider, ...(role === undefined ? {} : { role }) })
+  const events = [
+    refused('2026-11-10T10:00:00Z', S(1), 'orchestrator', 'plugin:github'),
+    refused('2026-11-10T10:01:00Z', S(1), 'orchestrator', 'user'),
+    refused('2026-11-11T10:00:00Z', S(2), 'agent', 'hook'),
+    // A session with no live call counts its summary's refusals, under its role.
+    ev('2026-11-11T12:00:00Z', 'session_summary', S(3), { role: 'auditor', refusals: { 'plugin:github': 2, user: 3 } }),
+    refused('2026-11-12T10:00:00Z', S(4), 'reviewer', 'plugin:norms'),
+    refused('2026-11-12T10:00:00Z', S(5), undefined, 'auto_mode'),
+    // Before the week: not counted.
+    refused('2026-11-01T10:00:00Z', S(6), 'coordinator', 'hook'),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    const at = out.indexOf('role          refusals  of them by a plugin')
+    assert.notEqual(at, -1)
+    assert.deepEqual(out.slice(at + 1, at + 6).map(l => l.trim().split(/\s+/)), [
+      ['orchestrator', '2', '1'],
+      ['agent', '1', '1'],
+      ['coordinator', '0', '0'],
+      ['auditor', '5', '2'],
+      ['other', '2', '1'],
+    ])
   })
 })

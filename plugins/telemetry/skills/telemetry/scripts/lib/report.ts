@@ -3,8 +3,9 @@
 // records, round files and measure files, and GitHub through `gh`; a figure none of them holds
 // prints `n/a` and says why, never an estimate. Days are Paris days (the operator's), the store's
 // are UTC. Time is injected.
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
 import { MEASURE_DIR, moduleDirOf, parseMeasure } from '../../../../core/orchestration.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
@@ -101,6 +102,11 @@ interface Session {
 
 const isPlugin = (decider: string | undefined): boolean => decider === 'hook' || (decider ?? '').startsWith('plugin')
 
+/** The roles a refusal is counted under, in the order the report prints them; any other role is `other`. */
+export const REFUSAL_ROLES = ['orchestrator', 'agent', 'coordinator', 'auditor', 'other'] as const
+const roleOfRefusal = (role: string | undefined): string => REFUSAL_ROLES.find(r => r === role) ?? 'other'
+const PLUGIN_NAME = new RegExp(LEARNING_CONTRACT.patterns.plugin)
+
 /** The events of the store, folded into what the report needs. */
 function gather(input: ReportInput, start: string, end: string, skipped: { n: number }) {
   const sessions = new Map<string, Session>()
@@ -193,6 +199,31 @@ function filesOf<T>(dir: string, parse: (body: string) => T, skipped: { n: numbe
   })
 }
 const json = (body: string): unknown => JSON.parse(body)
+
+/** The refusals the learning journals hold, each with its guard source and its Paris day: `<config>/<plugin>/journal/*.json`, read as the learning plugin reads them. */
+function journalRefusals(config: string, skipped: { n: number }): { plugin: string; code: string; day: string | undefined }[] {
+  const found: { plugin: string; code: string; day: string | undefined }[] = []
+  let plugins: string[]
+  try {
+    plugins = readdirSync(config)
+  } catch {
+    return found
+  }
+  for (const name of plugins.filter(n => PLUGIN_NAME.test(n))) {
+    const dir = journalDir(config, name)
+    if (!existsSync(dir)) continue
+    for (const file of readdirSync(dir).filter(f => f.endsWith('.json') && f !== JOURNAL_FOLD_FILE)) {
+      try {
+        const event = parseJournalEvent(JSON.parse(readFileSync(join(dir, file), 'utf8')))
+        if (event === undefined) skipped.n++
+        else if (!('fact' in event) && event.kind === 'refusal') found.push({ plugin: event.source.plugin, code: event.source.code, day: dayOf(event.at) })
+      } catch {
+        skipped.n++
+      }
+    }
+  }
+  return found
+}
 
 /** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms. */
 function dispatchLines(module: string, skipped: { n: number }): { opened: number; closed: number }[] {
@@ -364,12 +395,16 @@ export function report(input: ReportInput): string[] {
   // Questions and refusals per day.
   const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, 'archive'), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
   const refusals = new Map<string, { all: number; plugin: number }>()
+  const byRole = new Map<string, { all: number; plugin: number }>(REFUSAL_ROLES.map(role => [role, { all: 0, plugin: 0 }]))
   for (const s of sessions.values()) {
     // A session with live calls counts them on their days; one with only a summary counts its lifetime refusals on the day it ended.
     const counted = s.live || s.summarized === undefined ? s.refused.map(r => ({ day: r.day, all: 1, plugin: r.plugin ? 1 : 0 })) : [s.summarized]
+    const role = byRole.get(roleOfRefusal(s.role)) ?? { all: 0, plugin: 0 }
     for (const c of counted) {
       const d = refusals.get(c.day) ?? { all: 0, plugin: 0 }
       refusals.set(c.day, { all: d.all + c.all, plugin: d.plugin + c.plugin })
+      role.all += c.all
+      role.plugin += c.plugin
     }
   }
   out.push('', 'day         questions  refusals  of them by a plugin')
@@ -377,6 +412,23 @@ export function report(input: ReportInput): string[] {
     const asked = round.filter(r => dayOf(text(r['since'])) === day).length + (questions.get(day) ?? 0)
     out.push(`${day}  ${String(asked).padStart(9)}  ${String(refusals.get(day)?.all ?? 0).padStart(8)}  ${String(refusals.get(day)?.plugin ?? 0).padStart(19)}`)
   }
+
+  // Refusals per guard source, from the learning journals (the only place a guard's code is kept), and per role, from the events.
+  const sources = new Map<string, { plugin: string; code: string; count: number }>()
+  for (const r of journalRefusals(input.config, skipped)) {
+    if (!inWindow(r.day)) continue
+    const key = `${r.plugin} ${r.code}`
+    sources.set(key, { plugin: r.plugin, code: r.code, count: (sources.get(key)?.count ?? 0) + 1 })
+  }
+  const byPlugin = [...refusals.values()].reduce((n, d) => n + d.plugin, 0)
+  out.push('', 'refusals by guard source (the learning journals: plugin and guard code)')
+  for (const { plugin, code, count } of [...sources.values()].sort((a, b) => b.count - a.count || (a.plugin + a.code < b.plugin + b.code ? -1 : 1))) {
+    out.push(`  ${plugin.padEnd(14)} ${code.padEnd(44)} ${String(count).padStart(5)}`)
+  }
+  if (sources.size === 0) out.push('  none in the journals for the week')
+  out.push(`  (the journals hold ${[...sources.values()].reduce((n, s) => n + s.count, 0)} of the ${byPlugin} refusals the events count by a plugin; the others carry no code)`)
+  out.push('', 'role          refusals  of them by a plugin')
+  for (const [role, d] of byRole) out.push(`${role.padEnd(12)}  ${String(d.all).padStart(8)}  ${String(d.plugin).padStart(19)}`)
 
   // The figures of the target, in its order.
   const roleTurns = new Map<string, number[]>()
