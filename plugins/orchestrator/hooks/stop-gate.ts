@@ -450,7 +450,9 @@ export type Held = { case: string; reason: string }
 //
 // An idle agent of its own whose pull request is open (`awaitingMerge`, by label) is not stood
 // down: the executor lives until its pull request merges and receives the kept findings. The log
-// names it apart (`awaiting-merge`), never among the idle agents, until the done line reads it.
+// names it apart (`awaiting-merge`), never among the idle agents, until the done line reads it. An
+// open pull request is no wake source: with nothing else armed (no subscription, no watch, no task
+// of the host, no open question), the turn ends on « nothing will wake you » like any other.
 //
 // « Nothing will wake you » is decided on the host's own word (`tasks`, hostTasks above): what
 // the host holds in flight for the session is what will wake it. The process table walked by
@@ -494,21 +496,24 @@ export function checkWake(facts: {
   if (idle.length > 0) {
     return { warn: 'idle-agents', detail: idle.map(a => a.label).join(', ') }
   }
-  if (merging.length > 0) return { warn: 'awaiting-merge', detail: merging.join(', ') }
+  // The executor's open pull request wakes nothing by itself: it is logged apart only when
+  // something else will wake the session, and otherwise the ending is judged like any other.
+  const waking = (): null | { warn: 'awaiting-merge'; detail: string } =>
+    merging.length > 0 ? { warn: 'awaiting-merge', detail: merging.join(', ') } : null
   // A question still open in the round: its answer wakes the session.
-  if (facts.questionOpen) return null
+  if (facts.questionOpen) return waking()
   if (facts.resident) {
     // An idle resident agent waits on a background command of its own, and that
     // command wakes it as a running turn would: something will wake the orchestrator.
-    return null
+    return waking()
   }
-  if (facts.handedOver) return null
+  if (facts.handedOver) return waking()
   // Refused on the host's own list of work in flight; a host that sends none is only logged.
   if (facts.tasks !== undefined && facts.tasks !== null) {
-    if (facts.tasks.length > 0) return null
+    if (facts.tasks.length > 0) return waking()
     return { case: 'nothing-will-wake', reason: NOTHING }
   }
-  return { warn: 'nothing-will-wake', detail: '' }
+  return waking() ?? { warn: 'nothing-will-wake', detail: '' }
 }
 
 // How long a subscription to a peer's idle notice counts as something that will wake the

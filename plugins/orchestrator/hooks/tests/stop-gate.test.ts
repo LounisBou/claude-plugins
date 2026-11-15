@@ -2442,11 +2442,12 @@ test('no refusal teaches a tool wait: what runs, or a busy agent, wakes the sess
 
 // The fresh-eye plan A, item 4 (2026-11-14): the executor lives until its pull request merges and
 // receives the kept findings; the gate no longer flags it for its stand-down while that pull request is open.
-test('an idle agent whose pull request is open is not dismissed: the stop passes, logged apart; once merged it is delivered', async () => {
+test('an idle agent whose pull request is open is not dismissed: with something armed the stop passes, logged apart; once merged it is delivered', async () => {
   const { handlers } = mounted()
   const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n' }
   const open = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
-  const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...NOTHING_RUNS }))
+  const armed = { background_tasks: [{ command: 'bash ci-watch.sh 160', status: 'running' }], session_crons: [] }
+  const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...armed }))
   expect(out.answer).toBe(out.passed)
   expect(open.written.some(l => l.includes('idle-delivered') || l.includes('idle-agents') || l.includes('nothing-will-wake'))).toBe(false)
   expect(open.written.some(l => l.endsWith('| stop gate: warn awaiting-merge Agent: idle-p3'))).toBe(true)
@@ -2458,9 +2459,25 @@ test('an idle agent whose pull request is open is not dismissed: the stop passes
   await warnsNotRefuses(handlers, merged, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
 })
 
+test('an executor with its pull request open and nothing armed to wake the session is refused as nothing-will-wake', async () => {
+  const { handlers } = mounted()
+  const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}' }
+  const open = fakeDollar(pr)
+  const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...NOTHING_RUNS }))
+  expect(out.answer).not.toBe(out.passed)
+  expect(String((out.answer as any).block)).toContain('Nothing will wake you')
+  expect(open.written.some(l => l.includes('warn awaiting-merge'))).toBe(false)
+})
+
 test('an executor with its pull request open still holds a done, and another idle agent is still named', () => {
-  const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3'], tasks: [] as string[] }
+  const base = { agents: [AGENT_IDLE], resident: false, delivered: [], awaitingMerge: ['Agent: idle-p3'], tasks: ['bash ci-watch.sh 160'] }
   expect(checkWake({ ...base, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  // An open pull request wakes nothing: with no task of the host, no subscription, no watch and no open question, it is refused.
+  expect((checkWake({ ...base, tasks: [], message: 'Reviewing.' }) as any).case).toBe('nothing-will-wake')
+  expect(checkWake({ ...base, tasks: [], awaiting: true, message: 'Reviewing.' })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], watching: true, message: 'Reviewing.' })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], questionOpen: true, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
+  expect(checkWake({ ...base, tasks: undefined, message: 'Reviewing.' })).toEqual({ warn: 'awaiting-merge', detail: 'Agent: idle-p3' })
   const other = { label: 'Agent: other-p4', state: 'idle' as const, tty: '/dev/ttys004' }
   expect(checkWake({ ...base, agents: [AGENT_IDLE, other], message: 'Reviewing.' })).toEqual({ warn: 'idle-agents', detail: 'Agent: other-p4' })
   expect(checkWake({ ...base, message: 'waiting: done' })).toBe('read-what-is-left')
