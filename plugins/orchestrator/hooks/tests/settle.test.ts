@@ -294,3 +294,14 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
 })
+
+test('the coordinator closes a relay\'s entry, of this machine or of another, and sends its sender nothing', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed()))
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ id: 'r-2', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })))
+  const here = await settle(m.coordinator, request('r-1', { text: 'B' }), AT)
+  const there = await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
+  expect([here.result, there.result]).toEqual(['Settled r-1: closed.', 'Settled r-2: closed.'])
+  expect([entryOf(m, 'r-1').status, entryOf(m, 'r-2').status]).toEqual(['closed', 'closed'])
+  expect(m.sent).toEqual([])
+})
