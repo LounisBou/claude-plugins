@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -78,6 +78,14 @@ describe('sitecustomize', () => {
     assert.equal(python('-c', 'pass', '/r/plugins/alpha/engine'), 'started')
     assert.equal(python('-m', 'this').startsWith('started'), true)
     assert.equal(python('-c', 'pass'), '')
+  })
+  it('runs a Python without coverage.py unmeasured, with nothing on stderr', () => {
+    const site = mkdtempSync(join(tmpdir(), 'pycov-site-'))
+    writeFileSync(join(site, 'sitecustomize.py'), sitecustomize('/r/plugins/alpha'))
+    writeFileSync(join(site, 'coverage.py'), "raise ImportError('no coverage here')\n")
+    const result = spawnSync('python3', ['-c', 'print("ran")', '/r/plugins/alpha'], { env: { ...process.env, PYTHONPATH: site }, encoding: 'utf8' })
+    assert.equal(result.stdout.trim(), 'ran')
+    assert.equal(result.stderr, '')
   })
 })
 

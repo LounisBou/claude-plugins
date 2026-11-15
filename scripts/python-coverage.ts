@@ -42,7 +42,8 @@ export function rcText(pluginDir: string, dataFile: string): string {
 /**
  * Starts coverage.py in a process that can run the plugin's Python: one whose command line names the
  * plugin's directory, or runs a module (pytest). The suites' own helpers (`python3 -c` reading a JSON
- * answer) skip its start, about 50 ms each, a cost the suites pay thousands of times.
+ * answer) skip its start, about 50 ms each, a cost the suites pay thousands of times. A Python
+ * without coverage.py (a suite's own interpreter) runs unmeasured and prints nothing more.
  */
 export function sitecustomize(pluginDir: string): string {
   return [
@@ -50,8 +51,12 @@ export function sitecustomize(pluginDir: string): string {
     `_dir = ${JSON.stringify(pluginDir)}`,
     "_argv = getattr(sys, 'orig_argv', sys.argv)",
     "if '-m' in _argv or any(_dir in arg for arg in _argv):",
-    '    import coverage',
-    '    coverage.process_startup()',
+    '    try:',
+    '        import coverage',
+    '    except ImportError:',
+    '        pass',
+    '    else:',
+    '        coverage.process_startup()',
     '',
   ].join('\n')
 }
