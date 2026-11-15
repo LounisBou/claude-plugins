@@ -197,6 +197,17 @@ test('a question that asks consent is recorded as that consent, by the tab or by
   expect(records.sort()).toEqual([[`${mine}.json`, 'tab'], [`${theirs}.json`, 'coordinator']].sort())
 })
 
+test('an answer that names its choice by text then letter, as the coordinator relays it, is recorded as that choice, and « Accorder » grants', async () => {
+  const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
+  const m = machine()
+  const granted = await asked(m, consent)
+  await settle(m.coordinator, request(granted, { text: 'Accorder (A)' }), AT)
+  const refused = await asked(m, consent)
+  await settle(m.coordinator, request(refused, { text: 'Refuser (B)' }), AT)
+  const answers = (id: string) => JSON.parse(m.files.get([...m.files.keys()].find(p => p.endsWith(`/consents/acme/app/${id}.json`))!)!).answer
+  expect([answers(granted), answers(refused)]).toEqual(['Accorder', 'Refuser'])
+})
+
 test('an answer by message on its asker\'s own question records no consent: the model\'s word is no answer of the operator', async () => {
   const m = machine()
   const id = await asked(m, { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' })
@@ -270,6 +281,38 @@ test('its sender settles the relay\'s entry answered in its tab, or withdraws it
   expect(entryOf(m, 'r-1')).toMatchObject({ status: 'answered', answer: { by: 'tab', text: "answered in the sender's own tab", typed: 'B' } })
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'withdrawn', answer: { by: 'sender', text: 'no longer needed' } })
   expect(m.sent).toEqual([])
+})
+
+// The coordinator's own tab is the operator's: his orders given there are his consent, for a question
+// whichever orchestrator's pull request it is about; an orchestrator's own settle is its word, not his.
+const GRANT_WORDS = "Accorder la dispense de acme/app et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
+const consentOf = (id: string) => ({ consent: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 }, choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], kind: 'operator', question: 'Waive E2E on acme/app#7?', id })
+const recordsOf = (m: ReturnType<typeof machine>) => [...m.files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text))
+
+test('the coordinator settles its own wait that asks consent, answered in its tab with words after « Accorder »: the consent record is « Accorder », by the tab', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed({ ...consentOf('r-1'), from: COORD, session: 's-coord' })))
+  await settle(m.coordinator, request('r-1', { text: GRANT_WORDS }), AT)
+  expect(recordsOf(m)).toMatchObject([{ answer: 'Accorder', by: 'tab', entry: 'r-1', subject: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 } }])
+})
+
+test('an orchestrator settling its own wait that asks consent records none: its words are its own, and a withdrawal records none', async () => {
+  const m = machine()
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed(consentOf('r-1'))))
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ ...consentOf('r-2'), from: COORD, session: 's-coord' })))
+  await settle(m.asker, request('r-1', { text: GRANT_WORDS }), AT)
+  await settle(m.coordinator, request('r-2', { outcome: 'withdrawn', text: 'moot' }), AT)
+  expect(recordsOf(m)).toEqual([])
+})
+
+test('the coordinator closing another orchestrator\'s question with words after « Accorder » records « Accorder » for it, and « Refuser » words record « Refuser »', async () => {
+  const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
+  const m = machine()
+  const granted = await asked(m, consent)
+  await settle(m.coordinator, request(granted, { text: GRANT_WORDS }), AT)
+  const refused = await asked(m, consent)
+  await settle(m.coordinator, request(refused, { text: 'Refuser, pas ce soir' }), AT)
+  expect(recordsOf(m).map(r => [r.entry, r.answer, r.by]).sort()).toEqual([[granted, 'Accorder', 'coordinator'], [refused, 'Refuser', 'coordinator']].sort())
 })
 
 test('a relay\'s entry the coordinator here was shown is closed by its sender\'s settle, and the coordinator told so', async () => {

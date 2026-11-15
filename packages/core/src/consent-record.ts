@@ -133,6 +133,8 @@ export function givenAnswer(answer: string, choices: readonly { letter: string; 
  * among the question's choices is nothing to quote (''). Any other answer is quoted whole.
  */
 export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[]): string {
+  const chosen = answersChoice(answer, choices) ?? leadingChoice(answer, choices)
+  if (chosen) return chosen.text.trim()
   const given = givenAnswer(answer, choices)
   return given.letter === null && LETTERED.test(given.text) ? '' : given.text
 }
@@ -140,8 +142,9 @@ export function consentAnswer(answer: string, choices: readonly { letter: string
 /**
  * The choice that words the operator typed in the asking session's own tab answer, case and
  * spacing aside: that choice's letter alone (« A »); its letter, a separator (`:`, `—`, `)`, `-`,
- * `.`) and nothing else or exactly that choice's text (« a) waive it, docs only »); or exactly one
- * choice's text and nothing else. Anything else answers nothing (undefined): a prompt typed there
+ * `.`) and nothing else or exactly that choice's text (« a) waive it, docs only »); exactly that
+ * choice's text then its letter in parentheses (« Accorder (A) », as a relayed answer words it); or
+ * exactly one choice's text and nothing else. Anything else answers nothing (undefined): a prompt typed there
  * can be any instruction, and a consent record lets an E2E waiver through, so only an unambiguous
  * answer counts. The record's answer is then the chosen choice's text.
  */
@@ -154,8 +157,35 @@ export function answersChoice<C extends { letter: string; text: string }>(typed:
     const rest = lettered[2] ?? ''
     if (chosen && (rest === '' || rest === textOf(chosen))) return chosen
   }
+  const pressed = /^(.*\S)\s*\(\s*([a-z])\s*\)$/.exec(said)
+  if (pressed) {
+    const chosen = choices.find(choice => choice.letter.toLowerCase() === pressed[2])
+    if (chosen && textOf(chosen) !== '' && textOf(chosen) === pressed[1]) return chosen
+  }
   const exact = choices.filter(choice => textOf(choice) !== '' && textOf(choice) === said)
   return exact.length === 1 ? exact[0] : undefined
+}
+
+/**
+ * The choice an answer opens with: its text first, then the end of the answer or a character that
+ * is no letter or digit (« Accorder la dispense jusqu'au 16/11 », « Accorder — fusionne »), case
+ * and spacing aside; the longest such text when several do, undefined when two tie or when a
+ * letter in parentheses after it names another choice. For the words
+ * of an answer the operator himself gave, in the coordinator's tab or in its pane, where every
+ * order counts: the record then holds that choice's text, which is what grants. The words typed in
+ * any other session's tab stay answersChoice's, which refuses all but the exact forms.
+ */
+export function leadingChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[]): C | undefined {
+  const said = spaced(typed).toLowerCase()
+  const opening = choices.flatMap(choice => {
+    const text = spaced(choice.text).toLowerCase()
+    return text !== '' && said.startsWith(text) && (said.length === text.length || !/[\p{L}\p{N}]/u.test(said[text.length]!)) ? [{ choice, length: text.length }] : []
+  }).sort((a, b) => b.length - a.length)
+  const first = opening[0]
+  if (first === undefined || first.length === opening[1]?.length) return undefined
+  // « Accorder (B) » contradicts itself: the letter in parentheses must be the choice's own.
+  const named = /^\s*\(\s*([a-z])\s*\)$/.exec(said.slice(first.length))?.[1]
+  return named !== undefined && named !== first.choice.letter.toLowerCase() ? undefined : first.choice
 }
 
 /**

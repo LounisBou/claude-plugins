@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, leadingChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
@@ -38,6 +38,27 @@ describe('consent records', () => {
     assert.equal(consentAnswer('a : waive it on name#7', choices), 'waive it on name#7')
     assert.equal(consentAnswer('C', choices), '')
     assert.equal(consentAnswer('  go without it  ', choices), 'go without it')
+  })
+
+  it('takes an answer that opens with a choice for that choice, the words after it left out, so that « Accorder » with words after it grants', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    for (const answer of ['Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 !', 'accorder, merci', 'ACCORDER — go', 'Accorder\n(A)']) {
+      assert.equal(consentAnswer(answer, choices), 'Accorder', answer)
+      assert.equal(grants(consentAnswer(answer, choices)), true, answer)
+    }
+    assert.equal(consentAnswer('Refuser, pas ce soir', choices), 'Refuser')
+    for (const answer of ['Accorderai', 'je dis Accorder', 'peut-être']) assert.equal(consentAnswer(answer, choices), answer, answer)
+    assert.equal(leadingChoice('yes or no', [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'yes' }]), undefined)
+    assert.equal(leadingChoice('yes, and more', [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'yes, and' }])?.letter, 'B')
+  })
+
+  it('takes a choice pressed as its text then its letter in parentheses for its text, so that it grants', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.equal(consentAnswer('Accorder (A)', choices), 'Accorder')
+    assert.equal(consentAnswer(' accorder  (a) ', choices), 'Accorder')
+    assert.equal(consentAnswer('Refuser (B)', choices), 'Refuser')
+    assert.equal(grants(consentAnswer('Accorder (A)', choices)), true)
+    assert.equal(consentAnswer('Accorder (B)', choices), 'Accorder (B)')
   })
 
   it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {
@@ -127,6 +148,7 @@ describe('words typed in the sender\'s own tab', () => {
       assert.deepEqual(answersChoice(typed, choices), waive, typed)
     }
     for (const typed of ['b', 'B : run the e2e', 'RUN THE E2E']) assert.deepEqual(answersChoice(typed, choices), run, typed)
+    for (const typed of ['waive it, docs only (A)', 'Waive it, docs only (a)', 'waive it, docs only  ( A )']) assert.deepEqual(answersChoice(typed, choices), waive, typed)
   })
 
   it('is no answer when it is anything else', () => {
@@ -134,6 +156,7 @@ describe('words typed in the sender\'s own tab', () => {
       '', 'C', 'C)', 'yes', 'go on with phase 2',
       'do not waive it, docs only', 'I say WAIVE IT, docs only, thanks', 'ok: waive it, docs only',
       'B waive it, docs only', 'B : waive it, docs only', 'A run the E2E', 'A - but not yet', 'A, but check the diff first', 'A go', 'a) yes',
+      'waive it, docs only (B)', 'run the E2E (A)', 'yes (A)', '(A)',
     ]) assert.equal(answersChoice(typed, choices), undefined, typed)
     assert.equal(answersChoice('anything', []), undefined)
   })
