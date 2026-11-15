@@ -10147,7 +10147,7 @@ check "the pane's short name carries the file's own body, and no coordinator cop
 # An update: a copy written by an earlier version names that version's root; it is rewritten.
 sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SND/coordinator.md"; rm -f "$SND"/*.bak
 snout=$(inst "$SNH" 2>&1)
-check "an update rewrites a copy an earlier version wrote, and leaves the current ones" "0|1|13" \
+check "an update rewrites a copy an earlier version wrote, and leaves the current ones" "0|1|12" \
   "$(grep -c '/old/plugin/root' "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c 'short command rewritten: .*coordinator.md')|$(printf '%s\n' "$snout" | grep -c 'short command up to date: ')"
 # The operator's own file of the same name: kept as written, said, and skipped.
 printf -- '---\ndescription: my own coordinator\n---\nmine\n' > "$SND/coordinator.md"
@@ -10155,15 +10155,15 @@ snout=$(inst "$SNH" 2>&1)
 check "an operator's file of the same name is never overwritten, and the installer says so" "mine|1" \
   "$(tail -1 "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c "kept: $SND/coordinator.md is not this plugin's")"
 snout=$(uninst "$SNH" 2>&1)
-check "uninstall removes the plugin's copies alone, the operator's file kept" "coordinator.md|13" \
+check "uninstall removes the plugin's copies alone, the operator's file kept" "coordinator.md|12" \
   "$(ls "$SND")|$(printf '%s\n' "$snout" | grep -c 'short command removed: ')"
 SNDRY="$WORK/home-short-dry"; mkdir -p "$SNDRY/.claude"
 snout=$(inst "$SNDRY" --dry-run 2>&1)
-check "a dry run lists each short command and writes none" "none|14" \
+check "a dry run lists each short command and writes none" "none|13" \
   "$([ -d "$SNDRY/.claude/commands" ] && echo written || echo none)|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command written: ')"
 stub_venv "$SNDRY"; inst "$SNDRY" >/dev/null 2>&1
 snout=$(uninst "$SNDRY" --dry-run 2>&1)
-check "an uninstall dry run lists the copies and removes none" "14|14" \
+check "an uninstall dry run lists the copies and removes none" "13|13" \
   "$(ls "$SNDRY/.claude/commands" | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command removed: ')"
 # The module's own pass at each session start, `short-commands.sh sync`: a copy whose root
 # differs is rewritten, a current one untouched, a foreign one untouched, a missing one left
