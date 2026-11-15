@@ -556,15 +556,16 @@ export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promis
 }
 
 /**
- * The oldest question of this machine's round still open and asking the same as `entry`, an asker's
- * own (a replica is its owner's); null when none. Its session is not compared: a successor asks as
- * the project does.
+ * The oldest question of this machine's round still open and asking the same as `entry`; null when
+ * none. A replica is its owner's, and a claimed question is already off the pane, closed by the next
+ * turn's end with his typed words: neither holds a new ask back. The asker's session is not compared:
+ * the key is the project's.
  */
 export async function openAsked($: Host<'env' | 'fs'>, entry: Asked): Promise<Asked | null> {
   const key = askedKey(entry)
   let found: Asked | null = null
   for (const other of await readAsked($)) {
-    if (other.status !== 'open' || other.origin !== undefined || askedKey(other) !== key) continue
+    if (other.status !== 'open' || other.origin !== undefined || other.claimed !== undefined || askedKey(other) !== key) continue
     if (found === null || other.at < found.at) found = other
   }
   return found
@@ -588,7 +589,10 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
     ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
     : made
   // A question still open in the round is not stored twice: the entry already there is the one he answers.
-  const twin = record?.answer ? null : await openAsked($, made).catch(() => null)
+  const twin = record?.answer ? null : await openAsked($, made).catch(async err => {
+    await logLine($, 'question', `open twin of ${made.id} not looked for: ${messageOf(err)}`)
+    return null
+  })
   if (twin !== null) {
     return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
   }

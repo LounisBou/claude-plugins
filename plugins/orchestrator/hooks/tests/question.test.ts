@@ -367,6 +367,9 @@ test('a question that differs by one field, or whose twin is withdrawn or answer
       [`${ROUND}/q-withdrawn.json`]: twin('q-withdrawn', { status: 'withdrawn', answer: { ...answer, by: 'sender' } }),
       [`${ROUND}/q-message.json`]: twin('q-message', { status: 'answered', answer }),
       [`${ROUND}/q-other-project.json`]: twin('q-other-project', { sender: { ...first.sender, session: 's-old', name: 'Coord: another [d4e5f6]' } }),
+      // Open, but a replica of another machine's question, or claimed by the words he typed: neither is a twin.
+      [`${ROUND}/q-replica.json`]: twin('q-replica', { origin: { machine: 'box-2', address: 'box-2.local' } }),
+      [`${ROUND}/q-claimed.json`]: twin('q-claimed', { claimed: { typed: 'let me think', at: '2026-11-13T10:00:00.000Z' } }),
     },
   })
   const same = await ask(dollar, fields)
