@@ -6,7 +6,8 @@ import { basename, join } from 'node:path'
 import { ROLES } from '../../../core/names.ts'
 import type { WaitKind } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
-import { die, moduleOf, Refusal, stateOf, type Context } from './context.ts'
+import { writeAtomic } from '../../../core/store.ts'
+import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
 /** A remote row is kept for a day after its updated_at (REMOTE_STALE_AFTER_MS in hooks/remote-row.ts). */
@@ -703,6 +704,39 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   const found = collisions(facts)
   for (const line of found) ctx.out(line)
   return finish(ctx, facts, found.length > 0 ? 1 : 0)
+}
+
+/** What a check reports: each orchestrator session, each collision and each source not read, one line each. */
+export function findings(facts: Facts): string[] {
+  return [
+    ...facts.sessions.filter(s => s.title.startsWith(`${ORCH}:`)).map(s => `newcomer ${s.title} | session ${s.pid}`),
+    ...collisions(facts),
+    ...facts.unread.map(line => `unread ${line}`),
+  ]
+}
+
+/**
+ * The findings not reported at the last check, kept in <state>/coordinator-check.json; the first
+ * check reports none. With --every <seconds> it reads again at that pace until it has one: run in
+ * the background, it wakes its session only on a finding.
+ */
+export function checkCommand(ctx: Context, args: readonly string[]): number {
+  const every = args[0] === '--every' && args.length === 2 ? Number(args[1]) : args.length === 0 ? 0 : NaN
+  if (!Number.isInteger(every) || every < 0) die(`check: usage: check [--every <seconds>]`)
+  const path = join(stateOf(ctx.env), 'coordinator-check.json')
+  for (;;) {
+    const was = parseJson(readFile(path) ?? '')
+    const now = findings(readFacts(ctx))
+    try {
+      writeAtomic(path, `${JSON.stringify(now)}\n`)
+    } catch {
+      say(ctx, `check: cannot record the findings in ${path}`)
+    }
+    const fresh = Array.isArray(was) ? now.filter(line => !was.includes(line)) : []
+    for (const line of fresh) ctx.out(line)
+    if (fresh.length > 0 || every === 0) return 0
+    ctx.sleep(every * 1000)
+  }
 }
 
 /** One owner row: the pull request, its branch, the orchestrator or « unknown », and the evidence. */

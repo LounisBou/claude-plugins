@@ -7,6 +7,11 @@
 #   coordinator.sh facts     the sessions, checkouts and heavy runs of every repository a session
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
+#   coordinator.sh check [--every <seconds>]   what is new since the last check, one line each:
+#                            « newcomer <Orch: title> | session <pid> », a collision line, an unread
+#                            line; nothing on the first check (<state>/coordinator-check.json keeps
+#                            the last). --every reads again at that pace until a line is new: run in
+#                            the background, it wakes its session only on a finding
 #   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
 #                        --effort <level> [--session <id>] [--mode build|investigate] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;

@@ -226,19 +226,27 @@ export function paneOpen(ctx: Context, state: string): boolean {
   return tty === '' || listed === '' || listed === tty
 }
 
+type View = { readonly pane: boolean; readonly text: boolean; readonly live: Set<string>; readonly remote: Map<string, string> }
+
+/** Whether an open entry is due: an operator question its sender marked urgent, or any while no pane is open. */
+const isDue = (entry: Entry, view: View): boolean => entry['status'] === 'open' && entry['kind'] === 'operator' && (entry['urgent'] === true || !view.pane)
+
+/** Whether its question is printed: a due one, a closing proposal, or every one when asked whole. */
+const presents = (entry: Entry, view: View): boolean => view.text || isDue(entry, view) || entry['kind'] !== 'operator'
+
 /** The lines of one entry: its header, then its question and its close when they are printed. */
-export function entryLines(entry: Entry, view: { readonly pane: boolean; readonly text: boolean; readonly live: Set<string>; readonly remote: Map<string, string> }): string[] {
+export function entryLines(entry: Entry, view: View): string[] {
   const from = text(entry, 'from')
   const machine = isObject(entry['origin']) ? view.remote.get(from) : undefined
   const session = entry['session']
   const gone = isObject(entry['origin'])
     ? machine === undefined
     : typeof session === 'string' && session !== '' && !view.live.has(session.replace(/[^A-Za-z0-9._-]/gu, '_'))
-  const due = entry['status'] === 'open' && entry['kind'] === 'operator' && (entry['urgent'] === true || !view.pane)
+  const due = isDue(entry, view)
   const where = machine !== undefined ? ` | remote on ${machine}` : gone ? ' | sender gone' : ''
   const lines = [`round ${text(entry, 'id')} | ${text(entry, 'kind')} | from ${from} | since ${text(entry, 'since')} | blocks: ${shown(or(entry['blocks'], '-'))} | ${text(entry, 'status')}${due ? ' | due' : ''}${where}`]
   const question = text(entry, 'question')
-  if ((view.text || due || entry['kind'] !== 'operator') && question !== '') lines.push(...question.split('\n').map(line => `    ${line}`))
+  if (presents(entry, view) && question !== '') lines.push(...question.split('\n').map(line => `    ${line}`))
   const answer = isObject(entry['answer']) ? entry['answer'] : {}
   const at = shown(or(answer['at'], '?'))
   const said = shown(or(answer['text'], ''))
@@ -257,17 +265,18 @@ export function entryLines(entry: Entry, view: { readonly pane: boolean; readonl
 }
 
 /**
- * The ids of the open entries `round` printed, kept in <state>/round-listed.json beside those it
- * printed before, and only while the round still holds them. The hooks module reads it: an entry
- * the coordinator was shown and that is then settled is reported to it at once, so it never asks
- * it again. A write that fails is said and changes nothing of what round printed.
+ * The ids of the open entries whose question `round` printed, kept in <state>/round-listed.json
+ * beside those it printed before, and only while the round still holds them. The hooks module
+ * reads it: an entry the coordinator was shown and that is then settled is reported to it at once,
+ * so it never asks it again. An entry printed as its header alone is the pane's: its settling wakes
+ * no one. A write that fails is said and changes nothing of what round printed.
  */
-export function recordListed(ctx: Context, state: string, entries: readonly Entry[]): void {
+export function recordListed(ctx: Context, state: string, entries: readonly Entry[], view: View): void {
   const listed = join(state, 'round-listed.json')
   const was = readJson(listed)
   const before = Array.isArray(was) ? was.filter((id): id is string => typeof id === 'string') : []
   const present = new Set(entries.map(e => text(e, 'id')))
-  const open = entries.filter(e => e['status'] === 'open').map(e => text(e, 'id'))
+  const open = entries.filter(e => e['status'] === 'open' && presents(e, view)).map(e => text(e, 'id'))
   const ids = [...new Set([...before, ...open])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).filter(id => present.has(id))
   try {
     writeAtomic(listed, `${JSON.stringify(ids)}\n`)
@@ -301,7 +310,7 @@ export function round(ctx: Context, args: readonly string[]): number {
   for (const status of all ? ['open', 'answered', 'withdrawn'] : ['open']) {
     for (const entry of ordered(entries.filter(e => e['status'] === status))) entryLines(entry, view).forEach(line => ctx.out(line))
   }
-  if (isDir(dir)) recordListed(ctx, state, entries)
+  if (isDir(dir)) recordListed(ctx, state, entries, view)
   return 0
 }
 

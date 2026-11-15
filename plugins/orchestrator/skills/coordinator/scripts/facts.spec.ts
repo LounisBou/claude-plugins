@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { RunOptions, RunResult } from './context.ts'
@@ -284,6 +284,33 @@ describe('facts', () => {
     ])
     assert.ok(f.out.includes('heavy 200 | - | bash ./tests/run-tests.sh'))
     assert.ok(f.out.includes(`session 100 | ttys100 | Orch: alpha | Orch: alpha | - | - | -`))
+  })
+
+  it('checks: reports at first nothing, then only what is new since the last check, and waits for it with --every', () => {
+    const { f, t } = bench()
+    mkdirSync(f.state, { recursive: true })
+    assert.equal(run(f, 'check'), 0)
+    assert.deepEqual(f.out, [])
+    assert.equal(run(f, 'check'), 0)
+    assert.deepEqual(f.out, [])
+    const ps = f.ctx.env['COORDINATOR_PS_TABLE'] ?? ''
+    const newcomer = `107 1 ttys107 /usr/bin/hostcli --name Orch: delta\n`
+    // Nothing new at the first reading: it sleeps, the newcomer arrives, the next reading ends it.
+    const ctx = { ...f.ctx, sleep: (ms: number) => { f.slept.push(ms); writeFileSync(ps, readFileSync(ps, 'utf8') + newcomer); writeFileSync(f.ctx.env['COORDINATOR_CWDS'] ?? '', `107 ${t['src']}\n`, { flag: 'a' }) } }
+    assert.equal(main(ctx, ['check', '--every', '5']), 0)
+    const found = ['newcomer Orch: delta | session 107', 'collision sessions | forge.example/o/app | main | 100 Orch: alpha, 107 Orch: delta']
+    assert.deepEqual([f.out, f.slept], [found, [5000]])
+    assert.equal(run(f, 'check'), 0)
+    assert.deepEqual(f.out, found)
+    assert.equal(run(f, 'check', '--every', 'soon'), 1)
+    assert.deepEqual(f.err, ['coordinator: check: usage: check [--every <seconds>]'])
+  })
+
+  it('says a check record it cannot write, and still reports', () => {
+    const { f } = bench()
+    mkdirSync(join(f.state, 'coordinator-check.json'), { recursive: true })
+    assert.equal(run(f, 'check'), 0)
+    assert.deepEqual(f.err, [`coordinator: check: cannot record the findings in ${join(f.state, 'coordinator-check.json')}`])
   })
 
   it('says a forge and a process table it could not read', () => {
