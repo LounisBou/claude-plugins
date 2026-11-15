@@ -281,7 +281,12 @@ Both routes are `hooks/e2e-scope.ts`'s.
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
   `exempt: false` revokes it. `detail` quotes the operator's answer in a consent record
   of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
-  one that does not parse exempts nothing.
+  one that does not parse exempts nothing. `until` (ISO, UTC, to the second: `2026-11-15T22:00:00Z`), on
+  `exempt: true` only and still ahead, ends it at that instant: the question of the consent record states the
+  same `until`, and `detail` quotes the operator's answer to it; past it the exemption excuses nothing (its
+  labels are free again) and the gate adds one line, `E2E exemption of <repo> expired at <until>`, beside the
+  missing `e2e` item. Without `until` it stands until revoked, and its question then names no limit (no
+  `until`, date, time of day or « jusqu'à »): a question that limits it asks a limited exemption only.
 
 ### Light CI
 
