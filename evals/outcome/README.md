@@ -44,6 +44,9 @@ graded » with its reason, never a figure that measures the bench rather than th
 - a judgment gets at most `judgeUsd`, and none once the case-and-arm cap is spent;
 - a stopped arm is still graded on what it left, and reported as stopped.
 
+`retrospective` is the eval spend of one learning retrospective: `runUsd` for the whole of it,
+`promptRules` the prompt-rule candidates it may prove. No harness reads it yet.
+
 ## Running it
 
 From the repository root, into a directory outside the checkout (run output never lands in
