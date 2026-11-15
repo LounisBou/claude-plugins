@@ -43,6 +43,21 @@ function world(gitOut: Record<string, string> = {}) {
 
 const lintOf = (text: string) => lint(text, { expected: [], shortNames: new Set(), exists: () => true })
 
+// Seen 2026-11-15: a predecessor closed by the takeover never sent its successor's name, which the
+// briefs made the only proof of a successor; takeoversense, archivesort and writingfix each refused the
+// new orchestrator's orders. The successor alone under the name, or the module's line, is proof enough.
+test('every agent brief takes as its orchestrator the successor ListAgents lists alone under the name, or the one the module names', () => {
+  const w = world({ 'rev-parse --short=12 origin/main': 'abc123def456' })
+  assert.equal(w.phase(), 0)
+  const phase = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
+  const templates = join(import.meta.dirname, '..', '..', '..', 'templates')
+  for (const [what, text] of [['phase', phase], ['review', readFileSync(join(templates, 'agent-review-brief.md'), 'utf8')], ['comments', readFileSync(join(templates, 'agent-comments-brief.md'), 'utf8')]] as const) {
+    assert.ok(text.includes('once `ListAgents` lists no other session of that name'), `${what}: the successor alone under the name is the orchestrator`)
+    assert.ok(text.includes('`[module] Your orchestrator is now'), `${what}: the module's line names the orchestrator`)
+    assert.ok(!text.includes('waits for its word'), `${what}: no successor waits for a word its predecessor may never send`)
+  }
+})
+
 test('phase: the brief is printed from the row, the plan and the spec goals.md names, short, and passes its lint', () => {
   const w = world({ 'rev-parse --short=12 origin/main': 'abc123def456' })
   assert.equal(w.phase(), 0)
