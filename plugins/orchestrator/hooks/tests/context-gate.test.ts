@@ -68,6 +68,8 @@ type Setup = {
   noSession?: boolean
   root?: string
   installed?: string
+  // What `diff -rq` over two installed commits answers; by default a runtime file changed.
+  diff?: { exitCode: number; stdout: string }
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
@@ -125,6 +127,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
           return { exitCode: 0, stdout: setup.noLaunchName ? '  501 host\n' : `  501 host --name ${setup.launchName ?? 'Agent: belt'}\n`, stderr: '' }
         }
         if (argv[0] === 'ps') return { exitCode: 0, stdout: '1 ??\n', stderr: '' }
+        if (argv[0] === 'diff') {
+          const own = String(argv.at(-2))
+          return { stderr: '', ...(setup.diff ?? { exitCode: 1, stdout: `Files ${own}/orchestrator/hooks/guards.ts and ${String(argv.at(-1))}/orchestrator/hooks/guards.ts differ\n` }) }
+        }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -177,19 +183,11 @@ test('below the gate the prompt passes on untouched, context included', async ()
   expect(seen).toBe(e)
 })
 
-test('an unmeasured session is told so once, after a turn has answered', async () => {
-  // No launch name, so the session is named by the padded rename alone — the
-  // reading the Carries line normalized, proven here through the gate itself.
+test('an unmeasured session past its first turn is told nothing', async () => {
   const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, noLaunchName: true })
-  const handlers = mounted()
-  const first = await submit(handlers, dollar)
-  expect(first).toMatchObject({
-    context: ['CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (the smaller of 300,000 tokens and 80% of the reported window) cannot be read; measure by hand before dispatching or rotating.'], // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
-  })
-  // Once per session: the next prompt meets the same silence as a low fill.
-  const second = await submit(handlers, dollar)
-  expect(second).toMatchObject({ text: 'go' })
-  expect(second.context).toBeUndefined()
+  const seen = await submit(mounted(), dollar)
+  expect(seen).toMatchObject({ text: 'go' })
+  expect(seen.context).toBeUndefined()
 })
 
 test('a session whose first prompt this is stays silent', async () => {
@@ -246,20 +244,6 @@ test("a coordinator past the gate is shown its skill's absolute place", async ()
   expect(seen.context?.[0]).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
 })
 
-test('a /clear starts the memo over: the new session is told it is unmeasured too', async () => {
-  // After a /clear the session id changes and no start fires: a memo held across it
-  // named the old transcript and kept the line already said.
-  const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, noLaunchName: true })
-  const handlers = mounted()
-  expect((await submit(handlers, dollar)).context?.[0]).toContain('unmeasured')
-  const next = `${HOME}/.claude/projects/-a-project/s-two.jsonl`
-  const stat = dollar.fs.stat
-  dollar.session.id = async () => 's-two'
-  dollar.fs.exists = async (p: string) => p === next
-  dollar.fs.stat = async (p: string) => (p === next ? { kind: 'file', size: ANSWERED_RENAMED.length } : stat(p))
-  expect((await submit(handlers, dollar)).context?.[0]).toContain('unmeasured')
-})
-
 test('a model drift the gauge measured rides the next prompt to the model, once, whatever the role', async () => {
   const measure = hooksOn(capture<World>(registerGauge), 'session.measure').at(-1)!.handler
   let model = 'a-model'
@@ -291,26 +275,70 @@ const installedState = (...history: string[]): string => JSON.stringify({
   version: 1, repo: 'owner/name', marketplace: 'lounisbou', history: history.map(commit => ({ commit, at: '2026-01-01T00:00:00Z' })), skipped: [], pending: false, plugins: {},
 })
 
+const DIRS_OF = (installed: string) => ({ ownDir: `/cfg/deploys/lounisbou/${RUNNING}`, installedDir: `/cfg/deploys/lounisbou/${installed}` })
+// An orchestrator's generation that has lived, by its context, below the gate.
+const LIVED = JSON.stringify({ context_tokens: 160000, context_window: 1000000, context_percent: 16, model: 'a-model', updated_at: 't' })
+const YOUNG = JSON.stringify({ context_tokens: 40000, context_window: 1000000, context_percent: 4, model: 'a-model', updated_at: new Date().toISOString(), start: { tokens: 1, at: new Date().toISOString(), brief: null, brief_bytes: null } })
+
 test('an orchestrator and a coordinator are told of a newer installed commit once, then of the next one', async () => {
   for (const launchName of ['Orch: belt', 'Coord: belt']) {
-    const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName }
+    const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName, measure: LIVED }
     const { dollar } = fakeDollar(setup)
     const handlers = mounted()
     const role = launchName.startsWith('Orch') ? 'orchestrator' : 'coordinator'
-    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED }, role, role === 'coordinator' ? DEPLOYED : '')])
+    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, role, role === 'coordinator' ? DEPLOYED : '')])
     expect((await submit(handlers, dollar)).context).toBeUndefined()
     const next = 'c'.repeat(40)
     setup.installed = installedState(next, INSTALLED, RUNNING)
-    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next }, role, role === 'coordinator' ? DEPLOYED : '')])
+    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, role, role === 'coordinator' ? DEPLOYED : '')])
   }
+})
+
+test('a newer commit that changes no runtime file of a loaded plugin is not told, the next one that does is', async () => {
+  const setup: Setup = {
+    root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt',
+    diff: { exitCode: 1, stdout: `Files /cfg/deploys/lounisbou/${RUNNING}/plugins/orchestrator/README.md and /cfg/deploys/lounisbou/${INSTALLED}/plugins/orchestrator/README.md differ\n` },
+  }
+  const { dollar } = fakeDollar(setup)
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  setup.diff = { exitCode: 0, stdout: '' }
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  const next = 'c'.repeat(40)
+  setup.installed = installedState(next, INSTALLED, RUNNING)
+  delete setup.diff
+  expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, 'coordinator', DEPLOYED)])
+})
+
+test('a comparison that cannot be made gives the notice', async () => {
+  const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', diff: { exitCode: 2, stdout: '' } })
+  expect((await submit(mounted(), dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
+})
+
+test('a young orchestrator generation is not told of a newer commit until it has lived', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: YOUNG }
+  const { dollar } = fakeDollar(setup)
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  setup.measure = LIVED
+  expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'orchestrator', '')])
+})
+
+test('a /clear starts the memo over: the new session is told of the newer commit too', async () => {
+  const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt' })
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toHaveLength(1)
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  dollar.session.id = async () => 's-two'
+  expect((await submit(handlers, dollar)).context).toHaveLength(1)
 })
 
 test('a session running the installed commit, an agent, and a session with no readable state file are told nothing', async () => {
   const quiet: Setup[] = [
-    { root: DEPLOYED, installed: installedState(RUNNING), launchName: 'Orch: belt' },
+    { root: DEPLOYED, installed: installedState(RUNNING), launchName: 'Orch: belt', measure: LIVED },
     { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Agent: belt' },
-    { root: DEPLOYED, launchName: 'Orch: belt' },
-    { installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt' },
+    { root: DEPLOYED, launchName: 'Orch: belt', measure: LIVED },
+    { installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: LIVED },
   ]
   for (const setup of quiet) {
     const { dollar, written } = fakeDollar(setup)
