@@ -1,8 +1,6 @@
 ## Bash route (no `mcp__github__gh` in the tool list)
 
-Only for a session where plugin modules do not load, such as `claude -p`. Send
-the request `SKILL.md` writes for the tool to the same engine from Bash, the
-request object on standard input, no file in between:
+The request object on standard input, no file in between:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
