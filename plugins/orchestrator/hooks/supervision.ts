@@ -2404,9 +2404,11 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   /*
    * A delivery's facts are read on the repository, not taken from its report (relay.ts readDeliveryFacts),
    * in the session's own checkout: the module runs in another directory, and a read there said FALSE
-   * CLAIM of clean deliveries (2026-11-15). A checkout the host does not name gives no facts line.
+   * CLAIM of clean deliveries (2026-11-15). A checkout the host does not name gives no facts line,
+   * said in the log.
    */
-  const checkout = wait?.kind === 'delivered' ? await $.session.root().catch(() => $.session.cwd()).catch(() => '') : ''
+  const checkout = wait?.kind === 'delivered' ? await $.session.root().then(root => root || $.session.cwd()).catch(() => '') : ''
+  if (wait?.kind === 'delivered' && !checkout) await logLine($, 'supervision', `relay: ${name}'s checkout is unread: its delivery goes without facts`)
   const facts = checkout
     ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS, cwd: checkout }), whole))
     : null

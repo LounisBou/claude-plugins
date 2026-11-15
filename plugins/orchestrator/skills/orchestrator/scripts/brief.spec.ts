@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { lint } from './brief-lint.ts'
+import { rowOfBrief } from './succession.ts'
 import { citedSections, main, NOTES_CAP, parseArgs, previousReport, rotateLine, sectionOf, slug, TEMPLATES, tierOf, todoLines, type Deps } from './brief.ts'
 
 let dir = ''
@@ -56,6 +57,14 @@ test('every agent brief takes as its orchestrator the successor ListAgents lists
     assert.ok(text.includes('`[module] Your orchestrator is now'), `${what}: the module's line names the orchestrator`)
     assert.ok(!text.includes('waits for its word'), `${what}: no successor waits for a word its predecessor may never send`)
   }
+})
+
+test('the row a takeover binds an agent to is read in the phase and rotation briefs as they are printed', () => {
+  const w = world({ 'rev-parse --short=12 origin/main': 'abc123def456' })
+  assert.equal(w.phase(), 0)
+  assert.equal(rowOfBrief(readFileSync(join(w.briefs, 'routes.md'), 'utf8')), '2')
+  assert.equal(rotation(w), 0)
+  assert.equal(rowOfBrief(readFileSync(join(w.briefs, 'routes-r1.md'), 'utf8')), '2')
 })
 
 test('phase: the brief is printed from the row, the plan and the spec goals.md names, short, and passes its lint', () => {

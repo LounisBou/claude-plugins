@@ -451,6 +451,7 @@ test('a takeover run by a session that is not an orchestrator moves and wakes no
     await handlers['turn.complete'](fx.dollar, {}, pass)
     expect(fx.processes, name).toEqual([])
     expect(fx.submits, name).toEqual([])
+    expect(fx.logged.some(line => line.includes('a takeover run by a session that is not an orchestrator')), `${name}: ${fx.logged.join(' | ')}`).toBe(true)
   }
   // A role that cannot be read moves nothing, said in the log, and the command's answer stands.
   const { handlers } = mounted()

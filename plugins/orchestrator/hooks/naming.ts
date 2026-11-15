@@ -12,7 +12,7 @@ import { launcherOf } from '../core/orchestration.ts'
 import { answerOf, messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
-import { isOrchestratorSession } from './supervision.ts'
+import { sessionRole } from './supervision.ts'
 import { observed, RENAME_PENDING_CODE } from './observe.ts'
 
 // The nouns naming holds.
@@ -197,10 +197,12 @@ export function register(on: On<Held>): void {
       const answer = answerOf(out)
       // Read past the command's answer: a failure here is logged and moves nothing, never a second run of it.
       if (!answer.isError && answer.deny === undefined) {
-        tookOver = await $.session.id().then(id => isOrchestratorSession($, id)).catch(async (err: unknown) => {
+        const role = await $.session.id().then(id => sessionRole($, id)).catch(async (err: unknown) => {
           await logLine($, 'naming', `the takeover's session role could not be read, nothing moves: ${reasonOf(err)}`)
-          return false
+          return undefined
         })
+        tookOver = role === 'orchestrator'
+        if (role !== undefined && !tookOver) await logLine($, 'naming', `a takeover run by a session that is not an orchestrator (${role ?? 'no role read'}): nothing moves`)
       }
     }
     return out

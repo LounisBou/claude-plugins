@@ -132,6 +132,11 @@ test("a delivery's facts are read in the agent's own checkout, not in the module
   })
   await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
   expect(clean.sent[0]!.text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
+  // A checkout the host names nowhere: no facts read elsewhere, said in the log.
+  const unread = fake({ checkout: '', elsewhere: { 'git status --porcelain': ' M settings.json\n', 'git rev-parse HEAD': OTHER } })
+  await drive(mounted(), 'turn.complete', unread.dollar, turnEnd(report))
+  expect(unread.sent[0]!.text.includes('facts')).toBe(false)
+  expect(unread.logged.some(line => line.includes('checkout is unread: its delivery goes without facts')), unread.logged.join(' | ')).toBe(true)
 })
 
 test('the owner is the chain naming the tty, the one written last when two do', () => {

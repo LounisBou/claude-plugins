@@ -608,7 +608,9 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   const seats = live.agents.map(agent => {
     const brief = briefOf(state, agent.name)
     if (brief === undefined) return agent
-    const row = rowOfBrief(readText(brief))
+    // A brief that cannot be read binds no row: the takeover still prints the rest of the state.
+    let row: string | undefined
+    try { row = rowOfBrief(readText(brief)) } catch { row = undefined }
     return row === undefined ? { ...agent, brief } : { ...agent, brief, row }
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
@@ -650,15 +652,17 @@ export function rowLines(rows: readonly OpenRow[]): string[] {
 
 const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
 
-/** Whether a text names that agent: its name whole, not as the start of a longer word. */
+/**
+ * Whether a note names that agent in the dispatch's form, `Agent: <name>` (`Dispatched …: Agent: <name>`),
+ * its name whole, not as the start of a longer word; a name mentioned in passing is no dispatch.
+ */
 function names(text: string, agent: string): boolean {
   const name = bareName(agent).toLowerCase()
   if (name === '') return false
   const lower = text.toLowerCase()
   for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, at + 1)) {
-    const before = lower[at - 1] ?? ' '
     const after = lower[at + name.length] ?? ' '
-    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true
+    if (/(?:^|[^a-z0-9])agent:\s*$/.test(lower.slice(0, at)) && !/[a-z0-9]/.test(after)) return true
   }
   return false
 }
@@ -703,9 +707,9 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
 /**
  * Who works each open row, from the facts the state holds: the live agents whose brief was printed
  * for it (rowOfBrief, the id the dispatch recorded), never a guess from its label nor a name its note
- * merely mentions; an agent whose brief names no row is matched on a note that names it, as a
- * `Dispatched …: Agent: <name>` written by hand does (listed without the role prefix). A deferred row reads « ruling »; a row with no live agent reads its blocker
- * checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
+ * merely mentions; an agent whose brief names no row is matched on a note naming it in the dispatch's
+ * form, `Dispatched …: Agent: <name>` (listed without the role prefix). A deferred row reads
+ * « ruling »; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
  * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
  * with no blocker recorded reads NO OWNER.

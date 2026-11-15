@@ -424,6 +424,16 @@ test('ownersOf binds a live agent to the row its brief was printed for, never to
   ])
 })
 
+test('ownersOf: an agent whose brief names no row is bound by a note in the dispatch\'s form, never by a passing mention', () => {
+  const rows = [
+    { id: '265', line: '', label: 'TAKEOVERPROMPT', blocker: 'none', note: 'seen in takeoversense\'s session and in review 396' },
+    { id: '266', line: '', label: 'FOLLOW', blocker: 'none', note: 'Dispatched 2026-11-15T22:40Z: Agent: takeoversense (ttys000)' },
+  ]
+  const seats = [{ name: 'Agent: takeoversense', tty: null }]
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: takeoversense'], questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
+})
+
 test('the takeover reads each agent\'s row in the brief its launch named', () => {
   const w = world({
     rows: [
@@ -440,6 +450,11 @@ test('the takeover reads each agent\'s row in the brief its launch named', () =>
   writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'archivesort-rotation.md')}' && run\n`)
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
   assert.match(w.text(), /- Row owners: 259 takeoversense; 264 archivesort; 265 READY NOT STARTED\n/)
+  // A brief path that cannot be read (here a directory) binds no row, and the takeover still prints.
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000009000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${w.briefs}' && run\n`)
+  w.out.length = 0
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  assert.match(w.text(), /- Row owners: 259 takeoversense; 264 NO OWNER; 265 READY NOT STARTED\n/)
 })
 
 test('the deck and the launcher agreeing journal nothing; no list leaves the deck as it is', () => {
