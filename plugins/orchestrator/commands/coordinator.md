@@ -2,6 +2,7 @@
 description: Start the machine's coordinator, on the operator's word
 argument-hint: <subject>
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(cat:*), Bash(git:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
+disable-model-invocation: true
 ---
 
 Run on the operator's word only, in a session HE opened for it. No orchestrator, auditor or
