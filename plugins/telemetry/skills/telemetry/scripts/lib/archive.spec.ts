@@ -5,10 +5,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { archiveProject, planArchive } from './archive.ts'
+import { archiveProject, MAX_ARCHIVE_FILE_BYTES, planArchive } from './archive.ts'
 import { exportStore, type Git } from './export.ts'
 
 const SECRET = ['sk-', 'ant-', 'api03-', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj'].join('')
@@ -174,7 +174,7 @@ test('a file the repository already holds is removed on the next export, and one
     }
     const again = exported(root, remote, { git: racing })
     assert.equal(again.code, 0)
-    assert.equal(again.lines.at(-1), 'export: archive: 2 file(s) exported, 1 removed from this machine, 6 kept')
+    assert.deepEqual(again.lines.slice(-2), ['export: archive: 2 file(s) exported, 1 removed from this machine, 7 kept', 'export: demo/2026-10/box/report/report-one-brief.md stays on this machine (changed since it was copied)'])
     assert.equal(existsSync(join(dir, 'one-brief.md')), false)
     assert.equal(readFileSync(join(dir, 'report-one-brief.md'), 'utf8'), 'the report of row one, edited since\n')
   })
@@ -205,6 +205,62 @@ test('a row closed within the day keeps its files, and a row that names none lea
     const plan = planArchive({ moduleDir: join(root, 'config', 'claude-orchestrator'), machine: 'box', now: NOW })
     assert.deepEqual(plan.items.map(item => item.rel).sort(), [...SENT].sort())
     assert.equal(plan.kept, 8)
+  })
+})
+
+test('a repository whose tree cannot be listed after the push keeps every file, and says so', () => {
+  scratch(root => {
+    const { dir } = fixture(root)
+    const remote = remoteOf(root)
+    const before = readdirSync(dir).sort()
+    const blind: Git = (args, cwd) => (args[0] === 'ls-tree' && args.includes('demo') ? { status: 1, stdout: '', stderr: 'fatal' } : git(args, cwd))
+    const result = exported(root, remote, { git: blind })
+    assert.equal(result.code, 0)
+    assert.equal(result.lines.filter(line => line.endsWith('(the repository\'s tree could not be listed)')).length, 10)
+    assert.match(result.lines.find(line => line.startsWith('export: archive:')) ?? '', /^export: archive: 10 file\(s\) exported, 0 removed from this machine, 16 kept$/)
+    assert.deepEqual(readdirSync(dir).sort(), before)
+  })
+})
+
+test('a record that cannot be read, or is a link, archives no brief, report or review: an open row may be in it', () => {
+  scratch(root => {
+    const { dir, module } = fixture(root)
+    const outside = join(root, 'outside.jsonl')
+    writeFileSync(outside, readFileSync(join(dir, 'dispatch-record.jsonl')))
+    rmSync(join(dir, 'dispatch-record.jsonl'))
+    symlinkSync(outside, join(dir, 'dispatch-record.jsonl'))
+    const plan = planArchive({ moduleDir: module, machine: 'box', now: NOW })
+    assert.deepEqual(plan.items.map(item => item.rel).sort(), SENT.filter(rel => !/\/(brief|report|review)\//.test(rel)).sort())
+    assert.deepEqual(plan.notes, ['export: 1 dispatch record(s) cannot be read, no brief, report or review archived'])
+    assert.equal(plan.kept, 13)
+    // The same for a record the registry names and that is unreadable.
+    rmSync(join(dir, 'dispatch-record.jsonl'))
+    writeFileSync(join(dir, 'dispatch-record.jsonl'), readFileSync(outside))
+    const registered = join(root, 'other-record.jsonl')
+    writeFileSync(registered, row({ id: 9, state: 'open', label: 'NINE' }))
+    chmodSync(registered, 0)
+    put(join(module, 'records', 'session'), `${registered}\n`)
+    const blind = planArchive({ moduleDir: module, machine: 'box', now: NOW })
+    chmodSync(registered, 0o600)
+    if (process.getuid?.() !== 0) assert.equal(blind.notes.length, 1)
+  })
+})
+
+test('an open row\'s brief that names a file keeps it, a line that is no JSON counts as an open row\'s text, a name with a dot and an oversized file stay', () => {
+  scratch(root => {
+    const { dir, module } = fixture(root)
+    // Row 3's brief sends its agent to the report of row 2; a broken line of the record names the report of row 1.
+    put(join(dir, 'three-brief.md'), `${brief(3, 'report-three-brief.md', dir)}Read report-two-brief.md first.\n`)
+    writeFileSync(join(dir, 'dispatch-record.jsonl'), `${readFileSync(join(dir, 'dispatch-record.jsonl'), 'utf8')}{"id":4,"state":"open","note":"see report-one-brief.md\n`)
+    put(join(dir, '.hidden-brief.md'), brief(1, 'report-one-brief.md', dir))
+    put(join(dir, 'big-brief.md'), `${brief(2, 'report-big-brief.md', dir)}${'x'.repeat(MAX_ARCHIVE_FILE_BYTES)}\n`)
+    const plan = planArchive({ moduleDir: module, machine: 'box', now: NOW })
+    const rels = plan.items.map(item => item.rel)
+    assert.equal(rels.some(rel => rel.endsWith('report-two-brief.md')), false)
+    assert.equal(rels.some(rel => rel.endsWith('report-one-brief.md')), false)
+    assert.equal(rels.some(rel => rel.includes('.hidden')), false)
+    assert.equal(rels.some(rel => rel.endsWith('big-brief.md')), false)
+    assert.deepEqual(plan.notes, [`export: demo/big-brief.md left in place (${MAX_ARCHIVE_FILE_BYTES + 1 + brief(2, 'report-big-brief.md', dir).length} bytes, over ${MAX_ARCHIVE_FILE_BYTES})`])
   })
 })
 

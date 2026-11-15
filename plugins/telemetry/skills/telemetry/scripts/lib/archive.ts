@@ -10,8 +10,9 @@ import { orchForm, parseSessionName } from '../../../../core/names.ts'
 import { RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
 import { archiveOf } from '../../../../core/pr-ledger.ts'
 import { parseRoundQuestion } from '../../../../core/round-question.ts'
-import { projectDir } from './export.ts'
+import { MACHINES_DIR, projectDir } from './export.ts'
 import { record, text } from './manifest.ts'
+import { INDEX_DIR } from './schema-docs.ts'
 
 /** The orchestrator module's directory of briefs, one directory per project, each with its dispatch record. */
 export const BRIEFS_DIR = 'briefs'
@@ -51,7 +52,7 @@ export interface ArchivePlan {
 export type ArchiveSource = (machine: string, now: number) => ArchivePlan
 
 /** A directory of the repository's root that is not a project's. */
-const RESERVED = new Set(['machines', 'index'])
+const RESERVED = new Set([MACHINES_DIR, INDEX_DIR])
 
 /** A project's directory in the repository: the export's project name rule, kept off the repository's own directories. */
 export function archiveProject(name: string): string {
@@ -77,11 +78,17 @@ function entriesOf(dir: string): { name: string; kind: 'file' | 'dir' | 'other' 
   }
 }
 
-function readLines(path: string): string[] {
+/**
+ * The non-blank lines of a file; none when it does not exist, `undefined` when it exists and cannot
+ * be read or is a link (a link may lead out of the state directory): a reader that guards
+ * something treats that as unknown, never as empty.
+ */
+function readLines(path: string): string[] | undefined {
   try {
+    if (lstatSync(path).isSymbolicLink()) return undefined
     return readFileSync(path, 'utf8').split('\n').filter(line => line.trim() !== '')
-  } catch {
-    return []
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : undefined
   }
 }
 
@@ -93,20 +100,33 @@ interface Row {
   readonly findings: string | undefined
 }
 
-/** The rows of a record: the lines that carry an `id` and a `state`; the pull request ledger's lines and broken ones are none. */
-function rowsOf(path: string): Row[] {
-  return readLines(path).flatMap(line => {
+interface Rows {
+  readonly rows: Row[]
+  /** The lines that are no JSON: one may be an open row, so what they say counts as an open row's text. */
+  readonly broken: string[]
+  /** The record exists and cannot be read: what it holds is unknown. */
+  readonly unreadable: boolean
+}
+
+/** The rows of a record: the lines that carry an `id` and a `state`; the pull request ledger's lines are none. */
+function rowsOf(path: string): Rows {
+  const lines = readLines(path)
+  if (lines === undefined) return { rows: [], broken: [], unreadable: true }
+  const rows: Row[] = []
+  const broken: string[] = []
+  for (const line of lines) {
     try {
       const row = record(JSON.parse(line))
       const id = row['id']
-      if (typeof id !== 'number' || typeof row['state'] !== 'string') return []
+      if (typeof id !== 'number' || typeof row['state'] !== 'string') continue
       const closedAt = Date.parse(text(row['closed']) ?? '')
       const verdict = record(record(row['review'])['verdict'])
-      return [{ id, closed: row['state'] === 'closed' && Number.isFinite(closedAt), closedAt, line, findings: text(verdict['findings']) }]
+      rows.push({ id, closed: row['state'] === 'closed' && Number.isFinite(closedAt), closedAt, line, findings: text(verdict['findings']) })
     } catch {
-      return []
+      broken.push(line)
     }
-  })
+  }
+  return { rows, broken, unreadable: false }
 }
 
 /** Whether `haystack` names `needle` as a whole file name, not inside a longer one. */
@@ -124,7 +144,7 @@ const stemOf = (name: string): string => name.replace(/\.md$/, '')
 function recordPaths(moduleDir: string, projects: readonly string[]): Set<string> {
   const paths = new Set(projects.map(project => join(moduleDir, BRIEFS_DIR, project, RECORD_FILE)))
   for (const entry of entriesOf(join(moduleDir, RECORDS_DIR))) {
-    if (entry.kind === 'file') for (const path of readLines(join(moduleDir, RECORDS_DIR, entry.name))) paths.add(path.trim())
+    if (entry.kind === 'file') for (const path of readLines(join(moduleDir, RECORDS_DIR, entry.name)) ?? []) paths.add(path.trim())
   }
   return paths
 }
@@ -137,11 +157,20 @@ function headerOf(body: string): { row: number | undefined; report: string | und
   return { row: row === undefined ? undefined : Number(row), report }
 }
 
+/** The regular files of a directory of briefs and of the directories in it, the records left out. */
+function countFiles(dir: string): number {
+  return entriesOf(dir).filter(entry => !entry.name.startsWith('dispatch-record')).reduce((n, entry) => n + (entry.kind === 'file' ? 1 : entry.kind === 'dir' ? entriesOf(join(dir, entry.name)).filter(inner => inner.kind === 'file').length : 0), 0)
+}
+
 /** The files a project's closed rows leave in its directory of briefs. */
-function briefItems(moduleDir: string, project: string, machine: string, now: number, openText: string, items: ArchiveItem[], notes: string[]): number {
+function briefItems(moduleDir: string, project: string, machine: string, now: number, recordsText: string, items: ArchiveItem[], notes: string[]): number {
   const dir = join(moduleDir, BRIEFS_DIR, project)
-  const rows = new Map(rowsOf(join(dir, RECORD_FILE)).map(row => [row.id, row]))
-  const entries = entriesOf(dir).filter(entry => !entry.name.startsWith('dispatch-record'))
+  const rows = new Map(rowsOf(join(dir, RECORD_FILE)).rows.map(row => [row.id, row]))
+  // A name starting with a dot (`.git`) is no archive's: git would refuse it.
+  const entries = entriesOf(dir).filter(entry => !entry.name.startsWith('dispatch-record') && !entry.name.startsWith('.'))
+  const settled = (id: number): boolean => rows.get(id)?.closed === true && now - (rows.get(id)?.closedAt ?? now) > SETTLE_MS
+  // What a brief of a row that is not settled says counts as that row's text: it sends a live session to the files it names.
+  let openText = recordsText
   const known = new Set(entries.map(entry => entry.name))
   // What each top-level entry is claimed by: a brief's header, a row's review index, a report a row's verdict names.
   const claims = new Map<string, Set<number>>()
@@ -159,6 +188,7 @@ function briefItems(moduleDir: string, project: string, machine: string, now: nu
     }
     const header = headerOf(body)
     if (header.row === undefined) continue
+    if (!settled(header.row)) openText += `\n${body}`
     briefs.add(entry.name)
     claim(entry.name, header.row)
     // The state directory may have moved since the brief was written: the project's name tells which directory it means.
@@ -170,7 +200,7 @@ function briefItems(moduleDir: string, project: string, machine: string, now: nu
   }
   let kept = 0
   for (const entry of entries) {
-    const files = entry.kind === 'dir' ? entriesOf(join(dir, entry.name)).filter(inner => inner.kind === 'file').map(inner => `${entry.name}/${inner.name}`) : entry.kind === 'file' ? [entry.name] : []
+    const files = entry.kind === 'dir' ? entriesOf(join(dir, entry.name)).filter(inner => inner.kind === 'file' && !inner.name.startsWith('.')).map(inner => `${entry.name}/${inner.name}`) : entry.kind === 'file' ? [entry.name] : []
     const claimants = [...(claims.get(entry.name) ?? [])].map(id => rows.get(id))
     const closed = claimants.length > 0 && claimants.every(row => row?.closed === true && now - row.closedAt > SETTLE_MS)
     const opened = names(openText, entry.name) || names(openText, stemOf(entry.name))
@@ -204,7 +234,7 @@ function briefItems(moduleDir: string, project: string, machine: string, now: nu
 function ledgerItems(moduleDir: string, project: string, machine: string, current: string, items: ArchiveItem[]): void {
   const source = archiveOf(join(moduleDir, BRIEFS_DIR, project, RECORD_FILE))
   const months = new Map<string, string[]>()
-  for (const line of readLines(source)) {
+  for (const line of readLines(source) ?? []) {
     try {
       const archived = Date.parse(text(record(JSON.parse(line))['archived']) ?? '')
       if (!Number.isFinite(archived) || monthOf(archived) >= current) continue
@@ -260,10 +290,17 @@ export function planArchive(options: { readonly moduleDir: string; readonly mach
   const items: ArchiveItem[] = []
   const notes: string[] = []
   const projects = entriesOf(join(moduleDir, BRIEFS_DIR)).filter(entry => entry.kind === 'dir').map(entry => entry.name)
-  const openText = [...recordPaths(moduleDir, projects)].flatMap(path => rowsOf(path)).filter(row => !row.closed).map(row => row.line).join('\n')
+  const records = [...recordPaths(moduleDir, projects)].map(path => ({ path, ...rowsOf(path) }))
+  const unreadable = records.filter(each => each.unreadable)
+  const recordsText = records.flatMap(each => [...each.rows.filter(row => !row.closed).map(row => row.line), ...each.broken]).join('\n')
   let kept = 0
+  if (unreadable.length > 0) {
+    // A record that cannot be read may hold an open row that names a file: no brief, report or review is taken.
+    notes.push(`export: ${unreadable.length} dispatch record(s) cannot be read, no brief, report or review archived`)
+  }
   for (const project of projects) {
-    kept += briefItems(moduleDir, project, machine, options.now, openText, items, notes)
+    if (unreadable.length > 0) kept += countFiles(join(moduleDir, BRIEFS_DIR, project))
+    else kept += briefItems(moduleDir, project, machine, options.now, recordsText, items, notes)
     ledgerItems(moduleDir, project, machine, current, items)
   }
   kept += roundItems(moduleDir, machine, current, items)

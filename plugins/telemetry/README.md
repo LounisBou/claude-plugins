@@ -38,7 +38,7 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   never touched, and nothing is deleted from the repository. The result says how many files were
   exported, removed from this machine and kept.
 - `telemetry.ts export --auto [--foreground] --config <dir>`: the automatic export.
-- `telemetry.ts check --config <dir>`: the same scan, alone.
+- `telemetry.ts check --config <dir>`: the scan of the day files, alone (the export scans the archive's files).
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.
 - `telemetry.ts sweep [--auto] --config <dir>`: over the last seven day files, one
