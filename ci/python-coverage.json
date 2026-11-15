@@ -4,6 +4,7 @@
     "bugs-bot": 97,
     "cloudflare": 93,
     "github": 86,
+    "orchestrator": 87,
     "pr-review": 90
   }
 }
