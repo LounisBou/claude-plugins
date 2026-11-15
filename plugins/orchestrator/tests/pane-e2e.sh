@@ -10,7 +10,8 @@
 # server of its own. The host is the one logged in on this machine, on its subscription: the
 # script makes no credential, asks for none and writes none. It reads the host's banner before
 # it drives anything and refuses to run when the banner bills usage by the API rather than the
-# subscription (ORCHESTRATOR_E2E_PLAN, `Max` by default, names the plan the banner must show).
+# subscription: any plan the banner shows is a subscription (ORCHESTRATOR_E2E_PLAN, unset by
+# default, narrows it to the one plan it names).
 # Until its last part it types no prompt for the model: the pane is opened by its command, and
 # the coordinator's turns — its wake, the module's notices that a question is settled — are the
 # module's own and are interrupted once they show. The last part starts a second host, an
@@ -26,7 +27,11 @@
 #
 # The host runs on its own configuration directory, which holds its login, with the user's
 # settings left out (`--setting-sources project`, no MCP server) and its fullscreen layout,
-# where the pane is docked beside the transcript. The host is told the terminal draws links
+# where the pane is docked beside the transcript. Those settings hold `enabledPlugins`, so the
+# plugins the module depends on (method, github) would be « not installed » to it, and a host
+# that finds a dependency missing loads no module at all: the pane never draws and the module's
+# log stays empty. They are loaded with the module as `--plugin-dir` folders, copies of this
+# repository's under the sandbox, which the host writes in (tests/e2e-host.sh). The host is told the terminal draws links
 # (FORCE_HYPERLINK), as the operator's does: a tmux pane says nothing of it, and a host that
 # cannot draw one prints its address after its text. Everything the module writes goes to the
 # sandbox: its state (ORCHESTRATOR_STATE_DIR) and its own files, the store's rows among them
@@ -47,7 +52,7 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HOST=${ORCHESTRATOR_HOST_CLI:-claude}
-PLAN=${ORCHESTRATOR_E2E_PLAN:-Max}
+PLAN=${ORCHESTRATOR_E2E_PLAN:-}
 SESSION=pane-e2e-$$
 SCREENS=""
 KEEP=0
@@ -62,6 +67,8 @@ done
 for need in tmux jq "$HOST"; do
   command -v "$need" >/dev/null 2>&1 || { echo "skipped: $need is not installed"; exit 0; }
 done
+# shellcheck source=e2e-host.sh
+. "$ROOT/tests/e2e-host.sh"
 
 pass=0; fail=0; ALIVE=""
 check() {
@@ -109,21 +116,21 @@ cleanup() {
   return 0
 }
 trap cleanup EXIT
+# The module's dependencies, copied under the sandbox (tests/e2e-host.sh).
+e2e_plugin_args "$ROOT" "$SANDBOX/plugins" || exit 1
 [ -n "$SCREENS" ] && : > "$SCREENS"
 MODULE_LOG="$(dirname "${SCREENS:-.}")/pane-e2e-module.log"
 [ -n "$SCREENS" ] && : > "$MODULE_LOG"
 
 # The subscription, or nothing driven at all: the banner's first rows, read from the screen given
-# (`$1`), name the product and the plan (the plan escaped, so a name with a dot or a bracket
-# matches itself), and the API billing line anywhere on that screen refuses. Every host the
-# script starts is read so before anything is typed in it.
+# (`$1`), name the product and the plan, and the API billing line anywhere on that screen refuses
+# (e2e_banner_ok). Every host the script starts is read so before anything is typed in it.
 subscription_or_exit() {
-  local brand plan_re
+  local brand
   brand=$(printf '%s' "${HOST##*/}" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }')
-  plan_re=$(printf '%s' "$PLAN" | sed 's/[][\\.*^$(){}?+|\/-]/\\&/g')
-  if printf '%s\n' "$1" | grep -qF 'API Usage Billing' || ! printf '%s\n' "$1" | head -12 | grep -qE "$brand $plan_re( |$)"; then
+  if ! e2e_banner_ok "$brand" "$PLAN" "$1"; then
     [ -n "$SCREENS" ] && printf '== the banner\n%s\n\n' "$1" >> "$SCREENS"
-    echo "refused: the host's banner does not read the $PLAN subscription; nothing more was driven" >&2
+    echo "refused: the host's banner does not read $([ -n "$PLAN" ] && echo "the $PLAN" || echo a) subscription; nothing more was driven" >&2
     printf '%s\n' "$1" | head -12 >&2
     exit 1
   fi
@@ -176,7 +183,7 @@ start() {
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     "$HOST" --setting-sources project --strict-mcp-config --settings "$SANDBOX/settings.json" \
-    --plugin-dir "$ROOT" --name "Coord: e2e"
+    "${E2E_PLUGIN_ARGS[@]}" --name "Coord: e2e"
   wait_for 'Coord: e2e' 30
   if screen | grep -qF 'trust this folder'; then
     record "the trust question"
@@ -652,7 +659,7 @@ start_orch() {
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     "$HOST" --setting-sources project --strict-mcp-config --settings "$SANDBOX/settings.json" \
-    --plugin-dir "$ROOT" --name "Orch: flow"
+    "${E2E_PLUGIN_ARGS[@]}" --name "Orch: flow"
   local i
   for ((i = 0; i < 120; i++)); do orch_screen | grep -qF 'Orch: flow' && break; sleep 0.25; done
   [ "$i" -lt 120 ] || return 1
