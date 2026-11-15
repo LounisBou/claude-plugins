@@ -12,6 +12,7 @@ import { launcherOf } from '../core/orchestration.ts'
 import { answerOf, messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
+import { isOrchestratorSession } from './supervision.ts'
 import { observed, RENAME_PENDING_CODE } from './observe.ts'
 
 // The nouns naming holds.
@@ -187,12 +188,14 @@ export function register(on: On<Held>): void {
     })
   }
 
-  // A takeover that ran: its turn's end moves the session into its home session.
+  // A takeover that ran: its turn's end moves the session into its home session. A successor
+  // orchestrator's alone: an agent or a reviewer runs the script in its checkout (its tests, a
+  // proof) and was told to go on to step 4 of a takeover that was never its own (2026-11-15).
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const out = await next(e)
     if (!e.agentId && runsTakeover(String(e['command'] ?? ''))) {
       const answer = answerOf(out)
-      if (!answer.isError && answer.deny === undefined) tookOver = true
+      if (!answer.isError && answer.deny === undefined) tookOver = await isOrchestratorSession($, await $.session.id())
     }
     return out
   }).catch(async ($, e, next) => {

@@ -308,11 +308,15 @@ test('the end tool is offered to an orchestrator or a coordinator that has hande
 // The move into a home session: at the end of the turn that named an orchestrator, the
 // launcher's `home` is run; on `moved:` the session ends and window 0 resumes it with the
 // resume's prompt, on anything else the session is resumed where it is, as before.
-function movingDollar(answer: { exitCode: number; stdout: string; stderr?: string } | Error) {
+// The session's row in the store names it: an orchestrator unless the test says otherwise, the
+// role a takeover's move and wake are for.
+function movingDollar(answer: { exitCode: number; stdout: string; stderr?: string } | Error, name = 'Orch: plugins') {
   const fx = fakeDollar()
   const processes: { argv: readonly string[]; opts: ProcessRunInit | undefined }[] = []
+  const row = JSON.stringify({ name, updated_at: '2026-11-15T20:00:00.000Z' })
   const dollar: World = {
     ...fx.dollar,
+    fs: { ...fx.dollar.fs, read: async (path: string) => (path.endsWith('/store/sessions/S-1') ? row : '') },
     plugin: { root: '/plugin' },
     session: { ...fx.dollar.session, id: async () => 'S-1' },
     process: {
@@ -434,6 +438,20 @@ test('a takeover that failed, was interrupted, ended the session or was run by a
   await ending.handlers['turn.complete'](fz.dollar, {}, pass)
   expect(fz.processes).toEqual([])
   expect(fz.submits).toEqual([])
+})
+
+// Seen 2026-11-15: an agent that ran the succession script's takeover in its checkout (its own
+// tests, a review's proof) was sent « go on to step 4 of your takeover »; the move and the wake
+// are a successor orchestrator's alone.
+test('a takeover run by a session that is not an orchestrator moves and wakes nothing', async () => {
+  for (const name of ['Agent: takeoversense', 'Review: claude-plugins#396']) {
+    const { handlers } = mounted()
+    const fx = movingDollar({ exitCode: 0, stdout: 'stay: not a tab\n' }, name)
+    await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+    await handlers['turn.complete'](fx.dollar, {}, pass)
+    expect(fx.processes, name).toEqual([])
+    expect(fx.submits, name).toEqual([])
+  }
 })
 
 test('the takeover is read on the succession script, by either of its names', () => {
