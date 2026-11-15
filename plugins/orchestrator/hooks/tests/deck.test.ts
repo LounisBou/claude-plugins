@@ -10,7 +10,11 @@ import type { RemoteRow } from '../remote-row.ts'
 import type { RoundEntry } from '../round.ts'
 import { periodStarts } from '../usage.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Host, Noun, ProcessRunResult } from '../../core/host.ts'
 import { GOLDEN_DECK } from './golden-deck.ts'
+
+type Deck = ReturnType<typeof deckOf>
 
 const NOW = Date.parse('2026-10-28T14:00:00Z')
 const AT = new Date(NOW - 30_000).toISOString()
@@ -27,7 +31,7 @@ function remote(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
     name: 'Orch: far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AT, machine: 'mini',
-    repo: 'acme/site', prs: ['acme/site#7'], ...over,
+    repo: 'acme/site', prs: ['acme/site#7'], held: null, ...over,
   }
 }
 
@@ -76,13 +80,13 @@ test("a session names its window in a home session, null outside one", () => {
       'sessions/s-agent': row({ role: 'agent', name: 'Agent: one', tty: '/dev/ttys005', tmux: 'home:@3.%7' }),
     },
   }))
-  expect(deck.orchestrators[0].agents[0].tmux).toBe('home:@3.%7')
-  expect(deck.orchestrators[0].tmux).toBeNull()
+  expect(deck.orchestrators[0]!.agents[0]!.tmux).toBe('home:@3.%7')
+  expect(deck.orchestrators[0]!.tmux).toBeNull()
   expect(deck.coordinator?.tmux).toBeNull()
-  expect(deck.unattached_agents[0].tmux).toBeNull()
+  expect(deck.unattached_agents[0]!.tmux).toBeNull()
   // A remote session has no window here, whatever its row says.
   expect(deckOf(input()).orchestrators.find(o => o.machine)?.tmux).toBeNull()
-  expect(JSON.parse(deckText(deck)).orchestrators[0].agents[0].tmux).toBe('home:@3.%7')
+  expect(JSON.parse(deckText(deck)).orchestrators[0]!.agents[0]!.tmux).toBe('home:@3.%7')
 })
 
 test('no coordinator row is a null coordinator', () => {
@@ -94,24 +98,24 @@ test('no coordinator row is a null coordinator', () => {
 test('orchestrators come sorted by name, the remote one without a tty and with its machine', () => {
   const deck = deckOf(input())
   expect(deck.orchestrators.map(o => o.name)).toEqual(['Orch: belt', 'Orch: far'])
-  const far = deck.orchestrators[1]
+  const far = deck.orchestrators[1]!
   expect(far.tty).toBeNull()
   expect(far.machine).toBe('mini')
   expect(far.prs).toEqual(['acme/site#7'])
   expect(far.repo).toBe('acme/site')
-  expect(deck.orchestrators[0].machine).toBeNull()
-  expect(deck.orchestrators[0].prs).toEqual(['acme/app#12'])
+  expect(deck.orchestrators[0]!.machine).toBeNull()
+  expect(deck.orchestrators[0]!.prs).toEqual(['acme/app#12'])
 })
 
 test('a remote row a live local row names is dropped: local wins', () => {
   const deck = deckOf(input({ remote: [remote({ name: 'Orch: belt' })] }))
   expect(deck.orchestrators.map(o => o.name)).toEqual(['Orch: belt'])
-  expect(deck.orchestrators[0].machine).toBeNull()
+  expect(deck.orchestrators[0]!.machine).toBeNull()
 })
 
 test('an agent goes under the orchestrator its chain names; one no chain names is unattached', () => {
   const deck = deckOf(input())
-  expect(deck.orchestrators[0].agents.map(a => a.name)).toEqual(['Agent: one'])
+  expect(deck.orchestrators[0]!.agents.map(a => a.name)).toEqual(['Agent: one'])
   expect(deck.unattached_agents.map(a => a.name)).toEqual(['Agent: loose'])
 })
 
@@ -122,24 +126,24 @@ test('an agent whose tty a newer chain of a dead owner also names stays under th
       { name: 'ttys004.jsonl', mtimeMs: 2, text: chain('/dev/ttys005') },
     ],
   }))
-  expect(deck.orchestrators[0].agents.map(a => a.name)).toEqual(['Agent: one'])
+  expect(deck.orchestrators[0]!.agents.map(a => a.name)).toEqual(['Agent: one'])
   expect(deck.unattached_agents.map(a => a.name)).toEqual(['Agent: loose'])
 })
 
 test('the gate is the gauge\'s own: tokens past 300,000 on a wide window, the env\'s when given', () => {
   const deck = deckOf(input())
-  expect(deck.orchestrators[0].agents[0].context.past_gate).toBe(true)
-  expect(deck.orchestrators[0].context.past_gate).toBe(false)
+  expect(deck.orchestrators[0]!.agents[0]!.context.past_gate).toBe(true)
+  expect(deck.orchestrators[0]!.context.past_gate).toBe(false)
   const raised = deckOf(input({ gate: { gateTokens: 400000 } }))
-  expect(raised.orchestrators[0].agents[0].context.past_gate).toBe(false)
+  expect(raised.orchestrators[0]!.agents[0]!.context.past_gate).toBe(false)
 })
 
 test('a wait is carried with what it blocks, urgent when its open round entry is', () => {
   const deck = deckOf(input())
-  expect(deck.orchestrators[0].waiting).toEqual({ kind: 'operator', blocks: 'the schema', since: AT, urgent: true })
-  expect(deck.orchestrators[1].waiting).toBeNull()
+  expect(deck.orchestrators[0]!.waiting).toEqual({ kind: 'operator', blocks: 'the schema', since: AT, urgent: true })
+  expect(deck.orchestrators[1]!.waiting).toBeNull()
   const calm = deckOf(input({ round: [entry()] }))
-  expect(calm.orchestrators[0].waiting?.urgent).toBe(false)
+  expect(calm.orchestrators[0]!.waiting?.urgent).toBe(false)
 })
 
 test('the round counts open operator questions only, the oldest first', () => {
@@ -162,7 +166,7 @@ test('the deck is byte for byte the format the Stream Deck reads', () => {
     week: { from: '2026-10-25T23:00:00.000Z', tokens: { input: 100, output: 200, cache_read: 300, cache_write: 400 }, cost_usd: null },
     at: AT,
   }
-  const withUsage = { ...local, 'sessions/s-orch': { ...local['sessions/s-orch'], usage } }
+  const withUsage = { ...local, 'sessions/s-orch': { ...local['sessions/s-orch']!, usage } }
   expect(deckText(deckOf(input({ local: withUsage, gate: { gate: 40 } })))).toBe(GOLDEN_DECK)
 })
 
@@ -190,25 +194,25 @@ test('the deck is version 3 and names the basis of its costs', () => {
 // from there.
 function withUsage(usages: Record<string, DeckUsage | null>): DeckInput['local'] {
   const local = { ...input().local }
-  for (const [key, u] of Object.entries(usages)) local[key] = { ...local[key], usage: u }
+  for (const [key, u] of Object.entries(usages)) local[key] = { ...local[key]!, usage: u }
   return local
 }
 
 test('every local session carries the usage its row does; a remote one and a row without usage carry null', () => {
   const deck = deckOf(input({ local: withUsage({ 'sessions/s-coord': usage(1, 0.5), 'sessions/s-orch': usage(10, 1), 'sessions/s-agent': usage(100, 2), 'sessions/s-loose': null }) }))
   expect(deck.coordinator?.usage).toEqual(usage(1, 0.5))
-  expect(deck.orchestrators[0].usage).toEqual(usage(10, 1))
-  expect(deck.orchestrators[0].agents[0].usage).toEqual(usage(100, 2))
-  expect(deck.orchestrators[1].usage).toBeNull()
-  expect(deck.unattached_agents[0].usage).toBeNull()
-  expect(deckOf(input()).orchestrators[0].usage).toBeNull()
+  expect(deck.orchestrators[0]!.usage).toEqual(usage(10, 1))
+  expect(deck.orchestrators[0]!.agents[0]!.usage).toEqual(usage(100, 2))
+  expect(deck.orchestrators[1]!.usage).toBeNull()
+  expect(deck.unattached_agents[0]!.usage).toBeNull()
+  expect(deckOf(input()).orchestrators[0]!.usage).toBeNull()
   const far = deckOf(input({ local: { 'sessions/s-far': row({ name: 'Orch: x', machine: 'mini', usage: usage(10, 1) }) } }))
-  expect(far.orchestrators[0].usage).toBeNull()
+  expect(far.orchestrators[0]!.usage).toBeNull()
 })
 
 test('a period a row read before the boundary is the new one, empty, until the session is read again', () => {
   const deck = deckOf(input({ now: Date.parse('2026-10-29T09:00:00Z'), local: withUsage({ 'sessions/s-orch': usage(10, 1) }) }))
-  const read = deck.orchestrators[0].usage!
+  const read = deck.orchestrators[0]!.usage!
   expect(read.day).toEqual({ from: '2026-10-28T23:00:00.000Z', tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0 })
   expect(read.week).toEqual(usage(10, 1).week)
   expect(deck.usage_totals.day.tokens.input).toBe(0)
@@ -244,8 +248,11 @@ test('a usage read again with the same sums is no news; new sums are', () => {
 
 test('only the usage stamps are stripped: an `at` anywhere else in the deck is news', () => {
   const deck = deckOf(input())
-  const stamped = { ...deck, round: { ...deck.round, at: AT } } as any
-  const moved = { ...deck, round: { ...deck.round, at: new Date(NOW).toISOString() } } as any
+  // A round that carries an `at` of its own: the deck's type has none, the stripping must not care.
+  const stampedRound = { ...deck.round, at: AT }
+  const movedRound = { ...deck.round, at: new Date(NOW).toISOString() }
+  const stamped: Deck = { ...deck, round: stampedRound }
+  const moved: Deck = { ...deck, round: movedRound }
   expect(deckIsNews(moved, { deck: stamped, at: NOW }, NOW + 1000)).toBe(true)
   const restamped = { ...deck, usage_totals: { ...deck.usage_totals, at: new Date(NOW + 1000).toISOString() } }
   expect(deckIsNews(restamped, { deck, at: NOW }, NOW + 1000)).toBe(false)
@@ -287,15 +294,16 @@ function fake(id = 's-orch') {
   files.set(`${STORE}/remote/Orch_far`, JSON.stringify(remote({ updated_at: fresh })) + '\n')
   files.set(`${STATE}/chains/ttys003.jsonl`, chain('/dev/ttys005'))
   files.set(`${STATE}/round/x.json`, JSON.stringify(entry({ session: 's-orch' })) + '\n')
-  const dollar = {
+  const dollar = hostOf({
     session: { id: async () => id },
     env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     fs: {
       read: async (p: string) => {
         touched.push(p)
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => { files.set(p, text) },
       exists: async (p: string) => {
@@ -306,21 +314,22 @@ function fake(id = 's-orch') {
         touched.push(`${dir}/`)
         const below = [...files.keys()].filter(k => k.startsWith(`${dir}/`)).map(k => k.slice(dir.length + 1))
         if (below.length === 0) throw new Error(`ENOENT: ${dir}`)
-        const dirs = [...new Set(below.filter(k => k.includes('/')).map(k => k.split('/')[0]))]
+        const dirs = [...new Set(below.filter(k => k.includes('/')).map(k => k.split('/')[0] ?? ''))]
         return [
-          ...below.filter(k => !k.includes('/')).map(name => ({ name, kind: 'file', mtimeMs: 1 })),
-          ...dirs.map(name => ({ name, kind: 'dir', mtimeMs: 1 })),
+          ...below.filter(k => !k.includes('/')).map(name => ({ name, kind: 'file' as const, size: 0, isLink: false, mtimeMs: 1 })),
+          ...dirs.map(name => ({ name, kind: 'dir' as const, size: 0, isLink: false, mtimeMs: 1 })),
         ]
       },
       stat: async (p: string) => {
         touched.push(p)
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return { size: new TextEncoder().encode(files.get(p)!).length, mtimeMs: 1 }
+        return { kind: 'file' as const, size: new TextEncoder().encode(files.get(p)!).length, mtimeMs: 1 }
       },
     },
     process: {
-      run: async (argv: readonly string[]) => {
+      run: async (argv: readonly string[]): Promise<ProcessRunResult> => {
         const locked = lockRun(argv, files)
+        const [verb, , a2 = '', a3 = '', a4 = '', a5, a6] = argv
         if (locked) return locked
         const log = logLineOf(argv)
         if (log !== null) {
@@ -330,10 +339,10 @@ function fake(id = 's-orch') {
         // supervision.ts reads the host name once per module load: the same name as
         // remote-row.test.ts's, so the suite reads alike whichever file loads it first.
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'bench-mac.local\n', stderr: '' }
-        if (argv[0] === 'mv' && files.has(argv[2])) {
-          renames.push(argv[3])
-          files.set(argv[3], files.get(argv[2])!)
-          files.delete(argv[2])
+        if (verb === 'mv' && files.has(a2)) {
+          renames.push(a3)
+          files.set(a3, files.get(a2)!)
+          files.delete(a2)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'rm') {
@@ -341,17 +350,17 @@ function fake(id = 's-orch') {
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'ps') return { exitCode: 0, stdout: '501\n502\n', stderr: '' }
-        if (argv[0] === 'sh' && argv[2].includes('awk')) {
-          reads.push(argv[4])
-          touched.push(argv[4])
-          const answer = () => appended(files.get(argv[4]) ?? '', Number(argv[5]) - 1, Number(argv[6]))
+        if (verb === 'sh' && a2.includes('awk')) {
+          reads.push(a4)
+          touched.push(a4)
+          const answer = () => appended(files.get(a4) ?? '', Number(a5) - 1, Number(a6))
           if (!hold) return answer()
           return new Promise(done => held.push({ release: () => done(answer()) }))
         }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, files, renames, reads, touched, logged, held, holdReads: (on: boolean) => { hold = on } }
 }
 
@@ -368,7 +377,7 @@ const PROJECT = `${HOME}/.claude/projects/-w-app`
 const PRICES = JSON.stringify({ 'a-model': { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 } })
 function said(id: string | null, input: number, model = 'a-model'): string {
   const message: Record<string, unknown> = { model, usage: { input_tokens: input, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }
-  if (id) message.id = id
+  if (id) message['id'] = id
   return JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message }) + '\n'
 }
 
@@ -376,10 +385,10 @@ test('writeDeck writes deck.json in one rename, with the store, the remote rows 
   const fx = fake()
   await writeDeck(fx.dollar)
   expect(fx.renames).toEqual([DECK])
-  const deck = JSON.parse(fx.files.get(DECK)!)
+  const deck: Deck = JSON.parse(fx.files.get(DECK)!)
   expect(deck.machine).toBe('bench-mac')
-  expect(deck.orchestrators.map((o: any) => o.name)).toEqual(['Orch: belt', 'Orch: far'])
-  expect(deck.orchestrators[0].agents.map((a: any) => a.name)).toEqual(['Agent: one'])
+  expect(deck.orchestrators.map(o => o.name)).toEqual(['Orch: belt', 'Orch: far'])
+  expect(deck.orchestrators[0]?.agents.map(a => a.name)).toEqual(['Agent: one'])
   expect(deck.round.open).toBe(1)
   expect([...fx.files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
 })
@@ -454,8 +463,8 @@ test('writeDeck reads no transcript: the usage is each row\'s', async () => {
   expect(fx.reads).toEqual([])
   expect(fx.touched.some(p => p.startsWith(`${HOME}/.claude/projects`))).toBe(false)
   const deck = JSON.parse(fx.files.get(DECK)!)
-  expect(deck.orchestrators[0].usage.day.tokens.input).toBe(7)
-  expect(deck.orchestrators[0].agents[0].usage).toBeNull()
+  expect(deck.orchestrators[0]!.usage.day.tokens.input).toBe(7)
+  expect(deck.orchestrators[0]!.agents[0]!.usage).toBeNull()
 })
 
 // Each test runs as its own session: the book is module memory, kept across reads as it is
@@ -464,7 +473,7 @@ function solo(name: string) {
   const fx = fake(name)
   fx.files.set(`${STORE}/sessions/${name}`, JSON.stringify(row({ role: 'agent', name: `Agent: ${name}`, pid: '502', tty: null, updated_at: new Date().toISOString() })) + '\n')
   fx.files.set(`${STATE}/routing/prices.json`, PRICES)
-  const mine = () => JSON.parse(fx.files.get(DECK)!).unattached_agents.find((a: any) => a.key === `sessions/${name}`)
+  const mine = () => JSON.parse(fx.files.get(DECK)!).unattached_agents.find((a: { key: string }) => a.key === `sessions/${name}`)
   const ownRow = () => JSON.parse(fx.files.get(`${STORE}/sessions/${name}`)!)
   return { fx, mine, ownRow }
 }
@@ -479,8 +488,8 @@ test('the read books the session\'s own transcript and its subagents\', into its
   expect(deck.version).toBe(3)
   expect(mine().usage.day.tokens).toEqual({ input: 1100, output: 0, cache_read: 0, cache_write: 0 })
   expect(Math.abs(mine().usage.week.cost_usd - 1100 * 4 / 1e6) < 1e-12).toBe(true)
-  expect(deck.orchestrators[0].usage).toBeNull()
-  expect(deck.orchestrators[1].usage).toBeNull()
+  expect(deck.orchestrators[0]!.usage).toBeNull()
+  expect(deck.orchestrators[1]!.usage).toBeNull()
   expect(deck.usage_totals.day.tokens.input).toBe(1100)
 })
 
@@ -511,15 +520,11 @@ test('a hook returns without waiting for the read; the read then writes the row 
   const { fx, mine, ownRow } = solo('s-u7')
   fx.files.set(`${PROJECT}/s-u7.jsonl`, said('m1', 42))
   fx.files.set(`${STORE}/waits/s-u7`, JSON.stringify({ waiting: 'operator', blocks: 'x', waiting_since: AT, relayed: null, name: 'Agent: s-u7', pid: '502' }) + '\n')
-  const chains: Record<string, Function[]> = {}
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
-    return { catch: () => undefined }
-  })
+  const start = hooksOn(capture<Host<Noun>>(register), 'turn.start')[0]!
   fx.holdReads(true)
-  const e = { text: '' }
+  const e = {}
   let passed: unknown = null
-  const answer = await chains['turn.start'][0](fx.dollar, e, (x: unknown) => { passed = x; return x })
+  const answer = await start.handler(fx.dollar, e, async x => { passed = x; return x })
   expect(passed).toBe(e)
   expect(answer).toBe(e)
   expect(fx.held.length).toBe(1)
@@ -527,7 +532,7 @@ test('a hook returns without waiting for the read; the read then writes the row 
   expect(mine().usage).toBeNull()
   expect(mine().waiting).toBeNull()
   const reading = refreshUsage(fx.dollar)
-  fx.held[0].release()
+  fx.held[0]!.release()
   await reading
   expect(ownRow().usage.day.tokens.input).toBe(42)
   expect(mine().usage.day.tokens.input).toBe(42)
@@ -653,6 +658,6 @@ test('malformed transcript lines are said once per change of their count', async
   expect(ownRow().usage.day.tokens.input).toBe(11)
   const said_ = fx.logged.filter(l => l.includes('malformed lines dropped from the transcripts of session s-u11'))
   expect(said_.length).toBe(2)
-  expect(said_[0].includes('deck: 1 malformed')).toBe(true)
-  expect(said_[1].includes('deck: 2 malformed')).toBe(true)
+  expect(said_[0]?.includes('deck: 1 malformed')).toBe(true)
+  expect(said_[1]?.includes('deck: 2 malformed')).toBe(true)
 })
