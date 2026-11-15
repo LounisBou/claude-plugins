@@ -261,15 +261,17 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
   reviewer mode (`review_only`) exists and `/implement:review` uses it, the orchestrator's templates do not.
 
 **implement**
-- The implementer runs `implement:check` on its own work. **Partly** (#20): kept as a
-  self-check; the review is `/implement:review`, in another session.
+- The implementer runs `implement:check` on its own work. **Fixed** (#20): the check is a
+  self-check that writes no record (nothing in `plugins/implement` calls `mcp__github__record`); the review is `/implement:review`, in another session.
 - `hooks/core.ts:402`: any prompt with « agent » lifts the subagent refusal. **Fixed** (#30).
 - `hooks/core.ts:420-438`: the check's read-only guard misses `sed -i` and redirections. **Fixed** (#30).
 - `hooks/core.ts:441`: the host's commit attribution is silenced during feature, phase and close.
   Kept: it is the repository's rule (no attribution, `docs/conventions.md`).
 - `tests/run-tests.sh:109`: a locale-dependent wording lint. **Fixed** (#30).
 - Open decision for the operator: implement reserved to solo work and refused in orchestrated briefs, or merged into the implementer brief.
-  Still open; today no orchestrator brief names implement.
+  Today no orchestrator brief names implement. **Open: a choice.** Implement stays the method of a person working alone and an orchestrated agent
+  follows its brief only, two ways of working that never mix; or its phases go into the implementer brief, and every delivery, alone or
+  orchestrated, has the same plan, state file and gate commits, in a longer brief.
 
 **statusbar**
 - `statusline/statusline.sh:122-130`: `date -r <epoch>` is macOS-only; on GNU the reset times vanish silently. **Fixed** (#22).
