@@ -98,6 +98,17 @@ check "sweep records a settled round question, once" \
   "sweep: 0 session(s) without an end summarized, 1 round question(s) recorded, 0 dispatch(es) recorded|sweep: 0 session(s) without an end summarized, 0 round question(s) recorded, 0 dispatch(es) recorded|[\"B\"]" \
   "$(cli sweep)|$(cli sweep)|$(grep -h '"id":"q-suite"' "$CONFIG"/telemetry/events/*.jsonl | node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(0, "utf8")).chosen))')"
 
+# The archive of closed work: a closed row's brief in the orchestrator's module directory goes to the
+# logs repository by project and month and leaves the machine; the open row's stays.
+mkdir -p "$CONFIG/claude-orchestrator/briefs/demo"
+printf '{"id":1,"state":"closed","closed":"2026-10-20T10:00:00Z","label":"ONE: first"}\n{"id":2,"state":"open","label":"TWO: second"}\n' > "$CONFIG/claude-orchestrator/briefs/demo/dispatch-record.jsonl"
+printf 'Row: 1 ONE: first\n' > "$CONFIG/claude-orchestrator/briefs/demo/one-brief.md"
+printf 'Row: 2 TWO: second\n' > "$CONFIG/claude-orchestrator/briefs/demo/two-brief.md"
+out=$(cli export)
+check "export archives a closed row's brief by project and month, in the repository" "yes" "$(git -C "$WORK/logs2.git" cat-file -e "main:demo/2026-10/suite/brief/one-brief.md" 2>/dev/null && echo yes || echo no)"
+check "the brief is gone from the machine, the open row's stays" "no:yes" "$([ -e "$CONFIG/claude-orchestrator/briefs/demo/one-brief.md" ] && echo yes || echo no):$([ -e "$CONFIG/claude-orchestrator/briefs/demo/two-brief.md" ] && echo yes || echo no)"
+check "the export says what it archived, removed and kept" "export: archive: 1 file(s) exported, 1 removed from this machine, 1 kept" "$(printf '%s\n' "$out" | tail -1)"
+
 # The weekly report, from a directory that is no repository (so no call to gh): the first line, the
 # per-day rows, and a figure no source holds said n/a.
 out=$(cd "$WORK" && cli report --week 2026-11-08); code=$?

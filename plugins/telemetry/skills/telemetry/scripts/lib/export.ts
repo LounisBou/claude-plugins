@@ -2,11 +2,12 @@
 // clone of the logs repository and pushed, after the scan of every day file finds no secret and
 // every transcript is passed through the redaction. The repository is named only by the environment; its
 // address never reaches an output, git's own messages included.
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { readText, withLock, writeAtomic } from '../../../../core/store.ts'
+import { readText, update, withLock, writeAtomic } from '../../../../core/store.ts'
 import { lockOf } from '../../../../core/store-io.ts'
 import { EVENT_SCHEMA, type KindSpec } from '../../../../hooks/schema.ts'
+import type { ArchiveItem, ArchiveSource } from './archive.ts'
 import { buildManifest } from './manifest.ts'
 import { check, dayFiles, eventsDir } from './store.ts'
 import { redactText, redactValue, type EnvSecrets } from './redact.ts'
@@ -36,6 +37,11 @@ export interface ExportOptions {
   readonly transcript?: (session: string) => string | undefined
   /** What one export takes of the transcripts: the defaults, `MAX_TRANSCRIPT_BYTES` and `MAX_RUN_BYTES`, unless a caller passes another. */
   readonly limits?: { readonly transcriptBytes?: number; readonly runBytes?: number }
+  /**
+   * The files of closed work the orchestrator's module holds (`archive.ts`): they go to the repository
+   * after the same scan, and leave this machine only once the push that carries them is done.
+   */
+  readonly archive?: ArchiveSource
   /** The time, in milliseconds, against which a transcript's age is read; the clock's unless a caller passes another. */
   readonly now?: () => number
   /** Called before each git command and each transcript: the export is alive, and goes on. */
@@ -370,6 +376,95 @@ function copyTranscripts(options: ExportOptions, clone: string, sessions: Readon
   return { exported, offered, written, stamps, notes }
 }
 
+/** What the archive scan leaves of a plan: the files to export, those it holds back, and what to say of them. */
+interface Scanned {
+  readonly items: readonly ArchiveItem[]
+  readonly kept: number
+  readonly notes: readonly string[]
+}
+
+/**
+ * The plan's files held to the secret scan, as the index is: one with a hit stays where it is and
+ * is named with the patterns it matched, never a value; the rest are exported.
+ */
+function scanArchive(plan: { readonly items: readonly ArchiveItem[]; readonly kept: number; readonly notes: readonly string[] }, secrets: EnvSecrets): Scanned {
+  const items: ArchiveItem[] = []
+  const notes = [...plan.notes]
+  let kept = plan.kept
+  for (const item of plan.items) {
+    const hits = [...new Set(redactText(item.body.toString('utf8'), secrets).hits)]
+    if (hits.length === 0) {
+      items.push(item)
+      continue
+    }
+    kept++
+    notes.push(`export: ${item.rel} left in place (secret pattern: ${hits.join(', ')})`)
+  }
+  return { items, kept, notes }
+}
+
+/**
+ * Writes the archive's files into the clone. A ledger month joins the lines the repository holds
+ * of it already, in their order, each once: the lines that left the machine earlier are not here.
+ */
+function writeArchive(clone: string, items: readonly ArchiveItem[]): void {
+  for (const item of items) {
+    const file = join(clone, item.rel)
+    mkdirSync(dirname(file), { recursive: true })
+    if (item.lines === undefined) {
+      writeFileSync(file, item.body)
+      continue
+    }
+    const held = (readText(file) ?? '').split('\n').filter(line => line !== '')
+    writeFileSync(file, `${[...new Set([...held, ...item.lines])].join('\n')}\n`)
+  }
+}
+
+/**
+ * Removes from this machine the archive's files the repository holds, as pushed: the clone's HEAD is
+ * what the remote has (the push was done, or nothing was left to push), the file is in its tree and
+ * its bytes are the local file's, and the same plan made again still names it. A ledger month's
+ * lines leave their archive under its lock, the lines that came in meanwhile staying. Answers how many were removed.
+ */
+function removeArchived(options: ExportOptions, git: Git, clone: string, items: readonly ArchiveItem[], machine: string): number {
+  if (items.length === 0) return 0
+  const roots = [...new Set(items.map(item => item.rel.split('/')[0] ?? ''))]
+  const listed = git(['ls-tree', '-r', '--name-only', 'HEAD', '--', ...roots], clone)
+  if (listed.status !== 0) return 0
+  const held = new Set(listed.stdout.split('\n'))
+  const still = new Set((options.archive?.(machine, (options.now ?? Date.now)()).items ?? []).map(item => item.rel))
+  let removed = 0
+  for (const item of items) {
+    options.heartbeat?.()
+    if (!held.has(item.rel) || !still.has(item.rel)) continue
+    try {
+      if (item.lines === undefined) {
+        if (!readFileSync(item.source).equals(readFileSync(join(clone, item.rel)))) continue
+        rmSync(item.source)
+        if (item.dir !== undefined) {
+          try {
+            rmdirSync(item.dir)
+          } catch { /* the directory still holds a file that stays */ }
+        }
+      } else {
+        const gone = new Set(item.lines)
+        if (!existsSync(item.source)) continue
+        update(item.source, current => (current ?? '').split('\n').filter(line => line !== '' && !gone.has(line)).map(line => `${line}\n`).join(''))
+      }
+      removed++
+    } catch {
+      // A file that cannot be removed stays: the next export finds it held and removes it.
+    }
+  }
+  return removed
+}
+
+/** The archive's line of the result: files exported, removed from this machine, kept; and what was held back. */
+function archiveLines(scanned: Scanned, removed: number): string[] {
+  if (scanned.items.length + scanned.kept === 0) return []
+  return [`export: archive: ${scanned.items.length} file(s) exported, ${removed} removed from this machine, ${scanned.kept} kept`, ...scanned.notes]
+}
+
 /** Exports the store; answers the lines to print and the exit code. */
 export function exportStore(options: ExportOptions): ExportResult {
   const { stateDir, secrets, repo, machine } = options
@@ -387,7 +482,8 @@ export function exportStore(options: ExportOptions): ExportResult {
     }
   }
   const days = dayFiles(events)
-  if (days.length === 0) return { lines: ['export: no event recorded yet, nothing pushed'], code: 0 }
+  const scanned = scanArchive(options.archive?.(machine, (options.now ?? Date.now)()) ?? { items: [], kept: 0, notes: [] }, secrets)
+  if (days.length === 0 && scanned.items.length === 0) return { lines: ['export: no event recorded yet, nothing pushed', ...archiveLines(scanned, 0)], code: 0 }
   // The index is generated from the same events, and held to the same scan before anything is cloned:
   // as planned, every transcript here in the repository; it is made again once the copy says which are.
   const planned = indexFiles(options, events, days, session => options.transcript?.(session) !== undefined)
@@ -423,7 +519,7 @@ export function exportStore(options: ExportOptions): ExportResult {
   const stamped = readStamps(stateDir)
   const copied = copyTranscripts(options, clone, planned.sessions, stamped, held)
   if (typeof copied === 'string') return { lines: [copied], code: 1 }
-  const counted = `${days.length} day file(s)${copied.written > 0 ? ` and ${copied.written} transcript(s)` : ''}`
+  const counted = `${days.length} day file(s)${copied.written > 0 ? ` and ${copied.written} transcript(s)` : ''}${scanned.items.length > 0 ? `, ${scanned.items.length} archived file(s)` : ''}`
   let index = planned.files
   if (copied.exported.size < copied.offered.size) {
     // A manifest points at the transcript the repository holds, never at one that was skipped.
@@ -432,21 +528,25 @@ export function exportStore(options: ExportOptions): ExportResult {
     if (again.length > 0) return refusal(again)
   }
   writeIndex(clone, machine, index)
+  writeArchive(clone, scanned.items)
+  const projects = [...new Set(scanned.items.map(item => item.rel.split('/')[0] ?? ''))]
   // Forced: an ignore rule of the clone or the machine matching a day file would leave it out unsaid.
-  const added = git(['add', '--force', '--', join('machines', machine), INDEX_DIR], clone)
+  const added = git(['add', '--force', '--', join('machines', machine), INDEX_DIR, ...projects], clone)
   if (added.status !== 0) return fail('add', added)
   if (git(['diff', '--cached', '--quiet'], clone).status !== 0) {
     const committed = git(['commit', '--quiet', '-m', `chore(telemetry): ${machine}, ${counted} up to ${days[days.length - 1]?.slice(0, 10) ?? ''}`], clone)
     if (committed.status !== 0) return fail('commit', committed)
   } else if (!unpushed(git, clone)) {
     writeStamps(stateDir, new Map([...stamped, ...copied.stamps]))
-    return { lines: ['export: the logs repository already holds every event, nothing pushed', ...copied.notes], code: 0 }
+    const gone = removeArchived(options, git, clone, scanned.items, machine)
+    return { lines: ['export: the logs repository already holds every event, nothing pushed', ...copied.notes, ...archiveLines(scanned, gone)], code: 0 }
   }
   // HEAD now holds a commit main lacks: the new files, or a former export's commit whose push was refused.
   const sent = git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], clone)
   if (sent.status !== 0) return fail('push', sent)
   writeStamps(stateDir, new Map([...stamped, ...copied.stamps]))
-  return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`, ...copied.notes], code: 0 }
+  const gone = removeArchived(options, git, clone, scanned.items, machine)
+  return { lines: [`export: ${counted} of ${machine} pushed to the logs repository`, ...copied.notes, ...archiveLines(scanned, gone)], code: 0 }
 }
 
 /** Marks `lock` as held a moment longer: its age is what tells a holder that died from one that works. */

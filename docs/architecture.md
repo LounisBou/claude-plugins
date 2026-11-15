@@ -62,7 +62,7 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
 reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
-cloudflare stands outside it; telemetry observes every role and changes none; learning reads what the roles journal and changes none.
+cloudflare stands outside it; telemetry observes every role and changes only what it has archived (the files of closed rows, below the orchestrator's module directory, removed once the logs repository holds them); learning reads what the roles journal and changes none.
 
 ## Packaging
 
