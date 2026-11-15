@@ -22,10 +22,19 @@ export type Machine = {
   verdicts?: Record<string, { decision: string; rule?: unknown; reason?: string }>
   usage?: { tokens?: number; window: number } | null
   shell?: (e: any) => any
+  // The session's directory cannot be read: the guard throws, and its net judges.
+  cwdFails?: boolean
+  // Every file write fails with this message.
+  writeFails?: string
 }
 
-export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[]; registered: any[] } {
+// Where the fake host keeps the module's journal: its home, then the plugin's directory.
+export const JOURNAL_DIR = '/home/op/.claude/bugs-bot/journal/'
+
+export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[]; registered: any[]; journal: any[]; logs: string[] } {
   const runs: Run[] = []
+  const journal: any[] = []
+  const logs: string[] = []
   const asked: string[] = []
   const registered: any[] = []
   const files = m.files ?? {}
@@ -34,7 +43,10 @@ export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[];
     registered.push(e)
     return { value: { tool: `mcp__bugs-bot__${e.name}` } }
   })
-  on('session.cwd', () => ({ value: m.cwd ?? '/repo' }))
+  on('session.cwd', () => {
+    if (m.cwdFails) throw new Error('no cwd')
+    return { value: m.cwd ?? '/repo' }
+  })
   on('session.id', () => ({ value: 'session-1' }))
   on('env.get', (_$: any, e: any) => ({ value: { HOME: '/home/op', ...(m.env ?? {}) }[e.name] }))
   on('fs.exists', (_$: any, e: any) => ({ value: e.path in files }))
@@ -46,7 +58,17 @@ export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[];
     const real = (m.real ?? {})[e.path] ?? e.path
     return { value: { kind: 'file', size: 1, mtimeMs: 0, realPath: real } }
   })
+  // The journal's files are its events, read back by a test; its commands (the lock, the rename) succeed and are no run of a test.
+  on('fs.write', (_$: any, e: any) => {
+    if (m.writeFails) throw new Error(m.writeFails)
+    if (String(e.path).startsWith(JOURNAL_DIR)) journal.push(JSON.parse(String(e.text)))
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('clock.sleep', () => ({ value: undefined }))
+  on('ui.log', (_$: any, e: any) => { logs.push(String(e.text)); return { value: undefined } })
   on('process.run', (_$: any, e: any) => {
+    if (e.argv.some((arg: string) => String(arg).includes(JOURNAL_DIR))) return { value: { exitCode: 0, stdout: '', stderr: '' } }
     runs.push({ argv: [...e.argv], cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
     return { value: (m.run ?? (() => ({ exitCode: 0, stdout: '', stderr: '' })))([...e.argv]) }
   })
@@ -62,7 +84,7 @@ export function mount(on: any, m: Machine = {}): { runs: Run[]; asked: string[];
     if (m.usage === null) throw new Error('no usage')
     return { value: { startedAt: 0, context: m.usage ?? { window: 1_000_000 }, rateLimits: [] } }
   })
-  return { runs, asked, registered }
+  return { runs, asked, registered, journal, logs }
 }
 
 // A module's hooks captured without the engine, for what a test cannot raise

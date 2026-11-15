@@ -152,8 +152,6 @@ for owned in test-conventions naming code-hygiene; do
 done
 check "conformity agent reads a rule's cited reference before flagging" "1" \
   "$(grep -c -F 'Reference:' "$PC")"
-check "learn can file a rule under an existing project section" "1" \
-  "$(grep -c -F 'already present in the project' "$ROOT/commands/learn.md")"
 
 echo "== base branch resolver =="
 
@@ -225,8 +223,6 @@ check "a detached head resolves the base the module passes it" "$want" "$(base_i
 
 check "check command calls the resolver, not a hard-coded main" "0" \
   "$(grep -c 'merge-base HEAD main' "$ROOT/commands/check.md" "$ROOT/agents/norms-diff-scope.md" | awk -F: '{s+=$2} END {print s+0}')"
-check "suggested commit messages carry a type" "0" \
-  "$(grep -c 'git commit -m "Update project' "$ROOT/commands/learn.md")"
 
 echo "== hooks module =="
 
@@ -246,7 +242,6 @@ tag_read() { # <tag> <module file> <markdown file...>
 }
 tag_read norms-scope scope.ts "$ROOT/commands/check.md"
 tag_read norms-context scope.ts "$ROOT"/agents/norms-*.md
-tag_read norms-learn learn.ts "$ROOT/commands/learn.md"
 tag_read norms-validate-scan validate.ts "$ROOT/skills/validate/SKILL.md"
 
 check "the check command records its outcome in Step 5 and Step 8" "3" \

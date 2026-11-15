@@ -8,6 +8,7 @@
 // handler that fails passes the run on, and the markdown spends a turn running
 // install.sh as it always did. The preflight is the same scripts/preflight.sh
 // the skills run, so the two routes cannot disagree on what is missing.
+import type { Host, On, ProcessRunResult } from '../core/host.ts'
 
 // The exit codes of install.sh and of a skill's preflight, the remedy rows
 // commands/doctor.md prints. 13 comes only from a skill's preflight.
@@ -39,21 +40,21 @@ export function failedText(run: { exitCode: number; stdout: string; stderr: stri
 export const INSTALL_TIMEOUT_MS = 600_000
 export const CHECK_TIMEOUT_MS = 60_000
 
-async function install($: any, check: boolean): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function install($: Host<'plugin' | 'process'>, check: boolean): Promise<ProcessRunResult> {
   const argv = ['bash', $.plugin.root + '/install.sh', ...(check ? ['--check'] : [])]
   return $.process.run(argv, { timeoutMs: check ? CHECK_TIMEOUT_MS : INSTALL_TIMEOUT_MS })
 }
 
 // A passing install does not stand for a skill's preflight: install checks only
 // what installing needs, and never the repository a skill will work on.
-async function answer($: any, check: boolean): Promise<{ text: string }> {
+async function answer($: Host<'plugin' | 'process'>, check: boolean): Promise<{ text: string }> {
   const run = await install($, check)
   return { text: report(run) }
 }
 
-export function register(on: any): void {
-  on('command.run', { command: 'pr-review:doctor' }, async ($: any) => answer($, true))
-    .catch(async (_$: any, e: any, next: any) => next(e))
-  on('command.run', { command: 'pr-review:install' }, async ($: any) => answer($, false))
-    .catch(async (_$: any, e: any, next: any) => next(e))
+export function register(on: On<Host<'plugin' | 'process'>>): void {
+  on('command.run', { command: 'pr-review:doctor' }, async ($) => answer($, true))
+    .catch(async (_$, e, next) => next(e))
+  on('command.run', { command: 'pr-review:install' }, async ($) => answer($, false))
+    .catch(async (_$, e, next) => next(e))
 }
