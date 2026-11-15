@@ -1719,7 +1719,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: RoundEntry[] = []
       let pending = 0
-      // The open questions asked with `ask` (question.ts), drawn from their fields under the round's card.
+      // The open questions asked with `ask` (question.ts), drawn from their fields.
       let asked: Asked[] = []
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
@@ -2083,7 +2083,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 const RELAY_BOUND_MS = 5000
 
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
-// coordinator and an auditor do, as one rule for the turn's end and the prompt.
+// coordinator and an auditor do, as one rule for every turn's end.
 export function entersRound(role: string | null): boolean {
   return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
 }
@@ -2316,7 +2316,7 @@ export async function isOrchestratorSession($: any, sessionId: string): Promise<
 // holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
 // pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
 // of its wait and withdraws nothing. The same withdrawal closes every open entry of a session
-// that is superseded by its new question, that ended, or that handed over (`current` null).
+// that ended, or that handed over (`current` null).
 // `current` is the id of the entry this turn's wait has, kept open; `why` the withdrawal's answer
 // text; `kept` the entries left open besides. An entry the
 // coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
@@ -2580,15 +2580,10 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
 }
 
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
-// session alone, one that passes every check is entered in the round with where it came from, its
-// session's older entries superseded as a local one's are, and acknowledged to its sender. The same
-// entry sent again, its wait's start unchanged, is never entered twice, whatever became of it
-// since: it is acknowledged again, its first acknowledgment having been lost, and an open one takes
-// the urgent mark it now carries or not, as a local wait asked again does. The same wait asked
-// again once answered is a new ask, of a new start (receiveAnswer). That rule keeps the choices of
-// the wait's text too: a note without choices under the same wait has the same id and the same
-// start (roundEntryId reads no question under a wait that blocks something), so it never replaces
-// the entry, as keptChoices keeps a local one's. Anything else is one log line.
+// session alone, one that passes every check is entered in the round with where it came from, and
+// acknowledged to its sender. The same entry sent again, its wait's start unchanged, is never
+// entered twice, whatever became of it since: it is acknowledged again, its first acknowledgment
+// having been lost. Anything else is one log line.
 async function receiveAsk($: any, delivery: Delivery, asked: ReturnType<typeof parseAsk>, byEvent: boolean): Promise<{ consumed: string }> {
   const from = peerAddress(delivery)
   if (!asked || !from) {
@@ -2873,8 +2868,9 @@ export async function writeDeck($: any): Promise<void> {
   const deck = deckOf({
     machine: await machineOf($), now, local, chains, prs,
     remote: await readRemoteRows($),
-    // The relay's entries and the questions asked with `ask`, each its own object in the round.
-    round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).map(askedAsEntry)],
+    // The relay's entries and the questions asked with `ask`, each its own object in the round; one
+    // his prompt claimed in its asker's tab is gone from the round, as the pane and the wake read it.
+    round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).filter(entry => !entry.claimed).map(askedAsEntry)],
     sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
     gate: await gateEnv($),
   })
