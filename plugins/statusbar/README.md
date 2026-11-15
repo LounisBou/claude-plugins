@@ -156,8 +156,10 @@ writes (`docs/contracts.md` of the repository, « Measure file »).
 
 When the orchestrator plugin runs on the machine, line 1 ends with `✋ N` (red, `✋ N (U urgent)`,
 once U of the N are urgent): the operator's open questions, read from the `round` of the machine's
-`deck.json` (`docs/contracts.md` of the repository, « `deck.json` »). Nothing shows when none is open,
-when the file is absent or torn, or when its stamp is older than the contract's bound (`deck-reader.json`). The file is only read.
+`deck.json` (`docs/contracts.md` of the repository, « `deck.json` »). When its stamp is older than the
+contract's bound (`deck-reader.json`), the deck is stale: the last count it holds shows marked `✋ N?`,
+dimmed, or red with `(U urgent)` while one is urgent. Nothing shows when none is open, when the file is
+absent or torn, of another version, or stamped ahead past the bound. The file is only read.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.

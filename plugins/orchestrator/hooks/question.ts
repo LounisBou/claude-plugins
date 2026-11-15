@@ -23,8 +23,8 @@ import { answersChoice, consentPath, leadingChoice, CONSENT_GRANT, CONSENT_KINDS
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
 import { machineLabel } from './remote-row.ts'
-import { plainText, type RoundEntry } from './round.ts'
-import { parseSessionName } from '../core/names.ts'
+import type { RoundEntry } from './round.ts'
+import { askedKey } from './asked-key.ts'
 import { callTodo, whoAmI } from './todo.ts'
 import { closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
 import { scanTail } from './session-name.ts'
@@ -521,23 +521,6 @@ export function askedInTurn(id: string): number {
 /** The ids of the questions asked in the main thread's current turn. */
 export function askedThisTurn(): readonly string[] {
   return thisTurn
-}
-
-const flatText = (text: string): string => plainText(text).replace(/\s+/g, ' ').trim()
-
-/**
- * What makes two questions one for the record: the asker's project (its session name's subject),
- * what it blocks (its parts split by `, `, spacing and case aside), the consent it asks, and its
- * fields, choices and recommendation as given.
- */
-export function askedKey(entry: Pick<Asked, 'sender' | 'blocks' | 'consent' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'>): string {
-  const blocks = entry.blocks.split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
-  return JSON.stringify([
-    parseSessionName(entry.sender.name)?.subject ?? entry.sender.name, blocks, consent,
-    [entry.subject, entry.context, entry.ask].map(flatText), entry.choices.map(choice => [choice.letter, flatText(choice.text)]),
-    entry.recommended, entry.why === null ? null : flatText(entry.why),
-  ])
 }
 
 // The answers that are the operator's own: given in the asker's tab (naming one choice), in the pane

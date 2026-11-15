@@ -61,46 +61,8 @@ export type RoundEntry = {
 // the stamp of the answer it carries, so that a later answer is never said failed by it.
 export type RoundDelivery = { state: 'pending' | 'sent' | 'acked' | 'delivered' | 'failed'; at: string; attempts: number; answerAt?: string; reason?: string }
 
-// The question's text as the pane draws it: the emphasis markers around a span — `**x**`,
-// `__x__`, `*x*`, `_x_` and backticks — dropped, the words kept; a marker inside a word
-// (snake_case) or before a space (a `* ` list item) is no emphasis. Each span stays on its
-// line. The entry itself keeps the text verbatim.
-export function plainText(text: string): string {
-  return textSpans(text).map(span => span.text).join('')
-}
-
-// The same text cut into the spans the pane draws, each mark it carried kept as a style: inline
-// code, bold, italic. Joined, the spans are plainText's text. The markers are found as plainText
-// always found them, then read as an opening and a closing mark around each span.
-export type TextSpan = { text: string; code?: true; bold?: true; italic?: true }
-const MARK = { code: ['\uE000', '\uE001'], bold: ['\uE002', '\uE003'], italic: ['\uE004', '\uE005'] } as const
-const MARK_NAMES = ['code', 'bold', 'italic'] as const
-export function textSpans(text: string): TextSpan[] {
-  const marked = text
-    .replace(/`([^`\n]+)`/g, `${MARK.code[0]}$1${MARK.code[1]}`)
-    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, `${MARK.bold[0]}$2${MARK.bold[1]}`)
-    .replace(/(^|[^\w*])\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![\w*])/gm, `$1${MARK.italic[0]}$2${MARK.italic[1]}`)
-    .replace(/(^|[^\w])_(?=[^\s_])([^\n_]*?[^\s_])_(?!\w)/gm, `$1${MARK.italic[0]}$2${MARK.italic[1]}`)
-  const spans: TextSpan[] = []
-  const on = { code: 0, bold: 0, italic: 0 }
-  let run = ''
-  const flush = () => {
-    if (run === '') return
-    spans.push({ text: run, ...(on.code ? { code: true as const } : {}), ...(on.bold ? { bold: true as const } : {}), ...(on.italic ? { italic: true as const } : {}) })
-    run = ''
-  }
-  for (const char of marked) {
-    const mark = MARK_NAMES.find(name => MARK[name][0] === char || MARK[name][1] === char)
-    if (!mark) {
-      run += char
-      continue
-    }
-    flush()
-    on[mark] += char === MARK[mark][0] ? 1 : -1
-  }
-  flush()
-  return spans
-}
+// The text of a question as the pane draws it lives in asked-key.ts, with what makes two questions one.
+export { plainText, textSpans, type TextSpan } from './asked-key.ts'
 
 // The references to a pull request a text names, `<repository>#<number>`, one each wherever they
 // stand: glued to another by a slash, a comma or nothing, each is its own. `at` is where it

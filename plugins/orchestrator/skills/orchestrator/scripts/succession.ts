@@ -36,7 +36,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
-import { ROUND_DIR } from '../../../core/orchestration.ts'
+import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
@@ -51,6 +51,9 @@ import { GoalsFault, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
+import { askedKey } from '../../../hooks/asked-key.ts'
+import type { Asked } from '../../../hooks/question.ts'
+import { parseConsentSubject } from '../../../core/consent-record.ts'
 
 export const USAGE =
   'usage: succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]'
@@ -97,6 +100,21 @@ export interface Question {
   readonly text: string
 }
 
+/** A settled question of the round: its entry id, its block, and what settled it (the operator's answer, or the reason it was withdrawn). */
+export interface Settled {
+  readonly id: string
+  readonly text: string
+  readonly said: string
+  /** What names the question in a line: its subject, else its words cut short. */
+  readonly label: string
+}
+
+/** What a successor does with the settled questions of its orchestration: apply the answers, ask the withdrawn ones again. */
+export interface SettledQuestions {
+  readonly answered: readonly Settled[]
+  readonly reask: readonly Settled[]
+}
+
 /** An open row, as the takeover reads it. */
 export interface OpenRow {
   readonly id: string
@@ -141,6 +159,8 @@ export interface OpenState {
   /** The same agents with their tty and brief, as the Live state prints them. */
   readonly seats?: readonly LiveAgent[]
   readonly questions: readonly Question[]
+  /** The questions the operator answered, to apply; the withdrawn ones to ask again. */
+  readonly settled?: SettledQuestions
   /** How many agents the launcher's `list` and the deck disagree on; undefined when `list` was not read. */
   readonly disagree?: number
 }
@@ -284,6 +304,92 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
+const LABEL_MAX = 120
+const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** One entry of the round, read for what a succession decides on: what makes it the same question as another, its status, its asker, its words. */
+interface Seen {
+  readonly id: string
+  readonly key: string
+  readonly status: string
+  readonly ours: boolean
+  /** When it was settled, else when it was asked. */
+  readonly at: string
+  readonly text: string
+  readonly said: string
+  readonly label: string
+}
+
+const isText = (value: unknown): value is string => typeof value === 'string'
+
+/** The fields of an object `ask` stored that its key reads, each of its type; undefined for anything else. */
+function askedFields(entry: Fields): Pick<Asked, 'sender' | 'blocks' | 'consent' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'> & { id: string; status: string; at: string } | undefined {
+  const { id, status, at, subject, context, ask, blocks, recommended, why, choices, sender } = entry
+  const from = typeof sender === 'object' && sender !== null ? (sender as Fields) : {}
+  if (!isText(id) || !isText(status) || !isText(at) || !isText(subject) || !isText(context) || !isText(ask) || !isText(blocks) || !isText(from['name']) || !isText(from['session'])) return undefined
+  if ((recommended !== null && !isText(recommended)) || (why !== null && !isText(why)) || !Array.isArray(choices)) return undefined
+  const lettered = choices.flatMap(choice => {
+    const c = typeof choice === 'object' && choice !== null ? (choice as Fields) : {}
+    return isText(c['letter']) && isText(c['text']) ? [{ letter: c['letter'], text: c['text'] }] : []
+  })
+  if (lettered.length !== choices.length) return undefined
+  const consent = entry['consent'] === undefined ? undefined : parseConsentSubject(entry['consent'])
+  if (entry['consent'] !== undefined && consent === undefined) return undefined
+  return {
+    id, status, at, subject, context, ask, blocks, recommended: recommended as string | null, why: why as string | null, choices: lettered,
+    sender: { name: from['name'], session: from['session'], role: '', machine: '' }, ...(consent !== undefined ? { consent } : {}),
+  }
+}
+
+/**
+ * An entry of the round, `ask`'s (v 2) or the relay's; undefined for anything else. A withdrawal the
+ * operator made in the asker's own tab (`by: tab`) is his answer, the words he typed, whether the
+ * entry was withdrawn or closed after a coordinator was shown it; a relay entry `closed` with a
+ * `withdrawn:` text is otherwise a withdrawal.
+ */
+function seen(text: string | undefined, name: string, session: string): Seen | undefined {
+  const entry = object(text)
+  if (entry === undefined || typeof entry['id'] !== 'string' || typeof entry['status'] !== 'string') return undefined
+  const answer = typeof entry['answer'] === 'object' && entry['answer'] !== null ? (entry['answer'] as Fields) : {}
+  const reason = isText(answer['text']) ? answer['text'] : ''
+  const withdrawal = entry['status'] === 'withdrawn' || (entry['status'] === 'closed' && reason.startsWith('withdrawn:'))
+  const inTab = withdrawal && answer['by'] === 'tab'
+  const said = inTab ? (isText(answer['typed']) && answer['typed'] !== '' ? answer['typed'] : reason.replace(/^withdrawn:\s*/, '')) : reason
+  const status = inTab ? 'answered' : withdrawal ? 'withdrawn' : entry['status']
+  const settled = isText(answer['at']) ? answer['at'] : ''
+  const asked = entry['v'] === 2 ? askedFields(entry) : undefined
+  if (asked !== undefined) {
+    return { id: asked.id, key: askedKey(asked), status, ours: asked.sender.name === name || (session !== '' && asked.sender.session === session), at: settled === '' ? asked.at : settled, text: askedText(entry), said, label: flat(asked.subject).slice(0, LABEL_MAX) }
+  }
+  if (entry['v'] === 2 || entry['kind'] !== 'operator' || typeof entry['question'] !== 'string') return undefined
+  const ours = entry['from'] === name || (session !== '' && entry['session'] === session)
+  return { id: entry['id'], key: JSON.stringify(['relay', flat(entry['question'])]), status, ours, at: settled === '' ? (typeof entry['since'] === 'string' ? entry['since'] : '') : settled, text: entry['question'], said, label: flat(entry['question']).slice(0, LABEL_MAX) }
+}
+
+/**
+ * What a successor does with the settled questions of its orchestration, from the round's entries
+ * and the archive's: a question the operator answered (answered, or closed with a coordinator shown
+ * it) is applied, never asked again; a withdrawn one is asked again once, the newest of its key,
+ * unless an open, answered or closed entry holds its key, whoever asked it. A withdrawal made in
+ * the asker's tab is the operator's answer. Whether another withdrawal's reason names an answer and
+ * its premise stands is the successor's to read, from the reason printed.
+ */
+export function roundSettled(entries: readonly (string | undefined)[], archived: readonly (string | undefined)[], name: string, session: string): SettledQuestions {
+  const live = entries.flatMap(text => seen(text, name, session) ?? [])
+  const every = [...live, ...archived.flatMap(text => seen(text, name, session) ?? [])]
+  const byId = (a: Seen, b: Seen): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  const answeredOnes = (entry: Seen): boolean => entry.status === 'answered' || entry.status === 'closed'
+  const answered = live.filter(entry => entry.ours && answeredOnes(entry)).sort(byId).map(entry => ({ id: entry.id, text: entry.text, said: entry.said, label: entry.label }))
+  const reask = live.filter(entry => {
+    if (!entry.ours || entry.status !== 'withdrawn') return false
+    const same = every.filter(other => other.key === entry.key && other !== entry)
+    if (same.some(other => other.status === 'open' || answeredOnes(other))) return false
+    // The newest withdrawal of the key, among this orchestration's, speaks for the others.
+    return !same.some(other => other.ours && other.status === 'withdrawn' && (other.at > entry.at || (other.at === entry.at && other.id > entry.id)))
+  }).sort(byId).map(entry => ({ id: entry.id, text: entry.text, said: entry.said, label: entry.label }))
+  return { answered, reask }
+}
+
 const PR_REF = /([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?)#([1-9][0-9]*)/g
 
 /** The pull requests a text names, `<repo>#<n>` as written. */
@@ -413,6 +519,11 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
     agents: seats.map(agent => agent.name),
     seats,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
+    settled: roundSettled(
+      names.map(name => readText(join(round, name))),
+      [join(round, ROUND_ARCHIVE_DIR), join(round, ROUND_ARCHIVE_DIR, 'withdrawn')].flatMap(from => (existsSync(from) ? readdirSync(from).filter(name => name.endsWith('.json') && !name.includes('.tmp-')).sort().map(name => readText(join(from, name))) : [])),
+      request.name, request.session,
+    ),
     ...(live.disagree === undefined ? {} : { disagree: live.disagree }),
   }
 }
@@ -739,6 +850,8 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     LIVE_PULL_REQUESTS: list(open.prs),
     LIVE_AGENTS: list((open.seats ?? []).map(agentLine)),
     LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
+    LIVE_ANSWERED: (open.settled?.answered ?? []).length === 0 ? 'none' : (open.settled?.answered ?? []).map(q => `${q.label}: ${q.said === '' ? '(no answer text recorded)' : q.said}`).join('\n'),
+    LIVE_REASK: (open.settled?.reask ?? []).length === 0 ? 'none' : (open.settled?.reask ?? []).map(q => `[${q.id}] ${q.said === '' ? '(no reason recorded)' : q.said}\n${q.text}`).join('\n\n'),
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
