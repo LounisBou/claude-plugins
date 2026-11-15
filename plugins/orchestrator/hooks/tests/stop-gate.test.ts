@@ -16,7 +16,8 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
-import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
+import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait } from '../wait.ts'
+import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { machineLine } from '../../core/method.ts'
 import { unnamedReport } from '../relay.ts'

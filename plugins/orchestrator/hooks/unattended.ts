@@ -9,7 +9,7 @@ import {
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
-import { launcherOf } from '../core/orchestration.ts'
+import { launcherOf, RECORDS_DIR } from '../core/orchestration.ts'
 import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -62,8 +62,8 @@ export async function readOr($: Host<'fs'>, path: string): Promise<string> {
 }
 
 // The records a session registered (`<state>/records/<id>`, one path a line).
-async function registered($: Host<'fs'>, state: string, sessionId: string): Promise<string[]> {
-  return (await readOr($, `${state}/records/${safe(sessionId)}`)).split('\n').map(line => line.trim()).filter(Boolean)
+export async function registered($: Host<'fs'>, state: string, sessionId: string): Promise<string[]> {
+  return (await readOr($, `${state}/${RECORDS_DIR}/${safe(sessionId)}`)).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
 // The lines of the records a session registered, each with its record and its text; `own` keeps only

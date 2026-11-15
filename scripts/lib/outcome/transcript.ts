@@ -4,12 +4,10 @@
 // of the operator are the lines it wrote as `Decision: …`.
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { WAIT_KINDS, WAIT_TOOL as DECLARE_WAIT, type WaitKind } from '../../../packages/core/src/orchestration.ts'
 
-/** The tool by which a turn declares what will wake it. */
-export const WAIT_TOOL = 'mcp__orchestrator__declare_wait'
-
-export const WAIT_KINDS = ['operator', 'tool', 'done', 'deferred'] as const
-export type WaitKind = (typeof WAIT_KINDS)[number]
+/** The tool by which a turn declares what will wake it, as a transcript names it. */
+export const WAIT_TOOL = `mcp__orchestrator__${DECLARE_WAIT}`
 
 export interface Wait {
   readonly kind: WaitKind

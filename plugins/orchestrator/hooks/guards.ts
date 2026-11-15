@@ -35,7 +35,7 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, MACHINE_LINE, blocksNothing, liveNames,
 } from './stop-gate.ts'
 import { machineLine } from '../core/method.ts'
-import { launcherOf } from '../core/orchestration.ts'
+import { launcherOf, RECORDS_DIR } from '../core/orchestration.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
@@ -1002,7 +1002,7 @@ async function projectTop($: Held, cwd: string, until: number): Promise<string> 
 // filed under, one path a line, then each record file. A read that fails is no row.
 async function registeredRecords($: Held, state: string, sessionId: string, until: number): Promise<string[]> {
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
-  const register = await quietly($, () => $.fs.read(`${state}/records/${safe}`), until, '')
+  const register = await quietly($, () => $.fs.read(`${state}/${RECORDS_DIR}/${safe}`), until, '')
   return String(register).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
