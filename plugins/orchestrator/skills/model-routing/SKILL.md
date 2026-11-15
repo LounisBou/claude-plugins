@@ -24,19 +24,18 @@ A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, 
 Before each dispatch, run `routing.py pick --repo <checkout> --class <class> --record <record>
 --files <n> --lines <n>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`). It
 prints the pair and the table it came from (the order is below). Write the pair, its source and your reason in the
-brief. You may override it: say why. An entry marked `stale` was measured on a model the alias
-no longer resolves to; use it, and tell the operator in one line that the entry is out of date.
+brief. You may override it: say why.
 
 `--files` and `--lines` are the phase's size, given together or not at all: the files in the
 phase's scope and the lines the plan expects it to add and delete, test files left out. Given
-them, `pick` adds `size=small` or `size=large` to its first line, and an entry measured only on
-small work does not serve a large phase: it goes on down its order to the first entry measured
-on large work, or to the tier table, and prints `size=large beyond=<scope>`, naming the first
-scope it skipped. That scope was measured on smaller work than this phase: say so in the brief
-beside the pair and its source.
+them, `pick` adds `size=small` or `size=large` to its first line, and an entry whose `size` is
+`small` does not serve a large phase: it goes on down its order to the first entry that is not
+`small`, or to the tier table, and prints `size=large beyond=<scope>`, naming the first scope it
+skipped. That scope is stamped for smaller work than this phase: say so in the brief beside the
+pair and its source.
 
 **A phase beyond every measured size.** When `pick` served a large phase from a scope after a
-`beyond=`, or from the tier table, no table was measured at this size. Before dispatching the
+`beyond=`, or from the tier table, no table is stamped for this size. Before dispatching the
 phase, run a read-only search exploration at the `search` class's pair and write its summary
 (the files, the contracts, the decisions) into the brief: the pair is a guess, so give it a
 map.
@@ -47,7 +46,7 @@ map.
 
 ## The table
 
-The floor `pick` lands on when nothing is measured: the class's tier, through the map. The slug is the `--class` `pick` and the record take.
+The floor `pick` lands on when no table names the class: the class's tier, through the map. The slug is the `--class` `pick` and the record take.
 
 | Class of work | Slug | Tier | What re-reads its output |
 |---|---|---|---|
@@ -76,7 +75,7 @@ For a phase that does not sit plainly on a row, take these before dispatching, f
 
 Read the third and the fourth concretely. **Blast radius** is high when the phase touches files > 3 or lines > 50 (the thresholds of `--files` and `--lines`, so the reading and `pick` agree), creates a new file, or touches more than one module. **Residual ambiguity** is high when one question or more is open on the phase. The counts of the blast radius are what `pick` is given.
 
-Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by measured cost per closed dispatch), never more, never as a running total: the readings are retaken at each dispatch.
+Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by cost), never more, never as a running total: the readings are retaken at each dispatch.
 
 ## The correction round runs one notch above its phase
 

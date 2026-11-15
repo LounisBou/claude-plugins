@@ -1572,7 +1572,6 @@ check "cost adds the session's measured cost to the row" "0.1701|s-1" \
   "$(jq -r 'select(.id==1)|[(.cost_usd*10000|round/10000|tostring), (.sessions|join(","))]|join("|")' "$PR")"
 check "the same session twice is not counted twice" "0.1701" \
   "$(crec cost "$PR" "$p1" --session s-1 2>/dev/null; jq -r 'select(.id==1)|.cost_usd*10000|round/10000' "$PR")"
-check "cost records the identifier the row's alias resolved to" "a-model-1" "$(jq -r '.["a-model"]' "$CSTATE/routing/aliases.json")"
 crec close "$PR" "$p1" --verdict approved >/dev/null
 check "summary prints the pair and its average cost" "1" \
   "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=1 closed=1 rounds_avg=0 cost_avg=0.1701$')"
@@ -11302,13 +11301,6 @@ cp "$RFIX/prices.json" "$RSTATE/routing/prices.json"
 check_status "an unknown session is a refusal" 1 rcost --session s-404
 check "a transcript path that does not exist is a refusal, never a cost of zero" "ERROR: cost: no transcript at $WORK/none.jsonl" \
   "$(rcost "$WORK/none.jsonl" 2>&1)"
-rcost --session s-1 --alias a-model >/dev/null
-check "the alias records the identifier it resolved to" "a-model-1" \
-  "$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
-# A session of other models says nothing about an alias none of its identifiers carries: the
-# costliest one is not that alias's identifier, and folding pairs on it would merge two models.
-check "an alias no model of the session carries is recorded as nothing, the others kept" "0|false|a-model-1" \
-  "$(rcost --session s-1 --alias b-model >/dev/null 2>&1; echo $?)|$(jq -r 'has("b-model")' "$RSTATE/routing/aliases.json")|$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
 
 echo "== deck: usage, routing.py's cost rule =="
 
@@ -11387,8 +11379,6 @@ printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":
 check "the profile table beats the global one" $'pair=b-model/low source=profile:php/laravel-app\ncorrective=b-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true}]},"conversion-phase":{"pair":"a-model/medium","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/medium","n":8,"pass_rate":1.0,"eligible":true}]},"comments":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-collector":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-lens":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":2,"pass_rate":1.0,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"contract-phase":{"pair":"a-model/high","models":["a-model-1"]}}}' > "$PS/routing/tables/project-laravel.json"
 check "the project table beats them all" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' "$(rpick --class behaviour-phase)"
-printf '{"a-model":"a-model-2"}' > "$PS/routing/aliases.json"
-check "an entry measured on another identifier is flagged stale" $'pair=a-model/low source=project:laravel stale\ncorrective=a-model/medium' "$(rpick --class behaviour-phase)"
 check_status "an unknown class is a refusal" 1 rpick --class nonsense
 # Exploration: three one-round closes at the class's pair, none escaped, and a class that may be explored.
 ER="$WORK/explore.jsonl"; : > "$ER"
@@ -11457,7 +11447,6 @@ check "and nothing follows it" "3" "$(rpick --class behaviour-phase --record "$E
 ZS="$WORK/zstate"; ZD="$WORK/zdefaults"; mkdir -p "$ZS/routing/tables" "$ZS/routing/projects/laravel" "$ZD"
 printf '{"deep":"a-model","standard":{"model":"b-model","effort":"medium"},"light":"c-model"}' > "$ZS/models.json"
 cp "$PS/routing/projects/laravel/manifest.json" "$ZS/routing/projects/laravel/manifest.json"
-printf '{"a-model":"a-model-2","b-model":"b-model-2"}' > "$ZS/routing/aliases.json"
 printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","size":"small"},"conversion-phase":{"pair":"a-model/medium"},"comments":{"pair":"a-model/high","size":"large","models":["a-model-1"]},"review-lens":{"pair":"a-model/low","size":"small"}}}' > "$ZS/routing/tables/project-laravel.json"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","size":"large"},"conversion-phase":{"pair":"b-model/medium","size":"large","models":["b-model-1"]},"review-lens":{"pair":"b-model/low","size":"small"}}}' > "$ZS/routing/tables/profile-php-laravel-app.json"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","size":"small"},"review-lens":{"pair":"c-model/low","size":"small"}}}' > "$ZS/routing/tables/global.json"
@@ -11474,13 +11463,13 @@ check "a large phase by its lines falls through the same way" $'pair=b-model/low
   "$(zpick --class behaviour-phase --files 1 --lines 51)"
 check "without the options pick reads no size: the project's entry, no size= and no beyond=" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' \
   "$(zpick --class behaviour-phase)"
-check "a table written before the stamp reads as unknown size: skipped by a large phase" $'pair=b-model/medium source=profile:php/laravel-app stale size=large beyond=project:laravel\ncorrective=b-model/high' \
+check "a table written before the stamp reads as unknown size: skipped by a large phase" $'pair=b-model/medium source=profile:php/laravel-app size=large beyond=project:laravel\ncorrective=b-model/high' \
   "$(zpick --class conversion-phase --files 9 --lines 9)"
 check "and it serves a small phase" $'pair=a-model/medium source=project:laravel size=small\ncorrective=a-model/high' \
   "$(zpick --class conversion-phase --files 1 --lines 1)"
 check "a large phase with no entry measured on large work lands on the tier table, naming the first scope skipped" $'pair=b-model/medium source=tier-table size=large beyond=project:laravel\ncorrective=b-model/high' \
   "$(zpick --class review-lens --files 9 --lines 9)"
-check "a project entry measured on large work serves a large phase, nothing skipped" $'pair=a-model/high source=project:laravel stale size=large\ncorrective=a-model/xhigh' \
+check "a project entry measured on large work serves a large phase, nothing skipped" $'pair=a-model/high source=project:laravel size=large\ncorrective=a-model/xhigh' \
   "$(zpick --class comments --files 9 --lines 9)"
 check "a shipped entry measured on large work serves a large phase through the map, a shipped tier the map does not bind never being a beyond" \
   $'pair=a-model/high source=shipped:global size=large\ncorrective=a-model/xhigh' "$(zpick --class search --files 9 --lines 9)"

@@ -14,7 +14,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 
 STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude"),
@@ -52,16 +51,6 @@ def read_json(path, default):
         return default
     except ValueError:
         die("%s does not read as JSON" % path)
-
-
-def write_json(path, data):
-    """Through a temporary file in the same directory, so a reader never sees half a file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
-    with os.fdopen(fd, "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp, path)
 
 
 def parse_pair(text):
@@ -201,40 +190,10 @@ def measure(paths):
     return out
 
 
-def carries_alias(ident, alias):
-    """Whether a model identifier carries the alias as a dash segment (`b-model` in `b-model-1`)."""
-    return bool(re.search(r"(^|-)%s(-|$)" % re.escape(alias), ident))
-
-
-def resolve_alias(alias, models):
-    """The identifier an alias resolved to: the one carrying the alias as a dash segment,
-    else the costliest. None when nothing was reported.
-    """
-    if not alias or not models:
-        return None
-    named = [m for m in sorted(models) if carries_alias(m, alias)]
-    return named[0] if named else max(models, key=lambda m: models[m] or 0)
-
-
-def note_alias(alias, models):
-    """Record which identifier an alias resolved to, when one of `models` carries it. A session
-    that ran other models says nothing about the alias: the costliest of them is not its
-    identifier, and recording it would fold the trials of two models under one pair. A stale
-    table entry is read against this.
-    """
-    if not alias or not any(carries_alias(m, alias) for m in models or {}):
-        return
-    path = os.path.join(ROUTING_DIR, "aliases.json")
-    data = read_json(path, {})
-    data[alias] = resolve_alias(alias, models)
-    write_json(path, data)
-
-
 def cmd_cost(argv):
     p = argparse.ArgumentParser(prog="cost")
     p.add_argument("transcript", nargs="?")
     p.add_argument("--session")
-    p.add_argument("--alias")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     if bool(a.transcript) == bool(a.session):
@@ -243,7 +202,6 @@ def cmd_cost(argv):
         die("cost: no transcript at %s" % a.transcript)
     paths = session_transcripts(a.session) if a.session else [a.transcript]
     m = measure(paths)
-    note_alias(a.alias, m["models"])
     if a.json:
         print(json.dumps(m, sort_keys=True))
         return
@@ -495,13 +453,6 @@ def lookup(repo, cls, size=None):
     return (bound[0] + ("/" + bound[1] if bound[1] else "")), "tier-table", None, beyond
 
 
-def is_stale(pair, entry):
-    if not entry or not entry.get("models") or "/" not in pair:
-        return False
-    now = read_json(os.path.join(ROUTING_DIR, "aliases.json"), {}).get(pair.split("/")[0])
-    return bool(now) and now not in entry["models"]
-
-
 def read_rows(record):
     """The record's rows; a line that does not read is skipped with a warning, never fatal."""
     rows = []
@@ -575,7 +526,7 @@ def cmd_pick(argv):
         die("pick: unknown class: %s (expected one of %s)" % (a.cls, ", ".join(sorted(CLASS_TIERS))))
     size = phase_size(a.files, a.lines)
     pair, source, entry, beyond = lookup(a.repo, a.cls, size)
-    line = "pair=%s source=%s%s" % (pair, source, " stale" if is_stale(pair, entry) else "")
+    line = "pair=%s source=%s" % (pair, source)
     if size:
         line += " size=%s%s" % (size, " beyond=" + beyond if beyond else "")
     print(line)
