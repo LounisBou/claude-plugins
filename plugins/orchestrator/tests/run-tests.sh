@@ -5515,6 +5515,7 @@ check "the succession files point at the succession brief's steps, leaves the ch
 # the runbook, the state file and the briefs directory read whole. At takeover it needs what is live,
 # which its predecessor writes into the brief; the rest is read by the section a task touches.
 SUCC1=$(awk '/^1\. /{f=1} /^2\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+succ_has() { tr '\n' ' ' < "$SUCC" | tr -s ' ' | grep -oF -- "$1" | wc -l | tr -d ' '; }
 succ1_has() { printf '%s' "$SUCC1" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "step 1 of the succession brief orders no whole read of the spec, plan, runbook, state file or briefs directory" "0|0|0|0|0" \
   "$(succ1_has '{{SPEC}}')|$(succ1_has '{{PLAN}}')|$(succ1_has '{{RUNBOOK}}')|$(succ1_has '{{STATE_FILE}}')|$(succ1_has '{{BRIEFS_DIR}}')"
@@ -5674,6 +5675,10 @@ check "the template reads Instructions, then Source, then Expected result, each 
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
 check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
   "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
+# A takeover reads what is live, not what is kept: the project's own checkouts, not every project's,
+# and the goals still open, not the met ones.
+check "step 2 reads the goals without their met rows, step 3 the checkouts of the project only" "1|1|0|0" \
+  "$(succ_has "status | grep -v '| met |'")|$(succ_has 'workspace.sh list {{PROJECT}}')|$(succ_has 'status`, read whole')|$(succ_has 'workspace.sh list`')"
 check "the Analysis names its commands: pr-status per pull request, never pr-get, and git per checkout" "1|1|1|1" \
   "$(printf '%s' "$SUCC_ANALYSIS" | grep -cF "the github tool's \`pr-status <n>\`, never \`pr-get\`, never a body or comments")|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git -C <dir> rev-parse --short HEAD origin/<branch>')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'git status -sb | head -1')|$(printf '%s' "$SUCC_ANALYSIS" | grep -cF 'ONE named command each')"
 check "the template carries the predecessor's tty and home server, the launcher and the scripts" "yes|yes|yes|yes" \

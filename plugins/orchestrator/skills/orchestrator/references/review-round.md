@@ -20,4 +20,4 @@ A round's wall clock is the cold start, the verification gate and the decision r
 - **Overlap the gate with the writing.** The gate is the longest step and depends only on the last commit: it starts the moment that commit lands, the agent writing its report, diffs and reply text while it runs, then stating the result as DONE with its exit code.
 - **Skip the assessment step for items already judged.** When you have already ruled, or when the item is mechanical and its precedent is named (a rename, a literal, an annotation copied from a cited file), the brief carries a DECIDED findings list and the agent applies it.
 
-None of this is bought by shortening the verification: the gate is the cheapest step to cut, the most expensive to have cut, and the phase brief's scoped-run rule binds this round too.
+None of this is bought by shortening the verification: the gate is the cheapest step to cut, the most expensive to have cut, and the scoped-run rule of `templates/agent-phase-brief.md` §4 binds this round too.
