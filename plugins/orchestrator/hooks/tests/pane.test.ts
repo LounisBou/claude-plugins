@@ -2022,8 +2022,8 @@ const settleHere = (id: string, answer = 'A, ship it') => ({ id, outcome: 'answe
 // An operator entry of an older release left in the round (the relay writes none now): the
 // round's wake withdraws it, by the coordinator, and tells its sender to ask it with ask — a
 // session here by a message, one on another machine by an answer on its own line — once; it is
-// never told nor due.
-test('an open operator entry of an older release is withdrawn by the wake, its sender told once to ask it again, never told nor woken for', async () => {
+// never due.
+test('an open operator entry of an older release is withdrawn by the wake, its sender told once to ask it again, never woken for', async () => {
   const { fx, tick } = await wakingCoordinator([])
   const sent = sends(fx)
   const here = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
@@ -2079,81 +2079,34 @@ test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not
   expect(await paneText('%4')).toContain('no agent running')
 })
 
-// --- each new question told to the coordinator's conversation ---------------------------------
+// --- a new question and the coordinator's conversation -----------------------------------------
 
-// The operator's ruling of 2026-11-04 (« B »): one line per new question in the coordinator's
-// conversation, pane open or not, read from the round alone.
-test('with the pane open, a new question is told to the coordinator once, one line naming its sender and what it blocks, without its text; a second reading tells nothing', async () => {
-  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa', question: '_Question_ : Ship the secret plan?', blocks: 'the release of phase 4' })
-  const urgent = entry('Orch: b', minutesAgo(2), { session: 'sb', urgent: true })
-  // From the round alone: a sender with no row is told too, and nothing waits on the pane's list.
-  const rowless = entry('Orch: c', minutesAgo(3), { session: 'sc' })
-  const answered = entry('Orch: d', minutesAgo(4), { session: 'sd', status: 'answered' })
-  const done = entry('Orch: e', minutesAgo(5), { session: 'se', kind: 'done', blocks: null })
-  const { fx, tick } = await wakingCoordinator([asked, urgent, rowless, answered, done])
-  fx.files.delete(`${SESSIONS}/sc`)
+// With the pane open a question goes to the pane and not to the coordinator's conversation: no
+// line is drawn there and no turn of its model starts.
+test('with the pane open, a new question puts nothing in the coordinator\'s conversation and wakes no turn, entered by the relay or asked with ask', async () => {
+  const relayed = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([relayed])
+  const plain = askedObject('sb', 'Orch: b', minutesAgo(2))
+  fx.files.set(`${ROUND}/${plain.id}.json`, JSON.stringify(plain) + '\n')
+  fx.files.set(`${SESSIONS}/sb`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: b' })) + '\n')
   expect(fx.files.has(PANE_FILE)).toBe(true)
   await tick()
-  expect(fx.notices.sort()).toEqual([
-    'Question pending from Orch: a — blocks: the release of phase 4',
-    'Question pending from Orch: b — blocks: phase 3 (urgent)',
-    'Question pending from Orch: c — blocks: phase 3',
-  ])
-  expect(fx.notices.some(line => line.includes('Ship the secret plan'))).toBe(false)
-  // Only the urgent one wakes the model's turn, as before: the told lines start none.
-  expect(fx.submitted.length).toBe(1)
   await tick()
-  expect(fx.notices.length).toBe(3)
-  // A reload, or a successor over the same state directory, tells none again; a new entry is told.
-  const later = entry('Orch: a', minutesAgo(0), { session: 'sa', blocks: 'phase 5' })
-  fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(askedOf(later)) + '\n')
-  await mounted(registerSupervision).handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  await tick()
-  expect(fx.notices.slice(3)).toEqual(['Question pending from Orch: a — blocks: phase 5'])
+  expect([fx.notices, fx.submitted]).toEqual([[], []])
 })
 
-test('with the pane closed each new question is told as well, beside its due wake', async () => {
+test('with the pane closed a new question reaches the coordinator\'s conversation by its due wake alone, once', async () => {
   const fresh = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   const { fx, tick } = await wakingCoordinator([fresh], { paneClosed: true })
   await tick()
-  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: phase 3'])
+  await tick()
+  expect(fx.notices).toEqual([])
   expect(fx.submitted.length).toBe(1)
 })
 
-test('a told line the host refuses is one log line, is told again at the next reading, and never holds the due wake', async () => {
-  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
-  const { fx, tick } = await wakingCoordinator([urgent])
-  const log = fx.dollar.ui.log
-  fx.dollar.ui.log = () => { throw new Error('no transcript') }
-  await tick()
-  expect(fx.submitted.length).toBe(1)
-  expect(fx.written.filter(l => l.endsWith('| supervision | round told: no transcript')).length).toBe(1)
-  fx.dollar.ui.log = log
-  await tick()
-  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: phase 3 (urgent)'])
-})
-
-// A host that refuses the second line of a reading: the first was drawn, and is never drawn again.
-test('a told line drawn before one the host refuses is recorded, and told once', async () => {
-  const first = entry('Orch: a', minutesAgo(2), { session: 'sa' })
-  const second = entry('Orch: b', minutesAgo(1), { session: 'sb' })
-  const { fx, tick } = await wakingCoordinator([first, second])
-  const log = fx.dollar.ui.log
-  let calls = 0
-  fx.dollar.ui.log = (line: string) => {
-    if (++calls === 2) throw new Error('no transcript')
-    return log(line)
-  }
-  await tick()
-  expect(fx.notices.length).toBe(1)
-  fx.dollar.ui.log = log
-  await tick()
-  expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: phase 3', 'Question pending from Orch: b — blocks: phase 3'])
-})
-
-// A question asked with `ask` reaches the coordinator as the relay's entries did: told once, and
-// due in its tab when urgent or with its pane closed, while its asker lives here.
-test('a question asked with ask is told to the coordinator once, and wakes it when urgent', async () => {
+// A question asked with `ask` reaches the coordinator as the relay's entries did: due in its tab
+// when urgent or with its pane closed, while its asker lives here.
+test('a question asked with ask wakes the coordinator once when urgent, and not once settled', async () => {
   const { fx, tick } = await wakingCoordinator([])
   const urgent = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true })
   const plain = askedObject('sb', 'Orch: b', minutesAgo(2))
@@ -2163,26 +2116,23 @@ test('a question asked with ask is told to the coordinator once, and wakes it wh
     fx.files.set(`${SESSIONS}/${asked.sender.session}`, JSON.stringify(row({ role: 'orchestrator', name })) + '\n')
   }
   await tick()
-  expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)', 'Question pending from Orch: b — blocks: acme/app#1'])
   expect(fx.submitted.length).toBe(1)
   expect(String(fx.submitted[0])).toContain('Orch: a')
   await tick()
-  expect(fx.notices.length).toBe(2)
   expect(fx.submitted.length).toBe(1)
+  expect(fx.notices).toEqual([])
 })
 
-test('a question asked with ask claimed by his prompt in its asker\'s tab is neither told nor woken for, until that turn\'s end gives it back', async () => {
+test('a question asked with ask claimed by his prompt in its asker\'s tab is not woken for, until that turn\'s end gives it back', async () => {
   const { fx, tick } = await wakingCoordinator([])
   const claimed = askedObject('sa', 'Orch: a', minutesAgo(1), { urgent: true, claimed: { typed: 'B', at: minutesAgo(0) } })
   fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(claimed) + '\n')
   fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: a' })) + '\n')
   await tick()
-  expect(fx.notices).toEqual([])
   expect(fx.submitted).toEqual([])
   const { claimed: _typed, ...given } = claimed
   fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(given) + '\n')
   await tick()
-  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: acme/app#1 (urgent)'])
   expect(fx.submitted.length).toBe(1)
 })
 

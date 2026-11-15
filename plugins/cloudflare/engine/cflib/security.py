@@ -79,7 +79,7 @@ def restore(ctx, saved):
 def register(subparsers):
     parser = subparsers.add_parser("security", help="the protections in place on a zone")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=security, read=True)
+    parser.set_defaults(handler=security)
 
     parser = subparsers.add_parser("security-level", help="set the security level")
     parser.add_argument("zone")

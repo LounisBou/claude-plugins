@@ -266,17 +266,17 @@ def register(subparsers):
     parser.add_argument("zone", help="zone name or id")
     parser.add_argument("--type")
     parser.add_argument("--name", help="relative to the zone, @ for the apex")
-    parser.set_defaults(handler=dns_list, read=True)
+    parser.set_defaults(handler=dns_list)
 
     parser = subparsers.add_parser("dns-get", help="the records of one name, or one record by id")
     parser.add_argument("zone")
     parser.add_argument("record", help="record id, or name")
     parser.add_argument("--type")
-    parser.set_defaults(handler=dns_get, read=True)
+    parser.set_defaults(handler=dns_get)
 
     parser = subparsers.add_parser("dns-export", help="the zone file of a zone (--json: every record)")
     parser.add_argument("zone")
-    parser.set_defaults(handler=dns_export, read=True)
+    parser.set_defaults(handler=dns_export)
 
     parser = subparsers.add_parser("dns-create", help="create a record")
     parser.add_argument("zone")

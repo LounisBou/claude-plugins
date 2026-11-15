@@ -158,7 +158,7 @@ def register(subparsers):
     parser = subparsers.add_parser("settings", help="the zone's settings, or one of them")
     parser.add_argument("zone", help="zone name or id")
     parser.add_argument("setting", nargs="?", help="a setting id (ssl, min_tls_version, tls_1_3…)")
-    parser.set_defaults(handler=settings, read=True)
+    parser.set_defaults(handler=settings)
 
     parser = subparsers.add_parser("setting-set", help="change a zone setting")
     parser.add_argument("zone")
