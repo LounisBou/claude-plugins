@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  readyRows, readyRowsLine, statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, withArchived, withLine, withoutLines, type LedgerLine,
+  blockerFallen, readyRows, readyRowsLine, statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, untilOf, withArchived, withLine, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -183,6 +183,34 @@ describe('an unattended pull request', () => {
     it('reads the rows of every record', () => {
       const rows = readyRows({ texts: [rowText(), rowText({ id: 3, label: 'OTHERWORK: x' })], lines: [], live: new Set() })
       assert.deepEqual(rows.map(r => r.id), [12, 3])
+    })
+
+    it('a moment blocker is named once its until time has passed, and not before; a measure is never named', () => {
+      const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+      const at = (blocker: string, now: number) => readyRows({ texts: [rowText({ blocker })], lines: [], live: new Set(), now }).length
+      assert.equal(at('until 2026-11-15T11:00:00Z', MOMENT - 1), 0, 'one second before')
+      assert.equal(at('until 2026-11-15T11:00:00Z', MOMENT), 1, 'at the instant')
+      assert.equal(at('until 2026-11-15T11:00:00Z', MOMENT + 3_600_000), 1, 'after')
+      assert.equal(at('measure dashboard p95 under 300 ms', MOMENT + 3_600_000), 0, 'a measure never falls by itself')
+      assert.equal(at('until 2026-02-30T00:00:00Z', MOMENT + 3_600_000), 0, 'a time that does not exist is no moment')
+      assert.equal(at('PR acme/app#7 merged', MOMENT + 3_600_000), 0, 'an artifact form is the takeover\'s to check')
+    })
+
+    it('blockerFallen: none always; until by the clock; measure and the artifact forms never on the clock', () => {
+      const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+      assert.equal(blockerFallen('none', 0), true)
+      assert.equal(blockerFallen('until 2026-11-15T11:00:00Z', MOMENT), true)
+      assert.equal(blockerFallen('until 2026-11-15T11:00:00Z', MOMENT - 1), false)
+      assert.equal(blockerFallen('measure 3 runs', Number.MAX_SAFE_INTEGER), false)
+      assert.equal(blockerFallen('row 4 closed', Number.MAX_SAFE_INTEGER), false)
+      assert.equal(blockerFallen(undefined, Number.MAX_SAFE_INTEGER), false)
+    })
+
+    it('untilOf reads the one form, to the second with Z, and nothing else', () => {
+      assert.equal(untilOf('until 2026-11-15T11:00:00Z'), Date.parse('2026-11-15T11:00:00Z'))
+      for (const bad of ['until 2026-11-15T11:00Z', 'until 2026-11-15T11:00:00.000Z', 'until 2026-11-15T11:00:00+01:00', 'until 2026-02-30T00:00:00Z', 'until soon', 'none']) {
+        assert.equal(untilOf(bad), undefined, bad)
+      }
     })
 
     it('leaves out the ledger lines, broken lines and rows with no number', () => {

@@ -14,7 +14,7 @@ import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
 import { prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
-import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
+import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, untilOf, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
   'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|blocker|note|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
@@ -23,12 +23,16 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'blocker', 'note', 'escaped', 'cost'])
 
 /**
- * What an open row waits on before it can start, in one of four forms, each checked on its artifact
- * by the takeover (succession.ts): nothing, a pull request merged, another row closed, the release
- * installed on this machine.
+ * What an open row waits on before it can start: nothing; a pull request merged, another row closed,
+ * the release installed on this machine (each checked on its artifact by the takeover, succession.ts);
+ * a moment, `until <ISO UTC time>`, that falls by the clock; or a measure, `measure <what>`, that never
+ * falls by itself: the orchestrator sets it to `none` or closes the row. The `until` time is checked by
+ * `untilOf` (core), so a time that does not exist is refused here.
  */
-export const BLOCKER = /^(none|PR [A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+ merged|row [0-9]+ closed|release installed)$/
-const BLOCKER_FORMS = '`none`, `PR <owner/repo>#<n> merged`, `row <n> closed` or `release installed`'
+export const BLOCKER = /^(none|PR [A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+ merged|row [0-9]+ closed|release installed|until \S+|measure \S[^\n]*)$/
+const BLOCKER_FORMS = '`none`, `PR <owner/repo>#<n> merged`, `row <n> closed`, `release installed`, `until <ISO UTC time>` or `measure <what>`'
+// The blocker as the record takes it: a form of BLOCKER, and for `until` a time that exists.
+const blockerValid = (blocker: string): boolean => (blocker.startsWith('until ') ? BLOCKER.test(blocker) && untilOf(blocker) !== undefined : BLOCKER.test(blocker))
 // The writes of the pull request ledger (core's pr-ledger.ts): lines of the record that are no rows.
 const LEDGER_WRITES = new Set(['pr', 'pr-archive'])
 const GOAL_WRITES = new Set(['init', 'plan', 'met', 'rule-out', 'defer', 'reopen'])
@@ -538,7 +542,7 @@ async function open(ctx: Context, args: readonly string[]): Promise<void> {
   if (effort !== '' && !EFFORTS.includes(effort)) die(ctx, `open: unknown effort: ${effort} (expected low, medium, high, xhigh or max)`)
   if (effort !== '' && model === '') die(ctx, 'open: --effort needs --model')
   if (explore && model === '') die(ctx, 'open: --explore needs --model')
-  if (blocker !== undefined && !BLOCKER.test(blocker)) die(ctx, `open: --blocker takes ${BLOCKER_FORMS}, got: ${blocker}`)
+  if (blocker !== undefined && !blockerValid(blocker)) die(ctx, `open: --blocker takes ${BLOCKER_FORMS}, got: ${blocker}`)
   // The spec's goals are written before the first dispatch, or done is measured against the plan alone.
   if (!isFile(ctx.goalsFile)) die(ctx, `open: no goals.md beside ${ctx.record}: write the spec's goals first, dispatch-record.sh goals ${ctx.record} init --spec <path>|none`)
   const unplanned = (await ctx.deps.run(['python3', ctx.deps.goalsPy, 'unplanned', ctx.goalsFile])).stdout.split('\n').filter(g => g !== '')
@@ -1012,7 +1016,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     if (args.length !== 1) die(ctx, cmd === 'blocker' ? `blocker: give the row's blocker, one of ${BLOCKER_FORMS}` : 'note: give the note, one argument ("" removes it)')
     // One line: the note is printed on its row's line of `summary --open` and of the takeover.
     const value = (args[0] ?? '').replace(/\s+/g, ' ').trim()
-    if (cmd === 'blocker' && !BLOCKER.test(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
+    if (cmd === 'blocker' && !blockerValid(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
     return rewrite(ctx, id, row => {
       if (cmd === 'note' && value === '') delete row['note']
       else row[cmd] = value
