@@ -79,6 +79,8 @@ type Nouns = {
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
+  // The merged settings, as far as a module reads them.
+  settings: { read(): Promise<{ readonly enabledPlugins?: Readonly<Record<string, unknown>> } | undefined> }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }

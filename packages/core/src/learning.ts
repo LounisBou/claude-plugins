@@ -729,11 +729,12 @@ export function moved(state: CandidateState, to: { readonly state: CandidateStat
 
 /**
  * Whether the retrospective judges `candidate`: one with no state yet, or one rejected or left
- * unresolved whose events have since reached `again_factor` times the count it was judged at. A
- * candidate proposed, merged or ineffective is in flight and is not judged twice.
+ * unresolved whose events have since reached `again_factor` times the count it was judged at, or
+ * one whose remedy proved ineffective (reopened). A candidate proposed or merged is in flight and is
+ * not judged twice.
  */
 export function isDue(candidate: Candidate, state: CandidateState | undefined): boolean {
-  if (state === undefined) return true
+  if (state === undefined || state.state === 'ineffective') return true
   if (state.state !== 'rejected' && state.state !== 'unresolved') return false
   return candidate.events.length >= stateContract.again_factor * state.candidate.events.length
 }
@@ -827,6 +828,75 @@ export function guardPhase(state: CandidateState, verdicts: readonly WouldBeVerd
 /** What a learned guard does with a call it would refuse: in warn it lets it through and leaves an escape, enforced it refuses and leaves a refusal. */
 export function learnedDecision(phase: GuardPhase, refusal: string): { readonly deny: string | undefined; readonly kind: 'escape' | 'refusal' } {
   return phase === 'enforce' ? { deny: refusal, kind: 'refusal' } : { deny: undefined, kind: 'escape' }
+}
+
+/** What the forge says of a pull request: when it merged, null while it has not, and the times its commits were made. */
+export interface PrFacts {
+  readonly mergedAt: string | null
+  readonly commits: readonly string[]
+}
+
+/** The outcome of a pull request after a would-be refusal at `refusedAt`: corrected when a commit came after it and, once merged, before the merge. */
+export function prOutcomeOf(facts: PrFacts, refusedAt: string): PrOutcome {
+  const after = Date.parse(refusedAt)
+  const until = facts.mergedAt === null ? Infinity : Date.parse(facts.mergedAt)
+  return { merged: facts.mergedAt !== null, corrected: facts.commits.some(at => Date.parse(at) > after && Date.parse(at) <= until) }
+}
+
+/** Whether a guard's would-be refusals proved it wrong: enough decided, and too few of them right to enforce it. */
+export function provedWrong(tally: GuardTally): boolean {
+  return tally.right + tally.wrong >= LEARNED_GUARD_CONTRACT.min_decided && !isEnforceable(tally)
+}
+
+// ----- forget and check -----
+//
+// A remedy is checked after it lands: over the window after its pull request merged, its candidate's
+// signature must fall to half of what it was over the window before, or the candidate reopens
+// (`ineffective`, judged again) and the remedy becomes a removal candidate. A learned guard with no
+// would-be refusal and no refusal under its code over two windows is a removal candidate too. Both
+// are answered once the windows have passed; before, they wait. A learned guard's events are under
+// its candidate's code. A removal is a pull request, never an act of this code.
+
+export const FORGET_CONTRACT = {
+  // The share of the window before that the window after may keep.
+  fall_ratio: 0.5,
+  // The windows a learned guard may stay silent before it is proposed for removal.
+  silent_windows: 2,
+} as const
+
+const WINDOW_MS = LEARNING_WINDOW_DAYS * 86_400_000
+
+/** What the window after a remedy's merge says of it: still running, held, or ineffective, with the counts of both windows. */
+export type AfterLanding =
+  | { readonly verdict: 'pending'; readonly due: string }
+  | { readonly verdict: 'held' | 'ineffective'; readonly before: number; readonly after: number }
+
+/**
+ * The check of a merged remedy at `now`: the events of its candidate's signature that count toward a
+ * cluster, over the window before the merge (the state's time) and the window after it. Undefined
+ * for a state that is not merged.
+ */
+export function afterLanding(state: CandidateState, events: readonly LearningEvent[], now: number): AfterLanding | undefined {
+  if (state.state !== 'merged') return undefined
+  const merged = Date.parse(state.at)
+  if (now < merged + WINDOW_MS) return { verdict: 'pending', due: `${new Date(merged + WINDOW_MS).toISOString().slice(0, 19)}Z` }
+  let before = 0
+  let after = 0
+  for (const event of events) {
+    if (!countsInCluster(event) || signatureOf(event) !== state.signature) continue
+    const at = Date.parse(event.at)
+    if (at >= merged - WINDOW_MS && at < merged) before++
+    else if (at >= merged && at < merged + WINDOW_MS) after++
+  }
+  return { verdict: after <= FORGET_CONTRACT.fall_ratio * before ? 'held' : 'ineffective', before, after }
+}
+
+/** Whether a merged learned guard is silent: two windows past its merge, with no event under its code in the last two windows. */
+export function isSilentGuard(state: CandidateState, events: readonly LearningEvent[], now: number): boolean {
+  if (state.state !== 'merged' || state.remedy?.rung !== 'guard') return false
+  const span = FORGET_CONTRACT.silent_windows * WINDOW_MS
+  if (now < Date.parse(state.at) + span) return false
+  return !events.some(event => event.source.code === state.candidate.code && Date.parse(event.at) >= now - span)
 }
 
 // ----- the retrospective's start -----
