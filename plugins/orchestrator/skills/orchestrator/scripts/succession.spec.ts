@@ -158,6 +158,9 @@ test('a takeover in a plain tab ends on the move into the home session; one in a
   assert.equal(home.run('--tty', '/dev/ttys009'), 0)
   assert.ok(home.text().includes(`${STAY_TURN}\n4. Dispatch every open row`))
   assert.ok(plain.text().includes('\n4. Your next turn dispatches every open row'))
+  assert.ok(plain.text().includes('the announcement; the turn ended.'))
+  assert.ok(home.text().includes('the announcement; the open rows dispatched, or the wait declared.'))
+  for (const print of [plain.text(), home.text()]) assert.ok(!/\{\{[A-Z_]+\}\}/.test(print))
   assert.ok(!home.text().includes('home session, as the orchestrator start command does'))
   // Read from where the session runs: a tmux pane, or any system but macOS, never moves.
   assert.equal(movesHome({ TMUX: '/tmp/tmux-501/orch-x,1,0' }, 'darwin'), false)

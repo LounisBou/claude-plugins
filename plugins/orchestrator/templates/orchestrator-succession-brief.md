@@ -43,4 +43,4 @@ Printed by `succession.sh takeover` from the dispatch record, the to-do list, th
 
 # Expected result
 
-« takeover confirmed » sent; the predecessor closed; the announcement; the turn ended.
+« takeover confirmed » sent; the predecessor closed; the announcement; {{TURN_RESULT}}.
