@@ -3956,12 +3956,15 @@ def cmd_home(args):
     """Move a running orchestrator into a home session of its own, in its own place: a home
     server whose window 0 resumes the same conversation once the session has ended where it
     runs now, and a tab right of the caller's that shows it. Run by the hooks module at the
-    end of the turn that named the session; prints `moved: <server>` (the module then ends
-    the session, and window 0 closes the old tab once the session is gone) or `stay: <why>`.
-    Nothing is ended here, and any failure leaves the session running where it is."""
+    end of the turn that named the session, or that ran a successor's takeover; prints
+    `moved: <server>` (the module then ends the session, and window 0 closes the old tab once
+    the session is gone) or `stay: <why>`. Without --name, the name is the session's own, read
+    on its tty: a successor the launcher named has no rename to give one. Nothing is ended
+    here, and any failure leaves the session running where it is."""
     if not args.session:
         die("home: --session is required")
-    args.name = current_name(args.name)
+    own_name = args.name or session_name_on(self_tty() or "") or ""
+    args.name = current_name("" if own_name == UNREADABLE_NAME else own_name)
     if not args.name.startswith(ORCH_ROLE + " ") or not TITLE_SHAPE.match(args.name):
         print("stay: only an orchestrator moves into a home session, and this session is "
               "named '%s'" % args.name[:40])

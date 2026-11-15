@@ -8258,6 +8258,13 @@ check "window 0 waits for the old process, runs the resume on the session's curr
   "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
   "$(sfield "$out" home_launch)"
 check "and the dry run touched no tmux" "" "$(hcalls)"
+# A successor the launcher named passes no --name: the name is the session's own, read on its tty.
+printf '/dev/ttys900 999991 /opt/x/host --resume x --name Orch: conv\n' > "$WORK/home-ps"
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_PS_TABLE="$WORK/home-ps" bash "$AGENT" home --session "$HSID" --prompt "Go on" 2>&1)
+check "a move given no name takes the session's own, read on its tty" "Orch: conv" "$(sfield "$out" home_window0)"
+printf '/dev/ttys900 999991 /opt/x/host --resume x --name Agent: conv\n' > "$WORK/home-ps"
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_PS_TABLE="$WORK/home-ps" bash "$AGENT" home --session "$HSID" --prompt "Go on" 2>&1)
+check "and a session whose own name is no orchestrator's stays where it is" "1" "$(printf '%s' "$out" | grep -c '^stay: only an orchestrator')"
 mv "$ORCHESTRATOR_PROJECTS_DIR/p/$HSID.jsonl" "$WORK/hsid-transcript.jsonl"
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
 check "a session whose pair cannot be read stays where it is, and says why" "1|0" \

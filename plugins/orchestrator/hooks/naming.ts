@@ -9,7 +9,7 @@
 // turn's completion runs the rename — the same transcript entry a typed /rename
 // writes, the one every name walk reads.
 import { launcherOf } from '../core/orchestration.ts'
-import { messageOf, reasonOf, type Host, type On } from './host.ts'
+import { answerOf, messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
 import { observed, RENAME_PENDING_CODE } from './observe.ts'
@@ -87,6 +87,17 @@ export const heldForName = (name: string) =>
 // waits on the operator for its next turn.
 export const resumeText = (name: string) => `Your name "${name}" is taken. Continue where you left off.`
 
+// A successor's takeover (`succession.sh takeover`), run by the main thread: a session the
+// launcher opened has no rename, so the end of the turn that took over is the one that moves it
+// into its home session, as the naming turn moves an orchestrator the operator started.
+const TAKEOVER = /\bsuccession\.(?:sh|ts)["']?[ \t]+takeover(?=\s|$)/
+export function runsTakeover(command: string): boolean {
+  return TAKEOVER.test(command)
+}
+
+// The prompt window 0 resumes a successor with once its takeover's turn moved it.
+export const TAKEN_OVER_TEXT = 'Your takeover is done and this session now runs in its home session. Continue where you left off.'
+
 export function checkName(raw: unknown): { name: string } | { refused: string } {
   const name = typeof raw === 'string' ? raw : ''
   const role = parseSessionName(name)?.role
@@ -99,6 +110,7 @@ export function register(on: On<Held>): void {
   // second call in the same turn replaces the first — the last word stands.
   let pending: string | null = null
   let ending = false
+  let tookOver = false
 
   // The tool is declared at every start: register.ts owns session.start's
   // no-matcher registration, so this one carries the empty matcher. Listed with
@@ -171,6 +183,19 @@ export function register(on: On<Held>): void {
     })
   }
 
+  // A takeover that ran: its turn's end moves the session into its home session.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const out = await next(e)
+    if (!e.agentId && runsTakeover(String(e['command'] ?? ''))) {
+      const answer = answerOf(out)
+      if (!answer.isError && answer.deny === undefined) tookOver = true
+    }
+    return out
+  }).catch(async ($, e, next) => {
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   on('tool.call', { tool: `mcp__orchestrator__${END_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
     if (await $.env.get('ORCHESTRATOR_SPAWNED')) {
@@ -188,6 +213,8 @@ export function register(on: On<Held>): void {
     // A subagent's turn completes inside the main one: what the main loop asked waits
     // for the main loop's own completion, never run while the turn still waits on it.
     if (e.agentId) return next(e)
+    const homeAfterTakeover = tookOver && !e.isAborted
+    tookOver = false
     if (e.isAborted) {
       // The operator stopped the turn that asked: neither the rename nor the end runs.
       if (pending !== null || ending) await logLine($, 'naming', 'the turn was interrupted: the rename or end it asked is dropped')
@@ -207,7 +234,7 @@ export function register(on: On<Held>): void {
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
-      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await movedHome($, name)) {
+      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await movedHome($, name, resumeText(name))) {
         $.command.run({ command: 'exit' })
           .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)
@@ -219,6 +246,14 @@ export function register(on: On<Held>): void {
         $.prompt.submit({ text: resumeText(name) })
           .catch((err: unknown) => logLine($, 'naming', `the resume under "${name}" failed: ${reasonOf(err)}`))
       }
+    }
+    // A successor that took over in a plain tab: the same move, under the name the launcher gave
+    // it, which the launcher reads on its tty. Its agents in tabs stay there; its spawns from
+    // window 0 are windows.
+    else if (homeAfterTakeover && !ending && await movedHome($, '', TAKEN_OVER_TEXT)) {
+      $.command.run({ command: 'exit' })
+        .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
+      return next(e)
     }
     if (ending) {
       ending = false
@@ -236,17 +271,18 @@ export function register(on: On<Held>): void {
 // The bound of the move: the launcher waits for the new tab's client, its spawn timeout.
 export const HOME_MOVE_MS = 90_000
 
-// The launcher's move of this session into a home session of its own, as argv.
-export function homeArgv(root: string, sessionId: string, name: string): string[] {
-  return [launcherOf(root), 'home', '--session', sessionId, '--name', name, '--prompt', resumeText(name)]
+// The launcher's move of this session into a home session of its own, as argv. No name: the
+// launcher reads the session's own on its tty.
+export function homeArgv(root: string, sessionId: string, name: string, prompt = resumeText(name)): string[] {
+  return [launcherOf(root), 'home', '--session', sessionId, ...(name === '' ? [] : ['--name', name]), '--prompt', prompt]
 }
 
 // Whether the launcher moved this session (`moved: …` on its first line). A session it
 // keeps (`stay: …`) and a move that failed both stay where they are; a failure is logged.
-async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name: string): Promise<boolean> {
+async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name: string, prompt: string): Promise<boolean> {
   try {
     const sessionId = await $.session.id()
-    const done = await $.process.run(homeArgv($.plugin.root, sessionId, name), { timeoutMs: HOME_MOVE_MS })
+    const done = await $.process.run(homeArgv($.plugin.root, sessionId, name, prompt), { timeoutMs: HOME_MOVE_MS })
     const first = String(done?.stdout ?? '').split('\n')[0] ?? ''
     if (done?.exitCode === 0 && first.startsWith('moved: ')) {
       await logLine($, 'naming', `moved into its home session: ${first.slice('moved: '.length)}`)

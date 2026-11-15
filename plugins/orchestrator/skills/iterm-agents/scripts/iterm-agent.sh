@@ -54,8 +54,9 @@
 #     (a model alone, a tier and --inherit-model are refused), remote control on,
 #     no chain. `--open` comes right after `spawn`: that is the form the rule every
 #     `install.sh` run writes names
-#   iterm-agent.sh home --session <id> --name "Orch: <subject>" [--prompt <text>]
-#     run by the hooks module at the end of an orchestrator's naming turn: a home server of
+#   iterm-agent.sh home --session <id> [--name "Orch: <subject>"] [--prompt <text>]
+#     run by the hooks module at the end of an orchestrator's naming turn, or of a successor's
+#     takeover turn (no --name: the session's own, read on its tty): a home server of
 #     its own (-L orch-<id>, -f the plugin's tmux/home.conf) whose window 0 resumes the same
 #     session once it has ended in its tab, and a tab right of that one showing it. Prints
 #     `moved: …` or `stay: <why>`; nothing is ended, and a failure leaves the session in place
