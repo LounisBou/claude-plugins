@@ -30,7 +30,18 @@ export function verdictLine(v: Verdict): string {
   return `${repo}#${v.pr} ${v.head.slice(0, 7)} — ${v.verdict} — blocking: ${blocking} — report: ${v.report ?? 'none'}`
 }
 
-const REPORT_PATH = /\breport:\s*`?(\/[^\s`,;]+)/g
+const VERDICT_HEAD = /^`?([\w.-]+(?:\/[\w.-]+)?)#(\d+) ([0-9a-f]{7,40})`?\s+(?:—|–|--|-)\s/
+
+/** The pull request and head the text's last verdict line names, read as verdictLine writes it; null for none. */
+export function verdictOf(text: string): { repo: string; pr: number; head: string } | null {
+  for (const line of text.split('\n').reverse()) {
+    const found = VERDICT_HEAD.exec(line.trim())
+    if (found) return { repo: found[1] ?? '', pr: Number(found[2]), head: found[3] ?? '' }
+  }
+  return null
+}
+
+const REPORT_PATH =/\breport:\s*`?(\/[^\s`,;]+)/g
 
 /** The absolute path after the text's last `report:`, its closing punctuation dropped; null for none. */
 export function reportPathOf(text: string): string | null {
