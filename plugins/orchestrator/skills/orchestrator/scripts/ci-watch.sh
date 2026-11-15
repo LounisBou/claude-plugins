@@ -96,8 +96,8 @@
 #     (an unrelated flake, infrastructure), re-run the failed jobs once with
 #     `gh run rerun <run-id> --failed`, after naming the failing job's cause in one line, read in
 #     its log, and re-arm the watch. Only a second red, or a red in what the pull request touches,
-#     is reported to the operator in one line, and you dispatch the correction at once, to a fresh
-#     session (the implementer was stood down at its delivery).
+#     is reported to the operator in one line, and you send the correction at once to the
+#     implementer, which stays until its pull request merges.
 #   moved: re-arm on the new head.
 #   no-checks: ready on the suite's evidence; with auto-merge enabled, no merge came within the
 #     bound either. `conflicting` is the exception: never ready, rebase the branch onto its base

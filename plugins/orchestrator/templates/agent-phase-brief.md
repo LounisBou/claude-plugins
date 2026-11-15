@@ -74,7 +74,7 @@ Non-goals:
 - Draft PR, title `{{PR_TITLE}}`, base `{{BASE_BRANCH}}`, opened with the github tool's `pr-create --draft` (it labels `Not Ready`; opened another way, follow with `pr-readiness <n> not-ready`). Never `Ready`: the github ready gate's (`method:lifecycle`, « Done means ready »).
 - Description: {{PR_DESCRIPTION_SHAPE}} — its codified sections and nothing more: nothing about E2E. The « Self-review » section (§4) goes in too. Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.
 - Figures (counts, sizes, timings) are written once, on the final head.
-- The delivery ends at the push: the suite green locally on the final head, pushed, the pull request opened, then the final report, then the stand-down. You never watch the pull request's checks, never poll them and never wait for the merge: the orchestrator owns the CI watch, and a check that fails after your delivery is corrected by a fresh session. A project whose method opts into auto-merge says here how the pull request is delivered.
+- The delivery ends at the push: the suite green locally on the final head, pushed, the pull request opened, then the final report. You stay until it merges, correcting only the kept findings the orchestrator sends you. You never watch or poll the pull request's checks: the orchestrator owns the CI watch. A project whose method opts into auto-merge says here how the pull request is delivered.
 
 ## 8. Resource envelope
 

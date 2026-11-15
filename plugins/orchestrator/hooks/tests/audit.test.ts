@@ -201,10 +201,10 @@ test('a turn that declared nothing starts no wait; the session\'s end ends the o
   m.declarations.turnStarted()
   await m.on('turn.complete', fx.dollar, {}, {})
   expect(fx.journal()).toEqual([])
-  m.declarations.declare({ kind: 'tool', blocks: 'ci-watch.sh 12' })
+  m.declarations.declare({ kind: 'deferred', blocks: '1 items' })
   await m.on('turn.complete', fx.dollar, {}, {})
   await m.on('session.end', fx.dollar, { sessionId: 'sess-1' })
-  expect(fx.journal().map(e => [e.fact.wait, e.fact.edge, e.fact.on])).toEqual([['tool', 'start', 'tool'], ['tool', 'end', 'tool']])
+  expect(fx.journal().map(e => [e.fact.wait, e.fact.edge, e.fact.on])).toEqual([['deferred', 'start', 'operator'], ['deferred', 'end', 'operator']])
 })
 
 test('a journal that cannot be written is one line in the log, and the answer stands', async () => {
