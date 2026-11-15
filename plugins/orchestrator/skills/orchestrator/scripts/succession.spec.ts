@@ -78,16 +78,16 @@ test('live names the open pull requests from the ledger, each in its own reposit
   const w = world({
     rows: [
       JSON.stringify({ id: 2, label: 'API: merge acme/app#261 and #262 (merged)', state: 'open' }),
-      ledger('acme/plugins', 257, 'Agent: lean'),
-      ledger('acme/plugins', 268, 'Agent: fix-268'),
-      JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/plugins', pr: 270, status: 'waiting', on: 'CI', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' }),
+      ledger('acme/kit', 41, 'Agent: alpha'),
+      ledger('acme/kit', 42, 'Agent: beta'),
+      JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/kit', pr: 43, status: 'waiting', on: 'CI', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' }),
     ].join('\n') + '\n',
     // The deck lists bare numbers it files under the session's own repository, merged ones among them.
     deck: { version: 3, orchestrators: [{ name: NAME, machine: null, prs: ['acme/app#261', 'acme/app#262', 'acme/app#263'], agents: [{ name: 'Agent: api' }] }] },
   })
   assert.equal(w.run('live', '--next', 'x'), 0)
-  assert.match(w.read(), /- Pull requests open \(number, head, where each stands\): acme\/plugins#257 en cours \(agent Agent: lean\); acme\/plugins#268 en cours \(agent Agent: fix-268\); acme\/plugins#270 attend CI depuis 2026-11-14T09:00Z\n/)
-  assert.ok(!w.read().includes('acme/app#26'.concat('3')) && !/- Pull requests open[^\n]*acme\/app#/.test(w.read()))
+  assert.match(w.read(), /- Pull requests open \(number, head, where each stands\): acme\/kit#41 en cours \(agent Agent: alpha\); acme\/kit#42 en cours \(agent Agent: beta\); acme\/kit#43 attend CI depuis 2026-11-14T09:00Z\n/)
+  assert.ok(!/- Pull requests open[^\n]*acme\/app#/.test(w.read()))
   assert.match(w.out.join(''), / prs=3 /)
   assert.equal(w.run('check'), 0)
 })

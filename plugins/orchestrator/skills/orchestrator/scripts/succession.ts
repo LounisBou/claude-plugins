@@ -185,8 +185,9 @@ export function readOpen(request: Request, env: Env): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
   const rows = parseRecord(recordText).filter(row => row['state'] === 'open')
-  // The ledger names each open pull request with its own repository: the deck lists numbers whose
-  // repository it cannot tell, and a merged one lingers there (a ledger line is archived at its merge).
+  // The ledger names each pull request it attends with its own repository: the deck lists numbers
+  // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
+  // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
   const prs = ledgerLines(recordText).map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const { agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
   const round = join(state, 'round')
