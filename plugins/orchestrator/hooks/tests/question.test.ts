@@ -74,7 +74,7 @@ function world(options: Options = {}) {
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
         if (options.walk !== undefined && argv[0] === 'sh' && String(argv[2]).startsWith('ps -o ppid=')) return { exitCode: 0, stdout: '1 ttys001\n', stderr: '' }
-        if (options.walk !== undefined && argv[0] === 'ps') return { exitCode: 0, stdout: '4242 claude --resume 043603d9 --name Orch: launched\n', stderr: '' }
+        if (options.walk !== undefined && argv[0] === 'ps') return { exitCode: 0, stdout: '4242 host --resume 043603d9 --name Orch: launched\n', stderr: '' }
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'box-1.local\n', stderr: '' }
         if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
