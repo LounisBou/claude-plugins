@@ -15,7 +15,7 @@
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
-import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../core/orchestration.ts'
+import { ROUND_ARCHIVE_DIR, ROUND_DIR, roundEntryPath } from '../core/orchestration.ts'
 import { answerEvent, answerGiven, subjectOf } from '../core/learning.ts'
 import { write, type Memory } from './observe.ts'
 import { PLUGIN } from './audit-events.ts'
@@ -432,7 +432,7 @@ async function closeOwnAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   try {
     // Its asker closes it: nothing is sent, so the closer's name is never read.
     const me: Me = { session: await $.session.id(), name: '', role: '' }
-    const closed = await closeRound($, `${await stateDir($)}/${ROUND_DIR}/${id}.json`, current => {
+    const closed = await closeRound($, roundEntryPath(await stateDir($), id), current => {
       const fresh = current === undefined ? null : parseAsked(current)
       return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh)
     }, me, at)
@@ -572,7 +572,7 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const entry: Asked = record?.answer
     ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
     : made
-  const path = `${await stateDir($)}/${ROUND_DIR}/${entry.id}.json`
+  const path = roundEntryPath(await stateDir($), entry.id)
   let taken = false
   try {
     await updateOver(storeIo($), path, current => {
@@ -604,7 +604,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const who = await whoAmI($)
   if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once the host names it.')
   const me: Me = { ...who, session: await $.session.id() }
-  const path = `${await stateDir($)}/${ROUND_DIR}/${request.id}.json`
+  const path = roundEntryPath(await stateDir($), request.id)
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
@@ -689,7 +689,7 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
   if (said === '') return null
   const who = await whoAmI($)
   const me: Me = { session: await $.session.id(), name: who?.name ?? "the coordinator's pane", role: who?.role ?? 'coordinator' }
-  const path = `${await stateDir($)}/${ROUND_DIR}/${id}.json`
+  const path = roundEntryPath(await stateDir($), id)
   const at = now.toISOString()
   try {
     const closed = await closeRound($, path, current => {

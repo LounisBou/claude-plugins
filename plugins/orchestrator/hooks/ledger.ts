@@ -5,7 +5,11 @@
 // creating session belongs to: the session's own when it is an orchestrator's, its orchestrator's
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
-import { ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
+// A pull request an orchestrator merges through the github tool (`pr-merge`) is read against the
+// open rows of its own records: those whose blocker or note names it wait on it, and the answer
+// carries one line naming them, so the orchestrator relays the merge to their agents.
+import { prRefsOf } from '../core/learning.ts'
+import { isLedgerMarked, ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -116,9 +120,99 @@ export async function writeLine($: Held, pr: { repo: string; pr: number }, now: 
     current === undefined || held(current) ? undefined : withLine(current, ledgerLineOf({ repo: pr.repo, pr: pr.pr, status: 'working', agent }, now)))
 }
 
-// The call goes through; its answer is read for a creation and the line written within the bound.
+// The pull request a merge through the github tool merged: its number, and its repository when the
+// call names one; null for any other call or a merge that did not go through.
+export function mergedPr(e: Readonly<Record<string, unknown>>, result: unknown): { repo: string | null; pr: number } | null {
+  if (e['tool'] !== 'mcp__github__gh' || e['command'] !== 'pr-merge' || answerText(result) === null) return null
+  const args = typeof e['args'] === 'object' && e['args'] !== null ? e['args'] as Record<string, unknown> : {}
+  const pr = Number(String(args['pr'] ?? '').replace('#', ''))
+  const repo = typeof e['repo'] === 'string' && e['repo'].includes('/') ? e['repo'].trim().toLowerCase() : null
+  return Number.isInteger(pr) && pr >= 1 ? { repo, pr } : null
+}
+
+// Whether a reference (`name#7`, `owner/name#7`) names the merged pull request; with no repository
+// known, its number alone decides.
+function namesMerged(ref: string, merged: { repo: string | null; pr: number }): boolean {
+  const [where = '', number = ''] = ref.toLowerCase().split('#')
+  if (Number(number) !== merged.pr) return false
+  if (merged.repo === null) return true
+  return where.includes('/') ? where === merged.repo : where === merged.repo.split('/')[1]
+}
+
+// The open rows of a record's text that wait on the merged pull request: their blocker or their
+// note names it. A row the operator deferred has no agent to tell.
+export function waitingRows(text: string, merged: { repo: string | null; pr: number }): { id: number; label: string; agent: string | null }[] {
+  const found: { id: number; label: string; agent: string | null }[] = []
+  for (const line of text.split('\n')) {
+    let row: unknown
+    try {
+      row = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (typeof row !== 'object' || row === null || isLedgerMarked(row)) continue
+    const { id, label, state, blocker, note, deferred } = row as Record<string, unknown>
+    if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
+    const said = [blocker, note].filter((part): part is string => typeof part === 'string').join(' ')
+    if (!prRefsOf(said).some(ref => namesMerged(ref, merged))) continue
+    const agent = typeof note === 'string' ? /\bAgent: [^,;()«»]+/.exec(note)?.[0].trim() ?? null : null
+    found.push({ id, label: typeof label === 'string' ? label : '', agent })
+  }
+  return found
+}
+
+// The line the merge's answer carries, or null when no open row waits on it.
+export function mergeRelayLine(merged: { repo: string | null; pr: number }, rows: readonly { id: number; label: string; agent: string | null }[]): string | null {
+  if (rows.length === 0) return null
+  const named = rows.map(row => `row ${row.id}${row.label === '' ? '' : ` « ${row.label} »`}${row.agent === null ? '' : ` (${row.agent})`}`)
+  return `[module] ${merged.repo ?? ''}#${merged.pr} merged; open rows waiting on it: ${named.join(', ')}. Tell each one's agent now.`
+}
+
+// The open rows of the orchestrator's own records that wait on the merged pull request; none in a
+// session that is no orchestrator's. A merge that names no repository takes the one the records'
+// ledger holds for that number, when only one does.
+async function waitingOnMerge($: Held, merged: { repo: string | null; pr: number }): Promise<{ merged: { repo: string | null; pr: number }; rows: { id: number; label: string; agent: string | null }[] }> {
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
+  if (row?.role !== 'orchestrator') return { merged, rows: [] }
+  const texts: string[] = []
+  for (const path of await ownRecords($, await stateDir($), sessionId, row.name)) texts.push(await readOr($, path))
+  const repos = new Set(texts.flatMap(text => ledgerLines(text)).filter(line => line.pr === merged.pr).map(line => line.repo.toLowerCase()))
+  const known = merged.repo === null && repos.size === 1 ? { repo: [...repos][0] ?? null, pr: merged.pr } : merged
+  return { merged: known, rows: texts.flatMap(text => waitingRows(text, known)) }
+}
+
+// The answer with one more line: after a text, or as one more text part.
+function withRelay(result: unknown, line: string): unknown {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return result
+  const r = result as Record<string, unknown>
+  if (typeof r['result'] === 'string') return { ...r, result: `${r['result']}\n${line}` }
+  if (Array.isArray(r['result'])) return { ...r, result: [...r['result'], { type: 'text', text: line }] }
+  return result
+}
+
+// A merge read against the rows that wait on it, within the bound; the answer as it came when none does.
+async function afterMerge($: Held, merged: { repo: string | null; pr: number }, result: unknown, bound: number): Promise<unknown> {
+  try {
+    const found = await withDeadline(() => waitingOnMerge($, merged), bound)
+    if (isDegradedPass(found)) {
+      await logLine($, 'ledger', `the rows waiting on #${merged.pr} were not read within ${bound} ms`)
+      return result
+    }
+    const line = mergeRelayLine(found.merged, found.rows)
+    return line === null ? result : withRelay(result, line)
+  } catch (err) {
+    await logLine($, 'ledger', `the rows waiting on #${merged.pr} not read: ${messageOf(err)}`)
+    return result
+  }
+}
+
+// The call goes through; its answer is read for a creation and the line written within the bound,
+// or for a merge and the rows waiting on it named.
 async function afterCall($: Held, e: Call, next: Next<Call>, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
+  const merged = mergedPr(e, result)
+  if (merged !== null) return afterMerge($, merged, result, bound)
   const created = createdPr(e, result)
   if (created === null) return result
   try {
