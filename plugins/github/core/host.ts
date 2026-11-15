@@ -86,10 +86,11 @@ export type Events = {
   'turn.start': { readonly agentId?: string }
   'command.run': { readonly command: string; readonly args: string }
   // A prompt as the turn takes it: who typed it (`origin.kind`), and the lines a handler adds beside it.
-  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[] }
+  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[]; readonly turnId?: string }
   // A peer's delivery; `origin` is the host's own description of where it came from.
   'session.receive': { readonly agentId?: string; readonly origin: unknown; readonly text: string }
-  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean }
+  // `reason` is why the turn ended, `aborted` when the person interrupted it.
+  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean; readonly reason?: string }
   // The settings payload's own fields, as far as the stop gate reads them; the host's lists of the
   // work in flight are read through a validator.
   'classic.Stop': {
