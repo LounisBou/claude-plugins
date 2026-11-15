@@ -565,6 +565,24 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const entry: Asked = record?.answer
     ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
     : made
+  // A question still open in the round is not stored twice: the oldest entry already there is the one he
+  // answers. A replica is its owner's, and a claimed question is off the pane, closed by the next turn's
+  // end with his typed words: neither holds a new ask back. The asker's session is not compared: the key
+  // is the project's.
+  let twin: Asked | null = null
+  if (!record?.answer) {
+    const key = askedKey(made)
+    for (const other of await readAsked($).catch(async err => {
+      await logLine($, 'question', `open twin of ${made.id} not looked for: ${messageOf(err)}`)
+      return []
+    })) {
+      if (other.status !== 'open' || other.origin !== undefined || other.claimed !== undefined || askedKey(other) !== key) continue
+      if (twin === null || other.at < twin.at) twin = other
+    }
+  }
+  if (twin !== null) {
+    return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
+  }
   const path = roundEntryPath(await stateDir($), entry.id)
   let taken = false
   try {
