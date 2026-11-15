@@ -34,7 +34,7 @@ e2e_plugin_args() {
 
 # The banner's product line reads `<model> · <Brand> <Plan>`: any plan is a subscription, and the
 # API billing line anywhere on the screen is not. `$2`, when set, names the one plan accepted
-# (escaped, so a name with a dot or a bracket matches itself). The `Claude Code v…` line above
+# (escaped, so a name with a dot or a bracket matches itself). The version line above
 # it names the program, not a plan, and is not matched: the plan follows the middle dot.
 e2e_banner_ok() {
   local brand="$1" plan="$2" screen="$3" plan_re='[A-Z][A-Za-z0-9]*'
