@@ -23,6 +23,9 @@ type World = {
   env?: Record<string, string>       // the session's variables, beside HOME
   journalError?: string               // the journal's writes fail with this
   logged?: string[]                   // the lines the module logs
+  exists?: string[]                   // the paths that exist, beside the files
+  runs?: string[][]                   // every command line run
+  node?: { exitCode: number; stdout: string; stderr: string }   // what a node script answers
 }
 
 // The repository, the settings and the files beneath the plugin, from memory.
@@ -40,7 +43,9 @@ async function world(on: any, w: World = {}, specs: any[] = []) {
     const args = e.argv.slice(1).join(' ')
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const no = { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    w.runs?.push([...e.argv])
     if (e.argv[0] === 'mv') return ok()
+    if (e.argv[0] === 'node') return { value: { isStdoutTruncated: false, isStderrTruncated: false, ...(w.node ?? { exitCode: 0, stdout: '', stderr: '' }) } }
     if (args === 'rev-parse --is-inside-work-tree') return w.inside === false ? no : ok('true')
     if (args === 'branch --show-current') return ok(w.branch ?? 'feat/demo')
     if (args.startsWith('check-ignore')) return w.ignored === false ? no : ok()
@@ -58,6 +63,7 @@ async function world(on: any, w: World = {}, specs: any[] = []) {
     return text === undefined ? { deny: `ENOENT ${e.path}` } : { value: text }
   })
   on('env.get', (_$: any, e: any) => ({ value: { HOME: '/home/op', ...w.env }[e.name as string] }))
+  on('fs.exists', (_$: any, e: any) => ({ value: w.exists?.includes(String(e.path)) ?? false }))
   on('ui.log', (_$: any, e: any) => { w.logged?.push(String(e.text)); return { value: undefined } })
   on('session.id', () => ({ value: 'sess-1' }))
   on('fs.write', (_$: any, e: any) => {
@@ -513,4 +519,74 @@ test('outside a branch, nothing is launched', async ($, on) => {
   const out: any = await review($)
   expect(String(out.text)).toContain('needs a git repository on a branch')
   expect(runs.some(argv => argv[0] === 'sh')).toBe(false)
+})
+
+// ── The learning retrospective, started where a close ends ───────────────────
+
+const LEARNING_ROOT = '/cache/learning/0.2.0'
+const LEARNING_SCRIPT = `${LEARNING_ROOT}/skills/learning/scripts/retrospective.ts`
+const WITH_LEARNING = {
+  enabled: { 'superpowers@claude-plugins-official': true, 'learning@lounisbou': true },
+  files: { '/home/op/.claude/plugins/installed_plugins.json': JSON.stringify({ plugins: { 'learning@lounisbou': [{ installPath: LEARNING_ROOT }] } }) },
+  exists: [LEARNING_SCRIPT],
+}
+const started = (runs: string[][]) => runs.filter(argv => argv[0] === 'node')
+
+test('the turn that ran implement:close ends on the learning plugin\'s start command, once', async ($, on) => {
+  const runs: string[][] = []
+  const logged: string[] = []
+  await world(on, { ...WITH_LEARNING, runs, logged, node: { exitCode: 0, stdout: 'learning retrospective: not started, 0 candidates wait and it starts at 3\n', stderr: '' } })
+  await start($)
+  await skill($, 'close')
+  expect(started(runs)).toEqual([])
+  await turnEnd($, false)
+  expect(started(runs)).toEqual([['node', '--experimental-strip-types', '--no-warnings', LEARNING_SCRIPT, 'start', '--config', '/home/op/.claude']])
+  expect(logged).toEqual(['implement: learning retrospective: not started, 0 candidates wait and it starts at 3'])
+  await turnEnd($, false)
+  expect(started(runs).length).toBe(1)
+})
+
+test('no other skill\'s turn, and no aborted close, starts the retrospective', async ($, on) => {
+  const runs: string[][] = []
+  await world(on, { ...WITH_LEARNING, runs })
+  await start($)
+  await skill($, 'phase')
+  await turnEnd($, false)
+  await skill($, 'close')
+  await turnEnd($, true)
+  await turnEnd($, false)
+  expect(started(runs)).toEqual([])
+})
+
+test('with the learning plugin missing from the install record, a close starts nothing', async ($, on) => {
+  const runs: string[][] = []
+  const logged: string[] = []
+  await world(on, { ...WITH_LEARNING, runs, logged, files: {} })
+  await start($)
+  await skill($, 'close')
+  await turnEnd($, false)
+  expect(started(runs)).toEqual([])
+  expect(logged.length).toBe(1)
+})
+
+test('with the learning plugin disabled, or its script absent, a close starts nothing and ends as before', async ($, on) => {
+  const runs: string[][] = []
+  const w: World = { ...WITH_LEARNING, runs, enabled: { 'superpowers@claude-plugins-official': true, 'learning@lounisbou': false } }
+  await world(on, w)
+  await start($)
+  for (const change of [{}, { enabled: WITH_LEARNING.enabled, exists: [] }]) {
+    Object.assign(w, change)
+    await skill($, 'close')
+    await turnEnd($, false)
+  }
+  expect(started(runs)).toEqual([])
+})
+
+test('a start that fails is one line of the log, and the turn ends all the same', async ($, on) => {
+  const logged: string[] = []
+  await world(on, { ...WITH_LEARNING, logged, node: { exitCode: 1, stdout: '', stderr: 'learning retrospective: the session did not start (exit 127)\n' } })
+  await start($)
+  await skill($, 'close')
+  await turnEnd($, false)
+  expect(logged).toEqual(['implement: learning retrospective: the session did not start (exit 127)'])
 })

@@ -15,6 +15,7 @@
     "github: write a comment": ["github/engine/writing/comments.md", "github/engine/writing/references.md"],
     "drift: prove a change neutral": ["drift/skills/drift/SKILL.md"],
     "bugs-bot: resident agent": ["bugs-bot/agent/AGENT.md"],
+    "learning: retrospective": ["learning/skills/retrospective/SKILL.md"],
     "orchestrator: start (build)": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"],
     "orchestrator: start (investigate)": ["orchestrator/skills/orchestrator/SKILL.md"],
     "orchestrator: succession": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/templates/orchestrator-succession-brief.md"]
