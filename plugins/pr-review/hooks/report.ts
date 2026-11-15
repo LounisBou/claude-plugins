@@ -23,10 +23,6 @@ const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()
 // Whether a review agent's prompt carries the request, which the session writes there itself.
 export const carriesRequest = (prompt: string): boolean => squash(prompt).includes(squash(REPORT_REQUEST))
 
-// The deny of a review agent's call without the request: the session issues the call again.
-export const READER_DENY = 'pr-review auto-fix-loop: a review agent\'s prompt ends with the findings-block request, '
-  + 'which this call lacks. Issue the same call again, its prompt ending with this text, verbatim:' + REPORT_REQUEST
-
 const FENCE = /```json\s*\n([\s\S]*?)\n\s*```/g
 
 // The findings of an agent's answer: its last JSON block, or null when it has none
