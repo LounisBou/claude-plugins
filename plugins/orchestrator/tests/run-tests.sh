@@ -10541,8 +10541,8 @@ printf '["gone-entry","w1"]\n' > "$ASTATE/round-listed.json"
 # Only the entries whose question it printed: one printed as its header alone is the pane's.
 ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | awk '/^round / { id = ($0 ~ /\| open/) ? $2 : ""; next } /^    / && id != "" { print id; id = "" }' | sort | paste -sd, -)
 check "round records the ids of the open entries whose question it printed, keeps those printed before while the round holds them" \
-  "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
-  "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
+  "$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | grep . | sort | paste -sd, -)|0" \
+  "$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
   "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'call `settle` for it')"
