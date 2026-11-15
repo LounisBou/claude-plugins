@@ -154,11 +154,15 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(rowText({ note: 'Agent: drift-2, dispatched' }), { live: ['Agent: drift-2'] }), [])
       assert.deepEqual(ready(rowText(), { live: ['Agent: gatefix'] }).length, 1)
       assert.deepEqual(ready(rowText(), { live: ['Orch: tokendrift'] }).length, 1)
+      // A whole word of the subject holds it, a piece of a word does not.
+      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: prefix-bug'] }).length, 1)
+      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: fix-2 [a1b2c3]'] }), [])
     })
 
     it('is not named while an open pull request holds it, by its agent or by the row note', () => {
       assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: tokendrift' })] }), [])
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }), [])
+      assert.deepEqual(ready(rowText({ note: 'other-claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#71 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
     })
@@ -168,6 +172,17 @@ describe('an unattended pull request', () => {
         assert.deepEqual(ready(rowText(change)), [], JSON.stringify(change))
       }
       assert.deepEqual(ready(rowText({ deferred: ' ' })).length, 1)
+    })
+
+    it('names a row with no keyword as such, and only its note can hold it', () => {
+      assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Lignes prêtes sans agent : 12 no keyword')
+      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Lignes prêtes sans agent : 12 no keyword')
+      assert.deepEqual(ready(rowText({ label: undefined, note: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
+    })
+
+    it('reads the rows of every record', () => {
+      const rows = readyRows({ texts: [rowText(), rowText({ id: 3, label: 'OTHERWORK: x' })], lines: [], live: new Set() })
+      assert.deepEqual(rows.map(r => r.id), [12, 3])
     })
 
     it('leaves out the ledger lines, broken lines and rows with no number', () => {

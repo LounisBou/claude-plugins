@@ -237,7 +237,7 @@ function agentSubject(name: string | undefined): string | null {
  * The open rows ready with nobody on them: `blocker: none`, not deferred, and neither a live agent
  * (`live`, the session names the launcher lists running) nor an open pull request (`lines`, the
  * ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
- * agent's subject, or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
+ * agent's subject (a whole word of it), or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
  * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
  */
 export function readyRows(input: {
@@ -264,9 +264,11 @@ export function readyRows(input: {
       const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''
       const held = (typeof note === 'string' ? note : '').toLowerCase()
       const wanted = keyword.toLowerCase()
-      const named = (subject: string | null): boolean => subject !== null && wanted !== '' && subject.includes(wanted)
-      if (alive.some(subject => named(subject) || held.includes(`agent: ${subject}`))) continue
-      if (input.lines.some(line => named(agentSubject(line.agent)) || new RegExp(`${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
+      // A whole word of the agent's subject: `fix` is not held by `address-bug`.
+      const spelled = (text: string): string => ` ${text.replace(/[^a-z0-9]+/g, ' ').trim()} `
+      const named = (subject: string | null): boolean => subject !== null && wanted !== '' && spelled(subject).includes(spelled(wanted))
+      if (alive.some(subject => named(subject) || spelled(held).includes(spelled(`agent: ${subject}`)))) continue
+      if (input.lines.some(line => named(agentSubject(line.agent)) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
       ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword })
     }
   }

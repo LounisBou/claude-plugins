@@ -172,6 +172,19 @@ test('an open row with blocker none, no live agent and no open pull request is r
   expect((await readUnattended(running, 's-orch', NOW))?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
 })
 
+test('an open pull request in the ledger holds its row, with no agent running; the launcher is asked once, and only when a row may be ready', async () => {
+  // Line 7 names Agent: seven; the listing shows nobody running, so the pull request alone holds row 25.
+  const { dollar, files, runs } = world({ launcher: 'w1/t1 | /dev/ttys001 | zsh | zsh' })
+  files.set(RECORD, readyRecord([READY_ROWS[4]!]))
+  expect((await readUnattended(dollar, 's-orch', NOW))?.ready).toEqual([])
+  expect(runs.filter(r => r[0] === 'bash' && r[2] === 'list').length).toBe(1)
+  // No line names an agent and no row is ready: the launcher is never asked.
+  const { dollar: quiet, files: none, runs: asked } = world()
+  none.set(RECORD, `${JSON.stringify(READY_ROWS[2])}\n`)
+  expect((await readUnattended(quiet, 's-orch', NOW))?.readyLine).toBe(null)
+  expect(asked.filter(r => r[0] === 'bash' && r[2] === 'list')).toEqual([])
+})
+
 test('a launcher listing that cannot be read names no row ready, and a record with no ready row leaves no line', async () => {
   const { dollar, files, logs } = world({ launcher: null })
   files.set(RECORD, readyRecord(READY_ROWS))

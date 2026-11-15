@@ -526,7 +526,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // Observed, not refused: what the gate once refused the stop for is logged whole, the journal
     // holds one escape under the gate's code, and the stop passes, swept as any other.
     // The open rows ready with nobody on them, once the launcher's listing is read: said in every line
-    // the gate writes for a stop it lets through, and reason enough of its own for one that would pass.
+    // the gate writes for a stop it lets through, and a warning of its own for one that would pass.
     let readiness: (() => Promise<string | null>) | null = null
     const letThrough = async (reason: string | null): Promise<unknown> => {
       const ready = await readiness?.() ?? null
@@ -707,9 +707,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await sweepAtStop?.()
         return next(e)
       }
-      // A stop the checks let pass is still said when a ready row has nobody on it: observed, as any other.
+      // A stop the checks let pass is still said when a ready row has nobody on it: a warning, as the others the gate measures.
       const passing = async (): Promise<unknown> => {
-        if (await readiness?.() != null) return await letThrough(null)
+        // Measured, not refused: nothing held this stop, so no escape is journalled for it.
+        const ready = await readiness?.() ?? null
+        if (ready !== null) await logLine($, 'guards', `stop gate: warn ready-rows ${ready}`)
         await sweepAtStop?.()
         return next(e)
       }
