@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, withArchived, withLine, withoutLines, type LedgerLine,
+  readyRows, readyRowsLine, statusText, unattended, unattendedLine, UNATTENDED_AFTER_MS, withArchived, withLine, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -132,5 +132,66 @@ describe('an unattended pull request', () => {
     const lines = [line(), line({ pr: 8 }), line({ repo: 'acme/lib', pr: 3 })]
     const open = new Map([['acme/app', [8]]])
     assert.deepEqual(endedLines(lines, open).map(l => prKey(l.repo, l.pr)), ['acme/app#7'])
+  })
+
+  describe('a ready row nobody is on', () => {
+    // A dispatch row, open and ready unless changed; a field changed to undefined is left out.
+    const rowText = (change: Record<string, unknown> = {}): string => {
+      const all: Record<string, unknown> = { id: 12, state: 'open', label: 'TOKENDRIFT: the context fills', blocker: 'none', ...change }
+      for (const key of Object.keys(all)) if (all[key] === undefined) delete all[key]
+      return `${JSON.stringify(all)}\n`
+    }
+    const ready = (text: string, over: { lines?: LedgerLine[]; live?: string[] } = {}) =>
+      readyRows({ texts: [text], lines: over.lines ?? [], live: new Set(over.live ?? []) })
+
+    it('is named with its id and keyword when its blocker is none and no agent, no pull request holds it', () => {
+      assert.deepEqual(ready(rowText()), [{ id: 12, keyword: 'TOKENDRIFT' }])
+      assert.deepEqual(ready(rowText() + rowText({ id: 13, label: 'GATEFIX: a gate' })).map(r => r.id), [12, 13])
+    })
+
+    it('is not named while a live agent is on it, by its subject or by the row note', () => {
+      assert.deepEqual(ready(rowText(), { live: ['Agent: tokendrift'] }), [])
+      assert.deepEqual(ready(rowText({ note: 'Agent: drift-2, dispatched' }), { live: ['Agent: drift-2'] }), [])
+      assert.deepEqual(ready(rowText(), { live: ['Agent: gatefix'] }).length, 1)
+      assert.deepEqual(ready(rowText(), { live: ['Orch: tokendrift'] }).length, 1)
+      // A whole word of the subject holds it, a piece of a word does not.
+      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: prefix-bug'] }).length, 1)
+      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: fix-2 [a1b2c3]'] }), [])
+    })
+
+    it('is not named while an open pull request holds it, by its agent or by the row note', () => {
+      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: tokendrift' })] }), [])
+      assert.deepEqual(ready(rowText({ note: 'claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }), [])
+      assert.deepEqual(ready(rowText({ note: 'other-claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
+      assert.deepEqual(ready(rowText({ note: 'claude-plugins#71 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
+      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
+    })
+
+    it('is not named with a blocker, a deferral, a closed state, or no blocker said', () => {
+      for (const change of [{ blocker: 'row 4 closed' }, { blocker: undefined }, { deferred: 'later, 2026-11-14' }, { state: 'closed' }]) {
+        assert.deepEqual(ready(rowText(change)), [], JSON.stringify(change))
+      }
+      assert.deepEqual(ready(rowText({ deferred: ' ' })).length, 1)
+    })
+
+    it('names a row with no keyword as such, and only its note can hold it', () => {
+      assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Lignes prêtes sans agent : 12 no keyword')
+      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Lignes prêtes sans agent : 12 no keyword')
+      assert.deepEqual(ready(rowText({ label: undefined, note: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
+    })
+
+    it('reads the rows of every record', () => {
+      const rows = readyRows({ texts: [rowText(), rowText({ id: 3, label: 'OTHERWORK: x' })], lines: [], live: new Set() })
+      assert.deepEqual(rows.map(r => r.id), [12, 3])
+    })
+
+    it('leaves out the ledger lines, broken lines and rows with no number', () => {
+      assert.deepEqual(ready(`${JSON.stringify(line())}\nnot json\n[]\n${rowText({ id: 'r-1' })}`), [])
+    })
+
+    it('is said in one line, absent when there is none', () => {
+      assert.equal(readyRowsLine([]), null)
+      assert.equal(readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT' }, { id: 13, keyword: 'GATEFIX' }]), 'Lignes prêtes sans agent : 12 TOKENDRIFT, 13 GATEFIX')
+    })
   })
 })
