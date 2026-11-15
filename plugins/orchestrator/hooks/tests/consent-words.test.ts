@@ -161,12 +161,22 @@ test('words that name another repository than the one passed write nothing, and 
 })
 
 test('words that name another pull request than the one passed write nothing; one that names none does not grant a waiver', async () => {
-  const m = machine('orchestrator', [typed('Accorder la dispense E2E de acme/guide#8')])
+  const m = machine('orchestrator', [typed('Accorder la dispense E2E de acme/guide#8'), typed('Accorder la dispense E2E de acme/guide')])
   const wrong = await settleWords(m.dollar, words({ subject: { kind: 'e2e-waiver', repo: 'acme/guide', pr: 7 }, until: null, said: 'Accorder la dispense E2E de acme/guide#8' }), NOW)
   expect(wrong.isError).toBe(true)
   expect(wrong.result).toMatch(/another pull request \(#8\)/)
   const none = await settleWords(m.dollar, words({ subject: { kind: 'e2e-waiver', repo: 'acme/guide', pr: 7 }, until: null, said: 'Accorder la dispense E2E de acme/guide' }), NOW)
   expect(none.isError).toBe(true)
+  expect(records(m)).toEqual([])
+})
+
+test('a record that cannot be written is refused, the reason said, and nothing is left', async () => {
+  const m = machine('coordinator', [typed(SENTENCE)])
+  const run = m.dollar.process.run
+  m.dollar.process.run = async (argv: readonly string[]) => (argv[0] === 'mkdir' ? { exitCode: 1, stdout: '', stderr: 'read-only file system' } : run(argv))
+  const done = await settleWords(m.dollar, words(), NOW)
+  expect(done.isError).toBe(true)
+  expect(done.result).toMatch(/could not be written \(read-only file system\)/)
   expect(records(m)).toEqual([])
 })
 
@@ -334,7 +344,7 @@ test('the human turn is read from a user entry of origin human only', () => {
 test('the settle tool takes the consent fields, runs a call with no id as a consent in words and refuses an id with them', async () => {
   // The tool dates the call by the clock: a limit far ahead.
   const later = SENTENCE.replace('16/11/2026', '16/11/2040')
-  const m = machine('coordinator', [typed(later)])
+  const m = machine('coordinator', [typed(later, new Date().toISOString())])
   const handlers: Record<string, Function> = {}
   registerSettle(((event: string, ...rest: any[]) => {
     const [matcher, handler] = rest.length === 2 ? rest : [{}, rest[0]]
