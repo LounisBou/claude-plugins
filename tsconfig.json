@@ -8,6 +8,7 @@
     "plugins/cloudflare/hooks/register.ts",
     "plugins/cloudflare/types/*.d.ts",
     "plugins/github/hooks/check-plan.ts",
+    "plugins/github/hooks/deploy.ts",
     "plugins/github/hooks/e2e-scope.ts",
     "plugins/github/hooks/observe.ts",
     "plugins/github/hooks/shell.ts",

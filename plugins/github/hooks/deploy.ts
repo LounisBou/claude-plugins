@@ -59,15 +59,15 @@ export function parseDeclared(raw: unknown): Declared | string {
     const named = envOf(env)
     return named ? { repo, kind, argv: argv.map(String), env: named } : 'a "command" names its environment: dev, staging or prod'
   }
-  if (kind === 'script') return isText(raw.path) ? { repo, kind, path: raw.path } : 'a "script" names the end of its path: {"path": "scripts/deploy.sh"}'
+  if (kind === 'script') return isText(raw['path']) ? { repo, kind, path: raw['path'] } : 'a "script" names the end of its path: {"path": "scripts/deploy.sh"}'
   if (kind === 'workflow') {
-    return isText(raw.workflow) && isText(raw.input)
-      ? { repo, kind, workflow: raw.workflow, input: raw.input }
+    return isText(raw['workflow']) && isText(raw['input'])
+      ? { repo, kind, workflow: raw['workflow'], input: raw['input'] }
       : 'a "workflow" names its file and its environment input: {"workflow": "deploy.yml", "input": "environment"}'
   }
   if (kind === 'skill') {
-    const named = envOf(raw.env)
-    return isText(raw.name) && named ? { repo, kind, name: raw.name.replace(/^\//, ''), env: named } : 'a "skill" names itself and its environment: {"name": "mygeo-deploy-prod", "env": "prod"}'
+    const named = envOf(raw['env'])
+    return isText(raw['name']) && named ? { repo, kind, name: raw['name'].replace(/^\//, ''), env: named } : 'a "skill" names itself and its environment: {"name": "mygeo-deploy-prod", "env": "prod"}'
   }
   return 'a declared command is a "command", a "script", a "workflow" or a "skill"'
 }
@@ -76,15 +76,16 @@ export function parseDeclared(raw: unknown): Declared | string {
 export function parseDeployList(raw: unknown): DeployList | string {
   if (!isObject(raw)) return 'the file is not an object'
   const grants: Grant[] = []
-  for (const entry of raw.repositories ?? []) {
-    const env = isObject(entry) ? envOf(entry.env) : undefined
-    if (!isObject(entry) || typeof entry.repo !== 'string' || !REPO.test(entry.repo) || env === undefined || env !== entry.env) {
+  // A value that is no list is iterated as it is: one that cannot be throws, as a file that cannot be read does.
+  for (const entry of (raw['repositories'] ?? []) as Iterable<unknown>) {
+    const env = isObject(entry) ? envOf(entry['env']) : undefined
+    if (!isObject(entry) || typeof entry['repo'] !== 'string' || !REPO.test(entry['repo']) || env === undefined || env !== entry['env']) {
       return '"repositories" is not a list of {"repo": "owner/name", "env": "dev"|"staging"|"prod"}'
     }
-    grants.push({ repo: entry.repo, env })
+    grants.push({ repo: entry['repo'], env })
   }
   const declared: Declared[] = []
-  for (const entry of raw.commands ?? []) {
+  for (const entry of (raw['commands'] ?? []) as Iterable<unknown>) {
     const one = parseDeclared(entry)
     if (typeof one === 'string') return '"commands": ' + one
     declared.push(one)
@@ -104,7 +105,7 @@ const endsWithPath = (word: string, path: string): boolean => word === path || w
 function fieldValue(argv: string[], name: string): string | undefined {
   let value: string | undefined
   for (let k = 0; k < argv.length; k++) {
-    const word = argv[k]
+    const word = argv[k] ?? ''
     const long = /^--(?:raw-)?field=(.*)$/.exec(word)
     const set = long ? long[1] : /^(?:-f|-F|--field|--raw-field)$/.test(word) ? argv[++k] : undefined
     if (set !== undefined && set.startsWith(name + '=')) value = set.slice(name.length + 1)
@@ -118,7 +119,10 @@ function recognised(argv: string[], declared: Declared): Deploy | undefined {
     return same ? { repo: declared.repo, env: declared.env, what: declared.argv.join(' ') } : undefined
   }
   if (declared.kind === 'script') {
-    const at = [0, 1].find((k) => argv[k] !== undefined && endsWithPath(argv[k], declared.path) && (k === 0 || INTERPRETERS.test(argv[0])))
+    const at = [0, 1].find((k) => {
+      const word = argv[k]
+      return word !== undefined && endsWithPath(word, declared.path) && (k === 0 || INTERPRETERS.test(argv[0] ?? ''))
+    })
     if (at === undefined) return undefined
     const env = argv.slice(at + 1).map(envOf).find((named) => named !== undefined)
     return { repo: declared.repo, env, what: declared.path }
@@ -127,8 +131,9 @@ function recognised(argv: string[], declared: Declared): Deploy | undefined {
     if (baseName(argv[0] ?? '') !== 'gh') return undefined
     const words: string[] = []
     for (let k = 1; k < argv.length && words.length < 3; k++) {
-      if (argv[k] === '-R' || argv[k] === '--repo') k++
-      else if (!argv[k].startsWith('-')) words.push(argv[k])
+      const word = argv[k] ?? ''
+      if (word === '-R' || word === '--repo') k++
+      else if (!word.startsWith('-')) words.push(word)
     }
     if (words[0] !== 'workflow' || words[1] !== 'run' || words[2] === undefined) return undefined
     if (baseName(words[2]) !== baseName(declared.workflow)) return undefined
