@@ -14,6 +14,8 @@ import { NOT_ORCHESTRATOR } from '../review.ts'
 import { Declarations } from '../wait.ts'
 import { parseJournalEvent } from '../../core/learning.ts'
 import { logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Events, Host, Noun } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const JOURNAL = `${HOME}/.claude/orchestrator/journal/`
@@ -26,15 +28,15 @@ function fake(options: { broken?: boolean; name?: string } = {}) {
   const logged: string[] = []
   const order: string[] = []
   if (options.name) files[`${HOME}/.claude/claude-orchestrator/store/sessions/sess-1`] = JSON.stringify({ name: options.name, updated_at: AT })
-  const dollar = {
+  const dollar = hostOf({
     plugin: { root: '/plugins/orch-root' },
     env: { get: async (key: string) => ({ HOME } as Record<string, string>)[key] },
     session: { id: async () => 'sess-1' },
     clock: { sleep: async () => undefined },
     fs: {
       write: async (path: string, text: string) => { if (options.broken) throw new Error('disk full'); files[path] = text },
-      read: async (path: string) => { if (path in files) return files[path]; throw new Error(`ENOENT: ${path}`) },
-      list: async (dir: string) => Object.keys(files).filter(p => p.startsWith(`${dir}/`)).map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 0, isLink: false })),
+      read: async (path: string) => { const text = files[path]; if (text !== undefined) return text; throw new Error(`ENOENT: ${path}`) },
+      list: async (dir: string) => Object.keys(files).filter(p => p.startsWith(`${dir}/`)).map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, isLink: false })),
       stat: async (path: string) => { throw new Error(`ENOENT: ${path}`) },
       exists: async (path: string) => path in files,
     },
@@ -47,7 +49,7 @@ function fake(options: { broken?: boolean; name?: string } = {}) {
         return ok
       },
     },
-  }
+  })
   // The journal's events in the order they were written: two of one second sort by their random part.
   const journal = () => order.filter(p => p.startsWith(JOURNAL) && p in files).map(p => JSON.parse(files[p]!))
   return { dollar, files, logged, journal }
@@ -56,15 +58,12 @@ function fake(options: { broken?: boolean; name?: string } = {}) {
 // The handlers registered, by event, over a declarations memory the test drives.
 function mounted() {
   const declarations = new Declarations()
-  const handlers: Record<string, Function> = {}
-  register(((...args: unknown[]) => {
-    handlers[String(args[0])] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  }) as never, declarations, () => new Date('2026-11-14T10:15:00.400Z'))
-  return { declarations, on: (event: string, dollar: unknown, e: object, answer: unknown = undefined) => handlers[event]!(dollar, e, async () => answer) }
+  const hooks = capture<Host<Noun>>(on => register(on, declarations, () => new Date('2026-11-14T10:15:00.400Z')))
+  const on = <K extends keyof Events>(event: K, dollar: Host<Noun>, e: Events[K], answer: unknown = undefined) => hooksOn(hooks, event).at(-1)!.handler(dollar, e, async () => answer)
+  return { declarations, on }
 }
 
-const codes = (events: Record<string, any>[]) => events.map(e => [e.kind, e.source.code])
+const codes = (events: { kind: string; source: { code: string } }[]) => events.map(e => [e.kind, e.source.code])
 
 test('each refusal of the module\'s guards has its stable code; any other answer has none', () => {
   const cases: [unknown, string | null][] = [
@@ -190,7 +189,7 @@ test('a declared wait starts when its turn ends and ends when the next starts, b
   const fx = fake({ name: 'Orch: belt' })
   const m = mounted()
   m.declarations.turnStarted()
-  m.declarations.declare({ kind: 'operator', blocks: 'the merge', question: '**Question 1 of 1** secret', consent: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 } })
+  m.declarations.declare({ kind: 'operator', blocks: 'the merge', asked: ['**Question 1 of 1** secret'], consent: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 } })
   await m.on('turn.complete', fx.dollar, {}, { text: 'done' })
   await m.on('turn.complete', fx.dollar, { agentId: 'a1' }, { text: 'a subagent' })
   await m.on('turn.start', fx.dollar, { agentId: 'a1' })

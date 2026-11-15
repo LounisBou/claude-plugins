@@ -12,6 +12,15 @@ import { expect, test, mock } from 'claude-code/testing'
 import { statusText, agentsText, progressLines, parseDispatchRow, parseSleeping, sleepingText, register as registerCommands } from '../commands.ts'
 import type { SessionRow } from '../supervision.ts'
 import { logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { CatchHook, Events, Host, Matcher, Noun } from '../../core/host.ts'
+
+type World = Host<Noun>
+type Run = Events['command.run']
+// A registration as these tests read it; a call made without a next meets one that throws, as the
+// engine's absent next would.
+type Registration = { event: keyof Events; matcher: Matcher | undefined; handler: (dollar: World, e: Run, next?: (e: Run) => Promise<unknown>) => Promise<unknown> }
+const noNext = async (): Promise<unknown> => { throw new Error('no next in this call') }
 
 const HOME = '/tmp/h'
 const SESSIONS = `${HOME}/.claude/claude-orchestrator/store/sessions`
@@ -137,7 +146,7 @@ test('a deferred row is printed as deferred with the operator\'s ruling, never a
 
 test('progress leads with the goals line of each record that has a goals.md, and nothing for one without', async () => {
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
+  const progress = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-progress')!
   const fx = fakeDollar()
   const withGoals = `${HOME}/belt/dispatch.jsonl`
   const without = `${HOME}/legacy/dispatch.jsonl`
@@ -156,7 +165,7 @@ test('progress leads with the goals line of each record that has a goals.md, and
 // in-memory file map holding the store and the dispatch records, a recorded
 // session id, a log the failures land in.
 type Fx = {
-  dollar: any
+  dollar: World
   alive: string[]
   psFails: boolean
   files: Map<string, string>
@@ -169,8 +178,8 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
   const files = new Map<string, string>()
   const written: string[] = []
   const env: Record<string, string> = { HOME }
-  const fx: Fx = { dollar: null, files, written, env, sessionId: 's-one', alive: [], psFails: false }
-  fx.dollar = {
+  const fx: Fx = { dollar: hostOf(), files, written, env, sessionId: 's-one', alive: [], psFails: false }
+  fx.dollar = hostOf({
     session: {
       id: async () => {
         if (over.failSession) throw new Error('session noun unavailable')
@@ -185,8 +194,9 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
     },
     fs: {
       read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => {
         files.set(p, text)
@@ -196,18 +206,18 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
         for (const p of files.keys()) {
           if (!p.startsWith(`${dir}/`)) continue
           const rest = p.slice(dir.length + 1)
-          if (rest) names.add(rest.split('/')[0])
+          if (rest) names.add(rest.split('/')[0] ?? rest)
         }
         return [...names].map(name => {
           const text = files.get(`${dir}/${name}`)
           return text !== undefined
-            ? { name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }
-            : { name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
+            ? { name, kind: 'file' as const, size: text.length, mtimeMs: 0, isLink: false }
+            : { name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false }
         })
       },
       exists: async (p: string) => files.has(p),
     },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     process: {
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
@@ -231,23 +241,24 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return fx
 }
 
 // Every registration the module makes, in order, matchers beside them — the
 // three command hooks this file pins, and nothing else.
-function mounted(): { registrations: { event: string; matcher: object | undefined; handler: Function }[] } {
-  const registrations: { event: string; matcher: object | undefined; handler: Function }[] = []
-  registerCommands((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    registrations.push({
-      event: args[0],
-      matcher: args.length === 3 ? args[1] : undefined,
-      handler: args[args.length - 1] as Function,
-    })
-    return { catch: () => undefined }
-  })
-  return { registrations }
+function mounted(): { registrations: Registration[] } {
+  return {
+    registrations: capture<World>(registerCommands).map(h => ({
+      event: h.event,
+      matcher: h.matcher,
+      handler: (dollar, e, next = noNext) => {
+        const [run] = hooksOn([h], 'command.run')
+        if (run === undefined) throw new Error(`${h.event} is no command run`)
+        return run.handler(dollar, e, next)
+      },
+    })),
+  }
 }
 
 test('the module hooks every form of the four commands and registers on nothing else', () => {
@@ -279,14 +290,14 @@ const UNMARKED = '---\ndescription: my own status\n---\nmine\n'
 
 test('a bare short name is answered when its user command is the plugin\'s copy, and run as written otherwise', async () => {
   const { registrations } = mounted()
-  const passed = (x: unknown) => ({ passed: x })
+  const passed = async (x: unknown) => ({ passed: x })
   for (const [command, empty] of [
     ['orchestrator-status', 'Live sessions: none measured yet.'],
     ['orchestrator-agents', 'Implementer agents: none running.'],
     ['orchestrator-sleeping', 'Sleeping orchestrators: none.'],
     ['orchestrator-progress', 'no dispatch record registered'],
-  ]) {
-    const hook = registrations.find(r => (r.matcher as any)?.command === command)!
+  ] as const) {
+    const hook = registrations.find(r => r.matcher?.['command'] === command)!
     const e = { command, args: '' }
     const marked = fakeDollar()
     marked.files.set(`${HOME}/.claude/commands/${command}.md`, MARKED)
@@ -298,34 +309,34 @@ test('a bare short name is answered when its user command is the plugin\'s copy,
     expect(await hook.handler(fakeDollar().dollar, e, passed)).toEqual({ passed: e })
   }
   // The plugin's own command needs no copy.
-  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator:status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:status')!
   expect(await status.handler(fakeDollar().dollar, { command: 'orchestrator:status', args: '' }, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
 test('the copy is read where the installer wrote it: the override, else the config dir', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator-status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator-status')!
   const e = { command: 'orchestrator-status', args: '' }
-  const passed = (x: unknown) => ({ passed: x })
+  const passed = async (x: unknown) => ({ passed: x })
   const over = fakeDollar()
-  over.env.ORCHESTRATOR_COMMANDS_DIR = '/w/project/.claude/commands'
+  over.env['ORCHESTRATOR_COMMANDS_DIR'] = '/w/project/.claude/commands'
   over.files.set('/w/project/.claude/commands/orchestrator-status.md', MARKED)
   over.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, UNMARKED)
   expect(await status.handler(over.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
   const config = fakeDollar()
-  config.env.CLAUDE_CONFIG_DIR = '/cfg'
+  config.env['CLAUDE_CONFIG_DIR'] = '/cfg'
   config.files.set('/cfg/commands/orchestrator-status.md', MARKED)
   expect(await status.handler(config.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
 test('an empty config dir is an unset one: the copy is read under the home directory\'s', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator-status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator-status')!
   const e = { command: 'orchestrator-status', args: '' }
   const empty = fakeDollar()
-  empty.env.CLAUDE_CONFIG_DIR = ''
+  empty.env['CLAUDE_CONFIG_DIR'] = ''
   empty.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, MARKED)
-  expect(await status.handler(empty.dollar, e, (x: unknown) => ({ passed: x }))).toEqual({ text: 'Live sessions: none measured yet.' })
+  expect(await status.handler(empty.dollar, e, async (x: unknown) => ({ passed: x }))).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
 test('sleeping lists each sleeping orchestrator, or says none, or says the record is unreadable', () => {
@@ -356,11 +367,11 @@ test('sleeping lists each sleeping orchestrator, or says none, or says the recor
 
 test('sleeping answers the list from the state directory, and passes drop on to the markdown command', async () => {
   const { registrations } = mounted()
-  const sleeping = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-sleeping')!
+  const sleeping = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-sleeping')!
   const fx = fakeDollar()
-  fx.env.ORCHESTRATOR_STATE_DIR = `${HOME}/state`
+  fx.env['ORCHESTRATOR_STATE_DIR'] = `${HOME}/state`
   fx.files.set(`${HOME}/state/sleeping.json`, JSON.stringify([{ name: 'Orch: alpha', brief: '/p/b.md', dir: '/p', slept: '2026-10-13T10:00:00Z', prs: [] }]))
-  const passed = (x: unknown) => ({ passed: x })
+  const passed = async (x: unknown) => ({ passed: x })
   expect(await sleeping.handler(fx.dollar, { command: 'orchestrator:orchestrator-sleeping', args: '' }, passed)).toEqual({ text: [
     'Sleeping orchestrators (1):',
     '  **name**                Orch: alpha',
@@ -378,7 +389,7 @@ test('sleeping answers the list from the state directory, and passes drop on to 
 
 test('status answers the store read through its own fs calls, dropping the stale row', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-status')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/hot`, JSON.stringify(row({ name: 'Agent: hot', context_percent: 85 })) + '\n')
   fx.files.set(`${SESSIONS}/gone`, JSON.stringify(row({ name: 'Agent: gone', updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() })) + '\n')
@@ -396,7 +407,7 @@ test('status answers the store read through its own fs calls, dropping the stale
 
 test('status reads no temporary file as a row: a write in flight is no second session', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-status')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/live`, JSON.stringify({ ...row({ name: 'Agent: live' }), pid: '501' }) + '\n')
   fx.files.set(`${SESSIONS}/live.tmp-1-abcdef`, JSON.stringify({ ...row({ name: 'Agent: in flight' }), pid: '501' }) + '\n')
@@ -410,7 +421,7 @@ test('status reads no temporary file as a row: a write in flight is no second se
 
 test('agents answers the agent rows alone', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
+  const agents = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt-p3' })) + '\n')
   fx.files.set(`${SESSIONS}/coord`, JSON.stringify(row({ role: 'coordinator', name: 'Coord: main' })) + '\n')
@@ -426,7 +437,7 @@ test('agents answers the agent rows alone', async () => {
 
 test('agents lists a live agent no measure has written yet, beside the measured ones', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
+  const agents = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   const HOSTS = `${HOME}/.claude/sessions`
   fx.files.set(`${SESSIONS}/s-measured`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt-p3' })) + '\n')
@@ -459,7 +470,7 @@ test('agents lists a live agent no measure has written yet, beside the measured 
 
 test('status keeps the live rows beside a dead pid, and every row when ps fails', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-status')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/live`, JSON.stringify({ ...row({ name: 'Agent: live' }), pid: '501' }) + '\n')
   fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ name: 'Agent: dead' }), pid: '99999' }) + '\n')
@@ -481,7 +492,7 @@ test('status keeps the live rows beside a dead pid, and every row when ps fails'
 
 test('agents still lists an agent in its first turn when ps fails', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
+  const agents = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   fx.files.set(`${HOME}/.claude/sessions/102.json`, JSON.stringify({ sessionId: 's-first-turn', name: 'Agent: first turn', status: 'busy' }))
   fx.alive = ['102']
@@ -495,9 +506,9 @@ test('agents still lists an agent in its first turn when ps fails', async () => 
 
 test('progress answers the records this session registered, under the side-read bound', async () => {
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
+  const progress = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-progress')!
   const fx = fakeDollar()
-  fx.env.ORCHESTRATOR_SIDE_READ_MS = '50'
+  fx.env['ORCHESTRATOR_SIDE_READ_MS'] = '50'
   const record = `${HOME}/belt/dispatch.jsonl`
   fx.files.set(record, [
     '{"id":1,"opened":"2026-10-07T10:00:00Z","class":"feature","tier":"deep","label":"Belt the parser","rounds":1,"state":"closed","verdict":"approved","cascade":false}',
@@ -524,7 +535,7 @@ test('the registry is read under the state override, and under the config dir wi
   // (the reviewed boundary this wiring closes). The module's own artifacts — the store,
   // the log — stay config-dir-bound: no surviving script shares them.
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
+  const progress = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-progress')!
   const record = `${HOME}/belt/dispatch.jsonl`
   const rows = [
     '{"id":1,"opened":"2026-10-07T10:00:00Z","class":"feature","tier":"deep","label":"Belt the parser","rounds":1,"state":"closed","verdict":"approved","cascade":false}',
@@ -534,13 +545,13 @@ test('the registry is read under the state override, and under the config dir wi
   const expected = { text: ['open=2 label=Add the retry knob', 'dispatches=2 closed=1 rounds_avg=1.5'].join('\n') }
   // The override set: the registry is found under it...
   const over = fakeDollar()
-  over.env.ORCHESTRATOR_STATE_DIR = `${HOME}/elsewhere`
+  over.env['ORCHESTRATOR_STATE_DIR'] = `${HOME}/elsewhere`
   over.files.set(record, rows)
   over.files.set(`${HOME}/elsewhere/records/s-one`, `${record}\n`)
   expect(await progress.handler(over.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual(expected)
   // ...and a registry the config dir still holds answers nothing under it.
   const orphaned = fakeDollar()
-  orphaned.env.ORCHESTRATOR_STATE_DIR = `${HOME}/elsewhere`
+  orphaned.env['ORCHESTRATOR_STATE_DIR'] = `${HOME}/elsewhere`
   orphaned.files.set(record, rows)
   orphaned.files.set(`${RECORDS}/s-one`, `${record}\n`)
   expect(await progress.handler(orphaned.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual({ text: 'no dispatch record registered' })
@@ -559,35 +570,18 @@ test('a handler that cannot read falls back to the markdown command and is said'
   // The failed noun here is the session's own id (the progress handler's first
   // read), with env still answering: a failed env would take the log's own
   // path with it, and the net's word is exactly what must survive that.
-  const registrations: { event: string; matcher: object | undefined; handler: Function; net: Function }[] = []
-  registerCommands((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    const handler = args[args.length - 1] as Function
-    const caught: { net: Function } = { net: () => undefined }
-    registrations.push({
-      event: args[0],
-      matcher: args.length === 3 ? args[1] : undefined,
-      handler,
-      // The registration's .catch lands after the push, so the entry carries a
-      // dispatcher and not the stub's value as the push found it.
-      net: (...call: unknown[]) => (caught.net as (...x: unknown[]) => unknown)(...call),
-    })
-    return {
-      catch: (net: Function) => {
-        caught.net = net
-      },
-    }
-  })
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
+  const progress = hooksOn(capture<World>(registerCommands), 'command.run').find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-progress')!
+  const net: CatchHook<World, Run> = progress.net ?? (async () => undefined)
   const fx = fakeDollar({ failSession: true })
   const e = { command: 'orchestrator:orchestrator-progress', args: '' }
   let answered: unknown = null
-  await assertRejects(progress.handler(fx.dollar, e))
+  await assertRejects(progress.handler(fx.dollar, e, noNext))
   // The real next is a function the engine decorates (called, error), so the
   // fake is built the same way: a callable with the fields, never a spread,
   // which would leave an object no chain can call.
-  const through = (x: unknown) => { answered = { passed: x }; return answered }
+  const through = async (x: unknown) => { answered = { passed: x }; return answered }
   const next = Object.assign(through, { called: false, error: { kind: 'failure', message: 'session noun unavailable' } })
-  const netAnswer = await progress.net(fx.dollar, e, next)
+  const netAnswer = await net(fx.dollar, e, next)
   expect(netAnswer).toEqual({ passed: e })
   expect(fx.written.some(l => l.includes('| commands |') && l.includes('session noun unavailable'))).toBe(true)
 })

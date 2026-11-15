@@ -7,6 +7,11 @@ import { expect, test } from 'claude-code/testing'
 import { asksTheMode } from '../mode-dialog.ts'
 import { register as registerGuards } from '../guards.ts'
 import { journalled, logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Events, Hook, Host, Matcher, Noun } from '../../core/host.ts'
+
+type World = Host<Noun>
+type Guard = Hook<World, Events['tool.call']>
 
 const modeDialog = {
   tool: 'AskUserQuestion',
@@ -27,14 +32,14 @@ const otherDialog = {
 test('a dialog offering build and investigate as a mode is the mode question', () => {
   expect(asksTheMode(modeDialog)).toBe(true)
   expect(asksTheMode(otherDialog)).toBe(false)
-  expect(asksTheMode({ tool: 'AskUserQuestion' })).toBe(false)
-  expect(asksTheMode({ tool: 'AskUserQuestion', questions: [{ question: 'Build or investigate?', options: [] }] })).toBe(false)
+  expect(asksTheMode({})).toBe(false)
+  expect(asksTheMode({ questions: [{ question: 'Build or investigate?', options: [] }] })).toBe(false)
 })
 
-function fakeDollar(launchName: string | null): any {
+function fakeDollar(launchName: string | null): World {
   const env: Record<string, string> = { HOME: '/tmp/h', ORCHESTRATOR_HOST_CLI: 'hostcli' }
-  return {
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+  return hostOf({
+    plugin: { root: '/plugins/orch-root' },
     session: { id: async () => 'a1b2c3' },
     env: { get: async (name: string) => env[name] },
     fs: {
@@ -54,26 +59,17 @@ function fakeDollar(launchName: string | null): any {
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
-}
-
-function mounted(): { guard: Function; matcher: any } {
-  let guard: Function = () => undefined
-  let matcher: any
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    const handler = args[args.length - 1] as Function
-    if (args.length === 3 && (args[1] as any).tool === 'AskUserQuestion') {
-      guard = handler
-      matcher = args[1]
-    }
-    return { catch: () => undefined }
   })
-  return { guard, matcher }
 }
 
-async function call(guard: Function, dollar: any, e: object) {
+function mounted(): { guard: Guard; matcher: Matcher | undefined } {
+  const found = hooksOn(capture<World>(on => registerGuards(on)), 'tool.call').filter(h => h.matcher?.['tool'] === 'AskUserQuestion').at(-1)
+  return { guard: found?.handler ?? (async () => undefined), matcher: found?.matcher }
+}
+
+async function call(guard: Guard, dollar: World, e: Events['tool.call']) {
   let passed: unknown = null
-  const answer = await guard(dollar, e, (x: unknown) => { passed = x; return x })
+  const answer = await guard(dollar, e, async (x: unknown) => { passed = x; return x })
   return { answer, passed }
 }
 
@@ -101,7 +97,7 @@ test("an orchestrator's other dialog, and any other session's mode dialog, pass"
 // A session others wait on never asks in a dialog (method:lifecycle, « Questions to the operator »):
 // while a coordinator runs, an orchestrator's or the coordinator's dialog is observed: it opens, and
 // the journal holds one escape.
-function withCoordinator(launchName: string | null): any {
+function withCoordinator(launchName: string | null): World {
   const dollar = fakeDollar(launchName)
   const record = '/tmp/h/.claude/claude-orchestrator/coordinator.json'
   return { ...dollar, fs: { ...dollar.fs, read: async (p: string) => {

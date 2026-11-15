@@ -3,6 +3,11 @@ import { expect, test } from 'claude-code/testing'
 import { roleLine, gateAnnouncement, versionAnnouncement, register as registerGuards } from '../guards.ts'
 import { register as registerGauge, driftAnnouncement } from '../gauge.ts'
 import { logLineOf, blockOf, disk } from './fakes.ts'
+import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
+import type { Events, Host, Noun } from '../../core/host.ts'
+
+type World = Host<Noun>
+type Prompt = Events['prompt.submit']
 
 test('each role gets its own line, verbatim from the shell gate', () => {
   expect(roleLine('orchestrator')).toBe('Succeed at the next quiet boundary — run /orchestrator-succeed: spawn the successor in the operator\'s decision mode, then tell the user; do not ask.')
@@ -10,7 +15,7 @@ test('each role gets its own line, verbatim from the shell gate', () => {
   expect(roleLine('coordinator')).toContain('skills/coordination/SKILL.md')
   expect(roleLine('coordinator', '/plugins/orch-root')).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
   expect(roleLine('auditor')).toContain('auditor-succession-brief.md')
-  expect(roleLine('none' as any)).toBe('')
+  expect(roleLine('none')).toBe('')
 })
 
 test('the announcement names what was read', () => {
@@ -65,10 +70,10 @@ type Setup = {
   installed?: string
 }
 
-function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
+function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
   const written: string[] = []
-  const env = { HOME, ORCHESTRATOR_HOST_CLI: '/usr/local/bin/host', ...(setup.env ?? {}) }
-  const dollar = {
+  const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: '/usr/local/bin/host', ...(setup.env ?? {}) }
+  const dollar = hostOf({
     session: {
       id: async () => {
         if (setup.noSession) throw new Error('no session id')
@@ -77,7 +82,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
     },
     // The plugin's directory comes from the engine, never from the
     // environment: the module's environment carries no CLAUDE_PLUGIN_ROOT.
-    plugin: { name: 'orchestrator', root: setup.root ?? '/plugins/orch-root' },
+    plugin: { root: setup.root ?? '/plugins/orch-root' },
     env: { get: async (name: string) => env[name] },
     fs: {
       read: async (p: string) => {
@@ -91,13 +96,13 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
       write: async () => undefined,
       stat: async (p: string) => {
         if (p === TRANSCRIPT && setup.transcript !== undefined) {
-          return { kind: 'file', size: setup.transcript.length }
+          return { kind: 'file' as const, size: setup.transcript.length }
         }
         throw new Error('ENOENT')
       },
       list: async (p: string) => (
         p === `${HOME}/.claude/projects`
-          ? [{ name: '-a-project', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }]
+          ? [{ name: '-a-project', kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false }]
           : []
       ),
       exists: async (p: string) => p === TRANSCRIPT && setup.transcript !== undefined,
@@ -123,25 +128,21 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, written }
 }
 
-function mounted(): Record<string, Function> {
-  const handlers: Record<string, Function> = {}
-  registerGuards((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    // The engine's on returns a registration taking one .catch; the fake
-    // accepts it and drops it — the body's own catch is what the wiring tests.
-    return { catch: () => undefined }
-  })
-  return handlers
+// The hooks the guards register; their .catch nets are kept apart — the body's own catch is what
+// the wiring tests.
+function mounted(): Array<Captured<World>> {
+  return capture<World>(on => registerGuards(on))
 }
 
-async function submit(handlers: Record<string, Function>, dollar: any, e: object = { text: 'go', wait: false, origin: { kind: 'user' } }) {
-  let seen: unknown = null
-  await handlers['prompt.submit'](dollar, e, (x: unknown) => { seen = x; return x })
-  return seen
+async function submit(hooks: ReadonlyArray<Captured<World>>, dollar: World, e: Prompt = { text: 'go', origin: { kind: 'user' } }) {
+  const box: { seen: Prompt | null } = { seen: null }
+  await hooksOn(hooks, 'prompt.submit').at(-1)!.handler(dollar, e, async (x: Prompt) => { box.seen = x; return x })
+  if (box.seen === null) throw new Error('the prompt was not passed on')
+  return box.seen
 }
 
 test('past the gate the role line rides the prompt as one context block', async () => {
@@ -160,10 +161,10 @@ test('the gate an env var lowered trips on a fill the default lets by', async ()
     env: { ORCHESTRATOR_CONTEXT_GATE: '1' },
   })
   const seen = await submit(mounted(), dollar)
-  expect((seen as any).context[0]).toContain('42% (gate 1%)')
+  expect(seen.context?.[0]).toContain('42% (gate 1%)')
   // Live finding: a session shown a test threshold with no source declined to
   // rotate, reading it as a fault. The line names the variable and says it binds.
-  expect((seen as any).context[0]).toContain('This threshold is set by ORCHESTRATOR_CONTEXT_GATE=1 in this session\'s environment: it is binding, not a fault.')
+  expect(seen.context?.[0]).toContain('This threshold is set by ORCHESTRATOR_CONTEXT_GATE=1 in this session\'s environment: it is binding, not a fault.')
 })
 
 test('below the gate the prompt passes on untouched, context included', async () => {
@@ -188,7 +189,7 @@ test('an unmeasured session is told so once, after a turn has answered', async (
   // Once per session: the next prompt meets the same silence as a low fill.
   const second = await submit(handlers, dollar)
   expect(second).toMatchObject({ text: 'go' })
-  expect((second as any).context).toBeUndefined()
+  expect(second.context).toBeUndefined()
 })
 
 test('a session whose first prompt this is stays silent', async () => {
@@ -197,7 +198,7 @@ test('a session whose first prompt this is stays silent', async () => {
   const { dollar } = fakeDollar({})
   const seen = await submit(mounted(), dollar)
   expect(seen).toMatchObject({ text: 'go' })
-  expect((seen as any).context).toBeUndefined()
+  expect(seen.context).toBeUndefined()
 })
 
 test('a session no tty names is never spoken to', async () => {
@@ -227,8 +228,8 @@ test("an auditor past the gate is shown the brief's absolute place", async () =>
     launchName: 'Audit: 1712',
   })
   const seen = await submit(mounted(), dollar)
-  expect((seen as any).context[0]).toContain('/plugins/orch-root/templates/auditor-succession-brief.md')
-  expect((seen as any).context[0]).not.toContain(' succeed — templates/')
+  expect(seen.context?.[0]).toContain('/plugins/orch-root/templates/auditor-succession-brief.md')
+  expect(seen.context?.[0]).not.toContain(' succeed — templates/')
 })
 
 test('a handler that fails lets the prompt through and logs one line', async () => {
@@ -242,7 +243,7 @@ test('a handler that fails lets the prompt through and logs one line', async () 
 test("a coordinator past the gate is shown its skill's absolute place", async () => {
   const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, measure: MEASURED_84, launchName: 'Coord: main' })
   const seen = await submit(mounted(), dollar)
-  expect((seen as any).context[0]).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
+  expect(seen.context?.[0]).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
 })
 
 test('a /clear starts the memo over: the new session is told it is unmeasured too', async () => {
@@ -250,37 +251,35 @@ test('a /clear starts the memo over: the new session is told it is unmeasured to
   // named the old transcript and kept the line already said.
   const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, noLaunchName: true })
   const handlers = mounted()
-  expect((await submit(handlers, dollar) as any).context[0]).toContain('unmeasured')
+  expect((await submit(handlers, dollar)).context?.[0]).toContain('unmeasured')
   const next = `${HOME}/.claude/projects/-a-project/s-two.jsonl`
   const stat = dollar.fs.stat
   dollar.session.id = async () => 's-two'
   dollar.fs.exists = async (p: string) => p === next
   dollar.fs.stat = async (p: string) => (p === next ? { kind: 'file', size: ANSWERED_RENAMED.length } : stat(p))
-  expect((await submit(handlers, dollar) as any).context[0]).toContain('unmeasured')
+  expect((await submit(handlers, dollar)).context?.[0]).toContain('unmeasured')
 })
 
 test('a model drift the gauge measured rides the next prompt to the model, once, whatever the role', async () => {
-  const gauge: Record<string, Function> = {}
-  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    gauge[args[0]] = args[args.length - 1] as Function
-    return { catch: () => undefined }
-  })
+  const measure = hooksOn(capture<World>(registerGauge), 'session.measure').at(-1)!.handler
   let model = 'a-model'
-  const g = {
+  const g = hostOf({
     ...disk(),
     session: { usage: async () => ({ context: { tokens: 1, window: 2, percent: 3 } }), model: async () => model, id: async () => 's-gate' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
     ui: { toast: () => undefined, invalidate: () => undefined },
-  }
-  await gauge['session.measure'](g, {}, (x: unknown) => x)
+  })
+  // The gauge reads the figures from $.session.usage, not from the event.
+  const measured = { context: { window: 2 } }
+  await measure(g, measured, async (x: unknown) => x)
   model = 'another-model'
-  await gauge['session.measure'](g, {}, (x: unknown) => x)
+  await measure(g, measured, async (x: unknown) => x)
   // A session with no role at all is still told.
   const { dollar } = fakeDollar({ noLaunchName: true })
   const handlers = mounted()
   const seen = await submit(handlers, dollar)
-  expect((seen as any).context).toEqual([driftAnnouncement('another-model', 'a-model')])
-  expect((await submit(handlers, dollar) as any).context).toBeUndefined()
+  expect(seen.context).toEqual([driftAnnouncement('another-model', 'a-model')])
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
 })
 
 // The newer installed commit, on the gate's channel: the plugin's own root names the commit the
@@ -298,11 +297,11 @@ test('an orchestrator and a coordinator are told of a newer installed commit onc
     const { dollar } = fakeDollar(setup)
     const handlers = mounted()
     const role = launchName.startsWith('Orch') ? 'orchestrator' : 'coordinator'
-    expect((await submit(handlers, dollar) as any).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED }, role, role === 'coordinator' ? DEPLOYED : '')])
-    expect((await submit(handlers, dollar) as any).context).toBeUndefined()
+    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED }, role, role === 'coordinator' ? DEPLOYED : '')])
+    expect((await submit(handlers, dollar)).context).toBeUndefined()
     const next = 'c'.repeat(40)
     setup.installed = installedState(next, INSTALLED, RUNNING)
-    expect((await submit(handlers, dollar) as any).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next }, role, role === 'coordinator' ? DEPLOYED : '')])
+    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next }, role, role === 'coordinator' ? DEPLOYED : '')])
   }
 })
 
@@ -315,7 +314,7 @@ test('a session running the installed commit, an agent, and a session with no re
   ]
   for (const setup of quiet) {
     const { dollar, written } = fakeDollar(setup)
-    expect((await submit(mounted(), dollar) as any).context).toBeUndefined()
+    expect((await submit(mounted(), dollar)).context).toBeUndefined()
     expect(written).toEqual([])
   }
 })

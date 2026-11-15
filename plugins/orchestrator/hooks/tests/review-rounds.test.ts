@@ -5,6 +5,12 @@
 import { expect, test } from 'claude-code/testing'
 import { register as registerReview } from '../review.ts'
 import { logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Events, Host, Noun, ProcessRunInit } from '../../core/host.ts'
+
+type World = Host<Noun>
+// What the review tool answers: its text, and whether it is an error.
+type Out = { readonly result: string; readonly isError?: boolean }
 
 const HOME = '/tmp/rounds-home'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -29,17 +35,17 @@ function fake(over: Over = {}) {
   const logged: string[] = []
   const calls: Record<string, unknown>[] = []
   const origin = over.origin === undefined ? 'git@github.com:acme/app.git' : over.origin
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
     session: { id: async () => 's-orch' },
     clock: { sleep: async () => undefined },
-    tool: { call: async (input: Record<string, unknown>) => { calls.push(input); return over.answer ?? { result: WRITTEN } } },
+    tool: { call: async (input: { tool: string } & Record<string, unknown>) => { calls.push(input); return over.answer ?? { result: WRITTEN } } },
     fs: {
       read: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return files.get(p)! },
       write: async (p: string, text: string) => { if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
       exists: async (p: string) => files.has(p),
-      stat: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return { kind: 'file', size: 1, mtimeMs: 1 } },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return { kind: 'file' as const, size: 1, mtimeMs: 1 } },
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -51,22 +57,18 @@ function fake(over: Over = {}) {
         }
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
-        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2])!); files.delete(argv[2]!) }
+        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, files, logged, calls }
 }
 
-function handler(): (dollar: any, e: object) => Promise<any> {
-  let found: Function | null = null
-  registerReview((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'tool.call' && args.length === 3) found = args[2]
-    return { catch: () => undefined }
-  })
-  return (dollar, e) => found!(dollar, e)
+function handler(): (dollar: World, e: Events['tool.call']) => Promise<Out> {
+  const found = hooksOn(capture<World>(registerReview), 'tool.call').filter(h => h.matcher !== undefined).at(-1)!
+  return async (dollar, e) => await found.handler(dollar, e, async () => undefined) as Out
 }
 
 const rowsOf = (files: Map<string, string>) => (files.get(RECORD) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))

@@ -5,6 +5,8 @@
 import { expect, test } from 'claude-code/testing'
 import { register as registerWait, Declarations, RETROSPECTIVE_TIMEOUT_MS, startRetrospective } from '../wait.ts'
 import { logLineOf } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import type { Host, Noun, ProcessRunInit } from '../../core/host.ts'
 
 const HOME = '/tmp/retro-home'
 const RECORD = `${HOME}/.claude/plugins/installed_plugins.json`
@@ -20,8 +22,8 @@ function world(w: World = {}) {
   const record = w.record === undefined ? JSON.stringify({ plugins: { 'learning@lounisbou': [{ installPath: ROOT }] } }) : w.record
   if (record !== null) files.set(RECORD, record)
   if (w.script !== false) files.set(SCRIPT, '')
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
     settings: {
       read: async () => {
@@ -34,14 +36,14 @@ function world(w: World = {}) {
       exists: async (p: string) => files.has(p),
     },
     process: {
-      run: async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+      run: async (argv: readonly string[], init?: ProcessRunInit) => {
         const log = logLineOf(argv)
         if (log !== null) { logs.push(log); return { exitCode: 0, stdout: '', stderr: '' } }
         runs.push({ argv: [...argv], timeoutMs: init?.timeoutMs })
         return w.answer ?? { exitCode: 0, stdout: 'learning retrospective: not started, 0 candidates wait and it starts at 3\n', stderr: '' }
       },
     },
-  }
+  })
   return { dollar, logs, runs }
 }
 
@@ -82,14 +84,15 @@ test('a start that fails, or settings that cannot be read, is one line of the lo
 })
 
 test('the turn that ends on a done wait starts the retrospective; another wait or no wait does not', async () => {
-  const handlers: Record<string, Function> = {}
   const declarations = new Declarations()
-  registerWait(((...args: any[]) => { handlers[args[0]] = args[args.length - 1]; return { catch: () => undefined } }) as any, declarations)
+  const hooks = capture<Host<Noun>>(on => registerWait(on, declarations))
+  const start = hooksOn(hooks, 'turn.start').at(-1)!.handler
+  const complete = hooksOn(hooks, 'turn.complete').at(-1)!.handler
   const next = async (e: { answer?: string }) => ({ text: e.answer })
-  const turn = async (dollar: any, wait: { kind: 'done' | 'deferred'; blocks: string } | null, agentId?: string) => {
-    await handlers['turn.start'](dollar, agentId ? { agentId } : {}, async () => undefined)
+  const turn = async (dollar: Host<Noun>, wait: { kind: 'done' | 'deferred'; blocks: string } | null, agentId?: string) => {
+    await start(dollar, agentId ? { agentId } : {}, async () => undefined)
     if (wait !== null) declarations.declare(wait)
-    return handlers['turn.complete'](dollar, { answer: 'all goals met', ...(agentId ? { agentId } : {}) }, next)
+    return complete(dollar, { answer: 'all goals met', ...(agentId ? { agentId } : {}) }, next)
   }
   const { dollar, runs } = world()
   expect(await turn(dollar, { kind: 'done', blocks: '' })).toEqual({ text: 'all goals met' })

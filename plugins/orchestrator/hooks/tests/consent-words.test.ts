@@ -7,6 +7,12 @@ import { settleWords, registerSettle } from '../question.ts'
 import { asksWords, humanTurn, judgeWords, parseWords, type Words } from '../consent-words.ts'
 import { parseConsentRecord, quotesConsent, grants } from '../../core/consent-record.ts'
 import { blockOf, logLineOf, lockRun } from './fakes.ts'
+import { capture, hooksOn, hostOf } from '../../core/capture.ts'
+import { fieldsOf, type Host, type Noun, type ToolSpec } from '../../core/host.ts'
+
+type World = Host<Noun>
+// What the settle tool answers: its text, and whether it is an error.
+type Out = { readonly result: string; readonly isError?: boolean }
 
 const HOME = '/tmp/words-home'
 const MODULE = `${HOME}/.claude/claude-orchestrator`
@@ -36,8 +42,8 @@ function machine(role: 'coordinator' | 'orchestrator', transcript: string[]) {
   const files = new Map<string, string>([[`${SESSIONS}/s-1`, row(role, role === 'coordinator' ? 'Coord: general' : 'Orch: acme [a1b2c3]')]])
   const transcriptPath = `${PROJECTS}/-work/s-1.jsonl`
   const text = () => transcript.join('\n') + '\n'
-  const dollar: any = {
-    plugin: { name: 'orchestrator', root: '/plugins/orch' },
+  const dollar = hostOf({
+    plugin: { root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
     session: { id: async () => 's-1' },
     clock: { sleep: async () => undefined },
@@ -46,12 +52,12 @@ function machine(role: 'coordinator' | 'orchestrator', transcript: string[]) {
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
       write: async (p: string, body: string) => { files.set(p, body) },
       stat: async (p: string) => {
-        if (p === transcriptPath) return { kind: 'file', size: new TextEncoder().encode(text()).length, mtimeMs: NOW.getTime() }
+        if (p === transcriptPath) return { kind: 'file' as const, size: new TextEncoder().encode(text()).length, mtimeMs: NOW.getTime() }
         if (!files.has(p)) throw new Error('ENOENT')
-        return { kind: 'file', size: 1, mtimeMs: NOW.getTime() }
+        return { kind: 'file' as const, size: 1, mtimeMs: NOW.getTime() }
       },
       exists: async (p: string) => p === transcriptPath || files.has(p),
-      list: async (dir: string) => dir === PROJECTS ? [{ name: '-work', kind: 'dir', size: 0, isLink: false }] : [],
+      list: async (dir: string) => dir === PROJECTS ? [{ name: '-work', kind: 'dir' as const, size: 0, isLink: false }] : [],
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -60,12 +66,12 @@ function machine(role: 'coordinator' | 'orchestrator', transcript: string[]) {
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
-        if (argv[0] === 'mv') { files.set(argv[3], files.get(argv[2])!); files.delete(argv[2]) }
+        if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
-  }
+  })
   return { files, dollar }
 }
 
@@ -377,17 +383,13 @@ test('the settle tool takes the consent fields, runs a call with no id as a cons
   // The tool dates the call by the clock: a limit far ahead.
   const later = SENTENCE.replace('16/11/2026', '16/11/2040')
   const m = machine('coordinator', [typed(later, new Date().toISOString())])
-  const handlers: Record<string, Function> = {}
-  registerSettle(((event: string, ...rest: any[]) => {
-    const [matcher, handler] = rest.length === 2 ? rest : [{}, rest[0]]
-    handlers[`${event}${matcher.tool ? `:${matcher.tool}` : ''}`] = handler
-    return { catch: () => undefined }
-  }) as any)
-  const registered: any[] = []
-  m.dollar.tool = { register: async (spec: unknown) => { registered.push(spec) } }
-  await handlers['session.start'](m.dollar, { cwd: '/w' }, async () => undefined)
-  expect(Object.keys(registered[0].inputSchema.properties)).toEqual(expect.arrayContaining(['consent_kind', 'consent_repo', 'consent_pr', 'consent_env', 'until', 'said_at']))
-  const call = handlers['tool.call:mcp__orchestrator__settle']
+  const hooks = capture<World>(registerSettle)
+  const registered: ToolSpec[] = []
+  m.dollar.tool.register = async (spec: ToolSpec) => { registered.push(spec) }
+  await hooksOn(hooks, 'session.start').at(-1)!.handler(m.dollar, { cwd: '/w' }, async () => undefined)
+  expect(Object.keys(fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {})).toEqual(expect.arrayContaining(['consent_kind', 'consent_repo', 'consent_pr', 'consent_env', 'until', 'said_at']))
+  const settle = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'mcp__orchestrator__settle').at(-1)!
+  const call = async (dollar: World, e: Record<string, unknown>) => await settle.handler(dollar, e, async () => undefined) as Out
   expect((await call(m.dollar, { id: 'q-1', outcome: 'answered-here', answer: 'A', consent_kind: 'e2e-exemption' })).result).toMatch(/go with no id/)
   expect((await call(m.dollar, { consent_kind: 'e2e-exemption', consent_repo: 'acme/guide', answer: later, until: '2040-11-16T11:00:00Z', agentId: 'a-1' })).result).toMatch(/subagent/)
   expect(records(m)).toEqual([])
