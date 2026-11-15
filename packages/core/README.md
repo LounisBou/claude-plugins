@@ -7,7 +7,8 @@ when it installs the plugin.
 | Module | What it owns |
 |---|---|
 | `paths.ts` | The host's configuration directory and each plugin's state directory. |
-| `store.ts` | Writes in one rename, read-modify-write under a lock. |
+| `store.ts` | Writes in one rename, read-modify-write under a lock, and an owner file claimed once and given back. |
 | `deadline.ts` | Work given a deadline, cancelled when it passes. |
 | `names.ts` | The shapes of session names and the role each one gives. |
+| `session-orchestration.ts` | The orchestration a session belongs to, from the host's record of its sessions. |
 | `locate.ts` | Where the host installed another plugin. |

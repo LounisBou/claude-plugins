@@ -5,7 +5,7 @@
 // in the turn's text, the gate sent once per crossing, nothing from a session that is no
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
-import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP, heldReport, ciState, readDeliveryFacts, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, ciState, readDeliveryFacts, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -550,6 +550,60 @@ test('a turn without a status line that ends on subagents or background work sti
   // A turn whose stop carried no task list at all is reported, as before.
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('No stop seen.', 'turn-5'))
   expect(fx.sent.length).toBe(2)
+})
+
+// --- a turn the host ended in its own words ---------------------------------------------
+
+const LIMIT = "You've hit your weekly limit · resets Nov 20 at 8pm (Europe/Paris)"
+const LIMIT_LINE = `[module] ${AGENT} stopped: `
+  + `usage limit (resets Nov 20 at 8pm (Europe/Paris)) — « ${LIMIT} »`
+
+test('the host\'s limit and error texts read as stops, the model\'s words as none', () => {
+  expect(hostStopOf(LIMIT)).toEqual({ kind: 'limit', text: LIMIT })
+  expect(hostStopOf("You've hit your monthly spend limit · raise it in the settings")?.kind).toBe('limit')
+  expect(hostStopOf('Credit balance is too low')?.kind).toBe('limit')
+  expect(hostStopOf('API Error: 500 Internal server error.')).toEqual({ kind: 'error', text: 'API Error: 500 Internal server error.' })
+  expect(hostStopOf('Not logged in · Please run /login')?.kind).toBe('error')
+  expect(hostStopOf('I hit an API error in the test, fixing it.\nstatus: done — PR #3')).toBeNull()
+  expect(stopText(AGENT, { kind: 'limit', text: LIMIT })).toBe(LIMIT_LINE)
+  expect(stopText(AGENT, { kind: 'error', text: 'API Error: Connection lost mid-response.' })).toBe(`[module] ${AGENT} stopped: API error — Connection lost mid-response.`)
+  // The transcript's tail: the host's line last is a stop; a prompt after it, or the model's words, none.
+  const synthetic = JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { model: '<synthetic>', content: [{ type: 'text', text: LIMIT }] } })
+  const system = JSON.stringify({ type: 'system', subtype: 'turn_duration' })
+  expect(stopInTail(`garbage\n${synthetic}\n${system}\n`)).toEqual({ kind: 'limit', text: LIMIT })
+  expect(stopInTail(`${synthetic}\n${JSON.stringify({ type: 'user', message: { content: 'go on' } })}\n`)).toBeNull()
+  expect(stopInTail(JSON.stringify({ type: 'assistant', message: { model: 'm', content: [{ type: 'text', text: 'Working.' }] } }))).toBeNull()
+  expect(stopInTail(JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { content: 'Something new broke' } }))).toEqual({ kind: 'error', text: 'Something new broke' })
+})
+
+test('an agent the host halted at its weekly limit is told to its orchestrator once, its background work running or not', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'classic.Stop', fx.dollar, { last_assistant_message: LIMIT, background_tasks: [{ type: 'local_agent', description: 'lens: tests', status: 'running' }], session_crons: [] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(LIMIT, 'turn-1'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: LIMIT_LINE }])
+  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe('stop:turn-1')
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(LIMIT, 'turn-1'))
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a turn the host ended on an error, its text only in the transcript, is told as an API error', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const transcript = `${HOME}/.claude/projects/-w/s-one.jsonl`
+  const line = JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 500 Internal server error.' }] } })
+  const { list } = fx.dollar.fs
+  const { run } = fx.dollar.process
+  const parts = {
+    ...fx.dollar,
+    fs: { ...fx.dollar.fs, list: async (dir: string) => (dir === `${HOME}/.claude/projects` ? [{ name: '-w', kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false }] : list(dir)), exists: async (p: string) => p === transcript || fx.files.has(p) },
+    process: { run: async (argv: readonly string[]) => (argv[0] === 'tail' && argv[3] === transcript ? { exitCode: 0, stdout: `${line}\n`, stderr: '' } : run(argv)) },
+  }
+  await drive(chains, 'turn.complete', parts, { reason: 'error', isAborted: false, turnId: 'turn-9' })
+  expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} stopped: API error — 500 Internal server error.` }])
+  // Interrupted by the person: his, nothing is read or sent.
+  await drive(chains, 'turn.complete', parts, { reason: 'aborted', isAborted: true, turnId: 'turn-10' })
+  expect(fx.sent.length).toBe(1)
 })
 
 test('the final report written without a status line still reaches the orchestrator after earlier silent turns', async () => {

@@ -365,11 +365,15 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   const asked = await declare(dollar, { kind: 'operator', blocks: 'the merge' })
   expect(asked.isError).toBe(undefined)
   expect(declarations.current()?.kind).toBe('operator')
-  const { dollar: clear } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }]) } })
+  // The record's own row closed: an open one holds a done by itself (wait.ts holdsRecord).
+  const closed = (files: Map<string, string>) => files.set(RECORD, (files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
+  const { dollar: clear, files: clearFiles } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }]) } })
+  closed(clearFiles)
   expect((await declare(clear, { kind: 'done' })).isError).toBe(undefined)
   expect(declarations.current()?.kind).toBe('done')
   // A forge that cannot be read holds nothing: the refusal is for a pull request known unattended.
-  const { dollar: unread } = world({ forge: { 'acme/app': null } })
+  const { dollar: unread, files: unreadFiles } = world({ forge: { 'acme/app': null } })
+  closed(unreadFiles)
   expect((await declare(unread, { kind: 'done' })).isError).toBe(undefined)
   expect(unattendedRefusal('PR délaissées : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
 })
