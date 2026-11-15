@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { fdWriter, isEntry, run } from './process.ts'
 
 const node = process.execPath
@@ -72,4 +72,32 @@ test('isEntry: the module node was started with', () => {
   assert.equal(isEntry(pathToFileURL('/x/a.ts').href, '/x/a.ts'), true)
   assert.equal(isEntry(pathToFileURL('/x/a.ts').href, '/x/b.ts'), false)
   assert.equal(isEntry(pathToFileURL('/x/a.ts').href, undefined), false)
+})
+
+test('isEntry: a script reached through a symbolic link is its own entry', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'entry-'))
+  try {
+    const real = join(dir, 'real.ts')
+    const link = join(dir, 'link.ts')
+    writeFileSync(real, '')
+    symlinkSync(real, link)
+    assert.equal(isEntry(pathToFileURL(real).href, link), true)
+    assert.equal(isEntry(pathToFileURL(real).href, join(dir, 'other.ts')), false)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('a script run through a symbolic link prints what it prints when run directly', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'entry-'))
+  try {
+    const link = join(dir, 'workspace.ts')
+    symlinkSync(fileURLToPath(new URL('../workspace.ts', import.meta.url)), link)
+    const direct = await run([node, '--experimental-strip-types', '--no-warnings', fileURLToPath(new URL('../workspace.ts', import.meta.url))], { stderr: 'pipe' })
+    const viaLink = await run([node, '--experimental-strip-types', '--no-warnings', link], { stderr: 'pipe' })
+    assert.notEqual(viaLink.stdout + viaLink.stderr, '')
+    assert.deepEqual(viaLink, direct)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
 })
