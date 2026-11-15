@@ -10,6 +10,9 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ENGINE="$ROOT/engine"
+# Under the coverage run (scripts/python-coverage.ts) the scrubbed environment keeps what starts
+# coverage.py in the engine; otherwise it adds nothing.
+COV_ENV=${COVERAGE_PROCESS_START:+COVERAGE_PROCESS_START=$COVERAGE_PROCESS_START PYTHONPATH=${PYTHONPATH:-}}
 FIXTURES="$ROOT/tests/fixtures"
 WORK=$(mktemp -d)
 SERVER_PID=""
@@ -143,7 +146,7 @@ CAPTURED="$WORK/captured"
 run() {
   local entry="$1"
   shift
-  env -i PATH="$PATH" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$CONFIG" CF_API_BASE="$API" \
+  env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$CONFIG" CF_API_BASE="$API" \
     BETA_CLOUDFLARE_API_TOKEN="$TOKEN_BETA" ${EXTRA_ENV:-} ${RAW_ENV:+"$RAW_ENV"} \
     python3 "$ENGINE/$entry" "$@" >"$WORK/out" 2>"$WORK/err" <"${STDIN:-/dev/null}"
   CODE=$?
@@ -226,7 +229,7 @@ EXTRA_ENV="CLAUDE_CLOUDFLARE_CONFIG=$WORK/onlyenv.json" cf auth-check
 check "the only account found is used" "beta" "$(printf '%s\n' "$OUT" | tail -1 | cut -f1)"
 
 printf '{"env_files": ["~/.nothing"]}\n' > "$WORK/noaccount.json"
-env -i PATH="$PATH" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$WORK/noaccount.json" CF_API_BASE="$API" \
+env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$WORK/noaccount.json" CF_API_BASE="$API" \
   python3 "$ENGINE/cf.py" zones >"$WORK/out" 2>"$WORK/err"
 check "no account at all exits 4" "4" "$?"
 cat "$WORK/out" "$WORK/err" >> "$CAPTURED"
@@ -1639,7 +1642,7 @@ user_only() {
 inject() {
   local patch="$1"
   shift
-  env -i PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
+  env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
     python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import cf; from cflib import caddy, caddyctl; exec(sys.argv[2]); sys.exit(cf.main(sys.argv[3:], writes=not cf.is_read(cf.build_parser(), sys.argv[3])))' \
     "$ENGINE" "$patch" "$@" >"$WORK/out" 2>"$WORK/err"
   CODE=$?
@@ -2172,7 +2175,7 @@ check "an interrupt during the reload puts the Caddyfile back byte for byte" "sa
 
 caddy_reset
 printf 'hang\n' > "$CSTATE/validate"
-env -i PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
+env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
   python3 "$ENGINE/cf-write.py" caddy-site-set new.example.com --body-file "$BODY" >"$WORK/out" 2>"$WORK/err" &
 engine_pid=$!
 for _ in $(seq 1 50); do
@@ -2353,7 +2356,7 @@ check "e2e: a reload past the cycle's budget is rolled back within it, exit 6, t
 caddy_reset
 printf 'hang\n' > "$CSTATE/validate"
 printf '%s' "$e2e_set" > "$WORK/stdin"
-env -i PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
+env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(caddy_env) \
   python3 "$ENGINE/cf-write.py" --stdin-json <"$WORK/stdin" >"$WORK/out" 2>"$WORK/err" &
 engine_pid=$!
 for _ in $(seq 1 50); do
@@ -2457,7 +2460,7 @@ pub check slow.example.com
 check "a resolver slower than the timeout is named" "slow.example.com	resolver timeout	-	-	-" "$(printf '%s\n' "$OUT" | sed 1d)"
 check "…and every one of them exits 0" "0" "$CODE"
 check "no name check asks for is a wildcard: check.run skips one, asking nothing" "*.example.com	wildcard: not checked " \
-  "$(rm -f "$NAMES.log"; env -i PATH="$PATH" $(check_env) python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from cflib import check; r = check.run(["*.example.com"])["*.example.com"]; print(r["host"] + "\t" + r["resolution"])' "$ENGINE") $(resolved)"
+  "$(rm -f "$NAMES.log"; env -i $COV_ENV PATH="$PATH" $(check_env) python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from cflib import check; r = check.run(["*.example.com"])["*.example.com"]; print(r["host"] + "\t" + r["resolution"])' "$ENGINE") $(resolved)"
 
 # A certificate past its date, issued by the fixture CA, on a listener that
 # takes one connection and ends.
@@ -2772,7 +2775,7 @@ check "…the record left with the published address" "A	www.example.com	203.0.1
 # boom_publish <args...>: publish, its Caddy cycle failing with an error that is
 # no engine error; stdout, stderr and the exit code as run() keeps them.
 boom_publish() {
-  env -i PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(check_env) \
+  env -i $COV_ENV PATH="$PATH" HOME="$HOMEDIR" CF_API_BASE="$API" $(check_env) \
     python3 - "$ENGINE" "$@" >"$WORK/out" 2>"$WORK/err" <<'PYBOOM'
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -3037,7 +3040,7 @@ echo "== install.sh and the doctor =="
 
 # inst [args...]: install.sh in the same scrubbed environment as the engine.
 inst() {
-  env -i PATH="${INST_PATH:-$PATH}" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$CONFIG" CF_API_BASE="$API" \
+  env -i $COV_ENV PATH="${INST_PATH:-$PATH}" HOME="$HOMEDIR" CLAUDE_CLOUDFLARE_CONFIG="$CONFIG" CF_API_BASE="$API" \
     BETA_CLOUDFLARE_API_TOKEN="${INST_BETA-$TOKEN_BETA}" ${EXTRA_ENV:-} \
     /bin/bash "$ROOT/install.sh" "$@" >"$WORK/out" 2>"$WORK/err"
   CODE=$?
