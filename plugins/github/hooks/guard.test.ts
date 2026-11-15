@@ -435,7 +435,7 @@ test('in auto-merge a merge whose review failed at the head is refused before an
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: ' + REVIEW_FAILED_ITEM + '.' + REFUSAL_END)
   expect(seen.asked.length).toBe(0)
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
@@ -444,7 +444,7 @@ test('in auto-merge a merge with a record absent and CI failed is refused, both 
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
     + ' 0123456, e2e: no record at 0123456, CI failed: lint.' + REFUSAL_END)
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
@@ -590,7 +590,7 @@ test('a Bash undraft outside auto-merge whose guard throws is refused as an unve
   const out: any = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
   expect(String(out.deny)).toStartWith('github: readiness of acme/thing#12 unverified: ')
   expect(seen.bash.length).toBe(0)
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(seen.logs).toEqual([])
 })
 
@@ -648,7 +648,7 @@ test('an undraft outside auto-merge of a pull request not ready is still refused
   const seen = await world($, on, { ...REVIEW_FAILED })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out.deny).toContain('github: pr-ready refused on acme/thing#12 at 0123456: not ready.')
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
@@ -717,7 +717,7 @@ for (const [route, call] of UNDRAFT_ACTS) {
     const out: any = await $.tool.call(call)
     expect(out.deny).toContain('refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at 0123456, e2e: no record at 0123456, CI still running')
     expect(actRan(seen, route, 'pr-ready')).toBe(0)
-    expect(seen.journal).toEqual([])
+    expect(seen.journal).toEqual(['github.ready.held'])
     expect(seen.pull?.labels).toEqual(['Not Ready'])
   })
 
@@ -768,11 +768,11 @@ test('a Bash merge outside auto-merge is refused with the tool call to make, an 
   const api: any = await $.tool.call(bash('gh api -X PUT repos/acme/thing/pulls/12/merge'))
   expect(api.deny).toContain('not in auto-merge')
   expect(seen.bash).toEqual([])
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held', 'github.ready.held'])
   const ready: any = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
   expect(ready.deny).toBeUndefined()
   expect(seen.bash).toEqual(['gh pr ready 12 -R acme/thing'])
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual(['github.ready.held', 'github.ready.held', 'github.draft.leave'])
 })
 
 test('a Bash merge without a repository is refused, so is a GraphQL merge', async ($, on) => {
@@ -917,7 +917,7 @@ test('a Bash undraft through gh.py passes for CI with --for-ci, any other meets 
   expect(seen.logs).toEqual(['github: acme/thing#12 out of draft to run CI, still Not Ready'])
   const ready: any = await $.tool.call(bash(ENGINE + ' pr-ready 12 --repo acme/thing'))
   expect(ready.deny).toContain('github: gh.py pr-ready refused on acme/thing#12 at 0123456: not ready.')
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(seen.bash.length).toBe(1)
 })
 
@@ -1045,7 +1045,7 @@ for (const [name, labels, line] of [
     const seen = await world($, on, { labels: [...labels] })
     const out: any = await $.tool.call(bash(line))
     expect(out.deny).toContain('refused')
-    expect(seen.journal).toEqual([])
+    expect(seen.journal).toEqual(['github.ready.held'])
     expect(seen.bash).toEqual([])
   })
 }
@@ -1054,7 +1054,7 @@ test('a call a later check refuses leaves no observation: the journal is written
   const seen = await world($, on, { ...NO_RECORDS })
   const out: any = await $.tool.call(bash('echo x > ~/.claude/pr-records/o/r/x.json && gh pr merge 12 -R acme/thing'))
   expect(out.deny).toContain('refused')
-  expect(seen.journal).toEqual([])
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(seen.bash).toEqual([])
 })
 
@@ -1169,7 +1169,7 @@ test('a command that only mentions the records in its text passes unobserved, a 
   expect(seen.journal).toEqual(['github.records.write'])
   const rm: any = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
   expect(rm.deny).toBe(RECORDS_REFUSAL)
-  expect(seen.journal).toEqual(['github.records.write'])
+  expect(seen.journal).toEqual(['github.records.write', 'github.records.delete'])
   expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"', 'touch ~/.claude/pr-records/x'])
 })
 
@@ -1254,7 +1254,7 @@ for (const command of RECORDS_DELETIONS) {
     const seen = await world($, on)
     const out: any = await $.tool.call(bash(command))
     expect(out.deny).toBe(RECORDS_REFUSAL)
-    expect(seen.journal).toEqual([])
+    expect(seen.journal).toEqual(['github.records.delete'])
     expect(seen.bash).toEqual([])
   })
 }
@@ -1326,6 +1326,8 @@ test('an E2E pass or fail with no run is refused, and the run decides the result
     expect(out.deny).toContain('an E2E pass or fail is computed from its run, not stated')
   }
   expect(recordRun(seen)).toBeUndefined()
+  // Each refusal journals one event under its stable code.
+  expect(seen.journal).toEqual(['github.record.e2e-unrun', 'github.record.e2e-unrun', 'github.record.e2e-unrun'])
   await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN } as any)
   const argv = recordRun(seen)!
   expect(argv.slice(6, 12)).toEqual(['--kind', 'e2e', '--result', 'fail', '--producer', 'session-e2e'])
@@ -1934,7 +1936,7 @@ test('gh pr ready and the engine leaving draft outside auto-merge are observed, 
   const graphql: any = await $.tool.call(bash('gh api graphql -f query=\'mutation{markPullRequestReadyForReview(input:{pullRequestId:"x"}){clientMutationId}}\''))
   expect(graphql.deny).toContain(LEAVE_DRAFT)
   expect(seen.bash.length).toBe(2)
-  expect(seen.journal.length).toBe(2)
+  expect(seen.journal.length).toBe(3)
   expect(seen.asked).toEqual([])
 })
 
@@ -2459,7 +2461,7 @@ for (const [label, until] of [['an expiry behind', BEHIND], ['an expiry that is 
     expect(missing.result.split('expired at').length).toBe(2)
     // The expiry line beside the absent record is no reason of its own: the merge is observed.
     expect(await $.tool.call(gh('pr-merge', { pr: 12 }))).toEqual({ result: 'ok' })
-    expect(seen.journal).toEqual(['github.ready.no-record'])
+    expect(seen.journal).toEqual(['github.ready.held', 'github.ready.no-record'])
   })
 }
 
@@ -2759,15 +2761,15 @@ test('the exemption files are written through Write, Edit and Bash, each observe
     const out: any = await $.tool.call(bash(command))
     expect(out.deny, command).toBe(EXEMPT_REFUSAL)
   }
-  expect(seen.journal.length).toBe(calls.length)
+  expect(seen.journal.length).toBe(calls.length + 4)
   for (const command of ['cat /data/e2e-exempt/acme/thing.json', 'ls /data/check-plans/acme']) {
     const read: any = await $.tool.call(bash(command))
     expect(read.deny, command).toBeUndefined()
   }
-  expect(seen.journal.length).toBe(calls.length)
+  expect(seen.journal.length).toBe(calls.length + 4)
   const mention: any = await $.tool.call(bash('git commit -m "docs: explain e2e-exempt/ files"'))
   expect(mention.deny).toBeUndefined()
-  expect(seen.journal.length).toBe(calls.length)
+  expect(seen.journal.length).toBe(calls.length + 4)
   expect(seen.bash).toEqual([calls[2], bash('cat /data/e2e-exempt/acme/thing.json'), bash('ls /data/check-plans/acme'), bash('git commit -m "docs: explain e2e-exempt/ files"')].map((call: any) => call.command))
 })
 
@@ -3228,7 +3230,7 @@ test('the plan files are written through Write, observed, and deleted through Ba
   expect(((await $.tool.call(bash('touch "$CLAUDE_PLUGIN_DATA/check-plans/acme/12.json"'))) as any).deny).toBeUndefined()
   expect(seen.journal).toEqual(['github.exemption.write', 'github.exemption.write'])
   expect(((await $.tool.call(bash('rm -rf "$CLAUDE_PLUGIN_DATA/check-plans/acme"'))) as any).deny).toBe(EXEMPT_REFUSAL)
-  expect(seen.journal.length).toBe(2)
+  expect(seen.journal.length).toBe(3)
 })
 
 // ---- who writes the plan ----

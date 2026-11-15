@@ -22,6 +22,34 @@ export const OBSERVED = {
   noRecord: 'github.ready.no-record',
 } as const
 
+// The stable code of each refusal that protects something: the call is refused and one refusal event of its code
+// is journaled, as an observed guard's is. A refusal that only asks for a missing or malformed argument has none.
+export const REFUSED = {
+  // The Ready gate holds a merge, an undraft or a Ready label: a record failed, CI is not green, or readiness is unread.
+  ready: 'github.ready.held',
+  autoMergeList: 'github.auto-merge.list-write',
+  autoDeployList: 'github.auto-deploy.list-touch',
+  autoMergeSet: 'github.auto-merge.unproven',
+  autoDeploySet: 'github.auto-deploy.unproven',
+  deploy: 'github.deploy.unlisted',
+  recordsDelete: 'github.records.delete',
+  exemptionDelete: 'github.exemption.delete',
+  net: 'github.net.blocked',
+  // The record tool's refusals.
+  recordKind: 'github.record.kind',
+  recordPlan: 'github.record.plan-writer',
+  recordAcceptance: 'github.record.acceptance-writer',
+  recordPassOverFail: 'github.record.pass-over-fail',
+  recordSelfReview: 'github.record.self-review',
+  recordHead: 'github.record.off-head',
+  recordDirty: 'github.record.dirty-checkout',
+  recordUnverified: 'github.record.gate-unread',
+  recordRuntime: 'github.record.runtime-not-applicable',
+  recordUnquoted: 'github.record.unquoted-words',
+  recordUnplanned: 'github.record.waiver-unplanned',
+  recordE2eUnrun: 'github.record.e2e-unrun',
+} as const
+
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 
 // The time one observation may take: the call waits for it, so a journal that hangs (a held lock, a stuck write)

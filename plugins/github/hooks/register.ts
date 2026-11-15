@@ -18,7 +18,7 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
-import { isCatchable, observe, OBSERVED } from './observe.ts'
+import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
@@ -161,7 +161,10 @@ async function permit(
   // The ready guard, before any question: nobody is asked about a pull
   // request that is not ready.
   const notReady = beforeAsk ? await beforeAsk() : undefined
-  if (notReady) return notReady
+  if (notReady) {
+    await observed($, REFUSED.ready)
+    return notReady
+  }
 
   // Going back to draft, and leaving it for CI still Not Ready, are no
   // approvals to give: they run in every repository, as through Bash. An ask
@@ -806,6 +809,12 @@ async function observed($: Mod, code: string): Promise<void> {
     // Without a configuration directory observe says it cannot journal; the call goes on.
   }
   await observe($, config, code)
+}
+
+// A refusal that protects something: one refusal event of its stable code, then the refusal.
+async function refuse($: Mod, code: string, text: string): Promise<{ deny: string }> {
+  await observed($, code)
+  return { deny: text }
 }
 
 /*
@@ -1875,7 +1884,7 @@ async function setAutoMerge($: Mod, e: GhRequest): Promise<Answer> {
   if (typeof args['on'] !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
   const words = typeof args['words'] === 'string' ? args['words'] : ''
   const unproven = await unprovenWord($, words, repo, args['on'])
-  if (unproven) return { deny: unproven }
+  if (unproven) return await refuse($, REFUSED.autoMergeSet, unproven)
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
     if (refused) return { deny: refused }
@@ -1948,7 +1957,7 @@ async function setAutoDeploy($: Mod, e: GhRequest): Promise<Answer> {
   const declared = declarationsOf(args['commands'], repo)
   if (typeof declared === 'string') return { deny: declared }
   const unproven = await unprovenDeployWord($, typeof args['words'] === 'string' ? args['words'] : '', repo, env, args['on'])
-  if (unproven) return { deny: unproven }
+  if (unproven) return await refuse($, REFUSED.autoDeploySet, unproven)
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
     if (refused) return { deny: refused }
@@ -2015,7 +2024,7 @@ async function setExemption($: Mod, e: ToolInput, detail: string): Promise<Answe
     if (!(Date.parse(until) > now)) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
   }
   const refused = quotedWordsRefusal('an E2E exemption', detail)
-  if (refused) return { deny: refused }
+  if (refused) return await refuse($, REFUSED.recordUnquoted, refused)
   const dir = await dataDir($)
   if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
   let session = ''
@@ -2194,13 +2203,11 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   const owned = recordKindFor(origin)
   const kind = e['kind'] === undefined || e['kind'] === null || e['kind'] === '' ? owned : String(e['kind'])
   if (kind !== owned) {
-    return {
-      deny: kindRefusal(kind, origin, owned),
-    }
+    return await refuse($, REFUSED.recordKind, kindRefusal(kind, origin, owned))
   }
   const detail = e['detail'] === undefined || e['detail'] === null ? '' : String(e['detail'])
-  if (e['exempt'] !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : { deny: kindRefusal('e2e', origin, owned) }
-  if (e['plan'] !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : { deny: PLAN_REFUSAL }
+  if (e['exempt'] !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : await refuse($, REFUSED.recordKind, kindRefusal('e2e', origin, owned))
+  if (e['plan'] !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : await refuse($, REFUSED.recordPlan, PLAN_REFUSAL)
   let result = String(e['result'] ?? '')
   // An E2E pass or fail is computed from a run the tool performs or observed, never taken from the session's word.
   const e2eRun = kind === 'e2e' ? e2eRunOf(e) : undefined
@@ -2209,12 +2216,12 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
     return { deny: 'github: a run gives a pass or a fail; a ' + result + ' rests on no run: leave "run" and "ran" out.' }
   }
   if (kind === 'e2e' && !e2eRun && (result === 'pass' || result === 'fail' || result === '')) {
-    return { deny: 'github: an E2E pass or fail is computed from its run, not stated: give "run" (the command as an argv, run here in the checkout) or "ran" (the command line this session ran there in Bash).' }
+    return await refuse($, REFUSED.recordE2eUnrun, 'github: an E2E pass or fail is computed from its run, not stated: give "run" (the command as an argv, run here in the checkout) or "ran" (the command line this session ran there in Bash).')
   }
   if (result === 'not-applicable' && detail.trim() === '') {
     return { deny: 'github: an E2E not applicable gives its reason in "detail": what the pull request changes that runs nothing.' }
   }
-  if (result === ACCEPTANCE.result && origin !== ACCEPTANCE.plugin) return { deny: acceptanceOriginRefusal(origin) }
+  if (result === ACCEPTANCE.result && origin !== ACCEPTANCE.plugin) return await refuse($, REFUSED.recordAcceptance, acceptanceOriginRefusal(origin))
   if (result === ACCEPTANCE.result && detail.trim() === '') {
     return { deny: 'github: an acceptance names each point it sets aside with its reason in "detail".' }
   }
@@ -2231,31 +2238,29 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   const waived = result === 'waived' ? WAIVED.find((k) => k === kind) : undefined
   const planned = waived ? (await readPlan($, repo, pr))?.[waived] : undefined
   if (waived && planned && planned.need !== 'required') {
-    return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
+    return await refuse($, REFUSED.recordUnplanned, 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.')
   }
   const unquoted = waived ? quotedWordsRefusal(waived === 'e2e' ? 'an E2E waiver' : 'a norms waiver', detail) : undefined
-  if (unquoted) return { deny: unquoted }
+  if (unquoted) return await refuse($, REFUSED.recordUnquoted, unquoted)
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
   } catch (err: unknown) {
-    return { deny: unverifiedRefusal(repo, pr, reasonOf(err).trim()) }
+    return await refuse($, REFUSED.recordUnverified, unverifiedRefusal(repo, pr, reasonOf(err).trim()))
   }
   const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
   const local = head.exitCode === 0 ? String(head.stdout).trim().toLowerCase() : ''
   if (dir && !local) return { deny: 'github: ' + dir + ' has no commit to read: ' + (String(head.stderr ?? '').trim() || 'git rev-parse HEAD exited ' + head.exitCode) }
   if (local !== gate.head) {
-    return {
-      deny: 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ' (' + repo + '#' + pr + '): a record is written at the head it read. '
-        + (dir ? 'Checkout read: ' + dir + '.' : 'Name the checkout the tests ran in: {"dir": "<absolute path>"}.'),
-    }
+    return await refuse($, REFUSED.recordHead, 'github: the checkout is at ' + (local.slice(0, 7) || 'no commit') + ', the pull request\'s head is ' + gate.head.slice(0, 7) + ' (' + repo + '#' + pr + '): a record is written at the head it read. '
+        + (dir ? 'Checkout read: ' + dir + '.' : 'Name the checkout the tests ran in: {"dir": "<absolute path>"}.'))
   }
   const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000, ...inDir })
   if (status.exitCode !== 0) {
     return { deny: 'github: git status failed' + (dir ? ' in ' + dir : '') + ': ' + (String(status.stderr ?? '').trim() || 'exit ' + status.exitCode) }
   }
   if (String(status.stdout).trim() !== '') {
-    return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
+    return await refuse($, REFUSED.recordDirty, 'github: the tracked files have changes: a record is written on a clean checkout of the head.')
   }
   let self = ''
   try {
@@ -2264,19 +2269,19 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
     // Without its id the session is known as no pusher.
   }
   const selfReview = selfReviewRefusal(kind, gate.head, (await pushersOf($, gate.head)).has(self) && self !== '' ? new Set([gate.head]) : new Set<string>())
-  if (selfReview) return { deny: selfReview }
+  if (selfReview) return await refuse($, REFUSED.recordSelfReview, selfReview)
   // The orchestrator's pass does not override a failed review at its head: it sets the points aside.
   if (origin === ACCEPTANCE.plugin && result === 'pass' && latestReview(gate, await headRecords($, gate))?.result === 'fail') {
-    return { deny: passOverFailRefusal(gate.head) }
+    return await refuse($, REFUSED.recordPassOverFail, passOverFailRefusal(gate.head))
   }
   if (result === 'not-applicable') {
     const refused = await runtimeRefusal($, repo, pr, gate.head)
-    if (refused) return { deny: refused }
+    if (refused) return await refuse($, REFUSED.recordRuntime, refused)
   }
   let written = detail
   if (e2eRun) {
     const outcome = await e2eOutcome($, e2eRun, dir, gate.head, inDir, detail)
-    if ('deny' in outcome) return outcome
+    if ('deny' in outcome) return await refuse($, REFUSED.recordE2eUnrun, outcome.deny)
     result = outcome.result
     written = outcome.detail
   }
@@ -2517,24 +2522,24 @@ export function register(on: On<Mod>): void {
     const observations: string[] = []
     try {
       // A command that only reads them passes: the auto-merge list is refused a write, the deploy list any touch.
-      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return { deny: AUTO_MERGE_REFUSAL }
-      if (await touchesList($, line, AUTO_DEPLOY_FILE)) return { deny: AUTO_DEPLOY_REFUSAL }
+      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return await refuse($, REFUSED.autoMergeList, AUTO_MERGE_REFUSAL)
+      if (await touchesList($, line, AUTO_DEPLOY_FILE)) return await refuse($, REFUSED.autoDeployList, AUTO_DEPLOY_REFUSAL)
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
     try {
       // The records and the exemptions are refused a deletion (irreversible); any other write to them is observed.
       const root = await recordsRoot($)
-      if (deletesRecords(line, root)) return { deny: RECORDS_REFUSAL }
+      if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
       const exempt = await touchesExemptions($, line)
-      if (exempt && deletes(line, namesExemptions)) return { deny: EXEMPT_REFUSAL }
+      if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
       if (writesRecords(line, root)) observations.push(OBSERVED.records)
       if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
     const undeployed = await bashDeployRefusal($, line)
-    if (undeployed) return { deny: undeployed }
+    if (undeployed) return await refuse($, REFUSED.deploy, undeployed)
     let labellings: Labelling[] = []
     try {
       labellings = bashLabellings(line)
@@ -2550,11 +2555,11 @@ export function register(on: On<Mod>): void {
       for (const act of bashActs(line)) {
         current = act
         const refused = await bashReady($, act, after, observations)
-        if (refused) return { deny: refused }
+        if (refused) return await refuse($, REFUSED.ready, refused)
       }
     } catch (err) {
       // The ready guard failed on its own: its readiness reads as unverified, never as a pass.
-      return { deny: guardThrew(current, err) }
+      return await refuse($, REFUSED.ready, guardThrew(current, err))
     }
     for (const code of new Set(observations)) await observed($, code)
     await bashLint($, line)
@@ -2574,9 +2579,9 @@ export function register(on: On<Mod>): void {
       await notePushedHead($, line)
     }
     return result
-  }).catch(async (_$, e, next) => {
+  }).catch(async ($, e, next) => {
     const refusal = bashNetRefusal(String(e['command'] ?? ''))
-    return refusal === null ? next(e) : { deny: refusal }
+    return refusal === null ? next(e) : await refuse($, REFUSED.net, refusal)
   })
 
   // The auto-merge and deploy lists are written by their tools only; a write to the records or the exemptions is observed.
@@ -2589,18 +2594,18 @@ export function register(on: On<Mod>): void {
       }
       const data = await dataDir($)
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
-        return { deny: AUTO_MERGE_REFUSAL }
+        return await refuse($, REFUSED.autoMergeList, AUTO_MERGE_REFUSAL)
       }
       if ((data && path === normalise(data + '/' + AUTO_DEPLOY_FILE)) || AUTO_DEPLOY_PATH.test(path)) {
-        return { deny: AUTO_DEPLOY_REFUSAL }
+        return await refuse($, REFUSED.autoDeployList, AUTO_DEPLOY_REFUSAL)
       }
       if ((data && [EXEMPT_DIR, PLAN_DIR].some((dir) => path.startsWith(normalise(data + '/' + dir) + '/'))) || ANY_EXEMPT_PATH.test(path)) {
         await observed($, OBSERVED.exemption)
       }
       return next(e)
-    }).catch(async (_$, e, next) => {
+    }).catch(async ($, e, next) => {
       const refusal = writeNetRefusal(String(e['file_path'] ?? e['notebook_path'] ?? ''))
-      return refusal === null ? next(e) : { deny: refusal }
+      return refusal === null ? next(e) : await refuse($, REFUSED.net, refusal)
     })
   }
 
@@ -2618,7 +2623,7 @@ export function register(on: On<Mod>): void {
   // A skill the repositories declare as a deploy runs only where the list grants it.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
     const refused = await skillDeployRefusal($, String(e['skill'] ?? ''))
-    return refused ? { deny: refused } : next(e)
+    return refused ? await refuse($, REFUSED.deploy, refused) : next(e)
   }).catch(async (_$, e, next) => next(e))
 
   on('tool.call', { tool: RECORD_TOOL }, async ($, e, next) => {
