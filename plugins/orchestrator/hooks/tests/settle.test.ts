@@ -254,10 +254,10 @@ test('an answer that asks work records it as a to-do of the asker, in its list, 
   expect(m.sent.length).toBe(2)
 })
 
-// --- an entry the relay wrote --------------------------------------------------------------------
+// --- a closing proposal the relay wrote --------------------------------------------------------------------
 
 const relayed = (over: Record<string, unknown> = {}) => ({
-  id: 'r-1', from: ASKER, session: 's-ask', kind: 'operator', since: '2026-11-14T14:00:00.000Z', blocks: 'phase 3',
+  id: 'r-1', from: ASKER, session: 's-ask', kind: 'done', since: '2026-11-14T14:00:00.000Z', blocks: null,
   question: '**Question 1 of 1**', choices: [], recommendation: null, status: 'open', at: '2026-11-14T14:00:00.000Z', answer: null, ...over,
 })
 
@@ -289,24 +289,8 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   const open = relayed({ id: 'r-2' })
   m.files.set(`${ROUND}/r-2.json`, JSON.stringify(open))
   const wait = `${MODULE}/store/${waitKey('s-ask')}`
-  m.files.set(wait, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(open as RoundEntry) }))
+  m.files.set(wait, JSON.stringify({ waiting: 'done', relayed: entryFingerprint(open as RoundEntry) }))
   await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
-})
-
-test('the coordinator closes a relay\'s entry from another machine: closed with its delivery pending and no answer stamp, as the remote answers are, then sent once', async () => {
-  const m = machine()
-  m.files.set(`${ROUND}/r-far.json`, JSON.stringify(relayed({ id: 'r-far', session: 's-far', from: 'Orch: far', origin: { machine: 'box-2' } })))
-  const closes: any[] = []
-  const write = m.coordinator.fs.write
-  m.coordinator.fs.write = async (p: string, text: string) => {
-    if (p.startsWith(`${ROUND}/r-far.json`)) closes.push(JSON.parse(text))
-    return write(p, text)
-  }
-  await settle(m.coordinator, request('r-far', { text: 'B' }), AT)
-  const close = closes[0]
-  expect([close.status, close.answer.text, close.answer.by]).toEqual(['closed', 'B', 'coordinator'])
-  expect([close.delivery.state, close.delivery.attempts, 'answerAt' in close.delivery]).toEqual(['pending', 0, false])
-  expect([entryOf(m, 'r-far').delivery.state, entryOf(m, 'r-far').delivery.attempts]).toEqual(['sent', 1])
 })

@@ -31,12 +31,12 @@ import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, par
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, gateText, noStatusText, noStatusKey, heldReport, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { answerAskedFromPane, askedAsEntry, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, toldText, PANE_CLOSED, type RoundAnswer, type RoundEntry, type RoundDelivery } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, toldText, type RoundAnswer, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
@@ -44,8 +44,8 @@ import {
 } from './remote-row.ts'
 import {
   askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
-  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
-  qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
+  parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+  qAskLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
@@ -198,9 +198,9 @@ const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 // again by each reading.
 const ROUND_WAKE_MS = 30000
 
-// An answer sent to a sender on another machine and not acknowledged is sent again by that same
-// reading once its last send is this old, ANSWER_SENDS sends at most, then failed. A question asked
-// with `ask` keeps them, both ways (remote-asked.ts).
+// The answer to a question asked with `ask` sent to another machine and not acknowledged is sent
+// again by that same reading once its last send is this old, ANSWER_SENDS sends at most, then
+// failed, both ways (remote-asked.ts).
 export const ANSWER_RESEND_MS = 30000
 export const ANSWER_SENDS = 3
 
@@ -1054,9 +1054,9 @@ function stopWake(wake: WakeMemory): void {
   wake.timer = null
 }
 
-// One reading: the questions just due, the answers the coordinator's `settle` left to deliver, then the answers
-// to send again to another machine. A failure of any is one log line, and the next reading still
-// comes. A timer no longer the one armed reads nothing.
+// One reading: the questions just due, then the answers to send again to another machine. A
+// failure of either is one log line, and the next reading still comes. A timer no longer the one
+// armed reads nothing.
 async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
   if (wake.timer !== timer) return
   wake.timer = null
@@ -1065,9 +1065,7 @@ async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: nu
   } catch (err) {
     await logLine($, 'supervision', `round wake: ${(err as Error).message}`)
   }
-  await deliverInTurn($)
   try {
-    await resendAnswers($)
     await resendReplies($)
   } catch (err) {
     await logLine($, 'supervision', `round resend: ${(err as Error).message}`)
@@ -1309,17 +1307,6 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
-}
-
-// The answers the coordinator's `settle` left pending, delivered one reading at a time: the reading a command
-// starts waits for the one already running, so the same pending answer is never sent twice by
-// two readings that both found it pending.
-let delivering: Promise<void> = Promise.resolve()
-export function deliverInTurn($: any): Promise<void> {
-  delivering = delivering.then(() => deliverClosedAnswers($)).catch(async err => {
-    await logLine($, 'supervision', `round delivery: ${(err as Error).message}`)
-  })
-  return delivering
 }
 
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
@@ -2301,208 +2288,6 @@ function forgetDraft(pane: PaneMemory, key: string): void {
   if (pane.writing === key) pane.writing = null
 }
 
-// The one sequence both answers share: the entry written answered by the pane with `text`, its
-// fingerprint forgotten, the text sent to its sender, a send not delivered written failed in the
-// entry (deliverLocal). An entry from another machine forgets no wait file here: its answer is
-// pending in the same write and sent as a marked line to the address its ask came from
-// (sendAnswer), its sender's module forgetting the fingerprint.
-async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, text: string): Promise<void> {
-  if (pane.answering.has(asked.id)) return
-  pane.answering.add(asked.id)
-  try {
-    const path = roundPath(await stateDir($), asked.id)
-    const at = new Date().toISOString()
-    // The coordinator that was shown this question leaves it at once, in its own session: the
-    // entry is closed here, in the same rename, and never waits on the coordinator's `settle`.
-    const closed = await shownToCoordinator($, asked.id)
-    const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
-    // Read again under the entry's lock: a question its sender withdrew meanwhile is left as it
-    // is. An answer to another machine is pending in the same write, then sent by its module.
-    let entry: RoundEntry | null = null
-    const answered = await changeEntry($, path, current => {
-      if (!current || current.status !== 'open') return null
-      entry = current
-      const delivery: RoundDelivery | undefined = current.origin ? { state: 'pending', at, attempts: 0 } : undefined
-      return { ...current, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
-    })
-    if (!answered || !entry) return
-    await writeConsent($, entry, text, 'pane', at)
-    forgetDraft(pane, entry.id)
-    await answerTwins($, entry, text, at)
-    if (entry.origin) await sendAnswer($, path, answered, text)
-    else {
-      await forgetRelayed($, entry)
-      await deliverLocal($, path, answered, paneAnswerText(entry, text, at))
-    }
-    if (closed) {
-      const taken = await $.prompt.submit({ text: settledText(entry, answer) })
-      if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) await logLine($, 'supervision', `round: the host dropped the settled notice of ${entry.id}: ${String(taken.drop)}`)
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-  } finally {
-    pane.answering.delete(asked.id)
-    $.ui.invalidate('ui.render')
-  }
-}
-
-// The pane's answer to an entry, given to its twins: the open entries of the same session that ask
-// the same question when either of the two was moved to it at a succession. The sender asked once,
-// so it is sent the answer once (the entry's own send); the twins are settled in the round the same
-// way, answered or closed by the pane, so none stays in the pane or the coordinator's list. An entry
-// from another machine has no twin: a succession moves only the entries of this round.
-async function answerTwins($: any, entry: RoundEntry, text: string, at: string): Promise<void> {
-  if (entry.origin || entry.session === '') return
-  try {
-    for (const { path, entry: twin } of await readRound($)) {
-      if (twin.id === entry.id || twin.session !== entry.session || twin.kind !== 'operator' || twin.status !== 'open' || twin.origin) continue
-      if (!areTwins(entry, twin)) continue
-      const closed = await shownToCoordinator($, twin.id)
-      const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
-      const written = await changeEntry($, path, current =>
-        current && current.status === 'open' && current.session === entry.session ? { ...current, status: closed ? 'closed' : 'answered', answer } : null)
-      if (!written) continue
-      await forgetRelayed($, twin)
-      if (closed) await $.prompt.submit({ text: settledText(twin, answer) })
-    }
-  } catch (err) {
-    await logLine($, 'supervision', `round: ${(err as Error).message}`)
-  }
-}
-
-// One send of an answer to a sender on this machine, `readable` the message it receives, to its
-// session (senderAddress); then the entry read again and, while it still holds that answer and its
-// delivery has not moved, written whole once: `failed` with the host's reason when the send was
-// not delivered, or, for an answer whose delivery settle left pending, `delivered`. A pane's
-// answer delivered writes nothing more.
-async function deliverLocal($: any, path: string, entry: RoundEntry, readable: string): Promise<void> {
-  const answer = entry.answer!
-  let reason: string | null = null
-  try {
-    const sent = await $.session.send({ to: await senderAddress($, entry), text: readable })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-  } catch (err) {
-    reason = (err as Error).message
-  }
-  const by = answer.by === 'coordinator' ? 'coordinator' : 'pane'
-  if (reason !== null) await logLine($, 'supervision', `round: the ${by}'s answer was not delivered to ${entry.from}: ${reason}`)
-  if (reason === null && !entry.delivery) return
-  const at = new Date().toISOString()
-  const moved: RoundDelivery = reason === null
-    ? { state: 'delivered', at, attempts: 1, answerAt: answer.at }
-    : { state: 'failed', at, attempts: 1, answerAt: answer.at, reason }
-  const written = await changeEntry($, path, now =>
-    !now || now.answer?.at !== answer.at || now.delivery?.state !== entry.delivery?.state ? null : { ...now, delivery: moved })
-  if (!written) {
-    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
-  if (reason !== null) $.ui.invalidate('ui.render')
-}
-
-// A pending delivery stamped for another answer than the one the entry holds is never sent: it is
-// written `failed` naming the mismatch, so that it is not left pending for ever.
-async function failMismatched($: any, path: string, entry: RoundEntry): Promise<void> {
-  const was = entry.delivery!
-  const reason = `the delivery was stamped for the answer of ${was.answerAt}, the entry holds the answer of ${entry.answer?.at}`
-  const written = await changeEntry($, path, now =>
-    !now?.delivery || now.delivery.state !== 'pending' || now.answer?.at !== entry.answer?.at
-      ? null
-      : { ...now, delivery: { ...now.delivery, state: 'failed', at: new Date().toISOString(), reason } })
-  if (written) await logLine($, 'supervision', `round: ${entry.id}: ${reason}`)
-}
-
-// The answers the coordinator closed in its tab, read at each round wake whether the pane is open
-// or not: an entry the coordinator's `settle` closed with a delivery pending and never sent is
-// sent once — to its sender's session on this machine (deliverLocal), or as a marked line to
-// another machine (sendAnswer, its resends then resendAnswers') — and its outcome written in its
-// delivery. One the coordinator withdrew with `settle` is told as a withdrawal (coordinatorClosedText). A failure of one entry is one log line, and the others are still read.
-async function deliverClosedAnswers($: any): Promise<void> {
-  for (const { path, entry } of await readRound($)) {
-    const delivery = entry.delivery
-    if (entry.kind !== 'operator' || entry.status !== 'closed' || entry.answer?.by !== 'coordinator' || delivery?.state !== 'pending' || delivery.attempts !== 0) continue
-    try {
-      if (entry.origin) await sendAnswer($, path, entry, entry.answer.text)
-      else if (delivery.answerAt === entry.answer.at) await deliverLocal($, path, entry, coordinatorClosedText(entry, entry.answer.text, entry.answer.at))
-      else await failMismatched($, path, entry)
-    } catch (err) {
-      await logLine($, 'supervision', `round delivery: ${entry.id}: ${(err as Error).message}`)
-    }
-  }
-}
-
-// One send of the pane's answer to an entry from another machine, its delivery `pending` or `sent`
-// as `entry` holds it: the marked line to the address its ask came from, the answer cut as the
-// channel carries it and the cut said; then the entry read again and, while its delivery is still
-// the one this send moves, written whole once: `sent` with one more attempt, or `failed` with the
-// host's reason when the send was not delivered.
-async function sendAnswer($: any, path: string, entry: RoundEntry, text: string): Promise<void> {
-  const at = entry.answer!.at
-  const carried = cutQuestion(text)
-  let reason: string | null = null
-  try {
-    const readable = (entry.answer!.by === 'coordinator' ? coordinatorClosedText : paneAnswerText)(entry, carried, at)
-    // An entry entered from an older machine's line, or before this release, is answered in that line, which it alone reads.
-    const line = entry.origin!.line === 'q' ? qAnswerLine : answerLine
-    const sent = await $.session.send({ to: entry.origin!.address, text: line(entry.id, entry.since, carried, at, readable) })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-  } catch (err) {
-    reason = (err as Error).message
-  }
-  const was = entry.delivery!
-  const attempts = was.attempts + 1
-  const moved: RoundDelivery = reason === null
-    ? { state: 'sent', at: new Date().toISOString(), attempts }
-    : { state: 'failed', at: new Date().toISOString(), attempts, reason }
-  const written = await changeEntry($, path, now =>
-    !now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts ? null : { ...now, delivery: moved })
-  if (!written) {
-    await logLine($, 'supervision', `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
-  if (reason !== null) {
-    await logLine($, 'supervision', `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
-    $.ui.invalidate('ui.render')
-  }
-}
-
-// The answers sent to another machine and not acknowledged, read at each round wake whether the
-// pane is open or not: one whose last send is ANSWER_RESEND_MS old, or left pending that long (its
-// module stopped before the send), is sent again, or, sent ANSWER_SENDS times already, failed — the
-// entry read again first and written whole once. A failure of one entry is one log line, and the
-// others are still read.
-async function resendAnswers($: any): Promise<void> {
-  const now = Date.now()
-  for (const { path, entry } of await readRound($)) {
-    const delivery = entry.delivery
-    if (!entry.origin || !entry.answer || (delivery?.state !== 'sent' && delivery?.state !== 'pending') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
-    try {
-      if (delivery.attempts < ANSWER_SENDS) {
-        await sendAnswer($, path, entry, entry.status === 'closed' && entry.answer.text.startsWith(PANE_CLOSED) ? entry.answer.text.slice(PANE_CLOSED.length) : entry.answer.text)
-        continue
-      }
-      const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
-      const written = await changeEntry($, path, read =>
-        !read || read.delivery?.state !== delivery.state || read.delivery.attempts !== delivery.attempts
-          ? null
-          : { ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })
-      if (!written) continue
-      await logLine($, 'supervision', `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
-      $.ui.invalidate('ui.render')
-    } catch (err) {
-      await logLine($, 'supervision', `round resend: ${entry.id}: ${(err as Error).message}`)
-    }
-  }
-}
-
-// Where an entry's answer goes: its sender's own session, by the id the entry recorded, while
-// that session has a live row on this machine — two sessions may share a name, and a name sent
-// to is refused when they do. An entry naming no such session goes to its sender's name.
-export async function senderAddress($: any, entry: RoundEntry): Promise<string | { sessionId: string }> {
-  if (entry.session === '') return entry.from
-  return sessionKey(entry.session) in await readSessions($) ? { sessionId: entry.session } : entry.from
-}
-
 // Whether the round holds the entry of that id, open: a file absent, or in any other status, is not.
 async function entryIsOpen($: any, id: string): Promise<boolean> {
   return parseRoundEntry(String(await $.fs.read(`${await stateDir($)}/round/${id}.json`).catch(() => '')))?.status === 'open'
@@ -2516,23 +2301,6 @@ export async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
   if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
 }
 
-// The message the asking orchestrator receives: a report of the operator's choice, never more.
-export function paneAnswerText(entry: RoundEntry, answer: string, at: string): string {
-  return `[module] The operator answered from the coordinator's pane at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
-}
-
-// The same report for his answer the coordinator closed in its tab with settle.
-export function coordinatorAnswerText(entry: RoundEntry, answer: string, at: string): string {
-  return `[module] The operator answered through the coordinator at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
-}
-
-// What the sender of a question the coordinator withdrew with `settle` is told: that the coordinator
-// withdrew it, settled meanwhile, and the evidence it read on the artifact — never that the
-// operator answered it (the operator's ruling 6.1 of 2026-10-31).
-export function withdrawnText(entry: RoundEntry, evidence: string): string {
-  return `[module] The coordinator withdrew your question since ${entry.since}, settled meanwhile: ${evidence} (blocks: ${entry.blocks})`
-}
-
 // The role of the session: the name its row holds, else the name its walk reads.
 export async function sessionRole($: any, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
@@ -2542,12 +2310,6 @@ export async function sessionRole($: any, sessionId: string): Promise<string | n
 // Whether the session is an orchestrator.
 export async function isOrchestratorSession($: any, sessionId: string): Promise<boolean> {
   return (await sessionRole($, sessionId)) === 'orchestrator'
-}
-
-// The message for an entry the coordinator closed: a withdrawal when its answer carries the
-// evidence of one, the operator's answer otherwise.
-function coordinatorClosedText(entry: RoundEntry, answer: string, at: string): string {
-  return typeof entry.answer?.evidence === 'string' ? withdrawnText(entry, entry.answer.evidence) : coordinatorAnswerText(entry, answer, at)
 }
 
 // An orchestrator's turn ended on a machine line other than the wait an open entry of its own
@@ -2738,9 +2500,9 @@ async function readSuccessor($: any, sessionId: string): Promise<LearntSuccessor
 }
 
 // The session's open entries rewritten in place for its successor: its session and name become
-// theirs, the status stays open, and the answer goes to the successor (senderAddress). The
-// successor's own fingerprint is left as it is. Each move is one log line; one that cannot be
-// written is one too, and the others go on. Nothing is settled: the coordinator is told nothing.
+// theirs and the status stays open. The successor's own fingerprint is left as it is. Each move
+// is one log line; one that cannot be written is one too, and the others go on. Nothing is
+// settled: the coordinator is told nothing.
 async function moveToSuccessor($: any, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
   // A successor the registry did not name alone at its « takeover confirmed » is looked up again:
   // its record may have landed since. One still unnamed is drawn on its name (hostedSuccessors).

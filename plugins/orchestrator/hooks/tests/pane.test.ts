@@ -1813,7 +1813,7 @@ test('a remote withdrawal writes no consent record, whatever words it quotes', a
   expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))).toEqual([])
 })
 
-// --- an answer closed by the coordinator's settle, delivered by its module ----------------
+// --- a closing proposal settled by the coordinator ------------------------------------------
 
 // An open entry as the coordinator's settle leaves it: closed with the coordinator's answer,
 // its delivery pending for the module, stamped as the answer.
@@ -1835,73 +1835,13 @@ function sends(fx: Fx, refuse?: string) {
 
 const storedIn = (fx: Fx, id: string) => JSON.parse(String(fx.files.get(`${ROUND}/${id}.json`))) as RoundEntry
 
-test('an answer the coordinator\'s settle left pending reaches its sender once, at the round\'s reading, its delivery written delivered', async () => {
-  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent).toEqual([{
-    to: { sessionId: 'sa' },
-    text: `[module] The operator answered through the coordinator at ${asked.answer!.at} — A, ship it (question since ${asked.since}, blocks: phase 3)`,
-  }])
-  const stored = storedIn(fx, asked.id)
-  expect(stored.status).toBe('closed')
-  expect(stored.delivery).toEqual({ state: 'delivered', at: stored.delivery!.at, attempts: 1, answerAt: asked.answer!.at })
-  await tick()
-  await tick()
-  expect(sent.length).toBe(1)
-})
-
-// The operator's ruling 6.1 of 2026-10-31: a question settled meanwhile is withdrawn on the
-// evidence read on the artifact, and its sender is told — that it was withdrawn and why, never
-// that the operator answered it.
-function withdrawnByCoordinator(asked: RoundEntry, evidence: string): RoundEntry {
-  const closed = closedByCoordinator(asked, `withdrawn: settled meanwhile — ${evidence}`)
-  return { ...closed, answer: { ...closed.answer!, evidence } } as RoundEntry
-}
-
-test('a question the coordinator withdrew with settle tells its sender it was withdrawn, with the evidence, never that it was answered', async () => {
-  const asked = withdrawnByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }), '#12 merged at 10:04Z')
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent).toEqual([{
-    to: { sessionId: 'sa' },
-    text: `[module] The coordinator withdrew your question since ${asked.since}, settled meanwhile: #12 merged at 10:04Z (blocks: phase 3)`,
-  }])
-  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
-})
-
-test('a question the coordinator withdrew with settle from another machine carries the withdrawal in its marked line', async () => {
-  const asked = withdrawnByCoordinator(remoteEntry({ since: minutesAgo(1) }), '#12 merged at 10:04Z')
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent.length).toBe(1)
-  expect(sent[0].text).toContain(`The coordinator withdrew your question since ${asked.since}, settled meanwhile: #12 merged at 10:04Z`)
-  expect(sent[0].text).not.toContain('The operator answered')
-})
-
 // The operator's ruling 6.3 of 2026-10-31: each ruling relayed at once by the module, nothing
 // shown between questions — the coordinator's settle sends the answer in the same call, not at the
 // round's next reading up to 30 seconds later.
 const settleHere = (id: string, answer = 'A, ship it') => ({ id, outcome: 'answered-here' as const, text: answer, author: null, work: null })
 
-test('the coordinator\'s settle closes an open entry with his answer and sends it to its sender in the same call, once', async () => {
-  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
-  const { fx, tick } = await wakingCoordinator([open])
-  const sent = sends(fx)
-  expect((await settle(fx.dollar, settleHere(open.id))).isError).toBeUndefined()
-  const stored = storedIn(fx, open.id)
-  expect([stored.status, stored.answer!.text, stored.answer!.by]).toEqual(['closed', 'A, ship it', 'coordinator'])
-  expect(sent.map(s => s.text)).toEqual([`[module] The operator answered through the coordinator at ${stored.answer!.at} — A, ship it (question since ${open.since}, blocks: phase 3)`])
-  expect(stored.delivery).toEqual({ state: 'delivered', at: stored.delivery!.at, attempts: 1, answerAt: stored.answer!.at })
-  await tick()
-  expect(sent.length).toBe(1)
-})
-
 test('a settle refused, or one from a session that is no coordinator, sends nothing and closes nothing', async () => {
-  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const open = entry('Orch: a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null })
   const { fx } = await wakingCoordinator([open])
   const sent = sends(fx)
   expect((await settle(fx.dollar, { ...settleHere(open.id), outcome: 'answered-by-message', author: 'Orch: z' })).isError).toBe(true)
@@ -1913,80 +1853,6 @@ test('a settle refused, or one from a session that is no coordinator, sends noth
   orch.dollar.session.send = async (args: unknown) => { elsewhere.push(args); return { isDelivered: true } }
   expect((await settle(orch.dollar, settleHere(open.id))).isError).toBe(true)
   expect([sent.length, elsewhere.length, storedIn(fx, open.id).status, storedIn(orch, open.id).status]).toEqual([0, 0, 'open', 'open'])
-})
-
-test('a settle made while the round\'s reading runs sends its answer once', async () => {
-  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
-  const { fx, tick } = await wakingCoordinator([open])
-  const sent = sends(fx)
-  await Promise.all([tick(), settle(fx.dollar, settleHere(open.id))])
-  expect(sent.length).toBe(1)
-  expect(storedIn(fx, open.id).delivery!.state).toBe('delivered')
-})
-
-test('a settle withdrawn by the coordinator tells its sender it was withdrawn, with the evidence, and records no consent', async () => {
-  const open = entry('Orch: a', minutesAgo(1), { session: 'sa' })
-  const { fx } = await wakingCoordinator([open])
-  const sent = sends(fx)
-  await settle(fx.dollar, { id: open.id, outcome: 'withdrawn', text: '#12 merged at 10:04Z', author: null, work: null })
-  expect(storedIn(fx, open.id).answer).toEqual({ text: 'withdrawn: settled meanwhile — #12 merged at 10:04Z', by: 'coordinator', at: storedIn(fx, open.id).answer!.at, evidence: '#12 merged at 10:04Z' })
-  expect(sent.map(s => s.text)).toEqual([`[module] The coordinator withdrew your question since ${open.since}, settled meanwhile: #12 merged at 10:04Z (blocks: phase 3)`])
-})
-
-test('the coordinator closes an entry answered from the pane with settle, sending nothing again', async () => {
-  const answered = entry('Orch: a', minutesAgo(5), { session: 'sa', status: 'answered', answer: { text: 'A', by: 'pane', at: minutesAgo(4) } })
-  const { fx } = await wakingCoordinator([answered])
-  const sent = sends(fx)
-  await settle(fx.dollar, settleHere(answered.id, 'answered from the pane: A'))
-  expect([storedIn(fx, answered.id).status, storedIn(fx, answered.id).delivery, sent.length]).toEqual(['closed', undefined, 0])
-  expect((await settle(fx.dollar, settleHere(answered.id))).result).toContain('closed already')
-})
-
-test('an answer the coordinator\'s settle left pending to an entry from another machine goes as a marked line at the round\'s reading', async () => {
-  const asked = closedByCoordinator(remoteEntry({ since: minutesAgo(1) }))
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent.map(s => s.to)).toEqual([FAR])
-  expect(sent[0].text.startsWith('[module-answer] ')).toBe(true)
-  expect(sent[0].text).toContain(`The operator answered through the coordinator at ${asked.answer!.at} — A, ship it`)
-  const stored = storedIn(fx, asked.id)
-  expect(stored.delivery).toEqual({ state: 'sent', at: stored.delivery!.at, attempts: 1 })
-  await tick()
-  expect(sent.length).toBe(1)
-})
-
-test('an entry closed with no delivery pending — before the close carried one, or from the pane — is sent nothing at the round\'s reading', async () => {
-  const old = entry('Orch: a', minutesAgo(5), { session: 'sa', status: 'closed', answer: { text: 'A', by: 'coordinator', at: minutesAgo(4) } })
-  const pane = entry('Orch: b', minutesAgo(5), { session: 'sb', status: 'closed', answer: { text: 'answered from the pane: A', by: 'pane', at: minutesAgo(4) } })
-  const { fx, tick } = await wakingCoordinator([old, pane])
-  const sent = sends(fx)
-  await tick()
-  expect(sent).toEqual([])
-  expect(storedIn(fx, old.id).delivery).toBeUndefined()
-})
-
-test('an entry of kind done closed with a pending delivery is sent nothing at the round\'s reading', async () => {
-  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null }))
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent).toEqual([])
-  expect(storedIn(fx, asked.id).delivery).toEqual(asked.delivery)
-})
-
-test('a pending delivery stamped for another answer than the entry holds is written failed, naming the mismatch, and sent nothing', async () => {
-  const closed = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
-  const asked = { ...closed, delivery: { ...closed.delivery!, answerAt: minutesAgo(3) } } as RoundEntry
-  const { fx, tick } = await wakingCoordinator([asked])
-  const sent = sends(fx)
-  await tick()
-  expect(sent).toEqual([])
-  const stored = storedIn(fx, asked.id)
-  expect(stored.delivery!.state).toBe('failed')
-  expect(stored.delivery!.reason).toContain('stamped for the answer of')
-  await tick()
-  expect(sent).toEqual([])
 })
 
 test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not a sibling pane\'s sharing the server\'s ITERM_SESSION_ID', async () => {
@@ -2133,7 +1999,7 @@ test('a question asked with ask moved to a successor not measured yet is drawn',
     expect(await drawnWith(record)).not.toContain('pending')
   }
   // A question no successor took, its session with no row, is not drawn on a live record alone.
-  const { movedFrom: _from, ...plain } = moved
+  const { movedFrom: _from, ...plain } = moved as Record<string, unknown>
   expect(await drawnWith({ pid: 777, sessionId: 's-two' }, plain)).not.toContain('pending')
 })
 

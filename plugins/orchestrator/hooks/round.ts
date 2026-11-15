@@ -217,6 +217,3 @@ export function dueText(entries: readonly RoundEntry[]): string {
     + `${each.join('; ')}. Run coordinator.sh round and present the entries it marks due.`
 }
 
-// The prefix of the answer an entry the coordinator was shown is closed with by the pane.
-export const PANE_CLOSED = 'answered from the pane: '
-

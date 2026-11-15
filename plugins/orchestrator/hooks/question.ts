@@ -23,7 +23,7 @@ import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, deliverInTurn, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
+import { closesItself, forgetRelayed, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planRelayed, settledMessage, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -541,10 +541,6 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   }
   if (done.relayed) await forgetRelayed($, done.entry)
   if (done.told) await tellSettled($, [{ entry: done.entry, answer: done.entry['answer'] }])
-  if (done.deliver === 'pending') {
-    await deliverInTurn($)
-    said.push(`The answer goes to ${done.asker.name} now.`)
-  }
   if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
   if (done.deliver === 'remote') {
     const refused = await sendReply($, request.id)
