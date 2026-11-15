@@ -143,12 +143,13 @@ the scheduler only calls it: on Linux, cron:
 */5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >>~/.claude/deploys/lounisbou/deploy.log 2>&1
 ```
 
-On macOS, a LaunchAgent runs the same command, in `~/Library/LaunchAgents/<label>.plist` (launchd
-expands no `~` and gives a job a minimal `PATH`, so both are written out; replace `<home>` and
-the directories of `node`, `gh` and `claude`), loaded with
+On macOS, a LaunchAgent runs the same command, in `~/Library/LaunchAgents/<label>.plist`, `<label>`
+being the `Label` below (launchd expands no `~` and gives a job a minimal `PATH`, so both are
+written out; replace every `<…>` placeholder), loaded with
 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`. The marketplace update,
 the plugin updates and the choice of the commit are all `deploy.ts`'s own steps, so the agent
-carries no other command. `current` exists once `npm run deploy` has run by hand, which comes first:
+carries no other command. `npm run deploy` runs by hand first: it creates `current` and the `deploys/lounisbou/` directory
+the log goes in, which launchd does not create:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -158,7 +159,7 @@ carries no other command. `current` exists once `npm run deploy` has run by hand
   <key>Label</key><string>com.example.claude-plugins-autodeploy</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/node</string>
+    <string><path of node></string>
     <string>--experimental-strip-types</string>
     <string>--no-warnings</string>
     <string><home>/.claude/deploys/lounisbou/current/scripts/deploy.ts</string>
