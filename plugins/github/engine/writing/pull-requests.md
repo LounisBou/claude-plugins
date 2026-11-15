@@ -9,9 +9,6 @@ the same words forbidden in commit messages.
 Short: about sixty characters at most, the subject of the change in a few words
 after the conventional prefix, no clause on how or why — that belongs in the description.
 
-Too long: `test(device-server): stop the listen tests on their awaited event instead of a fixed timer`
-Right: `test(device-server): fix flaky listen tests`
-
 ## Pull request descriptions
 
 Follow this exact template:
@@ -87,14 +84,10 @@ dependency. `**Related PRs:**` lists the PRs truly linked to this work: part of 
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always, with no
-semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
---draft`, the house default), and leaves draft only once it is ready. Outside
-auto-merge, leaving draft (a CI undraft aside) is the operator's, on GitHub after their
-review, and a merge needs their explicit word, given through this tool. In an
-auto-merge repository, the merge and leaving draft need no operator approval once the
-pull request is ready. A deployment needs its repository listed for its environment
-(`auto-deploy-set`). A repository enters or leaves auto-merge only through `auto-merge-set`,
-on the operator's recorded answer.
+semicolon. No workflow vocabulary. Every PR is opened as a draft, and leaves draft only
+once it is ready. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
+on GitHub after their review, and a merge needs their explicit word, given through this tool.
+A deployment needs its repository listed for its environment (`auto-deploy-set`).
 Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.
 A colleague's PR and any review comment are proposed first.
@@ -127,11 +120,8 @@ the description. A refactor unrelated to the purpose goes in its own pull reques
 ## Ready pull requests
 
 What Ready needs and what voids it are core's readiness contract (`core/readiness.ts`).
-A required E2E or norms check goes laxer only by the operator's waiver: his words, quoted with their
-date in the `detail` of `mcp__github__record` (`waived`). Words that waive it for an orchestration or a
-repository hold for each of its pull requests: quote them, ask nothing. With no words of his, ask once:
+A required E2E or norms check goes laxer only by the operator's waiver, his words quoted with their
+date in `mcp__github__record`'s `detail` (`waived`). Words waiving it for an orchestration or a
+repository hold for each of its pull requests. With none, ask once:
 « Dispense d'E2E|de normes pour <owner/name>#<n> : <why> », « Accorder » / « Refuser ».
-
-The gate alone puts `Ready` and `Not Ready`, and a draft opens `Not Ready`. Leaving draft and a
-merge need `Ready`, which the gate puts just before them once every condition holds. When CI
-does not run on a draft, the plugin takes it out of draft, still `Not Ready`, and back once ready.
+The gate alone puts `Ready` and `Not Ready` (REFERENCE.md « Guards »).

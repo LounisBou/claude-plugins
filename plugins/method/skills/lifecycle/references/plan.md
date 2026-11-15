@@ -29,5 +29,4 @@ phase:
 | 01 | <title> | doing | <commit the current step started from> |
 ```
 
-Status is `todo`, `doing` or `done`; a `todo` row leaves the milestone empty. Core parses and
-writes it: keep this shape.
+Status is `todo`, `doing` or `done`. Core parses and writes it: keep this shape.
