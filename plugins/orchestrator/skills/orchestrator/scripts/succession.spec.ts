@@ -1,10 +1,11 @@
 import { strict as assert } from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { deckOpen, FIELDS, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
+import { deckOpen, FIELDS, leanSteps, notInstalled, ownersOf, namedIn, generationOf, main, missingItems, NOTES_MAX, NOTE_CHARS, notesOf, parseArgs, roundOpen } from './succession.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates', 'orchestrator-succession-brief.md')
@@ -285,4 +286,155 @@ test('the brief carries the open questions asked with ask, their block made from
     '_Subject_ : merge order', '_Context_ : Two pull requests touch one file.', '_Question_ : Which first?',
     '_Choices_ :', '- **A** : acme/app#1', '- **B** : acme/app#2', '_Recommendation_ : A — no rebase',
   ].join('\n'))
+})
+
+const STALE = [
+  '# Orchestrator succession brief — acme/belt',
+  '',
+  'Measure, wait and close: `references/lifecycle.md`, « Succession — the successor ».',
+  '',
+  '1. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole.',
+  '2. The Analysis above; then `dispatch-record.sh summary /r.jsonl --open --ids` and `dispatch-record.sh goals /r.jsonl status`, read whole.',
+  '3. `ListAgents`. Then `workspace.sh list`: delete no checkout before you know its phase.',
+].join('\n')
+
+test('leanSteps brings the reading orders of a standing brief to the template\'s lean form, and leaves a lean one as it is', () => {
+  const lean = leanSteps(STALE, '/b/rulings.md')
+  assert.equal(lean.refreshed, 4)
+  assert.equal(lean.left, 0)
+  assert.ok(lean.text.includes("1. Read the rulings that bind now, `grep -v '\\[for: ' /b/rulings.md`, the rulebook and THIS brief, and nothing else whole; a `[for: <item>]` ruling by `grep -n` on its item once a task reaches it."))
+  assert.ok(lean.text.includes("`dispatch-record.sh goals /r.jsonl status | grep -v '| met |'`."))
+  assert.ok(lean.text.includes('Then `workspace.sh list acme/belt`: delete'))
+  assert.ok(lean.text.includes('`references/succession-successor.md`, « Succession — the successor »'))
+  assert.ok(!lean.text.includes('WHOLE') && !lean.text.includes('read whole'))
+  assert.deepEqual(leanSteps(lean.text, '/b/rulings.md'), { text: lean.text, refreshed: 0, left: 0 })
+  // A `$` in a path is a character, never a replacement pattern.
+  assert.ok(leanSteps(STALE, '/b/$&/r.md').text.includes("`grep -v '\\[for: ' /b/$&/r.md`"))
+  // A title that is no repository name is never put in a command.
+  assert.ok(leanSteps(STALE.replace('acme/belt', 'acme/belt (v2)'), '/b/rulings.md').text.includes('Then `workspace.sh list`: delete'))
+  // A stale order worded otherwise is counted, not rewritten.
+  assert.ok(leanSteps(STALE.replaceAll('acme/belt', () => 'a$b'), '/b/rulings.md').text.includes('workspace.sh list`'), 'a title with a dollar sign is no repository name')
+  assert.equal(leanSteps('# Orchestrator succession brief — \n3. Then `workspace.sh list`: x', '').text.includes('workspace.sh list`'), true, 'no project, no rewrite')
+  assert.equal(leanSteps('1. Read the rulings file WHOLE, then the rulebook and more.', '/b/r.md').left, 1)
+  // No rulings file to name, no rewrite of the rulings step.
+  assert.ok(leanSteps(STALE, 'none').text.includes('Read the rulings file WHOLE'))
+})
+
+test('leanSteps leaves the lifecycle pointer where the successor reference is not installed, and counts it as left', () => {
+  const kept = leanSteps(STALE, '/b/rulings.md', false)
+  assert.ok(kept.text.includes('`references/lifecycle.md`, « Succession — the successor »'), 'the pointer is kept')
+  assert.equal(kept.refreshed, 3)
+  assert.equal(kept.left, 1)
+})
+
+test('live brings a stale standing brief\'s reading steps to the lean form and says so, a lean one silently', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, '# Rulings\n')
+  const lean = readFileSync(TEMPLATE, 'utf8').replaceAll('{{PROJECT}}', 'belt').replaceAll('{{RULINGS_FILE}}', rulings)
+  writeFileSync(w.brief, lean.replace(`1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`, '1. Read the rulings file WHOLE, then the rulebook and THIS brief, and nothing else whole.'))
+  assert.ok(w.read().includes('Read the rulings file WHOLE'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.out.join(''), new RegExp(`chars=${w.read().length} `), 'the figure counts the brief as written')
+  assert.ok(!w.read().includes('WHOLE') && w.read().includes(`grep -v '\\[for: ' ${rulings}`))
+  assert.deepEqual(w.err, ["succession: 1 reading step(s) of the brief brought to the template's lean form\n"])
+  w.err.length = 0
+  assert.equal(w.run('live', '--next', 'y'), 0)
+  assert.deepEqual(w.err, [])
+})
+
+test('ownersOf names each open row\'s live agent by its label word, a deferred row\'s ruling, and flags a row with neither', () => {
+  const rows = [
+    { id: '1', line: '', label: 'TAKEOVERLEAN: a takeover reads less' },
+    { id: '2', line: '', label: 'QREDESIGN PR4: remove the old path' },
+    { id: '3', line: '', label: 'AUDIT: nobody works it' },
+    { id: '4', line: '', label: 'LATER: parked', ruling: 'ruling 9' },
+    { id: '5', line: '', label: 'A: one letter names nothing' },
+  ]
+  const agents = ['Agent: takeoverlean', 'Agent: qredesign-removal-2', 'Agent: ab']
+  assert.deepEqual(ownersOf({ rows, prs: [], agents, questions: [] }), ['1 takeoverlean', '2 qredesign-removal-2', '3 NO OWNER', '4 ruling', '5 NO OWNER'])
+})
+
+test('live writes the row owners into the brief', () => {
+  const w = world()
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.match(w.read(), /- Row owners \(.*\): 2 api; 3 ruling\n/)
+})
+
+/** A repository whose main merged a pull request touching the plugin, and the install record of the commit before it. */
+function installedWorld(): { brief: string; env: Record<string, string>; merged: Date } {
+  const repo = join(dir, 'repo')
+  mkdirSync(join(repo, 'plugins', 'orchestrator'), { recursive: true })
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: '2026-11-14T10:00:00Z', GIT_AUTHOR_DATE: '2026-11-14T10:00:00Z' } }).trim()
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'a'), 'a')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'base')
+  const sha = git('rev-parse', 'HEAD')
+  git('checkout', '-q', '-b', 'feat')
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'b'), 'b')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'feature')
+  git('checkout', '-q', 'main')
+  git('merge', '-q', '--no-ff', '-m', 'Merge pull request #1', 'feat')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'plugins'), { recursive: true })
+  writeFileSync(join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: sha }] } }))
+  return { brief: `# Orchestrator succession brief — acme/belt\n\nworktree \`${repo}\`.\n`, env: { CLAUDE_CONFIG_DIR: config, HOME: dir }, merged: new Date('2026-11-14T10:00:00Z') }
+}
+
+test('notInstalled counts the merged pull requests touching the plugin since the installed commit, and says nothing it cannot read', () => {
+  const w = installedWorld()
+  assert.equal(notInstalled(w.brief, w.env, new Date(w.merged.getTime() + 5 * 3_600_000)), '1 merged PRs not installed, oldest 5 h')
+  assert.equal(notInstalled(w.brief.replace(/worktree `[^`]+`/, 'worktree `none`'), w.env, w.merged), '', 'no worktree')
+  assert.equal(notInstalled(w.brief, { ...w.env, CLAUDE_CONFIG_DIR: join(dir, 'nowhere') }, w.merged), '', 'no install record')
+  writeFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: 'a'.repeat(40) }] } }))
+  assert.equal(notInstalled(w.brief, w.env, w.merged), '', 'a commit the repository does not hold')
+})
+
+test('notInstalled counts two merged pull requests and reads the age of the older one', () => {
+  const w = installedWorld()
+  const repo = /worktree `([^`]+)`/.exec(w.brief)?.[1] ?? ''
+  const base = (JSON.parse(readFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), 'utf8')) as { plugins: Record<string, { gitCommitSha: string }[]> }).plugins['orchestrator@acme']?.[0]?.gitCommitSha ?? ''
+  const older = '2026-11-14T06:00:00Z'
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: older, GIT_AUTHOR_DATE: older } }).trim()
+  git('checkout', '-q', '-b', 'older', base)
+  writeFileSync(join(repo, 'plugins', 'orchestrator', 'c'), 'c')
+  git('add', '-A')
+  git('commit', '-q', '-m', 'older feature')
+  git('checkout', '-q', 'main')
+  git('merge', '-q', '--no-ff', '-m', 'Merge pull request #0', 'older')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  // The newer merge is at 10:00, the older one at 06:00: the age is taken from the older, read at 15:00.
+  assert.equal(notInstalled(w.brief, w.env, new Date(w.merged.getTime() + 5 * 3_600_000)), '2 merged PRs not installed, oldest 9 h')
+})
+
+test('notInstalled reads zero when the installed commit is the tip of origin/main', () => {
+  const w = installedWorld()
+  const repo = /worktree `([^`]+)`/.exec(w.brief)?.[1] ?? ''
+  const tip = execFileSync('git', ['-C', repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim()
+  writeFileSync(join(w.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: tip }] } }))
+  assert.equal(notInstalled(w.brief, w.env, w.merged), '0 merged PRs not installed')
+})
+
+test('live says on stderr when a reading step it cannot rewrite still follows an older template', () => {
+  const w = world()
+  const rulings = join(dir, 'rulings.md')
+  writeFileSync(rulings, '# Rulings\n')
+  const lean = readFileSync(TEMPLATE, 'utf8').replaceAll('{{PROJECT}}', 'belt').replaceAll('{{RULINGS_FILE}}', rulings)
+  writeFileSync(w.brief, lean.replace(`1. Read the rulings that bind now, \`grep -v '\\[for: ' ${rulings}\`, the rulebook and THIS brief, and nothing else whole; a \`[for: <item>]\` ruling by \`grep -n\` on its item once a task reaches it.`, '1. Read the rulings file WHOLE, then the rulebook and THIS brief.'))
+  assert.equal(w.run('live', '--next', 'x'), 0)
+  assert.equal(w.err.length, 1)
+  assert.match(w.err[0] ?? '', /^succession: 1 reading step\(s\) of the brief still follow an older template/)
+})
+
+test('live writes the not-installed line into the Live state when it is known', () => {
+  const w = world()
+  const i = installedWorld()
+  writeFileSync(w.brief, readFileSync(w.brief, 'utf8').replace('## Standing context\n', `## Standing context\n\nworktree \`${i.brief.match(/worktree `([^`]+)`/)?.[1] ?? ''}\`.\n`))
+  const env = { ...i.env, ORCHESTRATOR_STATE_DIR: w.state }
+  const err: string[] = []
+  assert.equal(main(['live', w.brief, '--name', NAME, '--session', SESSION, '--record', w.record, '--next', 'x'], env, { out: () => {}, err: t => { err.push(t) } }, () => new Date(i.merged.getTime() + 3_600_000)), 0)
+  assert.match(w.read(), /- Installed plugin \(.*\): 1 merged PRs not installed, oldest 1 h\n/)
 })
