@@ -148,7 +148,8 @@ function ghDecision(skill: Skill, e: Call, prompt: string): Verdict | null {
   if (skill === 'start-review') {
     if (command === 'review-pending-create' || command === 'review-pending-add') return null
     if (command === 'review-submit' && args['event'] !== undefined && String(args['event']) !== 'COMMENT') {
-      return observe('pr-review.review-event.not-comment', `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}`)
+      // A verdict submitted under the user's name is dismissed on GitHub, never withdrawn.
+      return { code: 'pr-review.review-event.not-comment', irreversible: true, reason: `pr-review start-review: a review is never submitted with event ${String(args['event'])}; post now publishes as COMMENT and the user submits the pending review on GitHub. ${ASK.replace('that word', '"end review"')}` }
     }
     if (GH_PUBLISH.has(command)) {
       return grantsPublish(prompt) ? null

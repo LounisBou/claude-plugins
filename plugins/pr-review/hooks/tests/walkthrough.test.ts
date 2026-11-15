@@ -131,14 +131,15 @@ test('each other rule lets its call through and leaves exactly one line under it
   const gh = (command: string, args: Record<string, unknown>) => ({ tool: 'mcp__github__gh', command, args }) as any
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await say($, 'post now')
-  await $.tool.call(gh('review-submit', { pr: 3, event: 'APPROVE' }))
+  const approved: any = await $.tool.call(gh('review-submit', { pr: 3, event: 'APPROVE' }))
+  expect(String(approved.deny)).toContain('never submitted')
   await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
   await say($, '3')
   await $.tool.call(gh('thread-resolve', { thread_id: 'T' }))
   await $.tool.call(gh('thread-reply', { thread_id: 'T', body: 'x' }))
   await $.tool.call(editCall)
-  expect(ran).toEqual(['mcp__github__gh:review-submit', 'mcp__github__gh:thread-resolve', 'mcp__github__gh:thread-reply', 'Edit'])
-  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.review-event.not-comment', 'pr-review.resolve.ungranted', 'pr-review.reply.ungranted'])
+  expect(ran).toEqual(['mcp__github__gh:thread-resolve', 'mcp__github__gh:thread-reply', 'Edit'])
+  expect(journal().map((e) => e.source.code)).toEqual(['pr-review.resolve.ungranted', 'pr-review.reply.ungranted'])
 })
 
 test('end review lifts the rules at once', async ($, on) => {

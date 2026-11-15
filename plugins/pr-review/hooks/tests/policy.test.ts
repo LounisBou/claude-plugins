@@ -97,11 +97,12 @@ test('start-review: publication without post now is noted, the pending review ne
   expect(decide('start-review', gh('pr-get'), '')).toBeNull()
 })
 
-test('start-review: a review submitted with an event other than COMMENT is noted, post now or not', () => {
+test('start-review: a review submitted with an event other than COMMENT is refused, post now or not', () => {
   for (const event of ['APPROVE', 'REQUEST_CHANGES']) {
     const v = decide('start-review', gh('review-submit', { pr: 1, event }), 'post now')
-    expect(noted(v)).toBe('pr-review.review-event.not-comment')
-    expect(refused(v)).toBeNull()
+    expect(v?.code).toBe('pr-review.review-event.not-comment')
+    expect(refused(v)).toContain('never submitted')
+    expect(noted(v)).toBeNull()
   }
 })
 
