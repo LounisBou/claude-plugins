@@ -27,7 +27,7 @@ import { isEnding } from './naming.ts'
 import { ASK_FIRST, DECLARATIONS, type Declarations } from './wait.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
-  refuse, withDeadline, isDegradedPass, type DegradedPass,
+  withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
@@ -36,14 +36,17 @@ import {
 } from './stop-gate.ts'
 import { machineLine } from '../core/method.ts'
 import { launcherOf } from '../core/orchestration.ts'
-import { coordinatorAddress, sendToCoordinator, REFERENCED } from './supervision.ts'
+import { coordinatorAddress, REFERENCED } from './supervision.ts'
 import { readAsked } from './question.ts'
-import { MODE_DIALOG_DENY, WAITED_ON_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
+import { asksTheMode } from './mode-dialog.ts'
 import { handsOver, unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
-import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
+import { namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
+import {
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+} from './observe.ts'
 import { todoName } from './todo-format.ts'
 
 export function roleLine(role: string, root = ''): string {
@@ -248,9 +251,6 @@ function undeclaredOperatorWait(message: string, declarations: Declarations): bo
   return declarations.current()?.kind !== 'operator' && !!MACHINE_LINE.exec(line)?.[1] && !blocksNothing(line)
 }
 
-// How many times a re-fired stop is refused again for an operator wait with no question asked.
-export const REFIRED_REFUSALS = 2
-
 // `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }, declarations: Declarations = DECLARATIONS) {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
@@ -277,9 +277,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The last prompt the operator typed in this session, keyed by its id like the memos
   // above: the tier map's guard stands aside when it names the map or a tier.
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
-  // The refusals a re-fired stop has paid this turn for an operator wait with no question, by
-  // session id: a fresh stop starts the count over, REFIRED_REFUSALS ends it (never an endless loop).
-  const unaskedRefusals = new Map<string, number>()
   on('prompt.submit', async ($: any, e: any, next: (e: any) => any) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
@@ -353,7 +350,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('tool.call', { tool: 'SendMessage' }, async ($: any, e: any, next: (e: any) => any) => {
     const to = typeof e.to === 'string' ? e.to.trim() : ''
     // An agent's message to an orchestrator over the verdict limit: cut to it with the pointer to the
-    // report it names, refused when it names none. The sender is read only for such a message; one
+    // report it names, let through whole when it names none. The sender is read only for such a message; one
     // that cannot be read lets the message through.
     let sending = e
     if (to && typeof e.message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
@@ -364,11 +361,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
           if (roleOf(name) === 'agent') {
             if (short.kind === 'unnamed') {
-              await logLine($, 'guards', `a message of ${short.length} characters to ${to} names no report file: refused`)
-              return { deny: unnamedReport(short.length) }
+              // Observed, not refused: the message goes whole, and the journal holds the escape.
+              await logLine($, 'guards', `a message of ${short.length} characters to ${to} names no report file: let through`)
+              await observed($, REPORT_UNNAMED_CODE)
+            } else {
+              await logLine($, 'guards', `a message of ${e.message.length} characters to ${to} cut, its report at ${short.path}`)
+              sending = { ...e, message: short.text }
             }
-            await logLine($, 'guards', `a message of ${e.message.length} characters to ${to} cut, its report at ${short.path}`)
-            sending = { ...e, message: short.text }
           }
         } catch (err) {
           await logLine($, 'guards', `the sender of a message to ${to} could not be read: ${(err as Error).message}`)
@@ -392,11 +391,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 
   // The tier map's guard: a session of the orchestration (one whose name gives it a role)
-  // never writes the operator's map — a Write, Edit or MultiEdit on it, or a Bash line that
-  // writes it, is denied with the rule — unless the last prompt he typed in this session
-  // names the map or a tier: then the binding is his word on the point. Mounted before the
+  // observes a write of the operator's map — a Write, Edit or MultiEdit on it, or a Bash line
+  // that writes it, goes through with one escape in the journal — unless the last prompt he typed
+  // in this session names the map or a tier: then the binding is his word on the point. Mounted before the
   // kill guard, so a Bash call reaches it first; the session's role is read only for a call
-  // that writes the map. Never `ask`: under auto mode it goes to the mode's decider, not to him.
+  // that writes the map. Never `ask`, never a refusal: only the irreversible is refused.
   on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($: any, e: any, next: (e: any) => any) => {
     const maps = mapPaths(await stateDir($), await configDir($))
     const writes = e.tool === 'Bash'
@@ -407,8 +406,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (lastTyped && lastTyped.sessionId === sessionId && namesTheMap(lastTyped.text)) return next(e)
     const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
     if (!roleOf(name)) return next(e)                // the operator's own sessions: untouched
-    await logLine($, 'guards', `models guard: a write of the tier map denied (${e.tool})`)
-    return { deny: MODELS_DENY }
+    // Observed, not refused: the write goes through, and the journal holds the escape.
+    await logLine($, 'guards', `models guard: a write of the tier map let through (${e.tool})`)
+    await observed($, MAP_WRITE_CODE)
+    return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     // A guard that could not read lets the call through, and the log says why: the map is
     // the operator's file, and a session held on the guard's own failure helps nobody.
@@ -418,19 +419,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   // A dialog in the session's own tab reaches neither the coordinator's pane nor a `waiting:` line,
   // so nothing tells the operator the session is blocked on him. The mode question is never a
-  // dialog: an orchestrator's that offers `build` and `investigate` is denied with the way to ask
-  // it. While a coordinator runs, an orchestrator and the coordinator are waited on: any dialog of
-  // theirs is denied, the question going to the round.
+  // dialog: an orchestrator's that offers `build` and `investigate` is observed. While a coordinator
+  // runs, an orchestrator and the coordinator are waited on: any dialog of theirs is observed. Both
+  // open, each with one escape in the journal.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: (e: any) => any) => {
     const sessionId = await $.session.id()
     const role = roleOf((await readName($, await transcriptPathOf($, sessionId), sessionId)).name)
     if (role === 'orchestrator' && asksTheMode(e)) {
-      await logLine($, 'guards', 'mode dialog denied: the mode is asked in the question format, never by dialog')
-      return { deny: MODE_DIALOG_DENY }
+      // Observed, not refused: the dialog opens, and the journal holds the escape.
+      await logLine($, 'guards', 'mode dialog let through: the mode is asked in the question format, never by dialog')
+      await observed($, MODE_DIALOG_CODE)
+      return next(e)
     }
     if ((role !== 'orchestrator' && role !== 'coordinator') || !(await coordinatorAddress($))) return next(e)
-    await logLine($, 'guards', `dialog denied: a ${role} is waited on while a coordinator runs`)
-    return { deny: WAITED_ON_DIALOG_DENY }
+    await logLine($, 'guards', `dialog let through: a ${role} is waited on while a coordinator runs`)
+    await observed($, WAITED_ON_DIALOG_CODE)
+    return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     // A guard that could not read lets the dialog through, and the log says why.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -511,16 +515,20 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // the same, and sweeps). Null until the scope is settled, so a failure before it
     // sweeps nothing.
     let sweepAtStop: (() => Promise<void>) | null = null
+    // Observed, not refused: what the gate once refused the stop for is logged whole, the journal
+    // holds one escape under the gate's code, and the stop passes, swept as any other.
+    const letThrough = async (reason: string): Promise<unknown> => {
+      await logLine($, 'guards', `stop gate: let through: ${reason.replace(/\s*\n\s*/g, ' ')}`)
+      await observed($, STOP_GATE_CODE)
+      await sweepAtStop?.()
+      return next(e)
+    }
     try {
-      // At most one refusal per turn (stop_gate.py:653-654): the host re-fires the stop
-      // with the marker set, and the gate steps aside before it reads anything — but for an
-      // operator wait still not declared on questions asked with `ask`: that one is refused
-      // again, within REFIRED_REFUSALS (below).
-      const refired = Boolean(e.stop_hook_active)
+      // A stop another gate already held this turn is re-fired with the marker set: this gate,
+      // which only observes, steps aside before it reads anything, its line already written.
+      if (e.stop_hook_active) return next(e)
       const unasked = undeclaredOperatorWait(String(e.last_assistant_message ?? ''), declarations)
-      if (refired && !unasked) return next(e)
       const sessionId = String(e.session_id ?? '')
-      if (!refired) unaskedRefusals.delete(sessionId)
       // The scope first, from the session itself: the launcher's listing is a call to
       // the terminal, and every agent's, auditor's and hand-started session would pay it.
       const transcript = String(e.transcript_path ?? '') || await transcriptPathOf($, sessionId)
@@ -537,11 +545,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       const role = roleOf(name)
       if (role === 'agent') {
-        // An agent's report over the verdict limit that names no report file: refused once, the way said.
+        // An agent's report over the verdict limit that names no report file: observed, the way said in the log.
         const short = shorten(String(e.last_assistant_message ?? '').trim())
         if (short.kind === 'unnamed') {
           await logLine($, 'guards', `stop gate: an agent's report of ${short.length} characters names no report file`)
-          return refuse(unnamedReport(short.length))
+          return await letThrough(unnamedReport(short.length))
         }
         return next(e)
       }
@@ -551,18 +559,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const open = [...owed.pending, ...owed.deferred]
         if (declarations.current() !== null || open.length === 0) return next(e)
         await logLine($, 'guards', `stop gate: an auditor with ${open.length} open to-do`)
-        return refuse(todoOpen(open.map(todoName)))
+        return await letThrough(todoOpen(open.map(todoName)))
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
-      if (refired) {
-        if (role !== 'orchestrator') return next(e)
-        return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, until) ?? next(e)
-      }
       if (role === 'coordinator') return next(e)
       // An orchestrator ending on a wait for the operator puts him a question asked with `ask`.
       if (unasked) {
         await logLine($, 'guards', 'stop gate: an operator wait with no question')
-        return refuse(ASK_FIRST)
+        return await letThrough(ASK_FIRST)
       }
       const state = await stateDir($)
       // A question asked with `ask` still open stays in the round until he answers it, its answer
@@ -664,11 +668,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         })
         if (held) {
           await logLine($, 'guards', `stop gate: check1 ${held.case}`)
-          return refuse(held.reason)
+          return await letThrough(held.reason)
         }
       } else if (wake !== null) {
         await logLine($, 'guards', `stop gate: check1 ${wake.case}`)
-        return refuse(wake.reason)
+        return await letThrough(wake.reason)
       }
       // Check 2, the real CI state, over what ci-watch already watched: its logs are the
       // precomputed state, no synchronous network at a stop.
@@ -724,7 +728,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       if (lines.length > 0) {
         await logLine($, 'guards', `stop gate: check2 ci-not-finished ${lines.map(l => l.split('. Report')[0]).join(' ; ')}`)
-        return refuse(lines.join('\n'))
+        return await letThrough(lines.join('\n'))
       }
       // The checks have let the stop pass: the sweep runs now, last and never part of
       // the decision (the design's « The sweep runs by itself »).
@@ -750,36 +754,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
-}
-
-// A re-fired stop (the host sets stop_hook_active after a refusal) of an orchestrator whose message still
-// ends on an operator wait with no question asked: refused again, REFIRED_REFUSALS times, then let through
-// (null) with one log line and a notice to its coordinator that it waits on the operator without asking him.
-// The notice runs under the gate's deadline: a coordinator that never answers never holds the stop.
-async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>, sessionId: string, name: string, until: number): Promise<{ block: string } | null> {
-  const paid = paidBySession.get(sessionId) ?? 0
-  if (paid < REFIRED_REFUSALS) {
-    paidBySession.set(sessionId, paid + 1)
-    await logLine($, 'guards', `stop gate: an operator wait with no question, refused again (${paid + 1} of ${REFIRED_REFUSALS})`)
-    return refuse(ASK_FIRST)
-  }
-  paidBySession.delete(sessionId)
-  await logLine($, 'guards', `stop gate: an operator wait with no question let through after ${REFIRED_REFUSALS} more refusals (${name})`)
-  try {
-    // Not inTime: it turns a throw into null, and a send that fails must be logged as the failure it is.
-    const left = until - Date.now()
-    const told = left <= 0 ? null : await withDeadline((async () => {
-      const coordinator = await coordinatorAddress($)
-      if (!coordinator) return 'no coordinator to tell that an orchestrator waits on the operator with no question'
-      const sent = await sendToCoordinator($, coordinator.to, `[module] ${name} ended its turn waiting on the operator with no question asked with \`ask\`, after ${REFIRED_REFUSALS + 1} refusals: he was not asked anything. Ask it of ${name}, or ask him for it.`)
-      return sent?.isDelivered ? '' : `the notice to the coordinator was not delivered: ${sent?.reason ?? 'no answer'}`
-    })(), left)
-    if (told === null || isDegradedPass(told)) await logLine($, 'guards', 'stop gate: the notice to the coordinator did not finish within the deadline')
-    else if (told !== '') await logLine($, 'guards', `stop gate: ${told}`)
-  } catch (err) {
-    await logLine($, 'guards', `stop gate: the notice to the coordinator failed: ${(err as Error).message}`)
-  }
-  return null
 }
 
 // --- the sweep (stop_gate.py:595-642) -----------------------------------------------------

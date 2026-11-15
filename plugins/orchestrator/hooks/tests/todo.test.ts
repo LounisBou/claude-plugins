@@ -342,23 +342,20 @@ function ender() {
   return { handlers, run }
 }
 
-test('/coordinator-end lists the coordinator\'s open to-dos and refuses to end while one is neither closed nor put off', async () => {
+test('/coordinator-end with open to-dos ends all the same: the open items in the log, one escape in the journal', async () => {
   const { run, handlers } = ender()
   expect(Object.keys(handlers).sort()).toEqual(['coordinator-end', 'orchestrator:coordinator-end'])
-  const { dollar } = world({ me: ['coordinator', 'Coord: general [ref-2]'] })
+  const { dollar, files, logs } = world({ me: ['coordinator', 'Coord: general [ref-2]'] })
+  const escapes = () => [...files.entries()].filter(([p]) => p.includes('/.claude/orchestrator/journal/')).map(([, text]) => JSON.parse(text)).map(e => `${e.kind} ${e.source.code}`)
   expect(await run(dollar)).toEqual({ passed: { command: 'orchestrator:coordinator-end', args: '' } })
+  expect(escapes()).toEqual([])
   await call(dollar, { action: 'add', words: 'relay the order to the billing orchestrator', said_at: SAID })
   await call(dollar, { action: 'add', words: 'ask for the numbers' })
   await call(dollar, { action: 'add', words: 'check the release later' })
   await call(dollar, { action: 'defer', id: 3, words: 'after the release, 2026-11-14' })
-  const refused = await run(dollar)
-  expect(refused.text).toContain('relay the order to the billing orchestrator')
-  expect(refused.text).toContain('ask for the numbers')
-  expect(refused.text).not.toContain('check the release later')
-  expect(refused.passed).toBe(undefined)
-  await call(dollar, { action: 'done', id: 1, outcome: 'sent to Orch: billing' })
-  await call(dollar, { action: 'drop', id: 2, words: 'not needed, he said, 2026-11-14' })
   expect(await run(dollar)).toEqual({ passed: { command: 'orchestrator:coordinator-end', args: '' } })
+  expect(escapes()).toEqual(['escape orchestrator.coordinator-end.todo-open'])
+  expect(logs.some(line => line.includes('coordinator-end let through with 2 to-do open'))).toBe(true)
 })
 
 test('/coordinator-end from another session than the coordinator runs as it always did', async () => {

@@ -67,3 +67,30 @@ export function disk(files: Map<string, string> = new Map()) {
 }
 export const emptied = (d: ReturnType<typeof disk>) => d.history.filter(([, text]) => text === '').map(([path]) => path)
 export const MEASURES = '/tmp/cfg/claude-orchestrator/measure'
+
+/*
+ * The journal a fake host writes into (observe.ts, over core's journal.ts): the events renamed into
+ * `<config>/orchestrator/journal/`, each as `<kind> <code>`. Wraps a fake `$` whose fs.write and
+ * process.run it observes, answering what they answer.
+ */
+export function journalled<D extends { fs: any; process: any }>(dollar: D): { dollar: D; journal: () => string[] } {
+  const texts = new Map<string, string>()
+  const events: string[] = []
+  const wrapped = {
+    ...dollar,
+    fs: { ...dollar.fs, write: async (path: string, text: string) => { texts.set(path, text); return dollar.fs.write?.(path, text) } },
+    process: {
+      ...dollar.process,
+      run: async (argv: readonly string[], ...rest: unknown[]) => {
+        const to = String(argv[argv.length - 1] ?? '')
+        if (argv[0] === 'mv' && to.includes('/orchestrator/journal/')) {
+          const event = JSON.parse(texts.get(String(argv[argv.length - 2])) ?? '{}')
+          events.push(`${event.kind} ${event.source?.code}`)
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        return dollar.process.run(argv, ...rest)
+      },
+    },
+  }
+  return { dollar: wrapped as D, journal: () => [...events] }
+}

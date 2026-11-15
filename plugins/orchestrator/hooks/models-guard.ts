@@ -5,9 +5,6 @@
 // an orchestrator to « bind the three tiers in models.json » was followed over the rule:
 // prose alone lost. guards.ts holds the $ that reads the session's role and the prompt.
 
-export const MODELS_DENY = 'The tier map is the operator\'s (model-routing, « Pairs, tiers and the map »): '
-  + 'put the binding to him as one arbitration. A pair `pick` returned goes in the brief and the record.'
-
 // The operator names the map or a tier in the prompt he typed: the binding is his word on
 // the point, and the guard stands aside.
 export function namesTheMap(prompt: string): boolean {
