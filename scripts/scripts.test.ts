@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
-import { isRelease, mainCells, matrixOf, nightlyCells, NO_SUITE, parseBlocking, parseShards, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
+import { isRelease, mainCells, mainTouched, matrixOf, nightlyCells, NO_SUITE, parseBlocking, parseShards, pullRequestCells, run as runMatrix, touchedPlugins } from './plugin-matrix.ts'
 import { breaches, isPromptPath, loweredOutsideRelease, measure } from './prompts.ts'
 import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
@@ -187,6 +188,101 @@ describe('plugin matrix', () => {
   it('runs one cell without a suite for a pull request that touches no plugin, so that it passes', () => {
     const matrix = matrixOf(parseBlocking({ blocking: { alpha: [] } }, ['alpha']))
     assert.deepEqual(pullRequestCells(matrix, []), [{ plugin: NO_SUITE, os: 'ubuntu-latest', blocking: true }])
+  })
+
+  it('runs on a push to main the plugins the merge touches, every plugin for core or ci/, none for documentation', () => {
+    const plugins = ['alpha', 'beta', 'gamma']
+    assert.deepEqual(mainTouched(['plugins/beta/x.sh'], plugins), ['beta'])
+    assert.deepEqual(mainTouched(['plugins/beta/x.sh', 'plugins/alpha/y.sh', 'docs/a.md'], plugins), ['alpha', 'beta'])
+    assert.deepEqual(mainTouched(['packages/core/src/a.ts'], plugins), plugins)
+    assert.deepEqual(mainTouched(['plugins/beta/x.sh', 'ci/plugins.json'], plugins), plugins)
+    assert.deepEqual(mainTouched(['docs/a.md', 'scripts/plugin-matrix.ts', '.github/workflows/ci.yml'], plugins), [])
+  })
+
+  it('cuts a push to main to the touched plugins, to the cell without a suite when none is left', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['ubuntu-latest'], beta: [], drift: [] } }, ['alpha', 'beta', 'drift']), new Map([['alpha', 2]]))
+    const keys = (touched: readonly string[]): string[] => mainCells(matrix, ['drift'], touched).map(cell => `${cell.plugin} ${cell.os} ${cell.shard ?? ''}`)
+    assert.deepEqual(keys(['alpha']), ['alpha ubuntu-latest 1', 'alpha ubuntu-latest 2'])
+    assert.deepEqual(keys(['beta']), ['beta ubuntu-latest '])
+    assert.deepEqual(keys([]), [`${NO_SUITE} ubuntu-latest `])
+    assert.deepEqual(keys(['drift']), [`${NO_SUITE} ubuntu-latest `])
+  })
+})
+
+describe('plugin matrix of a push to main', () => {
+  const git = (root: string, ...args: string[]): void => {
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'core.excludesFile=/dev/null', ...args], { cwd: root, stdio: 'ignore' })
+  }
+  const write = (root: string, path: string, text: string): void => {
+    mkdirSync(join(root, path, '..'), { recursive: true })
+    writeFileSync(join(root, path), text)
+  }
+
+  /** A repository of three plugins (two carry core) whose main holds a merge of a branch that changes `paths`. */
+  function mergeOf(paths: readonly string[]): string {
+    const root = repoWith({ alpha: MANIFEST, beta: { ...MANIFEST, name: 'beta' }, gamma: { ...MANIFEST, name: 'gamma' } })
+    write(root, 'ci/plugins.json', JSON.stringify({ blocking: { alpha: ['ubuntu-latest'], beta: ['ubuntu-latest'], gamma: ['ubuntu-latest'] } }))
+    write(root, 'plugins/alpha/core/a.ts', 'a')
+    write(root, 'plugins/beta/core/a.ts', 'a')
+    git(root, 'init', '-q', '-b', 'main')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'base')
+    git(root, 'checkout', '-q', '-b', 'topic')
+    for (const path of paths) write(root, path, 'changed')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'topic')
+    git(root, 'checkout', '-q', 'main')
+    write(root, 'unrelated.txt', 'main moved')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'main moved')
+    git(root, 'merge', '-q', '--no-ff', '-m', 'merge', 'topic')
+    return root
+  }
+
+  function cellsOf(root: string, mode: string, env: Record<string, string> = {}): string[] {
+    const lines: string[] = []
+    assert.equal(runMatrix(root, [mode], { out: line => lines.push(line), err: () => undefined, env }), 0)
+    const parsed: { include: { plugin: string, os: string }[] } = JSON.parse(lines[0] ?? '{}')
+    return parsed.include.map(cell => `${cell.plugin} ${cell.os}`)
+  }
+
+  it('runs one plugin when the merge touches only it, whatever else main carried before', () => {
+    assert.deepEqual(cellsOf(mergeOf(['plugins/gamma/x.sh']), '--main'), ['gamma ubuntu-latest'])
+  })
+
+  it('runs every plugin when the merge touches core', () => {
+    assert.deepEqual(cellsOf(mergeOf(['packages/core/src/a.ts']), '--main'), ['alpha ubuntu-latest', 'beta ubuntu-latest', 'gamma ubuntu-latest'])
+  })
+
+  it('runs every plugin when the merge touches ci/', () => {
+    assert.deepEqual(cellsOf(mergeOf(['ci/prompts.json']), '--main'), ['alpha ubuntu-latest', 'beta ubuntu-latest', 'gamma ubuntu-latest'])
+  })
+
+  it('runs the cell without a suite when the merge touches documentation only', () => {
+    assert.deepEqual(cellsOf(mergeOf(['docs/a.md']), '--main'), [`${NO_SUITE} ubuntu-latest`])
+  })
+
+  it('runs every plugin when the merge cannot be read, and says so', () => {
+    const root = repoWith({ alpha: MANIFEST })
+    write(root, 'ci/plugins.json', JSON.stringify({ blocking: { alpha: ['ubuntu-latest'] } }))
+    git(root, 'init', '-q', '-b', 'main')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'first')
+    const errors: string[] = []
+    const lines: string[] = []
+    assert.equal(runMatrix(root, ['--main'], { out: line => lines.push(line), err: line => errors.push(line), env: {} }), 0)
+    assert.match(lines[0] ?? '', /"plugin":"alpha"/)
+    assert.match(errors.join('\n'), /every plugin/)
+  })
+
+  it('leaves out of a push to main the touched cells a pull request already passed, down to the cell without a suite', () => {
+    const root = mergeOf(['plugins/gamma/x.sh', 'plugins/beta/x.sh'])
+    assert.deepEqual(cellsOf(root, '--main', { TESTED_CELLS: JSON.stringify(['gamma|ubuntu-latest|']) }), ['beta ubuntu-latest'])
+    assert.deepEqual(cellsOf(root, '--main', { TESTED_CELLS: JSON.stringify(['gamma|ubuntu-latest|', 'beta|ubuntu-latest|']) }), [`${NO_SUITE} ubuntu-latest`])
+  })
+
+  it('keeps the whole macOS matrix for the night, whatever the last merge touched', () => {
+    assert.deepEqual(cellsOf(mergeOf(['plugins/gamma/x.sh']), '--nightly'), ['alpha macos-latest', 'beta macos-latest', 'gamma macos-latest'])
   })
 })
 

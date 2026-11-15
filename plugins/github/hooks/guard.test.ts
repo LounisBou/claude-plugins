@@ -1254,6 +1254,25 @@ for (const command of RECORDS_READS) {
   })
 }
 
+// A read that waits, loops or silences its errors is still a read: nothing is observed.
+const RECORDS_QUIET_READS = [
+  'ls ~/.claude/pr-records/o/r/' + HEAD + ' 2>/dev/null',
+  'cat ~/.claude/pr-records/o/r/x.json 2>&1 | jq .result',
+  'until ls ~/.claude/pr-records/o/r/' + HEAD + '/e2e.json; do sleep 2; done',
+  'for f in ~/.claude/pr-records/o/r/*; do cat $f; done',
+  'sleep 5; ls ~/.claude/pr-records/o/r',
+]
+
+for (const command of RECORDS_QUIET_READS) {
+  test('a Bash command that only reads the records, waiting or silencing its errors, raises no event: ' + command.slice(0, 40), async ($, on) => {
+    const seen = await world($, on)
+    const out = await $.tool.call(bash(command))
+    expect(out.deny).toBeUndefined()
+    expect(seen.journal).toEqual([])
+    expect(seen.bash).toEqual([command])
+  })
+}
+
 const RECORDS_WRITES = [
   'echo x > ~/.claude/pr-records/o/r/x.json',
   'echo x >> ~/.claude/pr-records/o/r/x.json',
@@ -2194,7 +2213,7 @@ test('a norms record written from the norms module puts Ready through the record
 
 test('a pr-create out of draft outside auto-merge with a body that breaks the writing rules is observed twice, asked write', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' }, answer: 'Allow' })
-  const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false })
+  const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false }, 'geonativefr/thing')
   const out = await $.tool.call(call)
   expect(out).toEqual({ result: 'ok' })
   expect(seen.journal).toEqual(['github.draft.open-out', 'github.writing.rule'])

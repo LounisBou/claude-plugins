@@ -928,10 +928,34 @@ export function onlyReads(line: string): boolean {
   }
 }
 
+// What a command line that only reads may also hold, for the observation of a write to the records
+// (and for it alone: the refusals keep onlyReads): a redirection that writes nothing, to /dev/null or
+// to another descriptor (`2>/dev/null`, `2>&1`, `>&2`), and the shell's own words around a read, which
+// run no program that writes (`sleep`, and the loop `for … do … done`, `if … fi` that hold the
+// reads; the commands inside them are read one by one).
+const QUIET_REDIRECT = /(?:^|\s)(?:\d*|&)>>?\s*\/dev\/null(?=$|[\s;&|)])|(?:^|\s)\d*>&\d(?=$|[\s;&|)])/g
+const QUIET_WORDS: ReadonlySet<string> = new Set(['sleep', 'for', 'done', 'fi'])
+
+// Whether a command line only reads, as onlyReads says it, once what a read may hold around it is set aside.
+function onlyObservesReads(line: string): boolean {
+  const bare = line.replace(QUIET_REDIRECT, ' ')
+  try {
+    if (bare.includes('>')) return false
+    return readCommands(bare).every(({ argv }) => {
+      const program = argv[0] ?? ''
+      if (argv.length === 0 || QUIET_WORDS.has(program)) return true
+      if (!READERS.has(program)) return false
+      return program !== 'find' || !argv.some((word) => FIND_WRITES.test(word))
+    })
+  } catch {
+    return false
+  }
+}
+
 // Whether a Bash command line writes into the records or runs their writer: it names them
-// (touchesRecords) and is not a line that only reads.
+// (touchesRecords) and is not a line that only reads (onlyObservesReads).
 export function writesRecords(line: string, root?: string): boolean {
-  return touchesRecords(line, root) && !onlyReads(line)
+  return touchesRecords(line, root) && !onlyObservesReads(line)
 }
 
 // The programs that delete, bare or by path, and the options and calls that delete inside another

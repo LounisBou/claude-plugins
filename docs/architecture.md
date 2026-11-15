@@ -62,7 +62,7 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
 reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
-cloudflare stands outside it; telemetry observes every role and changes none; learning reads what the roles journal and changes none.
+cloudflare stands outside it; telemetry observes every role and changes only what it has archived (the files of closed rows, below the orchestrator's module directory, removed once the logs repository holds them); learning reads what the roles journal and changes none.
 
 ## Packaging
 
@@ -227,3 +227,8 @@ or is gone, a cell the pull request did not run, and any lookup that fails. The 
 reports on `main`: a skipped step is a passed job, and a matrix with no cell left runs the cell
 without a suite. It makes the push to `main` a net for what no pull request tested, not a second run
 of what one did.
+
+A push to `main` also runs only the plugins its merge commit changes (its diff against its first
+parent): a change of `packages/core` or `ci/` runs every plugin, a merge that changes none runs the
+cell without a suite, and a diff git cannot read runs every plugin and says so. The night keeps every
+plugin on macOS.

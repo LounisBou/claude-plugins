@@ -22,6 +22,12 @@
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
 // and the merged pull requests not installed.
 //
+// The print carries the meaning, never his words: a row's ruling and note are one line, a quotation
+// of his replaced by the id of the round entry or to-do item that holds it; a note several rows share
+// is printed once, naming them; an answer his asker already received (typed in its tab, or delivered)
+// is not printed, one still to apply is one line of its letter or first sentence under its id; the
+// objective is its first sentence. The full words stay in `round/` and the to-do list, named by id.
+//
 // The orchestration's name is the one given, else the record's owner (`<record>.owner`), else, when
 // that file names no orchestration, the name of the session that runs the takeover. A row names its
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
@@ -119,6 +125,9 @@ export interface SettledQuestions {
 export interface OpenRow {
   readonly id: string
   readonly line: string
+  /** The same line without its note, and the note on one line: a note several rows share is printed once. */
+  readonly bare?: string
+  readonly meant?: string
   readonly label?: string
   readonly ruling?: string
   /** The row's note of judgment, where its dispatch names the agent it went to. */
@@ -307,6 +316,47 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
 const LABEL_MAX = 120
 const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
+/** A place his words are kept: the id of a round entry (`q-…`) or of a to-do item (`to-do 15`), with the words it holds. */
+export interface Holder {
+  readonly id: string
+  readonly text: string
+}
+
+const LINE_MAX = 200
+const QUOTE_KEY = 40
+const QUOTE_MIN = 8
+
+const cut = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`)
+
+/**
+ * A text of a row on one line, the operator's quotations (« … ») replaced by the id of the holder
+ * that keeps them: `[words: q-1]`, else `« … »` when none holds them. A quotation is found in a
+ * holder by its first characters, case and spacing aside.
+ */
+export function oneLine(text: string, holders: readonly Holder[] = [], max = LINE_MAX): string {
+  const cited = text.replace(/«([^»]*)»/g, (_whole, quoted: string) => {
+    const key = flat(quoted).replace(/^[….\s]+/, '').slice(0, QUOTE_KEY).toLowerCase()
+    const holder = key.length < QUOTE_MIN ? undefined : holders.find(h => flat(h.text).toLowerCase().includes(key))
+    return holder === undefined ? '« … »' : `[words: ${holder.id}]`
+  })
+  const line = flat(cited)
+  if (line.length <= max) return line
+  // A cut never lands inside a `[words: id]` token: the id is what the line is for.
+  const open = line.lastIndexOf('[words:', max - 1)
+  const inside = open !== -1 && line.indexOf(']', open) >= max - 1
+  return cut(line, inside ? open + 1 : max)
+}
+
+/** The meaning of an answer in one line: its letter when it opens on one, else its first sentence. */
+export function answerMeaning(said: string): string {
+  const text = flat(said.replace(/«[^»]*»/g, ' '))
+  // A letter is a choice when nothing but a dash, a colon, a dot or a bracket follows it: « A few … » is a sentence.
+  const letter = /^([A-Z])(?=$|\s+[—–-]|[.:)])/u.exec(text)
+  if (letter !== null) return letter[1] ?? ''
+  const sentence = /^.*?(?:[.!?](?=\s+\p{Lu}|$)|$)/u.exec(text)?.[0] ?? text
+  return cut(sentence.trim(), LABEL_MAX)
+}
+
 /** One entry of the round, read for what a succession decides on: what makes it the same question as another, its status, its asker, its words. */
 interface Seen {
   readonly id: string
@@ -390,6 +440,19 @@ export function roundSettled(entries: readonly (string | undefined)[], archived:
   return { answered, reask }
 }
 
+/**
+ * The answers still to apply: those of `answered` whose asker does not have them yet. One typed in
+ * the asker's own tab, or delivered to it, was applied by the asker; its entry stays in the round.
+ */
+export function toApply(answered: readonly Settled[], entries: readonly (string | undefined)[]): Settled[] {
+  const received = new Set(entries.flatMap(text => {
+    const entry = object(text)
+    const answer = field(entry, 'answer')
+    return entry !== undefined && (field(answer, 'by') === 'tab' || field(field(entry, 'delivery'), 'state') === 'delivered') ? [String(entry['id'])] : []
+  }))
+  return answered.filter(q => !received.has(q.id))
+}
+
 const PR_REF = /([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?)#([1-9][0-9]*)/g
 
 /** The pull requests a text names, `<repo>#<n>` as written. */
@@ -403,15 +466,23 @@ function headsOf(row: Row): string[] {
   return [field(review, 'head'), field(field(review, 'fixed'), 'head')].filter((head): head is string => typeof head === 'string' && /^[0-9a-f]{7,40}$/.test(head))
 }
 
-/** The open rows of a record's rows, as the takeover reads them. */
-export function openRows(rows: readonly Row[]): OpenRow[] {
+/**
+ * The open rows of a record's rows, as the takeover reads them: a ruling and a note on one line, his
+ * quotations replaced by the id of the holder that keeps them.
+ */
+export function openRows(rows: readonly Row[], holders: readonly Holder[] = []): OpenRow[] {
   return rows.filter(row => row['state'] === 'open').map(row => {
     const surface = field(row['surface'], 'pr')
     const refs = [...refsOf(String(row['label'] ?? '')), ...(typeof surface === 'string' ? refsOf(surface) : [])]
     const heads = headsOf(row)
+    const meant = typeof row['note'] === 'string' ? oneLine(row['note'], holders) : ''
+    const said = typeof row['deferred'] === 'string' && row['deferred'] !== '' ? { deferred: oneLine(row['deferred'], holders) } : {}
+    const printed = { ...row, ...said }
     return {
       id: String(row['id']),
-      line: openLine(row),
+      line: openLine({ ...printed, note: meant }),
+      bare: openLine({ ...printed, note: '' }),
+      ...(meant === '' ? {} : { meant }),
       label: String(row['label'] ?? ''),
       ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
       ...(typeof row['note'] === 'string' && row['note'] !== '' ? { note: row['note'] } : {}),
@@ -488,6 +559,22 @@ export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[]
   return { rows: linked, prs: [...described.values()], unread: unread.map(repo => `${repo} open pull requests unread`) }
 }
 
+/** The words the round's entries keep: what he answered and typed, and the question. */
+function roundHolders(entries: readonly (string | undefined)[]): Holder[] {
+  return entries.flatMap(text => {
+    const entry = object(text)
+    if (entry === undefined || typeof entry['id'] !== 'string') return []
+    const answer = field(entry, 'answer')
+    const words = [field(answer, 'text'), field(answer, 'typed'), entry['question'], entry['ask']].filter(isText)
+    return words.length === 0 ? [] : [{ id: entry['id'], text: words.join(' ') }]
+  })
+}
+
+/** The words the to-do list keeps, by item. */
+function todoHolders(todoText: string): Holder[] {
+  return todoItems(todoText).map(item => ({ id: `to-do ${item.id}`, text: item.words }))
+}
+
 /** Reads the state this orchestrator holds open from the files that keep it. */
 export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[]): OpenState {
   const state = stateRoot(env)
@@ -508,27 +595,40 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
-  const found = linkRows(openRows(parseRecord(recordText)), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs)
-  const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
-  const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const round = join(state, ROUND_DIR)
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
+  const entries = names.map(name => readText(join(round, name)))
+  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs)
+  const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
+  const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
+  const settled = roundSettled(
+    entries,
+    [join(round, ROUND_ARCHIVE_DIR), join(round, ROUND_ARCHIVE_DIR, 'withdrawn')].flatMap(from => (existsSync(from) ? readdirSync(from).filter(name => name.endsWith('.json') && !name.includes('.tmp-')).sort().map(name => readText(join(from, name))) : [])),
+    request.name, request.session,
+  )
   return {
     rows: found.rows,
     prs,
     agents: seats.map(agent => agent.name),
     seats,
-    questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
-    settled: roundSettled(
-      names.map(name => readText(join(round, name))),
-      [join(round, ROUND_ARCHIVE_DIR), join(round, ROUND_ARCHIVE_DIR, 'withdrawn')].flatMap(from => (existsSync(from) ? readdirSync(from).filter(name => name.endsWith('.json') && !name.includes('.tmp-')).sort().map(name => readText(join(from, name))) : [])),
-      request.name, request.session,
-    ),
+    questions: roundOpen(entries.map(text => object(text)), request.name, request.session),
+    settled: { answered: toApply(settled.answered, entries), reask: settled.reask },
     ...(live.disagree === undefined ? {} : { disagree: live.disagree }),
   }
 }
 
 const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.join('; '))
+
+/** The open rows' lines: a note two rows or more share is printed once at the end, naming them. */
+export function rowLines(rows: readonly OpenRow[]): string[] {
+  // Rows share a note when their whole notes are the same, not their shortened lines.
+  const sameAs = (row: OpenRow): string => flat(row.note ?? '')
+  const holders = new Map<string, OpenRow[]>()
+  for (const row of rows) if (row.meant !== undefined && row.meant !== '') holders.set(sameAs(row), [...(holders.get(sameAs(row)) ?? []), row])
+  const shared = [...holders.values()].filter(group => group.length > 1)
+  const lines = rows.map(row => (row.meant !== undefined && (holders.get(sameAs(row))?.length ?? 0) > 1 ? (row.bare ?? row.line) : row.line))
+  return [...lines, ...shared.map(group => `note of rows ${group.map(row => row.id).join(', ')}: ${group[0]?.meant ?? ''}`)]
+}
 
 const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
 
@@ -675,6 +775,13 @@ export function forgeOpenPrs(env: Env): OpenPrReader {
   }
 }
 
+/** The objective's first sentence: what follows it is the history of the goals, which goals.md keeps. */
+export function objectiveOf(aim: string): string {
+  const text = flat(aim)
+  const end = /[.!?]\s+\p{Lu}/u.exec(text)
+  return cut(end === null ? text.replace(/[.!?]$/, '') : text.slice(0, end.index), 300)
+}
+
 /** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n open=none`, `open=` the open ones with their plan, and `deferred=` the deferred ones. */
 export function projectSheet(goals: string | undefined, installed: string): string {
   const parts: string[] = []
@@ -684,7 +791,7 @@ export function projectSheet(goals: string | undefined, installed: string): stri
       const { head, rows } = parseGoals(goals, 'goals.md')
       const open = rows.filter(row => row.status === 'open')
       const deferred = rows.filter(row => row.status === 'deferred').map(row => row.id)
-      parts.push(`objective ${head.aim || 'none'}`, `spec ${head.spec || 'none'}`)
+      parts.push(`objective ${objectiveOf(head.aim) || 'none'}`, `spec ${head.spec || 'none'}`)
       parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(row => `${row.id} (plan: ${row.plan || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
     } catch (error) {
       if (!(error instanceof GoalsFault)) throw error
@@ -709,7 +816,9 @@ export function projectOf(worktree: string, record: string): string {
 
 /** The fixed instructions filled: each placeholder of the template by its value. */
 export function fill(template: string, values: Readonly<Record<string, string>>): string {
-  return template.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key: string) => values[key] ?? whole)
+  // A line ending on an optional placeholder, `{{KEY?}}`, is left out whole when its value is empty.
+  const kept = template.replace(/^.*\{\{([A-Z_]+)\?\}\}[ \t]*\n?/gm, (line, key: string) => ((values[key] ?? '') === '' ? '' : line.replace(`{{${key}?}}`, `{{${key}}}`)))
+  return kept.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key: string) => values[key] ?? whole)
 }
 
 // The round's entries settled over a day ago, moved to its archive as `round-archive` moves them:
@@ -845,12 +954,12 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     TURN_END: moves ? 'END THE TURN.' : STAY_TURN,
     DISPATCH_WHEN: moves ? 'Your next turn dispatches' : 'Dispatch',
     TURN_RESULT: moves ? 'the turn ended' : 'the open rows dispatched, or the wait declared',
-    LIVE_ROWS: list(open.rows.map(row => row.line)),
+    LIVE_ROWS: list(rowLines(open.rows)),
     LIVE_OWNERS: list(owners),
     LIVE_PULL_REQUESTS: list(open.prs),
     LIVE_AGENTS: list((open.seats ?? []).map(agentLine)),
     LIVE_OPEN_QUESTIONS: open.questions.length === 0 ? 'none' : open.questions.map(q => `[${q.id}] ${q.text}`).join('\n\n'),
-    LIVE_ANSWERED: (open.settled?.answered ?? []).length === 0 ? 'none' : (open.settled?.answered ?? []).map(q => `${q.label}: ${q.said === '' ? '(no answer text recorded)' : q.said}`).join('\n'),
+    LIVE_ANSWERED: (open.settled?.answered ?? []).map(q => `[${q.id}] ${q.label}: ${answerMeaning(q.said) || '(no answer text recorded)'}`).join('\n'),
     LIVE_REASK: (open.settled?.reask ?? []).length === 0 ? 'none' : (open.settled?.reask ?? []).map(q => `[${q.id}] ${q.said === '' ? '(no reason recorded)' : q.said}\n${q.text}`).join('\n\n'),
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),

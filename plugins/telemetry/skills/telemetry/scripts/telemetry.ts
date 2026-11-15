@@ -20,7 +20,9 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { moduleDirOf } from '../../../core/orchestration.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
+import { planArchive } from './lib/archive.ts'
 import { runAuto } from './lib/auto.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
@@ -131,6 +133,7 @@ export function run(args: readonly string[], deps: Deps): number {
     machine: machineName(deps.env['TELEMETRY_MACHINE'] || hostname()),
     git: deps.git,
     transcript: (session: string) => transcriptOf(config, session),
+    archive: (machine: string, now: number) => planArchive({ moduleDir: moduleDirOf(config, deps.env['ORCHESTRATOR_MODULE_DIR']), machine, now }),
   })
   switch (sub) {
     case 'append': {

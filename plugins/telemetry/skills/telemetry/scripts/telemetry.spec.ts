@@ -140,6 +140,20 @@ test('export --auto --foreground pushes the day files, the index and the redacte
   })
 })
 
+test('export archives the closed rows\' files of the orchestrator\'s module directory, where its environment moved it, then removes them', () => {
+  harness((config, deps) => {
+    const module = join(config, 'elsewhere')
+    mkdirSync(join(module, 'briefs', 'demo'), { recursive: true })
+    writeFileSync(join(module, 'briefs', 'demo', 'dispatch-record.jsonl'), `${JSON.stringify({ id: 1, state: 'closed', closed: '2026-10-20T10:00:00Z', label: 'ONE: first' })}\n`)
+    writeFileSync(join(module, 'briefs', 'demo', 'one-brief.md'), 'Row: 1 ONE: first\n')
+    const logs = withLogs(config, deps)
+    assert.equal(run(['export', '--config', config], { ...deps, env: { ...logs.env, ORCHESTRATOR_MODULE_DIR: module } }), 0)
+    assert.deepEqual(deps.outs, ['export: 0 day file(s), 1 archived file(s) of box pushed to the logs repository', 'export: archive: 1 file(s) exported, 1 removed from this machine, 0 kept'])
+    assert.equal(logs.show('demo/2026-10/box/brief/one-brief.md'), 'Row: 1 ONE: first\n')
+    assert.equal(existsSync(join(module, 'briefs', 'demo', 'one-brief.md')), false)
+  })
+})
+
 test('export --auto without --foreground hands the work to a detached process and pushes nothing itself', () => {
   harness((config, deps, setStdin) => {
     setStdin(`${end}\n`)

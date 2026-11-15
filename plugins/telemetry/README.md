@@ -28,8 +28,19 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   `owner/name` of its git remote, the same from any worktree (the directory's name when it has none).
   Unset, it pushes nothing and says so. The export also runs by itself: a session's end starts it,
   detached, at most once a UTC day, one at a time per machine.
+  It also archives the files of closed work the orchestrator's module directory holds (`lib/archive.ts`), a day after the row closed,
+  at `<project>/<YYYY-MM>/<machine>/<kind>/<name>` of the same repository: the brief of a closed
+  dispatch row (the `Row:` line of its header), the report it asks for, the review index its verdict
+  records and the reports its verdict names; the pull request ledger's archived lines of a month already
+  over, and the round's archived questions of a month already over, copied only: the orchestrator's
+  live readers (`recordedAsked`, the takeover's settled list) read them where they are, so they stay.
+  A file goes through the same scan, JSON read as the text it stores and as its parsed strings (one with
+  a hit stays where it is and is named, never its value), and leaves the machine only once the push that carries it is
+  done and the repository holds its bytes. A file no closed row names, or one an open row names, is
+  never touched, and nothing is deleted from the repository. The result says how many files were
+  exported, removed from this machine and kept.
 - `telemetry.ts export --auto [--foreground] --config <dir>`: the automatic export.
-- `telemetry.ts check --config <dir>`: the same scan, alone.
+- `telemetry.ts check --config <dir>`: the scan of the day files, alone (the export scans the archive's files).
 - `telemetry.ts backfill --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript.
 - `telemetry.ts sweep [--auto] --config <dir>`: over the last seven day files, one

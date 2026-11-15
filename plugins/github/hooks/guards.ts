@@ -78,6 +78,8 @@ export type BashText = {
   title?: string
   body?: string
   bodyFile?: string
+  // The repository the command names, `-R owner/name` or the engine's `--repo`, when it names one.
+  repo?: string
 }
 
 // The value the last of a flag's settings gives, as gh reads it: `--body x`,
@@ -153,6 +155,11 @@ function markExpansions(line: string): string {
   return out
 }
 
+// A repository as `[HOST/]OWNER/NAME` when the word is one: no expansion, no flag taken for a value.
+function repoName(word: string | undefined): string | undefined {
+  return word !== undefined && /^[\w.-]+(\/[\w.-]+){1,2}$/.test(word) ? word : undefined
+}
+
 // The text a run of the plugin's engine, engine/gh.py, writes from Bash: its
 // subcommand's own rules, its --title and the file its --body-file names. The
 // engine reads every body from a file. A file from stdin or a shell variable,
@@ -167,6 +174,8 @@ function engineText(argv: string[], marked: string[] | undefined, moves: boolean
   if (title !== undefined && !title.includes(EXPANDED) && (call.command === 'pr-create' || call.command === 'pr-update')) {
     text.title = title
   }
+  const repo = repoName(seen.repo)
+  if (repo !== undefined) text.repo = repo
   const file = engineOption(seen, '--body-file')
   if (file !== undefined && !file.includes(EXPANDED) && file !== '-' && !(moves && !/^[/~]/.test(file))) text.bodyFile = file
   return text.title !== undefined || text.bodyFile !== undefined ? text : undefined
@@ -197,6 +206,8 @@ export function bashTexts(line: string): BashText[] {
     const words = marked[n] ? ghWords(marked[n]) : undefined
     if (!gh || !command || !name || !words) return
     const text: BashText = { name, command, argv }
+    const repo = repoName(flagValue(marked[n]?.slice(1) ?? [], '-R', '--repo'))
+    if (repo !== undefined) text.repo = repo
     const read = (value: string | undefined) => (value === undefined || value.includes(EXPANDED) ? undefined : value)
     const title = read(flagValue(words.flags, '-t', '--title'))
     if (title !== undefined && (command === 'pr-create' || command === 'pr-update')) text.title = title

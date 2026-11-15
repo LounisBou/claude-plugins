@@ -399,6 +399,39 @@ test('the records guard refuses a write into the records or their writer, never 
   expect(writesRecords('git status')).toBe(false)
 })
 
+test('the records observation skips a command that only reads them, however it waits or silences its errors', () => {
+  const dir = '~/.claude/pr-records/o/r/' + HEAD
+  for (const line of [
+    'ls ' + dir + ' 2>/dev/null',
+    'ls ' + dir + ' 2>&1 | tail -3',
+    'cat ' + dir + '/x.json &>/dev/null',
+    'until ls ' + dir + '/e2e.json; do sleep 2; done',
+    'for f in ' + dir + '/*; do cat $f; done',
+    'sleep 5; ls ' + dir,
+    'if [ -f ' + dir + '/x.json ]; then cat ' + dir + '/x.json; fi',
+    'grep -n records plugins/github/engine/record.py 2>/dev/null',
+  ]) {
+    expect(writesRecords(line), line).toBe(false)
+  }
+})
+
+test('the records observation still fires on a write hidden among reads or behind a quiet redirection', () => {
+  const dir = '~/.claude/pr-records/o/r/' + HEAD
+  for (const line of [
+    'ls ' + dir + ' 2>/dev/null; rm ' + dir + '/x.json',
+    'for f in ' + dir + '/*; do rm $f; done',
+    'for f in $(rm ' + dir + '/x.json); do cat $f; done',
+    'sleep $(rm ' + dir + '/x.json)',
+    'cd /w && echo x > ' + dir + '/x.json',
+    'echo x >/dev/null/../' + dir + '/x.json',
+    'cat ' + dir + '/x.json >&' + dir + '/y.json',
+    'python3 /p/engine/record.py --repo o/r 2>/dev/null',
+    'until ls ' + dir + '/x.json; do touch ' + dir + '/x.json; done',
+  ]) {
+    expect(writesRecords(line), line).toBe(true)
+  }
+})
+
 test('a deletion is a line that is no read and deletes: rm, unlink, find -delete, a move out, an interpreter\'s call', () => {
   const names = (text: string) => text.includes('/d/')
   for (const line of [
