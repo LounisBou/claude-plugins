@@ -662,7 +662,8 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
     excused: new Set(KINDS.filter((kind) => excused[kind])),
     required: new Set(excused.required ?? []),
     carried: new Set(carried.map((c) => c.kind)),
-    ciGreen: ci.result === 'SUCCESS',
+    // A repository with no CI configured has no CI to wait for.
+    ciGreen: ci.result === 'SUCCESS' || ci.result === NO_CI,
     ciFailed: ci.result === 'FAILURE',
     stacked: gate.stacked === true,
     lightCiOff: lightCiOff !== undefined,
@@ -680,7 +681,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   // CI is named when its holder asks it: GitHub's on the bottom pull request, the gate's failure on a stacked one.
   if (!held.some((item) => item.condition === 'ci')) return missing
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
-  else if (ci.result !== 'SUCCESS') {
+  else if (ci.result !== 'SUCCESS' && ci.result !== NO_CI) {
     const skippedChecks = ci.skipped ?? []
     // A read of the checks the base requires that failed: green cannot be told, and the failure is named.
     const unverified = ci.unverified ?? []
@@ -705,15 +706,20 @@ function lightCiMissing(gate: Gate): string {
     + ', run ' + SCRIPTED.tool + ' {"action": "run", "pr": ' + gate.pr + '} from a clean checkout of its head'
 }
 
+// The CI result of a repository with no CI configured (engine's gate_ci): no workflow, no required check, no check on
+// its default branch. It holds the place of green CI, named as such in the Ready line.
+export const NO_CI = 'NONE'
+const NO_CI_TEXT = 'no CI configured'
+
 // What stands for green CI at a stacked pull request's head, as the Ready line names it, or undefined on the bottom
-// pull request: the operator's refusal of light CI, the tests record (its own or carried), or the checks green.
+// pull request (`no CI configured` on either, in a repository with none): the operator's refusal of light CI, the tests record (its own or carried), or the checks green.
 export function stackedCi(gate: Gate, files: RecordFile[], carried: Carried[] = [], lightCiOff?: string): string | undefined {
-  if (gate.stacked !== true) return undefined
+  if (gate.stacked !== true) return gate.ci.result === NO_CI ? NO_CI_TEXT : undefined
   if (lightCiOff !== undefined) return 'the operator\'s refusal of light CI for this repository (' + lightCiOff + ')'
   const tests = latestByKind(headRecordsRead(gate, files).read).get(SCRIPTED.kind)
   if (tests && accepts(tests)) return 'passed local tests (' + SCRIPTED.producer + ')'
   if (!tests && carried.some((c) => c.kind === SCRIPTED.kind)) return 'passed local tests (' + SCRIPTED.producer + ')'
-  return 'green CI'
+  return gate.ci.result === NO_CI ? NO_CI_TEXT : 'green CI'
 }
 
 // An undraft only for the CI to run: the pull request carries Not Ready and no
@@ -721,7 +727,7 @@ export function stackedCi(gate: Gate, files: RecordFile[], carried: Carried[] = 
 export function ciUndraft(gate: Gate): boolean {
   const ci = gate.ci
   const passed = (ci.total ?? 0) - (ci.failed ?? []).length - (ci.running ?? 0) - (ci.skipped ?? []).length
-  return gate.labels.some((label) => label.toLowerCase() === NOT_READY) && ci.result !== 'SUCCESS' && passed <= 0
+  return gate.labels.some((label) => label.toLowerCase() === NOT_READY) && ci.result !== 'SUCCESS' && ci.result !== NO_CI && passed <= 0
 }
 
 export function carriesReady(gate: Gate): boolean {
@@ -826,7 +832,7 @@ export function ciUndraftLine(repo: string, pr: number): string {
 // accepted: the points the orchestrator's acceptance set aside at the head, named in place of a clean review.
 // excused: the kinds the check plan or the exemption stood for, named.
 // carried: the kinds counted at the head from an earlier head of the same diff.
-// ciText: what stands for green CI on a stacked pull request (stackedCi).
+// ciText: what stands for green CI on a stacked pull request, or in a repository with no CI (stackedCi).
 export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, excused: Excused = {},
   carried: Carried[] = [], ciText = 'green CI'): string {
   return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)

@@ -44,7 +44,7 @@ below, and the `args` object holds the subcommand's arguments.
 statuses and each check's latest run, less a skipped or neutral one of a run older than its
 workflow's latest (greatest run id) if that has a check, plus each required check not yet reported (running). `ci.result`: `FAILURE` if one failed
 (`ci.failed`), `PENDING` if one runs (`ci.running`) or proved nothing (`ci.skipped`:
-`skipped`, or `neutral` on a draft), else `SUCCESS`; no check at all is `PENDING` (CI not started). Actions call failed: `error:` on stderr, every
+`skipped`, or `neutral` on a draft), else `SUCCESS`; no check at all is `PENDING` (CI not started), or `NONE` in a repository with no CI configured (no active workflow, no required check, no check run or status on the default branch), which the gate counts as no CI to wait for (the Ready line says `no CI configured`). Actions call failed: `error:` on stderr, every
 run counted. `gh run rerun` of a draft-time run skips its jobs again: push a new commit
 instead.
 
@@ -177,7 +177,7 @@ else `raw`. `--json` (or `--format raw`) is the full object a program parses; a 
 | `pr-url` | `pr-create`, `pr-status` | the HTML URL |
 | `pr-merge-status` | `pr-status` | `merged`, `open` or `closed` |
 | `pr-details` | `pr-status` | number, title, state, draft, head, base, url |
-| `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
+| `checks-status` | `pr-checks` | `{"result": SUCCESS\|FAILURE\|PENDING\|NONE, "failed_checks": [...]}`, the verdict `pr-gate` gives as `ci.result` |
 | `open-threads` | `pr-threads` | unresolved threads |
 | `resolved-threads` | `pr-threads` | resolved threads |
 | `resolve-status` | `thread-resolve` | `resolved` or `unresolved` |
