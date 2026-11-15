@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -391,6 +391,23 @@ test('merged: the base branch\'s push runs are followed', async () => {
   assert.equal(await said({ view: [`MERGED ${HA}`] }), 'unread 7 gh pr view failed: gh: HTTP 404|5')
   assert.equal(await said({ view: [`MERGED ${HA}`], merge: ` main` }), 'unread 7 gh pr view failed: no merge commit or base branch read|5')
   assert.equal(await said({ ...merged }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+})
+
+test('merged during the watch with no push run on the base branch ends the watch, exit 0', async () => {
+  const during = { view: [`OPEN ${HA}`, `MERGED ${HA}`], reg: ['2'], merge: `${HM} main` }
+  assert.equal(await said({ ...during, runs: ['-'] }), `merged 7 ${HM} no push run on main filtered=0|0`)
+  assert.equal(await said({ ...during, runs: ['101:CI;102:Slow'] }, ['7', '--base-workflow', 'Ci']), `merged 7 ${HM} no push run on main filtered=2|0`)
+  // A red on the base branch after a merge during the watch is still a red.
+  assert.equal(await said({ ...during, runs: ['101:CI'], runCodes: { 101: 1 }, jobs: 'test\n' }), `base-red 7 ${HM} 101 test|6`)
+})
+
+test('the owner file is written whole, through a temporary name and one rename', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
+  await main(['7'], { ORCHESTRATOR_STATE_DIR: state, CLAUDE_CODE_SESSION_ID: 'sess-9' }, deps)
+  const dir = join(state, 'ci-watch')
+  assert.equal(readFileSync(join(dir, 'here-pr7.log.session'), 'utf8'), 'sess-9\n')
+  assert.equal(statSync(join(dir, 'here-pr7.log.session')).mode & 0o777, 0o600)
+  assert.deepEqual(readdirSync(dir).filter(name => name.includes('.tmp')), [])
 })
 
 test('a cancelled base run is replaced by its newer run, never by itself', async () => {

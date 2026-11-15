@@ -7,6 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
@@ -236,8 +237,9 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const followed = (name: string): boolean => options.workflows.length === 0 || options.workflows.includes(name)
 
   // The pull request is no longer open: closed without merge ends here; merged is followed onto
-  // the base branch's push runs at the merge commit, unless --no-base.
-  const ended = async (current: PullRequest): Promise<Said> => {
+  // the base branch's push runs at the merge commit, unless --no-base. `during`: the watch saw it
+  // open first, so no push run on the base branch ends the watch on the merge, exit 0.
+  const ended = async (current: PullRequest, during = false): Promise<Said> => {
     if (!(current.state === 'MERGED' && options.base)) return new Said(`closed ${pr} ${current.state}`, 4)
     const view = await gh(['pr', 'view', pr, '--json', 'mergeCommit,baseRefName', '--jq', '(.mergeCommit.oid // "") + " " + .baseRefName'], { stderr: 'pipe' })
     if (view.status !== 0) throw fail('gh pr view', view)
@@ -269,7 +271,10 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       if (fresh.length === 0) {
         // Every run listed has been watched green: one listing more found nothing new.
         if (seen.size > 0) return new Said(`base-green ${pr} ${green ?? sha}`, 0)
-        if (deps.now() >= deadline) return new Said(`base-no-run ${pr} ${sha} filtered=${left.size}`, 7)
+        if (deps.now() >= deadline) {
+          return during ? new Said(`merged ${pr} ${sha} no push run on ${branch} filtered=${left.size}`, 0)
+            : new Said(`base-no-run ${pr} ${sha} filtered=${left.size}`, 7)
+        }
         await sleep()
         continue
       }
@@ -317,7 +322,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // The pull request read again: closed, merged or moved ends the watch here.
   const reread = async (first: string): Promise<PullRequest> => {
     const current = await readPr()
-    if (current.state !== 'OPEN') throw await ended(current)
+    if (current.state !== 'OPEN') throw await ended(current, true)
     if (current.head !== first) throw new Said(`moved ${pr} ${first} ${current.head}`, 3)
     return current
   }
@@ -361,7 +366,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // an earlier watch's is removed, and the log is told to no session.
   if (options.session !== undefined) {
     try {
-      writeFileSync(`${log}.session`, `${options.session}\n`)
+      writeAtomic(`${log}.session`, `${options.session}\n`)
     } catch {
       throw unread(pr, `cannot write ${log}.session`)
     }

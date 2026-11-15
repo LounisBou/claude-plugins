@@ -82,7 +82,11 @@
 #   ci-watch: base-green <pr> <sha>                             0  merged, the base branch's runs green
 #                                                                  (the sha of a cancelled run's successor)
 #   ci-watch: base-red <pr> <sha> <run id> <failing job names>  6  the first red run on the base branch
-#   ci-watch: base-no-run <pr> <sha> filtered=<n>               7  no push run within the bound
+#   ci-watch: base-no-run <pr> <sha> filtered=<n>               7  no push run within the bound, on a watch
+#                                                                  that entered on MERGED
+#   ci-watch: merged <pr> <sha> no push run on <branch> filtered=<n>
+#                                                               0  merged during the watch, no push run within
+#                                                                  the bound
 #
 # `filtered` counts the push runs on that commit the workflow filter left out: above 0, a
 # followed workflow is misnamed, and the operator is told.
@@ -107,6 +111,7 @@
 #     enters on MERGED and follows the base branch.
 #   unread: re-arm once, then report; the same when the host's timeout ends the watch.
 #   base-green: nothing.
+#   merged: nothing; above filtered=0, a misnamed workflow, reported to the operator in one line.
 #   base-red: read the failing job; a flake or an infrastructure fault is re-run once with
 #     `gh run rerun <run-id> --failed`, after naming its cause in one line, and the watch re-armed;
 #     any other red, or a second one, is reported to the operator in one line and fixed at once in
