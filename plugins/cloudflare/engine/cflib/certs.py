@@ -22,4 +22,4 @@ def certs(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("certs", help="the edge certificate packs of a zone and their status")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=certs, read=True)
+    parser.set_defaults(handler=certs)

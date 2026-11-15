@@ -261,4 +261,4 @@ def check(args, ctx):
 def register(subparsers):
     parser = subparsers.add_parser("check", help="a host as the public sees it: resolution, HTTPS, certificate")
     parser.add_argument("host")
-    parser.set_defaults(handler=check, read=True, account_free=True)
+    parser.set_defaults(handler=check, account_free=True)

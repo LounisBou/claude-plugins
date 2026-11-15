@@ -22,6 +22,8 @@ from cflib import (accounts, backup, backups, cache, caddy, caddyctl, certs, che
 
 _MODULES = (accounts, zones, dns, backups, settings, certs, plan, rulesets, iprules, security, protect, cache, workers,
             caddy, check, publish)
+# The commands that only read are the mod's READS, read as data: the JSON list after the marker.
+READS_MARKER = "export const READS = new Set("
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -48,11 +50,15 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command")
     for module in _MODULES:
         module.register(subparsers)
-    for sub in subparsers.choices.values():
+    with open(os.path.join(os.path.dirname(__file__), "..", "hooks", "register.ts"), encoding="utf-8") as fh:
+        text = fh.read()
+    reads = json.JSONDecoder().raw_decode(text, text.index(READS_MARKER) + len(READS_MARKER))[0]
+    for name, sub in subparsers.choices.items():
         # The global flag after the subcommand as well: SUPPRESS keeps the
         # subparser from overwriting the parent's value when it is omitted.
         sub.add_argument("--account", default=argparse.SUPPRESS)
-        if sub.get_default("read"):
+        if name in reads:
+            sub.set_defaults(read=True)
             sub.add_argument("--json", action="store_true", help="full objects as JSON")
     return parser
 

@@ -45,23 +45,17 @@ Then:
    ```
 
 5. **Read the facts**: `coordinator.sh owners`, then `coordinator.sh facts`.
-6. **Announce.** Apply « Announcing newcomers » (`orchestrator:coordination`): a fresh
-   `ListAgents` names every running `Orch:` session as one you have not yet announced to.
+6. **Announce.** Apply « Announcing newcomers » (`orchestrator:coordination`): every running
+   `Orch:` session `ListAgents` names is one you have not yet announced to.
    Send each this text verbatim, the brackets filled — the pull requests are those `owners`
    traced to that orchestrator:
 
-   > A coordinator runs on this machine: I am `<your exact name and reference>`, since
-   > <date -u +%FT%TZ>. I am the operator's single question interface: from now on, send me
-   > every question meant for him — your own arbitrations and the questions of your agents
-   > you relay — never to him in your tab. With your questions, send three to five sentences
-   > on what you are working on: project, repository, current phase or pull requests, where
-   > it stands. I relay each question to him verbatim, with its context and your name, in a
-   > decision round where your questions come together, opened by that account of your work;
-   > I send his answer back to you verbatim and dated, and I answer none of them myself. For the facts, ask me when in doubt: whose pull request is this, is anyone on this
-   > branch, file or subject, may I do this or must I wait. Asking me the facts is optional and
-   > never a gate: nothing of yours waits for my word.
-   > The facts attribute to you: <each pull request with its branch, or « none »>. Confirm or
-   > correct that once, in one line.
+   > A coordinator runs on this machine: I am `<your exact name and reference>`, the operator's
+   > single question interface. A question meant for him reaches me from the end of your turn
+   > (`/orchestrator-decide`), never by a message. Asking me the facts — whose pull request is
+   > this, is anyone on this branch, file or subject — is optional and never a gate.
+   > The facts attribute to you: <each pull request with its branch, or « none »>. Reply only
+   > to correct that.
 
 7. **Tell the operator**, in one short message: registered under `<name>`, tab leftmost, who
    was told, and every `collision` and `unread` line `facts` printed.
