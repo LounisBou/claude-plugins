@@ -42,6 +42,8 @@ const text = (value: unknown): string => (typeof value === 'string' ? value.trim
 // The few words of level 1: dispatch-record.ts's VERDICT_WORDS_MAX, which refuses longer ones.
 const WORDS_MAX = 120
 const ROW_RUN_MS = 10_000
+// What stands in github's answer for the detail the verdict sent, which it repeats.
+const ECHOED_DETAIL = 'the detail sent'
 
 type RowTarget = { record: string; row: number; findings: string }
 
@@ -219,9 +221,12 @@ export function register(on: On<Held>): void {
     const target = rowTarget(e)
     if (typeof target === 'string') return { result: target, isError: true }
     if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
-    const answer = answerOf(await $.tool.call(call))
+    const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
-    if (answer.isError === true || !('result' in call)) return answer
+    if (written.isError === true || !('result' in call)) return written
+    // github's line repeats the detail the orchestrator just wrote: named, never carried back.
+    const sent = text(call['detail'])
+    const answer = sent ? { result: written.result.split(sent).join(ECHOED_DETAIL) } : written
     const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
     if (target === null) return { result: `${answer.result}\n${counted}` }
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
