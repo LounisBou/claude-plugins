@@ -1,7 +1,7 @@
 #!/bin/bash
 # learning's suite: the plugin validates, the scripts' tests pass (the reader and the report over
 # scratch journals, the hooks module over a fake host), then the command line end to end: no
-# journal, one journal, a file that is not an event.
+# journal, one journal, a file that is not an event, then the distiller's candidates.
 #
 # Requires bash, node and the claude CLI.
 set -u
@@ -39,6 +39,19 @@ OLD_AT=$("${NODE[@]}" -e 'console.log(new Date(Date.now() - 45 * 864e5).toISOStr
 OLD_ID="$(printf '%s' "$OLD_AT" | tr -d ':-')-0a1b2c3e"
 printf '%s\n' "$EVENT" | sed -e "s/20261114T101500Z-0a1b2c3d/$OLD_ID/" -e "s/2026-11-14T10:15:00Z/$OLD_AT/" -e 's/github.ready.missing-review/github.ready.old-guard/' > "$CONFIG/github/journal/$OLD_ID.json"
 check "a guard code silent over the window is listed with its days" "1" "$(health | grep -c 'github.ready.old-guard  *github 45 days silent$')"
+
+distil() { "${NODE[@]}" "$SCRIPTS/distil.ts" --config "$CONFIG"; }
+check "a cluster under the thresholds is no candidate" "" "$(distil)"
+NOW_AT=$("${NODE[@]}" -e 'console.log(new Date(Date.now() - 864e5).toISOString().slice(0, 19) + "Z")')
+n=0
+for pr in 1 1 2; do
+  n=$((n + 1))
+  ID="$(printf '%s' "$NOW_AT" | tr -d ':-')-0000000$n"
+  printf '%s\n' "$EVENT" | sed -e "s/20261114T101500Z-0a1b2c3d/$ID/" -e "s/2026-11-14T10:15:00Z/$NOW_AT/" -e 's/github.ready.missing-review/github.writing.rule/' -e "s|\"repo\":null,\"pr\":null|\"repo\":\"acme/app\",\"pr\":$pr|" > "$CONFIG/github/journal/$ID.json"
+done
+check "three events from two pull requests are one candidate" '"refusal:github.writing.rule" ["acme/app#1","acme/app#2"]' "$(distil | "${NODE[@]}" -e 'const c = JSON.parse(require("fs").readFileSync(0, "utf8")); console.log(JSON.stringify(c.signature), JSON.stringify(c.prs))')"
+"${NODE[@]}" "$SCRIPTS/distil.ts" >/dev/null 2>&1; code=$?
+check "the distiller called with no configuration directory exits 2" "2" "$code"
 
 "${NODE[@]}" "$SCRIPTS/health.ts" >/dev/null 2>&1; code=$?
 check "a call with no configuration directory exits 2" "2" "$code"
