@@ -10,7 +10,7 @@ import {
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
-import { fieldsOf, reasonOf, type Host, type On } from '../core/host.ts'
+import { fieldsOf, reasonOf, type Host, type On, type OnStream } from '../core/host.ts'
 import { spawnArgv } from '../core/orchestration.ts'
 import { observed } from './observe.ts'
 import { startRetrospective } from './retrospective.ts'
@@ -179,7 +179,7 @@ const method = { isLoaded: false }
 // Whether implement:close ran in the turn in progress: its end is where the learning retrospective may start.
 const close = { ran: false }
 
-export function register(on: On<ImplementHost>): void {
+export function register(on: On<ImplementHost> & OnStream<ImplementHost>): void {
   // The state tool, listed from the first turn.
   on('session.start', async ($, e, next) => {
     await $.tool.register(STATE_SPEC)

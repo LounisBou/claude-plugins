@@ -162,6 +162,8 @@ export type Next<E> = ((e: E) => Promise<unknown>) & Budget & Origin
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
+// What a registration matches beside its event: a tool or several, a command, a pattern.
+export type Matcher = Readonly<Record<string, string | readonly string[] | RegExp>>
 // The events that stream: a hook is an async generator over `next(e)`'s chunks.
 export type StreamEvents = {
   // One request of a turn to the model; what it returns carries the model's `answer`.
@@ -169,12 +171,13 @@ export type StreamEvents = {
 }
 export type StreamNext<E> = (e: E) => AsyncGenerator<unknown, unknown>
 export type StreamHook<H, E> = ($: H, e: E, next: StreamNext<E>) => AsyncGenerator<unknown, unknown>
+// A registration on an event that streams, for a module that holds one (`On<H> & OnStream<H>`).
+export type OnStream<H> = <K extends keyof StreamEvents>(event: K, hook: StreamHook<H, StreamEvents[K]>) => unknown
 
 // A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several, a pattern).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[] | RegExp>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof StreamEvents>(event: K, hook: StreamHook<H, StreamEvents[K]>): unknown
+  <K extends keyof Events>(event: K, matcher: Matcher, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
