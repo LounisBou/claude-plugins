@@ -17,7 +17,7 @@ import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
 import { countRound } from './review-rounds.ts'
 
-type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs'>
+type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
 
 // The tool's short name: the model calls it as mcp__orchestrator__review.
 export const REVIEW_TOOL = 'review'
@@ -273,7 +273,7 @@ export function register(on: On<Held>): void {
     const sent = text(call['detail'])
     const answer = sent ? { result: written.result.split(`orchestrator (${sent})`).join(`orchestrator (${ECHOED_DETAIL})`)
       .split(`orchestrator, ${sent}`).join(`orchestrator, ${ECHOED_DETAIL}`) } : written
-    const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
+    const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e['cwd'] === 'string' ? { cwd: e['cwd'] } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
     if (target === null) return { result: answerLines(answer.result, counted, null) }
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
     // fails is a warning on a success, never an error, so the audit trail keeps the verdict

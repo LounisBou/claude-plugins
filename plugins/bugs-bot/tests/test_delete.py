@@ -7,7 +7,7 @@ import json
 import pytest
 from fake_channel import FakeChannel
 from samples import BASE_DATE, GROUP_ID, TOKEN, FakeTelegram
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 from bugs_bot.errors import BugsError
 from bugs_bot.replies import cmd_delete
@@ -175,18 +175,3 @@ def test_telegram_deletes_with_delete_message():
 
 
 # -- the agent deletes its own messages, on its own judgment --------------------------------------
-
-
-@pytest.mark.parametrize("phrase", [
-    "`delete <id> [--reply N]`",
-    "on your own judgment",
-    "a wrong fact, a duplicate, a message posted on the wrong report",
-    "never a tester's message",
-    "its content posted on that report with `reply`",
-])
-def test_the_agent_edits_or_deletes_its_own_messages_on_its_own_judgment(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-def test_the_skill_documents_delete():
-    assert "| `delete <id> [--reply N]` |" in DOCS["SKILL.md"].read_text()

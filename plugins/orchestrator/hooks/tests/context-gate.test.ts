@@ -1,6 +1,6 @@
 // hooks/tests/context-gate.test.ts
 import { expect, test } from 'claude-code/testing'
-import { roleLine, gateAnnouncement, register as registerGuards } from '../guards.ts'
+import { roleLine, gateAnnouncement, versionAnnouncement, register as registerGuards } from '../guards.ts'
 import { register as registerGauge, driftAnnouncement } from '../gauge.ts'
 import { logLineOf, blockOf, disk } from './fakes.ts'
 
@@ -61,6 +61,8 @@ type Setup = {
   noLaunchName?: boolean
   launchName?: string
   noSession?: boolean
+  root?: string
+  installed?: string
 }
 
 function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
@@ -75,7 +77,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
     },
     // The plugin's directory comes from the engine, never from the
     // environment: the module's environment carries no CLAUDE_PLUGIN_ROOT.
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { name: 'orchestrator', root: setup.root ?? '/plugins/orch-root' },
     env: { get: async (name: string) => env[name] },
     fs: {
       read: async (p: string) => {
@@ -83,6 +85,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
           if (setup.measure === undefined) throw new Error('ENOENT')
           return setup.measure
         }
+        if (p === '/cfg/deploys/lounisbou/installed.json' && setup.installed !== undefined) return setup.installed
         throw new Error(`unread: ${p}`)
       },
       write: async () => undefined,
@@ -278,4 +281,41 @@ test('a model drift the gauge measured rides the next prompt to the model, once,
   const seen = await submit(handlers, dollar)
   expect((seen as any).context).toEqual([driftAnnouncement('another-model', 'a-model')])
   expect((await submit(handlers, dollar) as any).context).toBeUndefined()
+})
+
+// The newer installed commit, on the gate's channel: the plugin's own root names the commit the
+// session runs, the deploy's state file the one installed.
+const RUNNING = 'a'.repeat(40)
+const INSTALLED = 'b'.repeat(40)
+const DEPLOYED = `/cfg/deploys/lounisbou/${RUNNING}/plugins/orchestrator`
+const installedState = (...history: string[]): string => JSON.stringify({
+  version: 1, repo: 'owner/name', marketplace: 'lounisbou', history: history.map(commit => ({ commit, at: '2026-01-01T00:00:00Z' })), skipped: [], pending: false, plugins: {},
+})
+
+test('an orchestrator and a coordinator are told of a newer installed commit once, then of the next one', async () => {
+  for (const launchName of ['Orch: belt', 'Coord: belt']) {
+    const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName }
+    const { dollar } = fakeDollar(setup)
+    const handlers = mounted()
+    const role = launchName.startsWith('Orch') ? 'orchestrator' : 'coordinator'
+    expect((await submit(handlers, dollar) as any).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED }, role, role === 'coordinator' ? DEPLOYED : '')])
+    expect((await submit(handlers, dollar) as any).context).toBeUndefined()
+    const next = 'c'.repeat(40)
+    setup.installed = installedState(next, INSTALLED, RUNNING)
+    expect((await submit(handlers, dollar) as any).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next }, role, role === 'coordinator' ? DEPLOYED : '')])
+  }
+})
+
+test('a session running the installed commit, an agent, and a session with no readable state file are told nothing', async () => {
+  const quiet: Setup[] = [
+    { root: DEPLOYED, installed: installedState(RUNNING), launchName: 'Orch: belt' },
+    { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Agent: belt' },
+    { root: DEPLOYED, launchName: 'Orch: belt' },
+    { installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt' },
+  ]
+  for (const setup of quiet) {
+    const { dollar, written } = fakeDollar(setup)
+    expect((await submit(mounted(), dollar) as any).context).toBeUndefined()
+    expect(written).toEqual([])
+  }
 })

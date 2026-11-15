@@ -71,8 +71,7 @@ fact that changes a question still to come updates it before it is presented.
 1. « Recorded: <his words> », then « My reading: <what you do with them> » — he sees both and corrects the reading. Given in
    your tab or by a message, close it with `settle`, the work it asks in `work`.
 2. His answer in the round is the module's dated record, answering any re-ask, a successor's
-   too: never copy it. By hand only what binds beyond it (rulings file, `references/succession-predecessor.md`
-   item 0; plan; register) and, with no coordinator, his words there, verbatim and dated, your reading on an indented line under them, « Session's reading (not his words): … ». A goal
+   too: never copy it. A goal
    ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
    stop gate reads. Work deferred (« later, when I say so »):
    `dispatch-record.sh defer <record> <id>` (a row) or `dispatch-record.sh goals <record> defer <G>`
@@ -101,7 +100,7 @@ purpose because it is written. Never re-argue a question inside another one.
    premise a launch found false. If any is open and he is still there,
    announce « Wave 2: M questions, back to back. » and present its first question in this
    same turn.
-4. When no question is left: in one short list, where each ruling was written (file, entry),
+4. When no question is left: in one short list, each ruling's round entry,
    which agent was told, what was launched — and the round ends.
 
 $ARGUMENTS

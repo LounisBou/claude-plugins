@@ -86,7 +86,7 @@ Read from the code at orchestrator 0.99.3. Pull requests are this repository's.
 | 7 | met | the suite blocks on Linux, as root and as a normal user (#65), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
 | 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 1,960 tokens at a `build` start, 1,290 at an `investigate` start | no principle has been tested by ablation |
 | 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49) | no pilot or measure has run; paid runs are the operator's, under `evals/outcome/caps.json` |
-| 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted on the operator's order of 2026-11-14 | `routing.py` still holds `profile` and `pick` beside the cost rule |
+| 10 | partly met | one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; the calibration engine (`calibration.py`) was deleted on the operator's order of 2026-11-14 | `routing.py` still holds `pick` and `profile` beside the cost rule, and both are in use, so the wording is not met by a deletion. No code calls them; `skills/model-routing/SKILL.md` has every dispatch run `pick`, which is also what reads the tier map (`CLASS_TIERS`, `models.json`). What `pick` holds beyond that map: the operator's hand-written tables and the shipped defaults, the size rule (`--files`, `--lines`), the exploration notch read on the dispatch record, the `corrective=` pair (`docs/agent-dispatches.md`), and the profile inference that names a profile's table, which `profile` prints. Reducing it to the map removes those behaviours: the operator's ruling, not a refactor |
 | 11 | met | « Your mode » in `skills/orchestrator/SKILL.md`: `build` loads `method:lifecycle`, `investigate` does not; both starts are scenarios of `ci/scenarios.json` (#74, #75) | — |
 | 12 | met | `succession.sh live` generates the brief from the state, its notes capped and promoted or dropped; `succession.sh check` refuses a brief that misses an open item, and the launcher runs it (#71) | — |
 | 13 | met | the measure file's `start` (the first figure, the brief and its size; `hooks/gauge-core.ts`) (#61, #71) | — |
@@ -118,7 +118,7 @@ waits on the operator's paid runs.
 8. Kernel: goal 8, on the evals' harness, within the program's method plugin if the operator adopts it.
 9. Routing: goal 10.
 10. Modes: goal 11, once the program's method plugin exists.
-11. Succession: goals 12 and 13, on core's store and the rulings register (the in-flight `docs/standing-rulings` work is its starting point).
+11. Succession: goals 12 and 13, on core's store and the round's record of his answers.
 
 ## Non-goals
 
@@ -162,7 +162,7 @@ takes it.
    performance on average, models committing early to a guess and not recovering (Laban et al.
    2025, arXiv:2505.06120, over 200,000 simulated conversations; not coding agents). Signs a
    gauge cannot see call for the same fresh start from a consolidated brief: an agent
-   proposing again what a ruling in `rulings.md` rejected, re-reading a file it already read
+   proposing again what an answer of his in the round rejected, re-reading a file it already read
    in the same phase, a second correction round on the same finding. Each is countable by
    code; each could trip the gate as tokens do.
 3. **Every brief names the head it was written against.** Stale context misleads: with

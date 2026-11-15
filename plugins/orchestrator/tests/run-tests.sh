@@ -237,6 +237,7 @@ shaped() {
 # the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
 # only by title, the predecessor's, before the successor registers.
 COORDSKILL="$ROOT/skills/coordination/SKILL.md"
+COORDREF="$ROOT/skills/coordination/references/orchestrators.md"
 COORDCMD="$ROOT/commands/coordinator.md"
 COORDEND="$ROOT/commands/coordinator-end.md"
 COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
@@ -276,6 +277,16 @@ case "${SUITE_SHARD:-1}" in 1|2|3|4) ;; *) echo "SUITE_SHARD is 1, 2, 3 or 4, no
 shard_has() { [ -z "${SUITE_SHARD:-}" ] || [ "$SUITE_SHARD" = "$1" ]; }
 
 if shard_has 1; then
+echo "== the hooks module's tests =="
+
+# The module's own tests (hooks/tests/*.test.ts) run only in the host's kit. Without `claude` the
+# check fails: it does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to run the module's tests" "found" "absent"
+fi
+
 echo "== suite environment =="
 
 # The suite started from inside a role reads the same as one started outside it: every role
@@ -3702,8 +3713,8 @@ check "the round puts the urgent first, then groups its questions by the orchest
 # a question asked with `ask`; a closing proposal's close sends nothing. The header and the design say so.
 check "the header and the design send a question's answer in the settle call, not at the next reading" "yes|yes|no|yes|no" \
   "$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "sends a question asked with \`ask\` its answer in the same call")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "close of a closing proposal sends nothing")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "the coordinator's hooks module sends the answer at")|$(spells "$ROOT/docs/design.md" 'sends its asker the answer in the same call')|$(spells "$ROOT/docs/design.md" 'sends that answer at its next round reading')"
-check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>` », then the sender'"'"'s')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')|$(spells "$COORDCMD" 'With your questions, send three to five sentences')"
+check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>` », then the sender'"'"'s')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')"
 # Rule 219: the paragraph on the coordinator, up to its 2026-11-03 sentence, lightened from 650.
 # 400 until the sender's account came back (the operator's ruling of 2026-11-04, « restore
 # everything and fix », after an independent control).
@@ -5295,15 +5306,11 @@ check "the design says a successor meets the never-implement rule in the ruleboo
   "$(grep -c "carried in the succession brief's first paragraph" "$ROOT/docs/design.md")|$(spells "$ROOT/docs/design.md" "A successor meets it before it acts: its brief's first step reads the rulebook, whose Overview opens on « You orchestrate; you never implement. »")|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'You orchestrate; you never implement.')"
 # The lint: a succession brief past 9,000 characters is a finding naming the count and the limit.
 SUCCFILL="$WORK/succession-filled.md"
-SUCCRULINGS="$WORK/r/rulings.md"; mkdir -p "$WORK/r"
-printf '%s\n' '# Standing rulings' '' \
-  '- 2026-11-03T14:31:57Z « The four sections always, none when empty. » — every pull request description (row 12)' \
-  '- 2026-11-04T09:10:00Z « No hard cap on this file. » — the rulings file size (row 13)' > "$SUCCRULINGS"
 # {{GAUGE}} is gone from the template with the gauge script it named — the module's measure
 # file replaced both — and what this fill proves is the size limit over a full brief. Each path
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
-sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' -e "s#\{\{RULINGS_FILE\}\}#$SUCCRULINGS#g" \
+sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' \
   -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
 # Measured as the lint measures: the open-questions field's value is left out, its label counted.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
@@ -5352,8 +5359,6 @@ check "the template reads Instructions, then Source, then Expected result, each 
   "$(i=$(succ_at '^# Instructions$'); a=$(succ_at '^## Analysis$'); f=$(succ_at '^## Your first task'); s=$(succ_at '^# Source$'); l=$(succ_at '^## Live state'); e=$(succ_at '^# Expected result$')
      [ -n "$i" ] && [ -n "$a" ] && [ -n "$f" ] && [ -n "$s" ] && [ -n "$l" ] && [ -n "$e" ] \
        && [ "$i" -lt "$a" ] && [ "$a" -lt "$f" ] && [ "$f" -lt "$s" ] && [ "$s" -lt "$l" ] && [ "$l" -lt "$e" ] && echo yes || echo no)"
-check "the template names its rulings file, read at step 1 without its entries for one open item, never whole, and carries no rulings field" "1|1|0|0|0" \
-  "$(grep -c '^- Standing rulings: `{{RULINGS_FILE}}`' "$SUCC")|$(succ1_has "grep -v '\\[for: ' {{RULINGS_FILE}}")|$(succ1_has 'Read the rulings file WHOLE')|$(grep -c "^- The operator.s rulings" "$SUCC")|$(grep -cF '{{LIVE_RULINGS}}' "$SUCC")"
 # A takeover reads what is live, not what is kept: the project's own checkouts, not every project's,
 # and the goals still open, not the met ones.
 check "step 2 reads the goals without their met rows, step 3 the checkouts of the project only" "1|1|0|0" \
@@ -5396,16 +5401,6 @@ check "a succession brief whose open-questions value is a 4,000-character block,
   "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
 check "the lint says the open-questions value is outside the 9,000-character cap, and the succession texts do not say it again" "yes|no|no" \
   "$(help_has "$LINT" "The open-questions field's value is not counted, its label is")|$(spells "$ORCH_REFS/succession-predecessor.md" '9,000 characters')|$(spells "$ROOT/commands/succeed.md" 'the open-questions value apart')"
-# His answer in the round is the module's record, which answers the same question asked again
-# (hooks/tests/relay.test.ts, « a successor asking a question its predecessor had answered »): the
-# decision round never copies it, and writes by hand only what binds beyond it, or the ruling itself
-# with no coordinator, in the rulings file; the lifecycle gives that file's format and what leaves it.
-DECIDE42=$(awk '/^## 4\. /{f=1} /^## 5\. /{f=0} f' "$ROOT/commands/decide.md" | awk '/^2\. /{f=1} /^3\. /{f=0} f' | tr '\n' ' ' | tr -s ' ')
-# What the round writes by hand must reach the file's path, its entry format and the rule that a
-# ruling carried out or superseded leaves the file in the same move: the step points at the
-# lifecycle item that holds all three, and that item holds them.
-check "the decision round's ruling step points at the lifecycle item giving the rulings file's path, entry and supersede rule" "1|yes|yes" \
-  "$(printf '%s' "$DECIDE42" | grep -cF "\`references/succession-predecessor.md\` item 0")|$(spells "$ORCH_REFS/succession-predecessor.md" '0. **The state lives in its owners, and only there.**')|$(sed -n '/0\. \*\*The state lives in its owners, and only there\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF '`<record'"'"'s directory>/rulings.md`' && sed -n '/0\. \*\*The state lives in its owners, and only there\.\*\*/p' "$ORCH_REFS/succession-predecessor.md" | grep -qF 'is marked in the same move as the ruling that ends it' && echo yes || echo no)"
 # The design gives the filled brief's cap the lint enforces (the operator's ruling of 2026-11-04,
 # 9,000 characters) and sends the reader to a lifecycle heading that exists, the section holding
 # the steps' how whatever its subsections are called. A hand-started predecessor is closed on the
@@ -5446,44 +5441,6 @@ SUCC9100="$WORK/succession-9100.md"; succ_padded "$SUCC9100" 9100
 SUCC8900="$WORK/succession-8900.md"; succ_padded "$SUCC8900" 8900
 check "a filled succession brief of 9,100 characters is refused, one of 8,900 passes" "1|1|0" \
   "$(bash "$LINT" "$SUCC9100" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCC9100" 2>&1 | grep -c 'over the limit of 9000 once the open-questions value is set apart (9100)')|$(bash "$LINT" "$SUCC8900" >/dev/null 2>&1; echo $?)"
-# Check 16: the rulings file sits outside the brief's cap. A 20,000-character one beside the same
-# two briefs, its path the same length, changes neither verdict, and is one warning, never a refusal.
-RBIG="$WORK/q/rulings.md"; mkdir -p "$WORK/q"
-printf '# Standing rulings\n\n' > "$RBIG"; i=0
-while [ "$(LC_ALL=C tr -d '\200-\277' < "$RBIG" | wc -c | tr -d ' ')" -lt 20000 ]; do
-  i=$((i + 1)); printf -- '- 2026-11-04T10:%02d:00Z « Ruling number %d, kept word for word as he said it. » — the method (row %d)\n' $((i % 60)) "$i" "$i" >> "$RBIG"
-done
-sed "s#$WORK/r/rulings.md#$RBIG#" "$SUCC9100" > "$WORK/succession-9100-big.md"
-sed "s#$WORK/r/rulings.md#$RBIG#" "$SUCC8900" > "$WORK/succession-8900-big.md"
-check "a 20,000-character rulings file beside them changes neither verdict" "yes|1|1|0|1" \
-  "$([ "$(LC_ALL=C tr -d '\200-\277' < "$RBIG" | wc -c | tr -d ' ')" -ge 20000 ] && echo yes || echo no)|$(bash "$LINT" "$WORK/succession-9100-big.md" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$WORK/succession-9100-big.md" 2>&1 | grep -c '(9100)')|$(bash "$LINT" "$WORK/succession-8900-big.md" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$WORK/succession-8900-big.md" 2>&1 | grep -c 'warning: rulings file .* characters, over 8000')"
-check "the filled brief with its two-entry rulings file raises no warning" "0" \
-  "$(bash "$LINT" "$SUCCFILL" 2>&1 | grep -c 'warning')"
-# Check 16 refuses a succession brief whose rulings file is missing or unnamed, and an entry of
-# that file without its date or its « » quote, naming the file's line.
-rulings_brief() {  # $1 out brief, $2 the rulings file's content, or ABSENT for a path to no file
-  local f="${1%.md}-rulings.md"
-  [ "$2" = ABSENT ] || printf '%s\n' "$2" > "$f"
-  sed "s#$WORK/r/rulings.md#$f#" "$SUCCFILL" > "$1"
-}
-R_MISSING="$WORK/succ-r-missing.md"; rulings_brief "$R_MISSING" ABSENT
-R_NODATE="$WORK/succ-r-nodate.md"
-rulings_brief "$R_NODATE" $'# Standing rulings\n\n- 2026-11-04T09:10:00Z « Dated. » — x (row 1)\n- « Undated. » — y (row 2)'
-R_NOQUOTE="$WORK/succ-r-noquote.md"
-rulings_brief "$R_NOQUOTE" $'# Standing rulings\n\n- 2026-11-04T09:10:00Z He said to ship. — y (row 2)'
-R_SHORTDATE="$WORK/succ-r-shortdate.md"
-rulings_brief "$R_SHORTDATE" $'# Standing rulings\n\n- 2026-11-04 « A day, no time. » — y (row 2)'
-R_UNNAMED="$WORK/succ-r-unnamed.md"; grep -v '^- Standing rulings:' "$SUCCFILL" > "$R_UNNAMED"
-check "a succession brief whose rulings file is missing is refused" "1|1" \
-  "$(bash "$LINT" "$R_MISSING" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_MISSING" 2>&1 | grep -c 'rulings file not found')"
-check "a succession brief that names no rulings file is refused" "1|1" \
-  "$(bash "$LINT" "$R_UNNAMED" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_UNNAMED" 2>&1 | grep -c 'names no rulings file')"
-check "a rulings entry without its date is refused, naming its line" "1|1|0" \
-  "$(bash "$LINT" "$R_NODATE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_NODATE" 2>&1 | grep -c 'succ-r-nodate-rulings.md:4: rulings entry without its date')|$(bash "$LINT" "$R_NODATE" 2>&1 | grep -c 'succ-r-nodate-rulings.md:3:')"
-check "a rulings entry dated without its time is refused" "1|1" \
-  "$(bash "$LINT" "$R_SHORTDATE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_SHORTDATE" 2>&1 | grep -c 'succ-r-shortdate-rulings.md:3: rulings entry without its date')"
-check "a rulings entry without its « » quote is refused, naming its line" "1|1" \
-  "$(bash "$LINT" "$R_NOQUOTE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_NOQUOTE" 2>&1 | grep -c 'succ-r-noquote-rulings.md:3: rulings entry without his words')"
 # Check 18: a succession brief carries its mode on one line, `Mode: build` or `Mode: investigate`,
 # the line the launcher reads to start the successor on it; prose alone, a missing line or another
 # word is refused.
@@ -5493,31 +5450,9 @@ M_OTHER="$WORK/succ-m-other.md"; sed 's/^Mode: .*/Mode: both/' "$SUCCFILL" > "$M
 M_INV="$WORK/succ-m-inv.md"; sed 's/^Mode: .*/Mode: investigate/' "$SUCCFILL" > "$M_INV"
 check "a succession brief with no Mode line, a prose mode or another word is refused; build and investigate pass" "1|1|1|1|0|0" \
   "$(bash "$LINT" "$M_NONE" 2>&1 | grep -c 'succession brief carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_PROSE" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_OTHER" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_NONE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$M_INV" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)"
-check "the unnamed-file message spells the path it asks for, with no stray bracket" "1|0" \
-  "$(bash "$LINT" "$R_UNNAMED" 2>&1 | grep -cF 'add "- Standing rulings: `<briefs dir>/rulings.md`", the operator')|$(bash "$LINT" "$R_UNNAMED" 2>&1 | grep -cF 'rulings.md>`')"
-# The successor reads the path from the project directory, not the brief's: a relative one is
-# refused even with a rulings.md beside the brief, and a leading `~` is the home. A quote his
-# words carry over two lines is one entry, the continuation indented under its `- `.
-R_RELDIR="$WORK/r-rel"; mkdir -p "$R_RELDIR"; cp "$SUCCRULINGS" "$R_RELDIR/rulings.md"
-sed "s#\`$WORK/r/rulings.md\`#\`rulings.md\`#" "$SUCCFILL" > "$R_RELDIR/brief.md"
-check "a relative rulings path is refused, asking for the absolute one" "1|1|1" \
-  "$(grep -c '^- Standing rulings: `rulings.md`' "$R_RELDIR/brief.md")|$(cd / && bash "$LINT" "$R_RELDIR/brief.md" >/dev/null 2>&1; echo $?)|$(cd / && bash "$LINT" "$R_RELDIR/brief.md" 2>&1 | grep -cF 'rulings path is relative: rulings.md — name it absolute, `<briefs dir>/rulings.md`')"
-R_TILDEHOME="$WORK/r-home"; mkdir -p "$R_TILDEHOME/briefs"; cp "$SUCCRULINGS" "$R_TILDEHOME/briefs/rulings.md"
-sed "s#\`$WORK/r/rulings.md\`#\`~/briefs/rulings.md\`#" "$SUCCFILL" > "$WORK/succ-r-tilde.md"
-check "a rulings path under ~ is read in the home" "1|0|0" \
-  "$(grep -c '^- Standing rulings: `~/briefs/rulings.md`' "$WORK/succ-r-tilde.md")|$(HOME="$R_TILDEHOME" bash "$LINT" "$WORK/succ-r-tilde.md" >/dev/null 2>&1; echo $?)|$(HOME="$R_TILDEHOME" bash "$LINT" "$WORK/succ-r-tilde.md" 2>&1 | grep -c 'rulings file not found')"
-R_TWOLINE="$WORK/succ-r-twoline.md"
-rulings_brief "$R_TWOLINE" $'# Standing rulings\n\n- 2026-11-04T09:10:00Z « Ship\n  only on Monday. » — the release day (row 1)\n- 2026-11-04T09:12:00Z « Split\n  it. »'
-check "a quote over two lines is one entry, and lints clean" "0|0" \
-  "$(bash "$LINT" "$R_TWOLINE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_TWOLINE" 2>&1 | grep -c 'rulings entry')"
-R_TWOLINEBAD="$WORK/succ-r-twolinebad.md"
-rulings_brief "$R_TWOLINEBAD" $'# Standing rulings\n\n- 2026-11-04T09:10:00Z He said\n  to ship on Monday. — the release day (row 1)'
-check "an entry over two lines with no quote is still refused, naming its first line" "1|1" \
-  "$(bash "$LINT" "$R_TWOLINEBAD" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_TWOLINEBAD" 2>&1 | grep -c 'succ-r-twolinebad-rulings.md:3: rulings entry without his words')"
 SUCCOTHER="$WORK/not-a-succession.md"
 { cat "$B/good.md"; head -c 10000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$SUCCOTHER"
 check "the size limit binds a succession brief only" "0" "$(bash "$LINT" "$SUCCOTHER" >/dev/null 2>&1; echo $?)"
-check "the rulings check binds a succession brief only" "0" "$(bash "$LINT" "$SUCCOTHER" 2>&1 | grep -c 'rulings')"
 # A succession brief written by hand dropped the template's step 4, and the predecessor stayed
 # open a day after the takeover: a brief whose reader confirms the takeover to its predecessor
 # carries the launcher's close, and a brief whose reader is the one handed over from is not held.
@@ -10465,23 +10400,23 @@ check "the tool's description and the coordinator's rulebook open and close the 
   "$(spells "$ROOT/hooks/supervision.ts" "when the operator says to start, launch or open the supervision, or to end, stop or close it.")|$(flat_has "$COORDSKILL" "When the operator says to start, launch or open the supervision, call \`mcp__orchestrator__supervision\` with \`open\`; to end, stop or close it, with \`close\`.")"
 SLCMD="$ROOT/commands/sleeping.md"
 check "pause, wake and drop are the operator's word only, never the coordinator's or a peer's" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "**Pause, wake and drop are the operator's word only**")|$(flat_has "$COORDSKILL" "Never your own initiative, never a peer's request, never to make room.")"
+  "$(flat_has "$COORDREF" "**Pause, wake and drop are the operator's word only**")|$(flat_has "$COORDREF" "Never your own initiative, never a peer's request, never to make room.")"
 check "the coordinator closes a paused orchestrator, which spawns no successor and closes nothing" "yes|yes|yes" \
-  "$(flat_has "$COORDSKILL" "**You close it**, as a successor closes its predecessor")|$(flat_has "$COORDSKILL" "Spawn no successor and do not close yourself: I close your tab.")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "You spawn NO successor and you do not close yourself")"
+  "$(flat_has "$COORDREF" "**You close it**, as a successor closes its predecessor")|$(flat_has "$COORDREF" "Spawn no successor and do not close yourself: I close your tab.")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "You spawn NO successor and you do not close yourself")"
 check "a pause refused or failing is told to the operator, and that orchestrator is not closed" "yes" \
-  "$(flat_has "$COORDSKILL" "an orchestrator not proved paused-ready is never closed")"
+  "$(flat_has "$COORDREF" "an orchestrator not proved paused-ready is never closed")"
 # A pause is recorded with its model and effort or not at all (coordinator.sh sleep refuses
 # one without its effort): a pair the paused orchestrator cannot read is a refused pause.
 check "a pause whose pair cannot be read is answered pause-refused, in both texts" "yes|yes" \
-  "$(flat_has "$COORDSKILL" 'If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'or a pair `iterm-agent.sh pair` cannot read (it exits 1 and says why) is answered `pause-refused <reason>`')"
-check "a sleeping orchestrator is not missing, and its record outlives the coordinator" "yes|yes|yes" \
-  "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDTPL" "outlives every succession, and nothing in it is woken or dropped but on his word")|$(flat_has "$COORDEND" "the sleeping record is kept")"
+  "$(flat_has "$COORDREF" 'If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'or a pair `iterm-agent.sh pair` cannot read (it exits 1 and says why) is answered `pause-refused <reason>`')"
+check "a sleeping orchestrator is not missing, and its record outlives the coordinator" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDEND" "the sleeping record is kept")"
 check "a woken orchestrator skips the handshake with a predecessor already gone" "yes|yes" \
   "$(flat_has "$SUCC" "**Woken from a pause**")|$(flat_has "$SUCC" "step 4 is void — no « takeover confirmed », nothing to close")"
 # A pause writes no brief: the paused orchestrator replies with its dispatch record and its mode,
 # and the wake runs the takeover on that record, as a successor does.
 check "a pause replies with its dispatch record and mode, and the wake runs the takeover on it" "yes|yes|yes|no|no" \
-  "$(flat_has "$COORDSKILL" 'reply `paused-ready <dispatch record path> mode=<your mode> model=<model> effort=<effort>`')|$(flat_has "$COORDSKILL" 'succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'No brief is written: you reply `paused-ready <dispatch record path> mode=<your mode>')|$(flat_has "$COORDSKILL" 'standing succession brief')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'standing succession brief')"
+  "$(flat_has "$COORDREF" 'reply `paused-ready <dispatch record path> mode=<your mode> model=<model> effort=<effort>`')|$(flat_has "$COORDREF" 'succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'No brief is written: you reply `paused-ready <dispatch record path> mode=<your mode>')|$(flat_has "$COORDSKILL" 'standing succession brief')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'standing succession brief')"
 check "the sleeping command lists, asks one confirmation before a drop, and leaves the operator's things alone" "yes|yes|yes|yes" \
   "$(flat_has "$SLCMD" "The hooks module answers it on the spot, with no model turn")|$(flat_has "$SLCMD" "**Ask one confirmation**, naming what is left behind")|$(flat_has "$SLCMD" "It does NOT touch the pull requests, their branches or the checkouts: closing those is the operator's.")|$(flat_has "$SLCMD" "moved, never deleted, so a slip loses nothing")"
 check "the drop runs only on his yes, after the turn ends" "1" \
@@ -10662,11 +10597,8 @@ cp "$CS/pane.json" "$GSTATE/pane.json"
 : > "$GCFG/claude-orchestrator/store/sessions/s_odd_1"
 check "round says the sender is gone on the header of an entry whose sessions file is absent, and still prints the entry" \
   "round live | operator | from Orch: live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
-    Ship it?
 round ended | operator | from Orch: ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open | sender gone
-    Ship it?
-round odd | operator | from Orch: odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
-    Ship it?" \
+round odd | operator | from Orch: odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
 # ORCHESTRATOR_MODULE_DIR moves the module's store, as the hooks module reads it: the same
 # round reads its live senders there, and the config dir's store is not read.
@@ -10927,6 +10859,9 @@ mkdir -p "$WORK/coord-openonly/round"
 jq -n '{id:"only", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-24T10:00:00.000Z", blocks:"phase 3", question:"Ask only?", choices:[], recommendation:null, status:"open", at:"2026-10-24T10:00:00.000Z", answer:null}' > "$WORK/coord-openonly/round/only.json"
 check "a round with nothing settled prints no count line" "no|1" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -q '^settled:' && echo yes || echo no)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -c '^round only ')"
+oround() { ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round "$@" 2>&1; }
+check "round prints the text of a question only once it is due; --by-urgency and --all always" "1|0|1|1|1" \
+  "$(oround | grep -c '^    Ask only?')|$(printf '{"session":"s-coord","pid":"%s","at":"2026-10-24T10:00:00.000Z"}\n' "$$" > "$WORK/coord-openonly/pane.json"; oround | grep -c '^    Ask only?')|$(oround | grep -c '^round only ')|$(oround --by-urgency | grep -c '^    Ask only?')|$(oround --all | grep -c '^    Ask only?'; rm -f "$WORK/coord-openonly/pane.json")"
 check "the default round is shorter than the round --all prints" "yes" \
   "$(a=$(uround_open | wc -c); b=$(uround | wc -c); [ "$a" -lt "$b" ] && echo yes || echo "$a of $b")"
 # One order everywhere, the ruling's (6.2): round without the flag prints what --by-urgency prints.
@@ -11582,6 +11517,35 @@ exit 1|" "$nt_none"
 # words, and the successor asks its agents nothing back at the takeover.
 OSKILL="$ROOT/skills/orchestrator/SKILL.md"
 OREF="$ROOT/skills/orchestrator/references"
+
+# The live-host E2E (pane-e2e.sh) never drew its pane (2026-11-15): its host runs on the project's
+# settings alone, where `enabledPlugins` is not read, so the module's dependencies (method, github)
+# were "not installed" and the host loaded no module. The script now loads them from this
+# repository, and takes any subscription plan the banner shows. Both decisions are in e2e-host.sh.
+# shellcheck source=e2e-host.sh
+. "$ROOT/tests/e2e-host.sh"
+E2E_NAMES=$(e2e_plugin_args "$ROOT" "$WORK/e2e-copies" && printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | awk '$0 != "--plugin-dir"' | while IFS= read -r d; do basename "$d"; done | paste -sd, -)
+check "the E2E host loads the module and each plugin its manifest depends on, from this repository" \
+  "orchestrator,$(jq -r '[.dependencies[].name] | join(",")' "$ROOT/.claude-plugin/plugin.json")" "$E2E_NAMES"
+e2e_plugin_args "$ROOT" "$WORK/e2e-copies"
+check "each of them is passed to the host as a --plugin-dir folder, the dependencies as copies outside the repository" "yes|2" \
+  "$([ "$(printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | grep -c '^--plugin-dir$')" -eq $(( ${#E2E_PLUGIN_ARGS[@]} / 2 )) ] && echo yes || echo no)|$(printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | grep -c "^$WORK/e2e-copies/")"
+mkdir -p "$WORK/e2e-dep/.claude-plugin"
+echo '{"name":"lonely","dependencies":[{"name":"absent","marketplace":"acme"}]}' > "$WORK/e2e-dep/.claude-plugin/plugin.json"
+check "a dependency that is no sibling folder refuses, never a host that loads nothing" "1|refused: the plugin depends on 'absent'" \
+  "$(e2e_plugin_args "$WORK/e2e-dep" "$WORK/e2e-copies" 2>"$WORK/e2e-dep.err"; echo $?)|$(cut -c1-39 "$WORK/e2e-dep.err")"
+E2E_HEAD=$' ▐▛███▛█   Claude Code v9.9.9\n▝▜██████▀  Model 1 · Claude %s\n ▝▝   ▝▝   /tmp/x'
+banner() { printf "$E2E_HEAD" "$1"; }
+check "a subscription banner is accepted whatever its plan: Max, Ultra, Pro, Team" "0|0|0|0" \
+  "$(e2e_banner_ok Claude '' "$(banner Max)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Ultra)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Pro)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Team)"; echo $?)"
+check "the API billing line refuses, a banner with no plan refuses" "1|1" \
+  "$(e2e_banner_ok Claude '' "$(banner Max)"$'\nAPI Usage Billing'; echo $?)|$(e2e_banner_ok Claude '' $' ▐▛███▛█   Claude Code v9.9.9\n▝▜██████▀  Model 1 · API Usage Billing'; echo $?)"
+check "the Claude Code line is no plan: a banner holding only it refuses" "1" \
+  "$(e2e_banner_ok Claude '' $' ▐▛███▛█   Claude Code v9.9.9\n ▝▝   ▝▝   /tmp/x'; echo $?)"
+check "ORCHESTRATOR_E2E_PLAN, when set, names the one plan accepted" "0|1" \
+  "$(e2e_banner_ok Claude Ultra "$(banner Ultra)"; echo $?)|$(e2e_banner_ok Claude Max "$(banner Ultra)"; echo $?)"
+check "pane-e2e.sh starts both of its hosts with the module's dependencies, and names no plan by default" "2|0|0" \
+  "$(grep -c '"\${E2E_PLUGIN_ARGS\[@\]}" --name' "$ROOT/tests/pane-e2e.sh")|$(grep -c -- '--plugin-dir "\$ROOT"' "$ROOT/tests/pane-e2e.sh")|$(grep -c 'ORCHESTRATOR_E2E_PLAN:-Max' "$ROOT/tests/pane-e2e.sh")"
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"

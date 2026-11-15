@@ -3,9 +3,9 @@
 //   succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor's tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]
 //
 // One owner per fact: the dispatch record's rows hold the work (state, blocker, note, verdict line),
-// the to-do list holds the operator's words and the rows each item turned into, the rulings file
-// holds his rulings, the goals file the spec it names; agents, pull requests and checkouts are read
-// live. So no succession brief is written: the successor runs this command, which prints the fixed
+// the to-do list holds the operator's words and the rows each item turned into, the round his
+// answers, the goals file the spec it names; agents, pull requests and checkouts are read live. So
+// no succession brief is written: the successor runs this command, which prints the fixed
 // instructions of `templates/orchestrator-succession-brief.md` filled from those files, then the
 // Live state, and nothing of it lands in a file.
 //
@@ -22,9 +22,8 @@
 // that file names no orchestration, the name of the session that runs the takeover. A row names its
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
 // recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
-// the command moves the rulings carried out or superseded, and those for rows the record closed, to
-// the archive beside the rulings file (`prune.ts`), and the round's entries settled over a day ago
-// (round-archive's rule): what a takeover reads is only what is live. Its measure goes to stderr.
+// the command moves the round's entries settled over a day ago to its archive (round-archive's
+// rule): what a takeover reads is only what is live. Its measure goes to stderr.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -35,7 +34,6 @@ import { openLine, orchForm, parseRecord, sessionOrchestration, stateRoot, type 
 import { parseSessionName } from '../../../core/names.ts'
 import { ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
-import { pruneFile, pruneRulings, readAtTakeover, type PruneResult } from './prune.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
@@ -464,13 +462,6 @@ export function fill(template: string, values: Readonly<Record<string, string>>)
   return template.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key: string) => values[key] ?? whole)
 }
 
-function prune(path: string, closed: ReadonlySet<number>, now: Date, io: Io): PruneResult {
-  if (!existsSync(path)) return { moved: 0, before: 0, after: 0, warnings: [] }
-  const result = pruneFile(path, (text, archive) => pruneRulings(text, archive, closed), now)
-  for (const warning of result.warnings) io.err(`succession: ${path}: ${warning}\n`)
-  return result
-}
-
 // The round's entries settled over a day ago, moved to its archive as `round-archive` moves them:
 // a move that fails is said, and the takeover goes on.
 function archiveRound(state: string, now: Date, io: Io): number {
@@ -517,8 +508,6 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   }
   const now = deps.now()
   const all = parseRecord(recordText)
-  const rulingsFile = join(dirname(parsed.record), 'rulings.md')
-  const rulings = prune(rulingsFile, new Set(all.filter(row => row['state'] === 'closed').map(row => Number(row['id']))), now, io)
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
   const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env))
@@ -533,7 +522,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     MODE: parsed.mode,
     PREDECESSOR_NAME_PATTERN: name,
     AGENT_NAME_PATTERN: 'Agent: <subject>',
-    RULINGS_FILE: existsSync(rulingsFile) ? rulingsFile : 'none',
+    STATE_DIR: stateRoot(env),
     SCRIPTS: here,
     DISPATCH_RECORD: parsed.record,
     LAUNCHER: join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh'),
@@ -547,8 +536,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
   io.out(text.endsWith('\n') ? text : `${text}\n`)
-  const read = existsSync(rulingsFile) ? readAtTakeover(readText(rulingsFile) ?? '').length : 0
-  io.err(`takeover: chars=${text.length} rulings_read=${read} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=rulings:${rulings.moved},round:${round}\n`)
+  io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
   return 0
 }
 
