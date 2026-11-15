@@ -247,9 +247,9 @@ of you in plain words. Never your own initiative, never a peer's request, never 
 
 > The operator asks you to pause, relayed by `<your exact name>` at <date -u +%FT%TZ>. Prepare
 > your succession for a pause: reach a quiet boundary, stand your agents down and close their
-> tabs, stop your CI watches, bring your state file and dispatch record current, write and lint
-> your standing succession brief, then reply `paused-ready <brief path> model=<model>
-> effort=<effort>`, the two values `iterm-agent.sh pair` prints for you. Spawn no successor and do not close yourself: I close your tab.
+> tabs, stop your CI watches, bring your dispatch record current (every open item a row with
+> its blocker, a judgment its note), then reply `paused-ready <dispatch record path>
+> mode=<your mode> model=<model> effort=<effort>`, the last two the values `iterm-agent.sh pair` prints for you. Spawn no successor and do not close yourself: I close your tab.
 > If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.
 
 Then, on its `paused-ready`:
@@ -265,12 +265,12 @@ Then, on its `paused-ready`:
 3. **Record it sleeping**, its name without its reference:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <brief path> --dir <its directory> --model <model> --effort <effort> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> --mode <its mode> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
    ```
 
-4. Tell the operator in one line: asleep, since when, brief, pull requests left open.
+4. Tell the operator in one line: asleep, since when, dispatch record, pull requests left open.
 
-A `pause-refused`, a brief that fails its lint, a silence, a close that fails or a `sleep` the
+A `pause-refused`, a silence, a close that fails or a `sleep` the
 script refuses goes to the operator through your round, verbatim; an orchestrator not proved
 paused-ready is never closed, and one closed but not recorded is told with every field above.
 Its open pull requests stay as they are.
@@ -279,7 +279,7 @@ Its open pull requests stay as they are.
 field):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator with the argument "<its mode>", then run ${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
 ```
 
 The record's model and effort go together, or neither: a record a pause wrote before an
@@ -295,8 +295,8 @@ Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch: 
 then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
 
-**Drop** is his `/orchestrator-sleeping drop <name>`: the record removed, the brief moved to
-`abandoned/` beside it, the pull requests, branches and checkouts left to him.
+**Drop** is his `/orchestrator-sleeping drop <name>`: the record removed, its dispatch record
+moved to `abandoned/` beside it, the pull requests, branches and checkouts left to him.
 
 ## Opening an orchestrator
 

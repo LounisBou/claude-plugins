@@ -1,7 +1,7 @@
 #!/bin/bash
 # dispatch-record.sh - one row per dispatch, and the signal the routing rule needs.
 #
-#   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
+#   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--blocker <b>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
 #   dispatch-record.sh verdict <record> <id> --head <sha> --result <pass|fail|accepted> --words "<a few words>" [--findings <index path>]
@@ -12,6 +12,8 @@
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row)
 #   dispatch-record.sh undefer <record> <id>
+#   dispatch-record.sh blocker <record> <id> <b>   (what the open row waits on: none | PR <owner/repo>#<n> merged | row <n> closed | release installed)
+#   dispatch-record.sh note    <record> <id> "<text>"   (the open row's note of judgment; "" removes it)
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open [--ids | --label <id>[,<id>...]]]
@@ -27,6 +29,12 @@
 # The line's shape, its statuses and what « unattended » means are core's (`pr-ledger.ts`,
 # docs/contracts.md); the hooks module archives on its own the line of a pull request the forge no
 # longer lists open.
+#
+# A row holds its own state: every planned item and ruling is a row from the moment it is decided,
+# its blocker (`--blocker`, then `blocker`) what it waits on, its note the judgment a successor
+# needs on it. `summary --open` prints both; the takeover (`succession.sh takeover`) checks each
+# blocker on its artifact and reads an open row whose blocker fell and that no live agent holds as
+# READY NOT STARTED. A row written without a blocker has none recorded.
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then

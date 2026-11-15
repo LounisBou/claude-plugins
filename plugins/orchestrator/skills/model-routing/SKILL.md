@@ -108,7 +108,7 @@ A defect found later in work already approved is recorded with `dispatch-record.
 
 ## The record
 
-One row per dispatch in the project's build state: class, pair (or tier), rounds to close, measured cost, verdict. It corrects the table for this build, and your succession brief points at it. Keep it with `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh`:
+One row per dispatch in the project's build state: class, pair (or tier), rounds to close, measured cost, verdict. It corrects the table for this build, and your successor's takeover reads it. Keep it with `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh`:
 
 ```
 dispatch-record.sh open <record> --class <c> --model <alias> --effort <level> [--explore] --label "<what> <repo>#<n>"   # prints the row id

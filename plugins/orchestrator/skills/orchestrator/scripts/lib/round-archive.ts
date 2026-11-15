@@ -1,5 +1,5 @@
 // The round's archive: the entries of <state>/round/ settled over a day ago, moved into round/archive/,
-// the withdrawn ones into round/archive/withdrawn/. Run by `round-archive` and by `succession.sh live`.
+// the withdrawn ones into round/archive/withdrawn/. Run by `round-archive` and by `succession.sh takeover`.
 // The entries are the hooks module's (hooks/round.ts, hooks/question.ts), each moved under the lock
 // the module writes it under.
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'

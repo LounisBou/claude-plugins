@@ -1,11 +1,5 @@
-// Where an orchestration's dispatch record and the files beside it live, and how its brief names
-// it: read by dispatch-record (the owner and the goals) and succession (the brief's line).
-// Pure: no file is read here.
-
-/** The record's « Dispatch record » line in a brief: its path between backticks, or ''. */
-export function recordNamedIn(brief: string): string {
-  return /^- Dispatch record[^`\n]*`([^`{}]+)`/m.exec(brief)?.[1] ?? ''
-}
+// Where the files beside an orchestration's dispatch record live: read by dispatch-record and
+// succession (the owner and the goals). Pure: no file is read here.
 
 /** The file that names the record's owner, beside it. */
 export function ownerFileOf(record: string): string {

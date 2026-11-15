@@ -14,7 +14,7 @@ reading of each branch and pull request, and the table — since the module's an
 the context alone.
 
 1. Run `ListAgents`. Keep every live implementer (the names the project's
-   state file or briefs designate; when in doubt, every session that is not
+   rows or briefs designate; when in doubt, every session that is not
    yours and not a reader).
 2. Message each one with `SendMessage` and `notify_when_idle: true`, one
    message, this exact ask: « Status in five lines: phase and step in progress;

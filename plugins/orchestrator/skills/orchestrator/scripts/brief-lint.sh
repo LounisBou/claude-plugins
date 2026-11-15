@@ -258,7 +258,7 @@ succession_limit=9000
 oq_field() {  # $1 mode: `value` prints the open-questions value, `rest` the brief without it
     awk -v mode="$1" '
         function next_field(s) {
-            return s ~ /^- (Rows open|Pull requests open|Agents running|The operator.s open questions|The next step)/
+            return s ~ /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|To-do items|Project)/
         }
         f == 0 && /^- The operator.s open questions/ {
             f = 1; found = 1
@@ -349,28 +349,8 @@ if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; 
                 END { flush() }' "$rulings" 2>/dev/null || true)
             rchars=$(LC_ALL=C tr -d '\200-\277' < "$rulings" | wc -c | tr -d ' ')
             [ "$rchars" -le "$rulings_warn" ] \
-                || printf '%s:%s: warning: rulings file %s is %s characters, over %s: mark what is carried out [done: <ref>] or superseded [superseded: <date>], succession.sh live moves it out (not a finding)\n' \
+                || printf '%s:%s: warning: rulings file %s is %s characters, over %s: mark what is carried out [done: <ref>] or superseded [superseded: <date>], succession.sh takeover moves it out (not a finding)\n' \
                     "$brief" "$rl_line" "$rulings" "$rchars" "$rulings_warn"
-        fi
-    fi
-fi
-
-# 17. A succession brief's state file is pruned before the handover (lifecycle item 0): it keeps
-#     what is live, and the finished journal moves to an archive. Nothing read that rule, and a
-#     state file of 158,176 bytes was handed over, its « Open » section the journal a successor
-#     then read by section. The file is the one the brief names on « state file `<path>` », as the
-#     template writes it. Past 30,000 characters it is one warning, never a refusal: what is live
-#     is the orchestrator's judgment, not the script's. A path that is no file says nothing here.
-state_warn=30000
-if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
-    sl=$(grep -n -m1 -o 'state file `[^`]*`' "$brief" 2>/dev/null || true)
-    if [ -n "$sl" ]; then
-        state_file=$(printf '%s' "$sl" | sed -E 's/^[0-9]+:state file `([^`]*)`$/\1/')
-        if [ -f "$state_file" ]; then
-            schars=$(LC_ALL=C tr -d '\200-\277' < "$state_file" | wc -c | tr -d ' ')
-            [ "$schars" -le "$state_warn" ] \
-                || printf '%s:%s: warning: state file %s is %s characters, over %s: prune it, lifecycle item 0 — write its LIVE SUMMARY line, succession.sh live moves the journal before it to an archive (not a finding)\n' \
-                    "$brief" "${sl%%:*}" "$state_file" "$schars" "$state_warn"
         fi
     fi
 fi

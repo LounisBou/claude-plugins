@@ -2,7 +2,7 @@
 // The to-do list's format (todo-format.ts): the grammar of a line, the numbering, the closing and the deferring.
 import { expect, test } from 'claude-code/testing'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, todoItems, todoFile, todoLabel, todoName, todoPath, TODO_VERSION,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, parseTodoItem, pendingTodos, rowTodo, todoItems, todoFile, todoLabel, todoName, todoPath, TODO_VERSION,
 } from '../todo-format.ts'
 
 const NOW = new Date('2026-11-14T15:00:00Z')
@@ -88,4 +88,16 @@ test('reads only what is an item: a torn line, a foreign shape or another versio
 test('names an item by its id and label, as the refusals list it', () => {
   const { item } = added(undefined, 'rewrite the wait')
   expect(todoName(item)).toBe('1 (rewrite the wait)')
+})
+
+test('an item names the rows it turned into, never their state; a line whose rows are no row ids is no item', () => {
+  const one = added(undefined, 'a')
+  const linked = rowTodo(one.text, 1, 7)
+  if ('error' in linked) throw new Error(linked.error)
+  expect(linked.item.rows).toEqual([7])
+  expect(todoItems(linked.text)[0]?.rows).toEqual([7])
+  expect(rowTodo(one.text, 1, 1.5)).toEqual({ error: 'a dispatch row id is a positive integer' })
+  expect(rowTodo(one.text, 2, 7)).toEqual({ error: 'no to-do 2 in this list' })
+  expect(parseTodoItem({ ...linked.item, rows: ['7'] })).toBe(undefined)
+  expect(parseTodoItem({ ...linked.item, rows: 7 })).toBe(undefined)
 })

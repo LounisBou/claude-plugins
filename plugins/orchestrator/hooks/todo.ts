@@ -8,7 +8,7 @@
 // message, and told so.
 import { updateOver } from '../core/store-io.ts'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
+  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoItems, todoName, todoPath, TODO_CONTRACT, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf } from './supervision.ts'
@@ -23,7 +23,7 @@ export const TODO_TOOL = 'todo'
 // The sessions that keep a list: the ones that take the operator's word and hold no code of their own.
 const KEEPERS: readonly string[] = ['orchestrator', 'coordinator', 'auditor']
 
-const ACTIONS = ['add', 'done', 'drop', 'defer', 'list'] as const
+const ACTIONS = ['add', 'row', 'done', 'drop', 'defer', 'list'] as const
 type Answer = { result: string; isError?: true }
 
 const refuse = (result: string): Answer => ({ result, isError: true })
@@ -69,7 +69,7 @@ async function writeTodos($: Held, name: string, change: (text: string) => { tex
 }
 
 const shown = (item: TodoItem): string =>
-  `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.deferred ? `, put off: ${item.deferred}` : ''}`
+  `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.rows ? `, rows ${item.rows.join(', ')}` : ''}${item.deferred ? `, put off: ${item.deferred}` : ''}`
 
 // Whether a session is on another machine: an orchestrator's row sent here, or the coordinator whose
 // address a peer taught this machine. A session with a row on this machine is local whatever else is said.
@@ -129,9 +129,15 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   return refuse(`Recorded as to-do ${made.item.id} in the list of ${holderOf(to)}, but not sent: ${sent.reason}. The next session of that name reads the list; send it the words again if it must know now.`)
 }
 
-async function closing($: Held, me: { name: string }, action: 'done' | 'drop' | 'defer', e: Record<string, unknown>, now: Date): Promise<Answer> {
+async function closing($: Held, me: { name: string }, action: 'row' | 'done' | 'drop' | 'defer', e: Record<string, unknown>, now: Date): Promise<Answer> {
   const id = e['id']
   if (typeof id !== 'number' || !Number.isInteger(id)) return refuse(`${action} names the to-do by its \`id\`, a number.`)
+  if (action === 'row') {
+    const row = e['row']
+    if (typeof row !== 'number' || !Number.isInteger(row) || row < 1) return refuse('row names in `row` the dispatch row the to-do turned into, a positive integer.')
+    const made = await writeTodos($, me.name, text => rowTodo(text, id, row))
+    return 'error' in made ? refuse(made.error) : { result: `To-do ${id} names rows ${made.item.rows?.join(', ')}; their state is the record's.` }
+  }
   const said = (field: 'outcome' | 'words'): string => (typeof e[field] === 'string' ? e[field].trim() : '')
   if (action === 'done' && said('outcome') === '') return refuse('done names in `outcome` the proof: a pull request, a file, or « row 170 ».')
   if (action === 'drop' && said('words') === '') return refuse('drop passes in `words` his own words that drop it, dated: it is closed without being done.')
@@ -214,7 +220,7 @@ export function register(on: On<Held>): void {
         isDeferred: false,
         description: "Records, as the operator said it, a request of his that will not be done within this turn or that is for another session, and closes it later; it holds this session's `done` while one is open. "
           + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name), '
-          + '`done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
+          + '`row` (id, row: a dispatch row it turned into), `done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
           + 'Only for an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -226,6 +232,7 @@ export function register(on: On<Held>): void {
             label: { type: 'string' },
             id: { type: 'integer' },
             outcome: { type: 'string' },
+            row: { type: 'integer' },
           },
           required: ['action'],
         },

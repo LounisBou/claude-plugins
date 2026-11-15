@@ -1,6 +1,6 @@
 // The round's archive: round-archive moves the entries of <state>/round/ settled over a day ago into
 // round/archive/ (archiveSettled, in the orchestrator's scripts/lib/round-archive.ts, which
-// succession.sh live runs too). The entries are the hooks
+// succession.sh takeover runs too). The entries are the hooks
 // module's (hooks/round.ts, hooks/question.ts), each moved under the lock the module writes it under.
 // A question is closed by the module's `settle` tool, no longer by a command here.
 import { readdirSync, rmSync, statSync } from 'node:fs'

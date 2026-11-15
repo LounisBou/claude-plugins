@@ -26,11 +26,11 @@ His answer there is his ruling (step 4). Each question is also written in full i
 
 Read every pending arbitration before the first question: the agents' STOPs
 (their messages — never answered from your own judgment), the entries marked proposed
-or to ratify in the project's state file, register and plan, the findings of the last
+or to ratify in the project's dispatch rows, register and plan, the findings of the last
 review that need an owner. Then verify each item STILL OPEN on its own artifact — the pull
 request's state and merge, the branch head, the file, the agent's last message — and the
 premise its question assumes: how the project ships, which branch or environment is the
-target, what that target already holds. A state file or a register says what was true when
+target, what that target already holds. A row or a register says what was true when
 written; the user's own merge or close most often settles a question behind it. Collect wide: add the questions the next steps will need from him — a choice the next phase's brief must name, a premise its plan assumes — so that
 he answers them now. Every goal
 `dispatch-record.sh goals <record> status` lists as `unplanned=` is a question of the wave:
