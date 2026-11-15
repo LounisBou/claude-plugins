@@ -1,6 +1,7 @@
 ---
 description: Unregister this project so Pull stops routing its group (data and project file are kept)
 allowed-tools: Bash(bugs-bot:*)
+disable-model-invocation: true
 ---
 
 Release this repository's group from the bot.

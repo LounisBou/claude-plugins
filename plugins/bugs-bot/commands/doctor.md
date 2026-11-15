@@ -1,6 +1,7 @@
 ---
 description: Check this machine's bugs-bot setup; it changes nothing
 allowed-tools: Bash(bugs-bot:*)
+disable-model-invocation: true
 ---
 
 Check the setup and report the verdict. Doctor only reads: it installs, starts
