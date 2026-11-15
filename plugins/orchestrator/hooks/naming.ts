@@ -100,7 +100,7 @@ export const TAKEN_OVER_TEXT = 'Your takeover is done and this session now runs 
 
 // The prompt that wakes a successor whose move did not happen (the launcher kept it, or the move failed):
 // its turn ended on the announcement and nothing of its own is there yet to start the next one.
-export const TAKEN_OVER_STAYED_TEXT = 'Your takeover is done but this session stays in its tab: the move into a home session did not happen. Go on to step 4 of your takeover: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
+export const TAKEN_OVER_STAYED_TEXT = 'Your takeover is done but this session stays in its tab: the move into a home session did not happen. Go on to step 4 of your takeover, unless your takeover turn already did it: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
 
 export function checkName(raw: unknown): { name: string } | { refused: string } {
   const name = typeof raw === 'string' ? raw : ''
