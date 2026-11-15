@@ -64,6 +64,7 @@ ORANGE=$'\033[38;5;208m'
 # on white and on near-black alike, and stays clearly apart from the orange.
 AMBER=$'\033[38;5;136m'
 ITALIC=$'\033[3m'
+DIM=$'\033[2m'
 
 separator=" │ "
 
@@ -281,9 +282,11 @@ ctx_gate_tokens() {
 # The operator's open questions: the count the orchestrator publishes in the machine's deck.json
 # (its `round`), the file the Stream Deck reads. Core's contracts say where it lies (the module's directory
 # in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it),
-# its version, its name and how old its stamp may be (deck-reader.json). Prints "<open> <urgent>" when
-# some are open; nothing when none are, when the file is absent, torn, of another version or older
-# than the bound, either way (a stamp from the future is no live file either): a frozen deck is no news of the present. Reads only; nothing here is written.
+# its version, its name and how old its stamp may be (deck-reader.json). Prints "<open> <urgent> <stale>"
+# when some are open: <stale> is 1 when the stamp is older than the bound, the last count the frozen
+# deck holds, marked as stale by the caller; 0 while it is fresh. Nothing when none are open, when the
+# file is absent, torn, of another version, or stamped ahead past the bound (a stamp from the future is
+# no live file either). Reads only; nothing here is written.
 open_questions() {
   local reader="$here/../core/deck-reader.json" state file version stale
   [ -f "$contract" ] && [ -f "$reader" ] || return 0
@@ -297,8 +300,9 @@ open_questions() {
   jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
     select(.version == $version and (.generated_at | type) == "string"
            and (.round.open | type) == "number" and (.round.urgent | type) == "number")
-    | select((($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000 | fabs) <= $stale and .round.open > 0)
-    | "\(.round.open) \(.round.urgent)"' "$state/$file" 2>/dev/null
+    | (($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000) as $age
+    | select(($age >= 0 or ($age | fabs) <= $stale) and .round.open > 0)
+    | "\(.round.open) \(.round.urgent) \(if $age > $stale then 1 else 0 end)"' "$state/$file" 2>/dev/null
 }
 
 # >= 80% is roughly the auto-compaction threshold: context loss is close.
@@ -338,14 +342,18 @@ if [ "$show_lines" = "1" ] && is_number "$lines_add" && is_number "$lines_del" &
   line2=$(join_sep "$line2" "${GREEN}+${lines_add}${RESET}/${RED}-${lines_del}${RESET}")
 fi
 
-# The count closes the first line: yellow, red once one of the questions is urgent.
-read -r q_open q_urgent <<<"$(open_questions)"
+# The count closes the first line: yellow, red once one of the questions is urgent. A stale deck's
+# count is marked « ? » and dimmed (red while urgent), its last figures, no longer news.
+read -r q_open q_urgent q_stale <<<"$(open_questions)"
 if is_number "$q_open" && [ "$q_open" -gt 0 ]; then
+  q_mark=""; [ "$q_stale" = "1" ] && q_mark="?"
   if is_number "$q_urgent" && [ "$q_urgent" -gt 0 ]; then
-    line1=$(join_sep "$line1" "${RED}✋ ${q_open} (${q_urgent} urgent)${RESET}")
+    q_text="✋ ${q_open}${q_mark} (${q_urgent} urgent)"; q_colour=$RED
   else
-    line1=$(join_sep "$line1" "${YELLOW}✋ ${q_open}${RESET}")
+    q_text="✋ ${q_open}${q_mark}"; q_colour=$YELLOW
+    [ "$q_stale" = "1" ] && q_colour=$DIM
   fi
+  line1=$(join_sep "$line1" "${q_colour}${q_text}${RESET}")
 fi
 
 [ -n "$line1" ] && printf '%s\n' "$line1"

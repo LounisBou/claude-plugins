@@ -104,8 +104,8 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
   it('shows the count of the round the orchestrator writes, while the file is fresh', () => {
     const fresh = (age: number): string => GOLDEN_DECK.replace('2026-10-28T14:00:00.000Z', new Date(Date.now() - age).toISOString())
     assert.equal(show(fresh(1_000)), '✋ 1 (1 urgent)')
-    assert.equal(show(fresh(DECK_STALE_AFTER_MS + 60_000)), '')
-    assert.equal(show(GOLDEN_DECK), '')
+    assert.equal(show(fresh(DECK_STALE_AFTER_MS + 60_000)), '✋ 1? (1 urgent)')
+    assert.equal(show(GOLDEN_DECK), '✋ 1? (1 urgent)')
   })
 
   it('keeps its bound above the orchestrator\'s refresh, so a live file is never taken for a frozen one', () => {
