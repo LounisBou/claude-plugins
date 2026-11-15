@@ -123,7 +123,8 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
 }
 
 /* node:coverage ignore next 13 */
-if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+const entry = process.argv[1]
+if (entry !== undefined && existsSync(entry) && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
   const controller = new AbortController()
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(name, () => controller.abort())
   const code = await main(process.argv.slice(2), {
