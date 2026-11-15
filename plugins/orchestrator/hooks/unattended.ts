@@ -192,15 +192,22 @@ export async function holdsDone($: any, wait: DeclaredWait): Promise<string | nu
 const pending = new Map<string, string[]>()
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+  // The lines the last reading of each session had: a line met again is no news, the pane and the
+  // refusal of a done still carry it, so the context says only what changed since the turn before.
+  const lastRead = new Map<string, string[]>()
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
     if (e.agentId) return next(e)
     try {
       const sessionId = await $.session.id()
       const reading = await boundedReading($, sessionId)
       if (reading !== null) {
-        const said = [reading.line, reading.readyLine].flatMap(text => text ?? [])
-        if (said.length === 0) pending.delete(sessionId)
-        else pending.set(sessionId, said)
+        const read = [reading.line, reading.readyLine].flatMap(text => text ?? [])
+        const before = lastRead.get(sessionId) ?? []
+        lastRead.set(sessionId, read)
+        // A change leaves the new lines only; a turn with nothing new leaves what an earlier turn end left, not yet said.
+        const said = read.filter(text => !before.includes(text))
+        if (read.length === 0) pending.delete(sessionId)
+        else if (said.length > 0) pending.set(sessionId, said)
         await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread })
       }
     } catch (err) {
