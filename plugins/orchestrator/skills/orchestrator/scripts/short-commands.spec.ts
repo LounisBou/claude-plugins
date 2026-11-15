@@ -1,8 +1,10 @@
 import { strict as assert } from 'node:assert'
+import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { SHORT_MARKER } from '../../../hooks/short-names.ts'
 import { main, render, rows, USAGE } from './short-commands.ts'
 
@@ -125,4 +127,17 @@ test('a directory that cannot be written fails the install and leaves nothing be
   assert.equal(r.code, 1)
   assert.match(r.err, /^short-commands: /m)
   assert.deepEqual(readdirSync(out), [])
+})
+
+test('the script run through a link outside its plugin finds its own plugin root, as when run directly', () => {
+  const script = fileURLToPath(new URL('./short-commands.ts', import.meta.url))
+  const link = join(dir, 'short-commands.ts')
+  symlinkSync(script, link)
+  const dest = join(dir, 'dest')
+  const run = (path: string) => spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', path, 'install', '--dry-run', '--dir', dest], { encoding: 'utf8' })
+  const direct = run(script)
+  const viaLink = run(link)
+  assert.equal(direct.status, 0)
+  assert.notEqual(viaLink.stdout, '')
+  assert.deepEqual([viaLink.status, viaLink.stdout, viaLink.stderr], [direct.status, direct.stdout, direct.stderr])
 })

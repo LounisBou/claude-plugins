@@ -6,6 +6,7 @@
 // an eval, or removal.
 //
 //   npm run rules                 one line per plugin, then the rules left, by file
+//   npm run rules -- --json       the counts per plugin as one JSON object (what the weekly report reads)
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
@@ -77,8 +78,12 @@ export function report(root: string): Report[] {
   })
 }
 
-export function run(root: string, _args: readonly string[], io: Io): number {
+export function run(root: string, args: readonly string[], io: Io): number {
   const reports = report(root)
+  if (args.includes('--json')) {
+    io.out(JSON.stringify({ plugins: reports.map(({ plugin, rules, byCode, byEval, left }) => ({ plugin, rules, byCode, byEval, left: left.length })) }))
+    return 0
+  }
   io.out('| plugin | rules | held by code | named by an eval | prose alone |')
   io.out('|---|---:|---:|---:|---:|')
   for (const r of reports) io.out(`| ${r.plugin} | ${r.rules} | ${r.byCode} | ${r.byEval} | ${r.left.length} |`)

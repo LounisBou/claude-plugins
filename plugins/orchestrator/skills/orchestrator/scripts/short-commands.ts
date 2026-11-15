@@ -21,7 +21,7 @@ import { dirname, join, resolve } from 'node:path'
 import { isOwnCopy, SHORT_MARKER } from '../../../hooks/short-names.ts'
 import { configDir, setting, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
-import { isEntry, processIo, type Io } from './lib/process.ts'
+import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
 
 export const USAGE = 'usage: short-commands.sh install|uninstall|sync [--dry-run] [--dir <path>]'
 const MODES = ['install', 'uninstall', 'sync'] as const
@@ -173,6 +173,6 @@ function run(mode: Mode, dry: boolean, dest: string, deps: Deps): void {
 
 /* node:coverage ignore next 4 */
 if (isEntry(import.meta.url)) {
-  const script = process.argv[1] ?? ''
+  const script = resolvedPath(process.argv[1] ?? '')
   process.exitCode = main(process.argv.slice(2), { io: processIo, env: process.env, root: resolve(dirname(script), '..', '..', '..') })
 }

@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { backfillEvent, enrich, readSecrets, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
+import { backfillEvent, enrich, readSecrets, realCheck, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const FIXTURE = fileURLToPath(new URL(`../../../tests/fixtures/${S}.jsonl`, import.meta.url))
@@ -25,7 +25,7 @@ function harness(work: (config: string, deps: Deps & { outs: string[]; errs: str
   const deps = {
     env: { TELEMETRY_ENV_FILE: envFile, TELEMETRY_MACHINE: 'box' }, stdin: () => stdin, out: (l: string) => outs.push(l), err: (l: string) => errs.push(l),
     git: realGit, now: () => Date.parse('2026-11-13T21:00:00Z'), detach: (dir: string) => { detached.push(dir) }, exportWaitMs: 0, outs, errs, detached,
-    gh: realGh, repositoryAt: () => undefined, cwd: root,
+    gh: realGh, check: () => ({ status: 1, stdout: '', stderr: 'no checkout' }), repositoryAt: () => undefined, cwd: root,
   }
   try {
     work(config, deps, text => { stdin = text })
@@ -228,5 +228,38 @@ test('gh and the repository of a directory, read for real: a failure is a status
     assert.equal(realRepositoryAt(dir), undefined)
     spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:acme/tool.git'], { env: { ...process.env, ...gitEnv } })
     assert.equal(realRepositoryAt(dir), 'acme/tool')
+  })
+})
+
+test('a checkout\'s script is run for real with --json: its answer is read whatever its status, a missing script is a failure with no figures', () => {
+  harness((_config, deps) => {
+    const dir = join(deps.cwd, 'tooling')
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'scripts', 'prompts.ts'), '')
+    writeFileSync(join(dir, 'prompts.js'), 'console.log(JSON.stringify({ args: process.argv.slice(2) })); process.exit(1)\n')
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { prompts: 'node prompts.js', rules: 'node prompts.js' } }))
+    const failing = realCheck(dir, 'prompts')
+    assert.equal(failing.status, 1)
+    assert.deepEqual(JSON.parse(failing.stdout), { args: ['--json'] })
+    // The package's own `rules` script is never run: the directory holds no scripts/rules.ts.
+    const missing = realCheck(dir, 'rules')
+    assert.equal(missing.status, 1)
+    assert.equal(missing.stdout, '')
+    assert.match(missing.stderr, /^no scripts\/rules\.ts in it/)
+  })
+})
+
+test('report: the checkout\'s figures reach the report through the dependency, run in the working directory', () => {
+  harness((config, deps) => {
+    const asked: string[] = []
+    const check = (checkout: string, script: string) => {
+      asked.push(`${script}@${checkout}`)
+      return { status: 0, stdout: script === 'prompts' ? JSON.stringify({ budgets: { a: { tokens: 1, budget: 2 } }, duplicates: { count: 0, ceiling: 0 } }) : JSON.stringify({ plugins: [{ plugin: 'a', rules: 1, byCode: 1, byEval: 0, left: 0 }] }), stderr: '' }
+    }
+    assert.equal(run(['report', '--config', config, '--week', '2026-11-08', '--tool', 'acme/tool'], { ...deps, check, gh: () => ({ status: 1, stdout: '', stderr: 'offline' }) }), 0)
+    assert.deepEqual(asked, [`prompts@${deps.cwd}`, `rules@${deps.cwd}`])
+    assert.ok(deps.outs.includes('prompt budgets: all 1 plugin within their budget (a 1/2)'))
+    assert.ok(deps.outs.includes('duplicates: 0 sentences said more than once, ceiling 0: within'))
+    assert.ok(deps.outs.includes('rules held by prose alone: 0 of 1 (held by code 1, named by an eval 0)'))
   })
 })
