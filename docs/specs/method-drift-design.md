@@ -148,6 +148,8 @@ G20 (acceptance, no longer only on a failed review at the same commit), N6 (an o
 
 Everything that protects the secrets, production, merge and leaving draft outside auto-merge, the shape of consent, review by another session, the core of the stop gate (O4, O5, O7, O8), the guards of interactive walkthroughs, Cloudflare and bugs-bot.
 
+Settled on 2026-11-15 by the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation that kept today's behaviour: « suis tes recommandations »: github keeps its consent waivers, its check plans, the Ready label with the CI undraft (measured for a week) and the E2E exemptions. The exemption is the record of his words that name a repository or « all PRs » with an end (`mcp__github__record {repo, exempt: true, until, detail}`, `writing/pull-requests.md` « Ready pull requests »): recorded once, never asked again per pull request; it is no exemption the method grants itself (§5).
+
 ### 11.7 Context cuts
 
 - `pr-status` returns a summary of a few lines; the full JSON only on request (`json: true`).
