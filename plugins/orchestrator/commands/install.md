@@ -14,7 +14,7 @@ The script is idempotent and does four things:
 2. **The state directory**, `~/.claude/claude-orchestrator/`: creates
    `measure/` (one measure file per session, the one channel external
    processes read), removes the tap's `ctx/` whole if a previous install left
-   one, and prunes a measure file only past a week and when no live session
+   one, and prunes a measure file only past 90 days and when no live session
    owns it. It also takes the tap off the status line, keeping the command
    that followed it as written, and removes the tap's copy, its saved object
    and the old gates' logs once no line runs the tap.

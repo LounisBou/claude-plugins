@@ -209,9 +209,11 @@ fi
 
 # A session writes its measure file when a turn ends, so an idle one — an agent waiting
 # through a weekend, a quiet coordinator — keeps an old file it will read again in its next
-# turn. Age alone proves nothing: a file is pruned only past a week AND when no live
+# turn. Age alone proves nothing: a file is pruned only past 90 days AND when no live
 # session owns it. The host's registry (sessions/<pid>.json) names each session's id; a
-# registry file whose pid is gone frees that session's measure file.
+# registry file whose pid is gone frees that session's measure file. A closed session's file
+# is kept, not removed at its end: the series of closed sessions is what tells whether a
+# change of method helped, so the prune keeps 90 days of it.
 live_sessions=""
 for reg in "$CONFIG_DIR"/sessions/*.json; do
   [ -f "$reg" ] || continue
@@ -227,8 +229,8 @@ while IFS= read -r f; do
   case "$live_sessions" in *" $(basename "$f" .json) "*) continue ;; esac
   run "rm -f '$f'"
   pruned=$((pruned + 1))
-done < <(find "$STATE_DIR/measure" -type f -name '*.json' -mtime +6 2>/dev/null)
-say "measure files pruned (past a week, no live session): $pruned"
+done < <(find "$STATE_DIR/measure" -type f -name '*.json' -mtime +90 2>/dev/null)
+say "measure files pruned (past 90 days, no live session): $pruned"
 
 # The tier map: three capability tiers, bound by the operator to identifiers this
 # plugin must not name. An empty binding means "let the host choose", so a fresh
