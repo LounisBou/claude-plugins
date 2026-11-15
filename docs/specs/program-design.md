@@ -126,6 +126,9 @@ the orchestration stands, not conditions of the end.
 | 7 | A question put to the operator again | none |
 | 8 | Tokens a session loads (skills, references, templates, commands, briefs, hook text printed into a conversation), release to release, by `npm run context` and `npm run -s prompts` | net zero or less |
 | 9 | `main` red | never |
+| 10 | First call of a launched orchestrator (skills, briefs and hook text it starts on) | 30k tokens at most |
+
+Figure 10 was set on 2026-11-15 as this session's own target, told to the operator, not a ruling of his: geo-git-flow's generation loaded at `c3019cfa` started at 37.1k; the floor cuts of release 0.105.0 (estimated −9k) are measured on its next generation.
 
 Figure 8 counts what sessions read, not executable code. His words, 2026-11-15: « l'allègement, il
 concerne les briefs, le code, le token, pas le code en TypeScript qui ne prend pas de token ». Read by
