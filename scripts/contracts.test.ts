@@ -139,6 +139,7 @@ describe('session names: core owns the shape, the launcher reads it', () => {
     mkdirSync(join(plugin, 'core'))
     copyFileSync(LAUNCHER, join(scripts, 'iterm_agent.py'))
     copyFileSync('plugins/orchestrator/core/store.json', join(plugin, 'core', 'store.json'))
+    copyFileSync('plugins/orchestrator/core/launcher.json', join(plugin, 'core', 'launcher.json'))
     const roles = { Lead: 'orchestrator', Desk: 'coordinator', Check: 'auditor', Hand: 'agent' }
     assert.deepEqual(Object.values(roles).sort(), Object.values(NAMES_CONTRACT.roles).sort())
     writeFileSync(join(plugin, 'core', 'names.json'), JSON.stringify({ ...NAMES_CONTRACT, roles, subject: '\\S{1,3}' }))
