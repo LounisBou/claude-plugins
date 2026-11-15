@@ -20,7 +20,7 @@ import { withdrawalText } from '../relay.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { GLUED_BLOCKS } from './fixtures.ts'
-import { parseQ, parseAnswer as parseOldAnswer } from '../remote-round.ts'
+import { parseQ } from '../remote-round.ts'
 
 const HOME = '/tmp/h'
 const SESSIONS = `${HOME}/.claude/claude-orchestrator/store/sessions`
@@ -2107,14 +2107,14 @@ const settleHere = (id: string, answer = 'A, ship it') => ({ id, outcome: 'answe
 
 // An operator entry of an older release left in the round (the relay writes none now): the
 // round's wake withdraws it, by the coordinator, and tells its sender to ask it with ask — a
-// session here by a message, one on another machine by an answer on its own line — once; it is
+// session here by a message, one on another machine by an answer on the event line — once; it is
 // never due.
 test('an open operator entry of an older release is withdrawn by the wake, its sender told once to ask it again, never woken for', async () => {
   const { fx, tick } = await wakingCoordinator([])
   const sent = sends(fx)
   const here = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   // A remote entry's id in the shape the lines between machines carry.
-  const there = entry('Orch: b', minutesAgo(2), { id: 'sb-17-abc1', session: 'sb', urgent: true, origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })
+  const there = entry('Orch: b', minutesAgo(2), { id: 'sb-17-abc1', session: 'sb', urgent: true, origin: { machine: 'bench-mac', address: 'bridge:peer' } })
   const old = entry('Orch: c', minutesAgo(3), { id: 'sc-17-abc2', session: 'sc', urgent: true, origin: { machine: 'bench-mac', address: 'bridge:old' } })
   for (const e of [here, there, old]) {
     fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
@@ -2126,8 +2126,9 @@ test('an open operator entry of an older release is withdrawn by the wake, its s
   expect(sent.find(s => JSON.stringify(s.to) === JSON.stringify({ sessionId: 'sa' }))?.text).toBe(`[module] Your question ${here.id} was withdrawn: the coordinator's machine runs a newer release, which takes questions through the ask tool only. Ask it again with the ask tool.`)
   const q = parseQ(sent.find(s => s.to === 'bridge:peer')!.text)
   expect(q?.event.kind === 'answer' ? [q.id, q.event.since, q.event.readable.endsWith('Ask it again with the ask tool.')] : null).toEqual([there.id, there.since, true])
-  const line = parseOldAnswer(sent.find(s => s.to === 'bridge:old')!.text)
-  expect([line?.id, line?.since, line?.readable.endsWith('Ask it again with the ask tool.')]).toEqual([old.id, old.since, true])
+  // Every remote sender is answered by the event line, whichever machine it is on.
+  const fromOld = parseQ(sent.find(s => s.to === 'bridge:old')!.text)
+  expect(fromOld?.event.kind === 'answer' ? [fromOld.id, fromOld.event.since, fromOld.event.readable.endsWith('Ask it again with the ask tool.')] : null).toEqual([old.id, old.since, true])
   expect([fx.notices, fx.submitted]).toEqual([[], []])
   expect(fx.written.filter(l => l.includes('| round: an operator question of an older release withdrawn:')).length).toBe(3)
   await tick()

@@ -106,15 +106,25 @@ async function git(ctx: Context, dir: string, args: readonly string[], signal?: 
   return ctx.deps.run(['git', '-C', dir, ...args], { stderr: 'pipe', ...(s === undefined ? {} : { signal: s }), ...(env === undefined ? {} : { env }) })
 }
 
+/*
+ * A git read in a checkout an agent may have written: its own settings run no command here, so
+ * neither a `core.fsmonitor` nor a hook it set runs in this process.
+ */
+const READ_ONLY = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const
+
+async function gitRead(ctx: Context, dir: string, args: readonly string[], signal?: AbortSignal, env?: Readonly<Record<string, string>>): Promise<Ran> {
+  return git(ctx, dir, [...READ_ONLY, ...args], signal, env)
+}
+
 /** The output of a git read that succeeded, else undefined. */
 async function gitOut(ctx: Context, dir: string, args: readonly string[]): Promise<string | undefined> {
-  const r = await git(ctx, dir, args)
+  const r = await gitRead(ctx, dir, args)
   return r.status === 0 ? chomp(r.stdout) : undefined
 }
 
 /** The NUL-separated listing of a git read; an empty one when the read fails, as a shell's process substitution reads it. */
 async function gitList(ctx: Context, dir: string, args: readonly string[]): Promise<string[]> {
-  const r = await git(ctx, dir, args)
+  const r = await gitRead(ctx, dir, args)
   if (r.status !== 0) return []
   return r.stdout.split('\0').filter(f => f !== '')
 }
@@ -259,7 +269,7 @@ function liveWhy(state: Live): string {
 /** Why the checkout or pin at `real` may not be deleted, or '' when nothing holds it. */
 export async function refusal(ctx: Context, real: string): Promise<string> {
   const read = async (args: readonly string[]): Promise<string | { readonly why: string }> => {
-    const r = await git(ctx, real, args)
+    const r = await gitRead(ctx, real, args)
     if (r.status === 0) return chomp(r.stdout)
     const first = r.stderr.split('\n')[0] ?? ''
     return { why: `git cannot read the checkout: ${first === '' ? `git ${args[0] ?? ''} failed` : first}` }
@@ -525,18 +535,18 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   // remote is fetched into the checkout below, since a clone carries only what the source's
   // local branches reach.
   const origin = (await gitOut(ctx, src, ['remote', 'get-url', 'origin'])) ?? ''
-  const local = (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`])).status === 0
+  const local = (await gitRead(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`])).status === 0
   const unknown = new Refused(`create: the source has no branch or origin/ remote-tracking ref ${base}`)
   let remoteBranch = ''
   let unreadable: string | undefined
-  if (!local && base.startsWith('origin/') && (await git(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/remotes/${base}`])).status === 0) {
+  if (!local && base.startsWith('origin/') && (await gitRead(ctx, src, ['rev-parse', '--verify', '--quiet', `refs/remotes/${base}`])).status === 0) {
     remoteBranch = base.slice('origin/'.length)
   } else if (explicit && origin !== '') {
     // `origin/<b>` names the origin's branch <b> when the source holds no such local branch, even
     // as a remote-tracking ref it never fetched; the probe asks for the bare name. It never
     // prompts for a credential: an origin that wants one is unreadable.
     const asked = !local && base.startsWith('origin/') ? base.slice('origin/'.length) : base
-    const probe = await git(ctx, src, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${asked}`], AbortSignal.timeout(PROBE_MS), { GIT_TERMINAL_PROMPT: '0' })
+    const probe = await gitRead(ctx, src, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${asked}`], AbortSignal.timeout(PROBE_MS), { GIT_TERMINAL_PROMPT: '0' })
     const why = probe.status === null ? `no answer within ${PROBE_MS / 1000} s` : probe.stderr.trim() || `git exited ${probe.status}`
     if (probe.status === 0) remoteBranch = asked
     else if (probe.status === 2) {
@@ -609,7 +619,7 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
         if (`/${f}` === '/.claude/settings.local.json') withheld++
         else if (copyable(f)) list.push(f)
       }
-      const listed = await git(ctx, src, ['-c', 'core.quotePath=false', 'ls-files', '--others', '--ignored', '--directory', `--exclude-from=${rules}`, '--', dir])
+      const listed = await gitRead(ctx, src, ['-c', 'core.quotePath=false', 'ls-files', '--others', '--ignored', '--directory', `--exclude-from=${rules}`, '--', dir])
       skipped = listed.stdout.split('\n').filter(l => l !== '').length
     } finally {
       rmSync(rules, { force: true })
@@ -779,12 +789,12 @@ export async function list(ctx: Context, argv: readonly string[] = []): Promise<
   for (const d of dirs) {
     if (repo !== '' && basename(dirname(d)) !== repo) continue
     if (!present(join(d, '.git'))) continue
-    const br = chomp((await git(ctx, d, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout)
-    const head = chomp((await git(ctx, d, ['rev-parse', '--short', 'HEAD'])).stdout)
-    const state = chomp((await git(ctx, d, ['status', '--porcelain'])).stdout) === '' ? 'clean' : 'dirty'
+    const br = chomp((await gitRead(ctx, d, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout)
+    const head = chomp((await gitRead(ctx, d, ['rev-parse', '--short', 'HEAD'])).stdout)
+    const state = chomp((await gitRead(ctx, d, ['status', '--porcelain'])).stdout) === '' ? 'clean' : 'dirty'
     const pushed = isFile(join(d, '.git'))
       ? 'pinned'
-      : chomp((await git(ctx, d, ['log', '--branches', '--not', '--remotes', '--oneline'])).stdout) === '' ? 'pushed' : 'unpushed'
+      : chomp((await gitRead(ctx, d, ['log', '--branches', '--not', '--remotes', '--oneline'])).stdout) === '' ? 'pushed' : 'unpushed'
     out(ctx, `${d} | ${br} | ${head} | ${state} | ${pushed}`)
   }
 }
@@ -932,8 +942,8 @@ async function about(ctx: Context, real: string, heads: readonly string[]): Prom
   const head = (await gitOut(ctx, real, ['rev-parse', 'HEAD'])) ?? ''
   for (const oid of heads) {
     if (oid === head) return true
-    if ((await git(ctx, real, ['cat-file', '-e', `${oid}^{commit}`])).status === 0
-      && (await git(ctx, real, ['merge-base', '--is-ancestor', head, oid])).status === 0) return true
+    if ((await gitRead(ctx, real, ['cat-file', '-e', `${oid}^{commit}`])).status === 0
+      && (await gitRead(ctx, real, ['merge-base', '--is-ancestor', head, oid])).status === 0) return true
   }
   return false
 }
