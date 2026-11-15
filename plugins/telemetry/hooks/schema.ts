@@ -33,6 +33,8 @@ export const COMMON_FIELDS: readonly FieldSpec[] = [
   { name: 'agent', type: 'string', description: 'The subagent whose loop the fact happened in; absent for the session\'s own loop.' },
   { name: 'title', type: 'string', description: 'The title of the session that acted; absent until the module learns it (the host\'s start, a rename, the transcript\'s head). A launched session\'s spawn and close carry the child\'s own.' },
   { name: 'role', type: 'string', description: 'The role that title gives: `orchestrator`, `coordinator`, `agent`, `auditor`, `reviewer` or `other`; absent with the title.' },
+  { name: 'parent', type: 'string', description: 'The name of the orchestrator the session reports to, as its launcher gave it (`ORCHESTRATOR_REPORTS_TO`), cut to 80 characters; absent in a session launched without one.' },
+  { name: 'launch_tier', type: 'string', description: 'The capability tier the session was launched on, as its launcher gave it (`ORCHESTRATOR_TIER`); absent in a session launched by a model\'s name or by the operator.' },
 ]
 
 const field = (name: string, type: string, description: string, unit?: string): FieldSpec => (unit === undefined ? { name, type, description } : { name, type, unit, description })
@@ -116,29 +118,34 @@ export const EVENT_SCHEMA = {
     ],
   },
   agent_closed: {
-    summary: 'A subagent finished its first run, or a launched session is closed.',
-    writers: ['hook `turn.complete` of the child (kind `subagent`)', 'the launcher\'s `iterm-agent.sh close` command line (kind `session`)'],
+    summary: 'A run of a subagent ended (its first, then each later one), or a launched session is closed.',
+    writers: ['hook `turn.complete` of the child, each time one of its runs ends (kind `subagent`)', 'the launcher\'s `iterm-agent.sh close` command line (kind `session`)'],
     fields: [
       field('kind', 'string', '`subagent` or `session`.'),
       field('child', 'string', 'Subagent: the child\'s agent id.'),
-      field('duration_ms', 'number', 'Subagent: from its spawn to its first run\'s end.', 'ms'),
+      field('run', 'number', 'Subagent: the run\'s rank from the spawn, 1 for the first; absent when the module did not see the spawn (a resumed session).', 'count'),
+      field('duration_ms', 'number', 'Subagent: the first run from its spawn to its end; a later run from its first turn\'s start, or the host\'s own figure for its last turn when that start was not seen.', 'ms'),
       field('reason', 'string', 'Subagent: why its run ended.'),
       field('title', 'string', 'Session: the closed session\'s title.'),
     ],
   },
   question: {
     summary: 'A question put to the operator and the letters chosen; no text.',
-    writers: ['tool `AskUserQuestion` (source `ask_user`)', 'orchestrator tool `declare_wait` of kind `operator` (source `round`)'],
+    writers: ['tool `AskUserQuestion` (source `ask_user`)', 'orchestrator tool `declare_wait` of kind `operator` (source `round`)', '`telemetry.ts sweep`, from a settled question\'s file in the orchestrator\'s round (source `round_file`): the event\'s `session`, `title` and `role` are the asker\'s, its `ts` the answer\'s'],
     fields: [
-      field('source', 'string', '`ask_user` or `round`.'),
+      field('source', 'string', '`ask_user`, `round` or `round_file`.'),
       field('count', 'number', 'Questions in the call.', 'count'),
       field('headers', 'string[]', 'Each question\'s header, cut to 12 characters.'),
       field('options', 'number[]', 'Options offered by each question.', 'count'),
       field('multi', 'boolean[]', 'Whether each question allowed several choices.'),
-      field('chosen', 'string[]', 'The letters chosen for each question, `-` unanswered, `other` free text.'),
-      field('wait_ms', 'number', 'How long the call waited for the answer.', 'ms'),
-      field('kind', 'string', 'Round: the declared wait\'s kind.'),
+      field('chosen', 'string[]', 'The letters chosen for each question, `-` unanswered (round file: withdrawn), `other` free text.'),
+      field('wait_ms', 'number', 'How long the call waited for the answer; round file: from the question to its settling.', 'ms'),
+      field('kind', 'string', 'Round: the declared wait\'s kind; round file: `operator`, or `done` for a closing proposal.'),
       field('urgent', 'boolean', 'Round: presented at once.'),
+      field('id', 'string', 'Round file: the question\'s id in the round.'),
+      field('status', 'string', 'Round file: `answered`, `withdrawn` or `closed`.'),
+      field('by', 'string', 'Round file: who settled it: `pane`, `tab`, `coordinator`, `sender` or `message`.'),
+      field('recommended', 'string', 'Round file: the recommended choice\'s letter.'),
     ],
   },
   dispatch: {
@@ -176,7 +183,7 @@ export const EVENT_SCHEMA = {
   },
   session_summary: {
     summary: 'A past session summarized from its transcript.',
-    writers: ['`telemetry.ts backfill <transcript>`'],
+    writers: ['`telemetry.ts backfill <transcript>`', '`telemetry.ts sweep`, for a session whose events stopped a day ago with no `session_end`'],
     fields: [
       field('title', 'string', 'The transcript\'s title.'),
       field('role', 'string', 'The role the title gives.'),
@@ -190,7 +197,7 @@ export const EVENT_SCHEMA = {
       field('tools', 'object', 'Calls by tool name.', 'count'),
       field('errors', 'number', 'Tool calls that failed.', 'count'),
       field('refusals', 'object', 'Refusals by decider.', 'count'),
-      field('source', 'string', '`transcript`.'),
+      field('source', 'string', '`transcript` (backfill) or `sweep`.'),
     ],
   },
 } satisfies Record<string, KindSpec>

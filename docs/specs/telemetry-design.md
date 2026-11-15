@@ -3,7 +3,8 @@
 The `telemetry` plugin records what the sessions of this machine do (orchestrators,
 coordinators, auditors, agents, reviewers, any other) so the method can be audited from data:
 models, efforts, durations, context, tokens, cost, tools, refusals, questions, dispatches.
-Phase 1 collects and exports; dashboards and analyses are phase 2.
+Phase 1 collects and exports. Phase 2 adds what phase 1 left to it (« Phase 2 », below) but for
+the dispatch record's own rows; dashboards and analyses are not designed here.
 
 ## Where each fact comes from
 
@@ -13,7 +14,8 @@ fill and cost at each turn, a session's start latency, a spawn's link to its par
 fact, from the host's own transcript (`<config>/projects/*/<session>.jsonl`), for what it
 already holds: the title (`custom-title`), the effort of each answer, the models, the token
 totals. The transcript is read at `session.end` to enrich that event, and by `backfill` for
-sessions that ended before the plugin was installed or ended without a `session.end`.
+sessions that ended before the plugin was installed; the daily sweep reads it for a session that
+ended without a `session.end` (« Phase 2 »).
 
 ## Events (version 1, one JSON object per line)
 
@@ -34,12 +36,45 @@ kinds, and the export generates the logs repository's schema pages from the same
 readiness are the github tool's calls (`tool_call.command`: `pr-merge`, `pr-gate`,
 `pr-ready`, `pr-readiness`).
 
-**Left for phase 2**: the parent orchestrator and tier on the child's own events (the child's
-environment carries them under `ORCHESTRATOR_*` names core does not declare; today the link is
-the parent's `agent_spawned` by title); the round's id, asker and chosen letter (in the
-orchestrator's private `round/` files: a contract to add); the dispatch record's own rows; a
-subagent's later runs as closes; collection of sessions that never reach `session.end` except
-by `backfill`.
+## Phase 2
+
+**Parent orchestrator and tier.** The launcher exports, in a session it spawns, the name of the
+orchestrator it reports to (`ORCHESTRATOR_REPORTS_TO`, with `--orchestrator`) and the tier it was
+launched on (`ORCHESTRATOR_TIER`, with `--tier`); core's `ENV` declares both. The module reads
+them at `session.start` and every event of that session carries `parent` and `launch_tier`. A
+session launched without `--orchestrator` has no `parent`, one launched by `--model` or on its
+caller's own pair no `launch_tier`: the parent's `agent_spawned`, by title, is then the only link.
+
+**A subagent's later runs.** Each end of a run of a subagent is an `agent_closed`, with `run`, its
+rank from the spawn: the first is timed from the spawn, a later one (the child was sent a message
+and ran again) from its own first turn. A child whose spawn the module did not see (a resumed
+session) closes with no rank.
+
+**The daily sweep.** `telemetry.ts sweep` reads what no hook hands the writer. When the writer
+stores a `session_end` and no sweep was started that UTC day (`<config>/telemetry/sweep.json`),
+it starts `sweep --auto` as a detached process, whatever `CLAUDE_LOGS_REPO` says. Over the last
+seven day files:
+
+- a session whose last event is a day old, with no `session_end` or summary at or after it, and
+  whose transcript has not moved for a day either, gets the `session_summary` of its transcript
+  (`source: sweep`), written at the later of the transcript's end and its last event; a session
+  that runs again after it is summarized again once it has been idle a day;
+- a settled question of the orchestrator's round gets a `question` event (`source: round_file`):
+  its `id`, the asker as the event's `session`, `title` and `role`, who settled it (`by`), the
+  number of choices, the recommended letter and the letter chosen (`other` for other words, `-`
+  when it was withdrawn), and the wait. The round files (`round/<id>.json` and `round/archive/`
+  under the orchestrator's module directory) are read through core's `parseRoundQuestion`, the
+  contract for both of their forms (`docs/contracts.md`, « Round files »); no word of a question
+  or an answer leaves them. A question settled before the window, or whose asker's session id is
+  not the host's shape (a sender on another machine), is not recorded.
+
+The store alone says what is done: nothing else is kept, so a sweep run twice writes nothing twice.
+
+**Not done: the dispatch record's own rows.** The `dispatch` events are still read from the
+`dispatch-record.sh` command lines. The record's owner publishes its writes in its journal (audit
+events `step` and `link`: record, row, step, head, session), which carry neither the class, the
+tier, the model, the effort nor every subcommand; the events come from the owner once its
+published facts hold what the command line gives.
 
 ## What is not recorded (secrets win over « toutes les données »)
 
