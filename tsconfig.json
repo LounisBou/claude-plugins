@@ -12,6 +12,7 @@
     "plugins/github/hooks/e2e-scope.ts",
     "plugins/github/hooks/guards.ts",
     "plugins/github/hooks/observe.ts",
+    "plugins/github/hooks/ready.ts",
     "plugins/github/hooks/shell.ts",
     "plugins/github/hooks/writing.ts",
     "plugins/implement/hooks/core.ts",
