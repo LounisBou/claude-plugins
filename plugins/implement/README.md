@@ -71,6 +71,11 @@ it fails.
   the repository as the skill's text is loaded: a failure replaces the text with
   the `error:`/`fix:` lines, a pass leads it with a `Preflight: passed` line and
   the state derived from the branch, and the skill skips its own preflight call.
+- **A close is where the learning retrospective may start.** When the turn that ran
+  `implement:close` ends, and only where the `learning` plugin is enabled, the module runs that
+  plugin's start command (`hooks/retrospective.ts`; core's `retrospectiveStartArgv`), which starts
+  another session when enough candidates wait. What it answered is one line of the host's log; a
+  start that fails changes nothing of the close.
 - **One state tool.** `mcp__implement__state` answers `get` (branch, codename,
   artifacts path and mode, ignore-guard verdict, head, clean tree, the parsed
   `IMPLEMENTATION.md` and its next phase) and `mark` (one row, its sha resolved

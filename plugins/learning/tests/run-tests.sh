@@ -1,7 +1,8 @@
 #!/bin/bash
 # learning's suite: the plugin validates, the scripts' tests pass (the reader and the report over
 # scratch journals, the hooks module over a fake host), then the command line end to end: no
-# journal, one journal, a file that is not an event, then the distiller's candidates.
+# journal, one journal, a file that is not an event, then the distiller's candidates and the
+# retrospective's digest and judgment.
 #
 # Requires bash, node and the claude CLI.
 set -u
@@ -52,6 +53,17 @@ done
 check "three events from two pull requests are one candidate" '"refusal:github.writing.rule" ["acme/app#1","acme/app#2"]' "$(distil | "${NODE[@]}" -e 'const c = JSON.parse(require("fs").readFileSync(0, "utf8")); console.log(JSON.stringify(c.signature), JSON.stringify(c.prs))')"
 "${NODE[@]}" "$SCRIPTS/distil.ts" >/dev/null 2>&1; code=$?
 check "the distiller called with no configuration directory exits 2" "2" "$code"
+
+retro() { "${NODE[@]}" "$SCRIPTS/retrospective.ts" "$@" --config "$CONFIG"; }
+check "the retrospective's digest names the candidate that waits" "candidate refusal:github.writing.rule" "$(retro digest | sed -n 2p)"
+check "under the threshold, no session is started" "learning retrospective: not started, 1 candidates wait and it starts at 3" "$(retro start)"
+FIRST="$(printf '%s' "$NOW_AT" | tr -d ':-')-00000001"
+JUDGEMENT='{"signature":"refusal:github.writing.rule","cause":{"resolved":true,"first_failure":"the rules are read after the text","counterfactual":"read first, the commit passes","evidence":["'"$FIRST"'"],"alternatives":["the rules changed"],"confidence":"low"},"remedy":{"scope":"project","rung":"lint","target":"acme/app","proof":{"type":"test","path":"tests/writing.test.ts"}}}'
+check "a judgment is kept as the candidate's state" "refusal:github.writing.rule: proposed" "$(printf '%s' "$JUDGEMENT" | retro judge)"
+check "the state is one file under the plugin's directory" "proposed" "$("${NODE[@]}" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).state)' "$CONFIG/learning/candidates/refusal_github.writing.rule.json")"
+check "a judged candidate waits no more" "learning retrospective: 0 of 1 candidates to judge" "$(retro digest)"
+printf '%s' '{"signature":"refusal:github.writing.rule","cause":{"resolved":true},"remedy":null}' | retro judge >/dev/null 2>&1; code=$?
+check "a judgment of a candidate that does not wait exits 1" "1" "$code"
 
 "${NODE[@]}" "$SCRIPTS/health.ts" >/dev/null 2>&1; code=$?
 check "a call with no configuration directory exits 2" "2" "$code"

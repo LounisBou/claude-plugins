@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
+  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, originOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 
@@ -125,6 +125,8 @@ export function mount(on: On, collector: Collector): void {
       collector.launchedAt = usage.startedAt
       collector.setTitle(sessionTitleOf(e))
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
+      // The launcher's own words on a session it spawned (core's ENV.reportsTo and ENV.tier); neither is set in the operator's own.
+      collector.setOrigin(originOf(await $.env.get('ORCHESTRATOR_REPORTS_TO'), await $.env.get('ORCHESTRATOR_TIER')))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
     })
     // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.
@@ -136,6 +138,10 @@ export function mount(on: On, collector: Collector): void {
 
   on('turn.start', async ($, e, next) => {
     const result = await next(e)
+    if (typeof e['agentId'] === 'string') {
+      const child = e['agentId']
+      await quietly($, 'turn.start of a subagent', async () => collector.runStarted(child, await $.clock.now()))
+    }
     if (e['agentId'] === undefined && !collector.firstTurnSeen) {
       collector.firstTurnSeen = true
       await quietly($, 'turn.start', async () => {
@@ -160,8 +166,7 @@ export function mount(on: On, collector: Collector): void {
       const usage = usageFacts(await $.session.usage())
       const events = [turnEnd(at, session, e, usage, collector.turnCost(usage.costUsd))]
       const child = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
-      const spawnedAt = collector.closing(child)
-      if (child !== undefined && spawnedAt !== undefined) events.push(agentClosed(at, session, child, spawnedAt, e))
+      if (child !== undefined) events.push(agentClosed(at, session, child, collector.closing(child), e))
       if (child === undefined) collector.turns++
       collector.push(...events)
       if (child === undefined) await flush($, collector)

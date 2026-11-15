@@ -30,6 +30,9 @@ export type UiElements = { Box: UiElement; Text: UiElement; Button: UiElement; L
 
 export type CommandSpec = { name: string; description: string; argumentHint?: string }
 
+// A key of the host's session state: the plugin that owns it and its name.
+export type StateRef = { plugin: string; key: string }
+
 type Nouns = {
   plugin: { root: string }
   env: { get(name: string): Promise<string | undefined> }
@@ -44,6 +47,8 @@ type Nouns = {
   session: {
     id(): Promise<string>
     cwd(): Promise<string>
+    // The session's project root, which a shell `cd` does not move.
+    root(): Promise<string>
     model(): Promise<string>
     usage(): Promise<{ context: SessionContextUsage }>
     send(args: { to: string | { sessionId: string }; text: string }): Promise<SessionSendResult>
@@ -60,7 +65,9 @@ type Nouns = {
     register(tool: ToolSpec): Promise<unknown>
     call(input: { tool: string } & Record<string, unknown>): Promise<unknown>
     check(input: { tool: string; input: unknown }): Promise<ToolCheckResult>
+    list(): Promise<ReadonlyArray<{ readonly name: string }>>
   }
+  state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }
@@ -80,10 +87,11 @@ export type Events = {
   'turn.start': { readonly agentId?: string }
   'command.run': { readonly command: string; readonly args: string }
   // A prompt as the turn takes it: who typed it (`origin.kind`), and the lines a handler adds beside it.
-  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[] }
+  'prompt.submit': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string; readonly context?: readonly string[]; readonly turnId?: string }
   // A peer's delivery; `origin` is the host's own description of where it came from.
   'session.receive': { readonly agentId?: string; readonly origin: unknown; readonly text: string }
-  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean }
+  // `reason` is why the turn ended, `aborted` when the person interrupted it.
+  'turn.complete': { readonly agentId?: string; readonly answer?: string; readonly isAborted?: boolean; readonly reason?: string }
   // The settings payload's own fields, as far as the stop gate reads them; the host's lists of the
   // work in flight are read through a validator.
   'classic.Stop': {
@@ -100,6 +108,10 @@ export type Events = {
   // A call of a tool: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
   'ui.close': { readonly id: string }
+  // A skill's text as it loads: its name, and the text the handler may rewrite.
+  'skill.prompt': { readonly skill?: string; readonly text?: string; readonly args?: string }
+  // A subagent about to start: its type and the prompt it is handed.
+  'agent.spawn': { readonly subagentType?: string; readonly fork?: boolean; readonly prompt?: string }
   // A surface to draw: the pane `requestId` names, its props as the host gives them.
   'ui.render': { readonly requestId?: string; readonly props?: { readonly bodyColumns?: number } }
 }
@@ -117,10 +129,10 @@ export type Next<E> = ((e: E) => Promise<unknown>) & Budget & Origin
 export type Hook<H, E> = ($: H, e: E, next: Next<E>) => Promise<unknown>
 export type CatchHook<H, E> = ($: H, e: E, next: Next<E> & Caught) => Promise<unknown>
 export type Registration<H, E> = { catch(handler: CatchHook<H, E>): void }
-// A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several).
+// A registration, with or without a matcher (`{}`, `{ tool }`, a tool or several, a pattern).
 export type On<H> = {
   <K extends keyof Events>(event: K, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
-  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[]>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
+  <K extends keyof Events>(event: K, matcher: Readonly<Record<string, string | readonly string[] | RegExp>>, hook: Hook<H, Events[K]>): Registration<H, Events[K]>
 }
 
 // A rejection's reason as a line: its `message`, else the value itself.
@@ -133,4 +145,32 @@ export function reasonOf(err: unknown): string {
 // `undefined` for a value that carries none.
 export function messageOf(err: unknown): string {
   return String(typeof err === 'object' && err !== null && 'message' in err ? err.message : undefined)
+}
+
+// A record's fields, or undefined for anything that is not one.
+export function fieldsOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+// What a tool or a hook beneath answered, as far as a module reads it.
+export interface Answer {
+  // The refusal, when the call was refused.
+  readonly deny: string | undefined
+  readonly isError: boolean
+  // The answer's `result`, as it came: a text, content parts, or a tool's own record.
+  readonly result: unknown
+  // The answer's `result`, else its `text`, as trimmed text.
+  readonly text: string
+}
+
+// The answer `raw` holds; anything that is no record answers nothing.
+export function answerOf(raw: unknown): Answer {
+  const fields = fieldsOf(raw) ?? {}
+  const deny = fields['deny']
+  return {
+    deny: deny === undefined || deny === null || deny === false || deny === '' ? undefined : String(deny).trim(),
+    isError: Boolean(fields['isError']),
+    result: fields['result'],
+    text: String(fields['result'] ?? fields['text'] ?? '').trim(),
+  }
 }

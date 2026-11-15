@@ -9,11 +9,12 @@
 // instructions of `templates/orchestrator-succession-brief.md` filled from those files, then the
 // Live state, and nothing of it lands in a file.
 //
-// The Live state: the open rows at level 1; their owners, an open row's live agent by its label
-// word, « ruling » for a deferred one, else its blocker checked on its artifact (the pull request
-// merged, the row closed, the release installed, the `until` time passed; a `measure` never falls):
-// fallen and with no agent, READY NOT STARTED; an
-// open row with no blocker recorded reads NO OWNER; the record's pull request ledger; the deck's
+// The Live state: the open rows at level 1; their owners, « ruling » for a deferred one, an open
+// row's live agent as its note names it (the dispatch writes `Dispatched …: Agent: <name>` there),
+// else its blocker checked on its artifact (the pull request merged, the row closed, the release
+// installed, the `until` time passed; a `measure` never falls): fallen and with no agent, READY NOT
+// STARTED; a row whose note names an agent no longer live, DISPATCHED, NO LIVE AGENT; an open row
+// with no blocker recorded reads NO OWNER; the record's pull request ledger; the deck's
 // agents of this orchestration; the round's open questions, verbatim; the to-do items pointing to a
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
 // and the merged pull requests not installed.
@@ -86,6 +87,8 @@ export interface OpenRow {
   readonly line: string
   readonly label?: string
   readonly ruling?: string
+  /** The row's note of judgment, where its dispatch names the agent it went to. */
+  readonly note?: string
   /** What the row waits on; undefined when none was recorded. */
   readonly blocker?: string
   /** The pull requests the row names, as written (`<repo>#<n>`, the repository maybe by its short name). */
@@ -190,6 +193,7 @@ export function openRows(rows: readonly Row[]): OpenRow[] {
       line: openLine(row),
       label: String(row['label'] ?? ''),
       ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
+      ...(typeof row['note'] === 'string' && row['note'] !== '' ? { note: row['note'] } : {}),
       ...(typeof row['blocker'] === 'string' ? { blocker: row['blocker'] } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       ...(heads.length > 0 ? { heads } : {}),
@@ -289,7 +293,20 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
 
 const list = (items: readonly string[]): string => (items.length === 0 ? 'none' : items.join('; '))
 
-const alnum = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
+
+/** Whether a text names that agent: its name whole, not as the start of a longer word. */
+function names(text: string, agent: string): boolean {
+  const name = bareName(agent).toLowerCase()
+  if (name === '') return false
+  const lower = text.toLowerCase()
+  for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, at + 1)) {
+    const before = lower[at - 1] ?? ' '
+    const after = lower[at + name.length] ?? ' '
+    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true
+  }
+  return false
+}
 
 /** Whether a blocker has fallen, read on its artifact: fallen, still standing, or not readable now. */
 export type Fall = 'fallen' | 'standing' | 'unread'
@@ -329,25 +346,26 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
 }
 
 /**
- * Who works each open row, from the facts the state holds: the agents of the deck carry the row's
- * label word as their name (`Agent: takeoverlean` for `TAKEOVERLEAN: …`, listed without its role
- * prefix). A deferred row reads « ruling »; a row with no agent reads its blocker checked on its
- * artifact: READY NOT STARTED once it has fallen, `blocked: <blocker>` while it stands, `blocker
- * unread: <blocker>` when its artifact cannot be read; a row with no blocker recorded reads NO OWNER.
+ * Who works each open row, from the facts the state holds: the deck's live agents its note names
+ * (the dispatch writes `Dispatched …: Agent: <name>` there; listed without the role prefix), never a
+ * guess from its label. A deferred row reads « ruling »; a row with no live agent reads its blocker
+ * checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
+ * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
+ * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
+ * with no blocker recorded reads NO OWNER.
  */
 export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () => 'unread'): string[] {
   return open.rows.map(row => {
     if ((row.ruling ?? '') !== '') return `${row.id} ruling`
-    const word = alnum(/^[A-Za-z0-9]+/.exec(row.label ?? '')?.[0] ?? '')
-    const agent = word.length < 3 ? undefined : open.agents.find(name => {
-      const own = alnum(name.replace(/^Agent:\s*/, ''))
-      return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
-    })
-    if (agent !== undefined) return `${row.id} ${agent.replace(/^Agent:\s*/, '')}`
+    const note = row.note ?? ''
+    const live = open.agents.filter(agent => names(note, agent))
+    if (live.length > 0) return `${row.id} ${live.map(bareName).join(', ')}`
     // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
     const fell = row.blocker === undefined ? undefined : fall(row.blocker)
     if (fell === 'standing') return `${row.id} blocked: ${row.blocker}`
     if ((row.linked ?? []).length > 0) return `${row.id} ${(row.linked ?? []).join(', ')}`
+    // Dispatched, and its agent gone from the deck: its pull request or branch is read before anyone is sent again.
+    if (/\bAgent:\s*\S/.test(note)) return `${row.id} DISPATCHED, NO LIVE AGENT`
     if (row.blocker === undefined) return `${row.id} NO OWNER`
     return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
   })

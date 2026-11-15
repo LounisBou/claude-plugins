@@ -33,6 +33,9 @@ export function nextOf(answer: (e: any) => any = e => e): { next: any; seen: any
   return { next, seen }
 }
 
+// Where the fake host keeps the module's journal: its home, then the plugin's directory.
+export const JOURNAL_DIR = '/home/u/.claude/norms/journal/'
+
 export type FakeSetup = {
   runs?: Record<string, { exitCode?: number; stdout?: string; stderr?: string }>
   files?: Record<string, string>
@@ -80,6 +83,8 @@ export function fakeDollar(setup: FakeSetup): {
     process: {
       // A run in another directory than the session's is keyed `(<dir>) <argv>`.
       run: async (argv: readonly string[], init?: { cwd?: string }) => {
+        // The journal's own commands (its lock, its rename, its removals) succeed and are no run of a test.
+        if (argv.some(arg => arg.startsWith(JOURNAL_DIR))) return { exitCode: 0, stdout: '', stderr: '' }
         const key = (init?.cwd && init.cwd !== cwd ? `(${init.cwd}) ` : '') + argv.join(' ')
         argvs.push(key)
         const r = setup.runs?.[key]
@@ -94,6 +99,8 @@ export function fakeDollar(setup: FakeSetup): {
         return files[abs(p)]
       },
       write: async (p: string, text: string) => {
+        // A journal file is read back through watchJournal, not as a file a test's subject wrote.
+        if (p.startsWith(JOURNAL_DIR)) return
         written[p] = text
         files[abs(p)] = text
       },
@@ -112,7 +119,8 @@ export function fakeDollar(setup: FakeSetup): {
         return { isSet: true, version: 1 }
       },
     },
-    session: { root: async () => setup.root ?? '/work' },
+    session: { root: async () => setup.root ?? '/work', id: async () => 'sess-1' },
+    clock: { sleep: async () => undefined },
     ui: { log: (text: string) => { logs.push(text) } },
     tool: {
       call: async (input: any) => {

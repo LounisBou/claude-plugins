@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
-import { appendEventOver, randomPart, type JournalIo } from './journal.ts'
+import { appendEventOver, journalIoOf, randomPart, type JournalIo } from './journal.ts'
 import { appendEvent } from './journal-sync.ts'
 import { foldedText, foldWeekly, JOURNAL_FOLD_FILE, JOURNAL_MAX_EVENTS, journalFileOf, learningEvent, parseFold, parseJournalEvent } from './learning.ts'
 
@@ -155,5 +155,35 @@ describe('a hooks module\'s journal', () => {
 
   it('draws a random part of eight lowercase hex digits', () => {
     assert.match(randomPart(), /^[0-9a-f]{8}$/)
+  })
+})
+
+describe("the journal's I/O over a hooks module's host", () => {
+  it('writes, reads, runs, stats and lists through the host, and reads what it cannot as nothing', async () => {
+    const files = new Map<string, string>([['/j/a.json', 'A']])
+    const ran: string[][] = []
+    const io = journalIoOf({
+      fs: {
+        write: async (path, text) => { files.set(path, text) },
+        read: async (path) => { const text = files.get(path); if (text === undefined) throw new Error('ENOENT'); return text },
+        list: async (dir) => { if (dir !== '/j') throw new Error('ENOENT'); return [...files.keys()].map(path => ({ name: path.slice(3), kind: 'file' as const, size: 1, isLink: false })) },
+        exists: async (path) => files.has(path),
+        stat: async (path) => { if (!files.has(path)) throw new Error('ENOENT'); return { kind: 'file' as const, size: 1, mtimeMs: 7 } },
+      },
+      process: { run: async (argv) => { ran.push([...argv]); return { exitCode: 0, stdout: '', stderr: '' } } },
+      clock: { sleep: async () => undefined, after: () => undefined, now: async () => 0, every: () => ({ cancel: () => undefined }) },
+    })
+    await io.write('/j/b.json', 'B')
+    assert.equal(await io.read('/j/b.json'), 'B')
+    assert.equal(await io.read('/j/none.json'), undefined)
+    assert.equal(await io.mtimeMs('/j/a.json'), 7)
+    assert.equal(await io.mtimeMs('/j/none.json'), undefined)
+    assert.deepEqual(await io.list('/j'), ['a.json', 'b.json'])
+    assert.deepEqual(await io.list('/none'), [])
+    await io.run(['mv', 'a', 'b'])
+    await io.sleep(1)
+    assert.deepEqual(ran, [['mv', 'a', 'b']])
+    assert.notEqual(io.tag(), io.tag())
+    assert.equal(typeof io.now(), 'number')
   })
 })

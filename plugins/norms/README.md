@@ -21,9 +21,10 @@ in the existing codebase. No evidence, no finding.
 ## Commands and skills
 
 - `/norms:check` — runs the eight agents above in parallel against the current diff
-- `/norms:learn` — after a PR is merged or reviewed, reads its resolved review
-  threads and turns the generalizable ones into rules in the project's own
-  `CONTRIBUTING.md`
+- `/norms:learn` — after a PR is merged or reviewed, hands its resolved review
+  threads to the `learning` plugin's distiller as evidence; a rule comes from a
+  candidate its retrospective judges, and enters the project's `CONTRIBUTING.md`
+  only after the person says « add »
 - `find-pattern` skill — pre-implementation pattern discovery for a given file type
 - `validate` skill — validates `CONTRIBUTING.md` structure before `/norms:check` relies on it
 
@@ -42,7 +43,8 @@ findings come in one table (severity, agent, `file:line`, issue, proposed fix).
 The record counts the ERROR findings as open and passes the WARNING and INFO
 ones as non-blocking: its detail reads like
 `0 fixed, 3 passed (non-blocking, automatic), 0 open`, so a reader can tell an
-automatic pass from an operator's. The result is `pass` when nothing is open,
+automatic pass from an operator's. These figures are computed from the findings the
+agents reported; the ones the call gives are not read. The result is `pass` when nothing is open,
 `fail` otherwise. A finding set aside as not critical, with its reason (`setAside`
 and `reason` of the tool), is not open: the detail keeps the reason. Typing the command in your own session stays interactive.
 
@@ -57,9 +59,15 @@ mechanical work the markdown would otherwise hand the model:
   `<norms-scope>` block after the arguments.
 - Each `norms-*` agent receives, when it starts, the diff of its own files and
   the CONTRIBUTING.md sections it applies, as a `<norms-context>` block.
-- `/norms:learn`: with no PR number the usage answers at once; otherwise each
-  PR's resolved threads come from the `github` plugin's tool, with the rules
-  CONTRIBUTING.md already holds, as a `<norms-learn>` block.
+- `/norms:learn` is answered by the module, with no model turn: with no PR number
+  the usage; otherwise each PR's resolved threads come from the `github` plugin's
+  tool, and each thread code shows acted on (resolved and outdated: its lines
+  changed after it) whose first comment's author can write to the repository
+  (`OWNER`, `MEMBER` or `COLLABORATOR`) is one `finding` line of the journal,
+  trust `external`, code `norms.thread`, its pull request and its path as
+  pointers. No reviewer's word is kept or handed to a model. The distiller counts
+  these lines (core's `countsInCluster`). A thread whose author's association the
+  `github` plugin does not hand counts as one whose author cannot write.
 - The walkthrough rules are watched: no code edit on the report turn or after a
   "pass" or "discuss" answer, no CONTRIBUTING.md edit before "add" or after
   "skip", under `/norms:check` no commit message naming the check or its
@@ -69,7 +77,8 @@ mechanical work the markdown would otherwise hand the model:
   `norms.contributing.ungranted`, `norms.commit.message`, `norms.push.ungranted`,
   `norms.agent.write`). Only the irreversible stays held: a forced or deleting
   `git push` asks the user through the host's dialog, where only their Allow lets
-  it through and nobody there to answer refuses it (a push whose line does not show it
+  it through and nobody there to answer refuses it; their Allow or Deny is kept in the
+  journal as one `answer` line (`norms.answer.push.granted`, `norms.answer.push.refused`) (a push whose line does not show it
   whole, with a variable set before it, behind `env`, a substitution or xargs, or
   with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
   `rm`, `rmdir`, `unlink` or `find -delete` (or `find -exec` of one), and a shell line the reader
@@ -88,8 +97,13 @@ mechanical work the markdown would otherwise hand the model:
   at the head commit the check ended on. The findings are the ones the check's
   agents reported, each ending its answer with a JSON block the module reads:
   the call is refused when no agent reported, when one gave no readable block,
-  or when its figures do not account for every finding once. Commits made after the check may only
-  touch the files it read. It leaves none, and says why on a `record:` line of
+  or when its figures do not account for every finding once. A finding said fixed
+  with no commit since the check is counted open. Commits made after the check may only
+  touch the files it read. Once the pull request is read, the same call keeps the check's
+  findings in the journal, one `finding` line each: the agent and the severity as its code
+  (`norms.magic-values.error`), the file as its path, the pull request as its subject, and
+  nothing of the finding's text. Every line of the journal names the pull request the check
+  reads, once the module read it. It leaves none, and says why on a `record:` line of
   the report, when `/norms:check` did not compute its scope in the session, the
   branch has no pull request, tracked files have changes, a later commit touches
   a file the check did not read, or the `github` plugin is absent, older, or
