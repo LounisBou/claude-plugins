@@ -47,11 +47,11 @@ test('a missing list is only absent records when every item names a record absen
   const none = missingItems(gate(), [])
   expect(none).toEqual(['review: no record at 0123456', 'e2e: no record at 0123456'])
   expect(onlyAbsentRecords(none)).toBe(true)
-  // A stacked pull request with neither its tests record nor its checks green.
+  // A stacked pull request with neither its tests record nor its checks green: its CI is not green, which refuses.
   const stacked = missingItems(gate({ stacked: true, base: 'feat-a' }, { result: 'PENDING', running: 1 }), ALL)
   expect(stacked.length).toBe(1)
   expect(stacked[0]).toStartWith('tests: no record at 0123456')
-  expect(onlyAbsentRecords(stacked)).toBe(true)
+  expect(onlyAbsentRecords(stacked)).toBe(false)
   // Nothing missing is no absent record; CI, a record that failed, an unreadable one and a closed pull request are not either.
   expect(onlyAbsentRecords([])).toBe(false)
   expect(onlyAbsentRecords(missingItems(gate({}, { result: 'FAILURE', failed: ['lint'] }), []))).toBe(false)

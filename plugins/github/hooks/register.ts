@@ -688,9 +688,9 @@ export async function diagnose($: any, check = false): Promise<string> {
 
 /*
  * A pull request is ready as core's readiness contract defines it (readiness.ts). Taking it out of
- * draft and merging it need the Ready label, which the gate puts itself when the whole contract holds
- * at the head, CI included, through the tool and through Bash alike, and an act that is not ready
- * is refused. In a repository not in
+ * draft and merging it are refused while its CI is not green or a record failed at the head, through
+ * the tool and through Bash alike; a record only absent there is observed, and the act goes on without
+ * the Ready label, which the gate puts when the whole contract holds. In a repository not in
  * auto-merge, leaving draft is observed on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.

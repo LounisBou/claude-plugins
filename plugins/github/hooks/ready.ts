@@ -686,7 +686,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
 }
 
 // An item of missingItems that names a record absent at the head: no run, no verdict, nothing that failed.
-const ABSENT_RECORD = new RegExp('^(?:' + KINDS.join('|') + '): no record at ')
+const ABSENT_RECORD = new RegExp('^(?:' + KINDS.join('|') + '): no record at [0-9a-f]+$')
 
 /** Whether what a pull request misses is only records absent at its head: what the gate observes on an act, and does not refuse. */
 export function onlyAbsentRecords(missing: readonly string[]): boolean {
