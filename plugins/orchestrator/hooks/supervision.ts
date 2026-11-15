@@ -24,7 +24,7 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
@@ -1402,6 +1402,12 @@ async function recordedCoordinator($: Host<'env' | 'fs' | 'process' | 'session'>
   return { tty, pid }
 }
 
+// The work in flight the host listed at this session's last stop (classic.Stop: its background
+// tasks and scheduled wake-ups), taken by the relay of the turn's end that follows it: an agent
+// that ends a turn to wait on its subagents or background work is not idle, and its orchestrator
+// is not woken for it. Null when the host listed nothing at all.
+let inFlightAtStop: readonly string[] | null = null
+
 // The coordinator's round reading, module memory that register and registerWake share: a reload
 // starts it afresh, the host having dropped the old environment's timers with it.
 let wake: WakeMemory = { timer: null, generation: 0 }
@@ -1617,10 +1623,19 @@ export function register(on: On<Held>): void {
   // the message a stop carries is not always the turn's last word, and the gate's own
   // deadline is not this report's to spend; turn.complete fires once the turn is over,
   // with its final answer. Bounded, and never holds the turn's end.
+  on('classic.Stop', {}, async ($, e, next) => {
+    inFlightAtStop = hostTasks(e.background_tasks, e.session_crons)
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
   on('turn.complete', {}, async ($, e, next) => {
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId), RELAY_BOUND_MS)
+        const inFlight = inFlightAtStop
+        inFlightAtStop = null
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -2247,7 +2262,9 @@ export function entersRound(role: string | null): boolean {
 // on it. The row itself is never written here: the measure is its one writer.
 // An operator wait waits on questions asked with `ask`, already in the round as their own objects:
 // its wait is written, so its row shows it waiting, and no entry is entered or sent.
-export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown): Promise<void> {
+// An agent's turn without a status line that ended with work still in flight (`inFlight`, what the
+// host listed at the stop) is no idle agent: nothing is sent; its next turn's end reports.
+export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2282,6 +2299,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
   if (orchestrating && wait?.kind === 'operator') return
+  if (!wait && inFlight !== null && inFlight.length > 0) return
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
