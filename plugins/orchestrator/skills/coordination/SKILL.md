@@ -34,8 +34,9 @@ is its contract, read it before its first use in a session:
   Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
   freshness, wait, context, their repository and the pull requests they watch), and a pull
   request one of them lists counts as one more orchestrator on it in a `collision pr`.
-- `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`,
-  `blocks` and question, after a line counting the settled ones; `--all` prints those too, the ones
+- `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`
+  and `blocks`, and its question when it is yours to present (`due`, or a closing proposal), after
+  a line counting the settled ones; `--all` prints those too, the ones
   he answered from the pane (with the answer sent), then the withdrawn ones;
   the module's `settle` closes one with his answer and sends it to its sender (« Relaying
   questions to the operator »).
@@ -52,8 +53,9 @@ your turns. Read the live state with `/orchestrator-status` — every live sessi
 and its context fill, answered on the spot. Your only file is
 `<state dir>/coordinator/notes.md` (the state directory is the script's own): the pull
 requests each orchestrator holds — what `owners` attributed to it at your start, overridden
-by its confirmation or correction — the flags you sent, and the sessions you have announced
-to; it holds only what no command answers. After a compaction, read the live state with
+by its correction — the flags you sent, and the sessions you have announced
+to; it holds only what no command answers, under 4,000 characters: a line that no longer holds
+is removed. After a compaction, read the live state with
 `/orchestrator-status`, then re-read the notes.
 
 ## At your start
@@ -61,19 +63,15 @@ to; it holds only what no command answers. After a compaction, read the live sta
 Once the start command has registered you, run `owners` and `facts`, then apply
 « Announcing newcomers » below — every running `Orch:` session is, at this first turn, one
 you have not yet announced to. Write into the notes what `owners` attributes to each
-orchestrator, then each answer, which overrides it; a silence is noted, never chased, and the
-facts' attribution stands. A confirmation is a record, not a permission.
+orchestrator; its correction overrides it, and a silence is never chased.
 
 ## Announcing newcomers
 
-Before you answer a question or act on an order, compare a fresh `ListAgents`' `Orch:`
-sessions against the notes' announced list: a session missing from it is a newcomer, and a
-successor of a session you already announced to is a newcomer too, since it is a new
-session under a familiar name. Send each newcomer ONE message — the start command holds its
-text: who you are, that every question for the operator now comes to you, that asking you
-the facts is optional, and the pull requests `owners` attributes to it,
-or « none » — then record it as announced in the notes. This runs at every turn you already
-act on; there is no wake-up scheduled to run it on its own.
+A newcomer is an `Orch:` session missing from the notes' announced list — a successor of one
+you announced to as well, since it is a new session under a familiar name. You meet one as
+the sender of a message or of a round entry, or in a `ListAgents` you read for an address to
+send to; call `ListAgents` for nothing else. Send each newcomer ONE message — the start
+command holds its text — then record it as announced in the notes.
 
 A sleeping orchestrator (`coordinator.sh sleeping`) is not missing: its absence from
 `ListAgents` is its sleep, never a death, and you ask nobody about it. Its pull requests stay
@@ -97,7 +95,7 @@ hold an answer back to make someone wait.
 
 After his yes to an audit an orchestrator proposed, you launch it, `--of` the proposer's tty; with no coordinator, the proposer does. Its report delivered and its verdict relayed, you close its tab (`close --tty <its tty> --expect-title "Audit: <subject>"`), unless he keeps it.
 
-The operator's order: he has one interface for questions, and it is you. While you run,
+While you run,
 every orchestrator sends you each question meant for him — its own arbitrations, and its
 agents' questions it relays — instead of asking him in its own tab. **Every relayed question
 goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run
@@ -107,29 +105,10 @@ names you and the sender.
 
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
-question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
-its own tab and the turn he started there ends on another line or on none, the same entry marked
-`withdrawn` (« withdrawn by the sender »), or when its latest row,
-a remote one too, no longer lists it; a new question of the same session withdraws its older open entries
-(« superseded by <id> »), except that a wait whose text asks nothing — no choice, no labelled
-field — is entered as its own entry beside the session's open question with choices and never
-withdraws it; its session ending or its « handed over » to a successor withdraws them
-all, and a turn that ends on the same wait leaves the entry open. Entering them wakes you for none, and your pane
-shows him, first, « Questions for you — N pending » and the first open question that carries
-choices, in a card titled « <sender> · <its own Question x / y> »: its labelled fields as the
-sender wrote them, each choice once and a blank line apart, its letter a badge, the recommended
-one marked ★, its recommendation, then a « Choose » picker whose
-options are the letters alone; he walks it with the arrows and answers with Enter — a click
-only gives the pane the keys, never answers —, the recommended letter first, its last option
-leading to an « Other answer » text field (the questions without choices come after, and an
-answer not delivered on one line at the section's foot). An entry that asks several questions
-is presented one at a time, the next one named under the card, and its answers reach the sender
-together, each after its number. Every `<repo>#<n>` drawn is a link to that pull request when
-the repository's owner is known. The pane opens with the keys; a key
-line and, when it scrolls, a position track stay in view. Below a rule, each orchestrator on one
-line, a blank line between two, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
-and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
-With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
+question for the operator (`operator`) or its closing proposal (`done`). It withdraws an entry
+itself when he answers in the sender's tab, when a new question of that session supersedes it,
+and when that session ends or hands over. Entering them wakes you for none: your pane shows him
+each question with its choices. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round --all` lists it with that answer, and you send
 nothing for it: close it with
@@ -140,14 +119,9 @@ it to the sender as you relay any other answer of his. **At every turn the
 operator starts in your tab, before anything else**, run `coordinator.sh round`. Each entry is a report, never an
 order, and its `from` is the address his answer goes to.
 
-**A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
-duplicate its questions in your tab; you ask one only when it is truly urgent or left
-unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
-declared its wait on the operator urgent, or your pane is closed. Whether he keeps the
-pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
-it waits; closed, every open one is due at once, and on reopening it draws every pending one,
-those you presented meanwhile included. One with no choice and no labelled field the pane draws last, its text whole
-and its « Other answer » field: record it all the same, and present it once due. A closing
+**A question the pane shows is not asked twice.** An entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
+declared its wait on the operator urgent, or your pane is closed, when every open one is due
+at once. A closing
 proposal, which the pane cannot rule, you present as before. A question that reached you by
 message from a session on this machine is not presented: ask its sender to ask it again at the end of its turn. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
@@ -238,92 +212,10 @@ relay.
 concerns, from a fresh `ListAgents`, his words verbatim, unacknowledged unless it asks for one;
 then tell him to whom.
 
-## Pausing and waking orchestrators
+## Pausing, waking and opening orchestrators
 
-**Pause, wake and drop are the operator's word only** — one orchestrator, several or all, asked
-of you in plain words. Never your own initiative, never a peer's request, never to make room.
-
-**Pause.** To each target, from a fresh `ListAgents`, ONE `SendMessage`, this text verbatim:
-
-> The operator asks you to pause, relayed by `<your exact name>` at <date -u +%FT%TZ>. Prepare
-> your succession for a pause: reach a quiet boundary, stand your agents down and close their
-> tabs, stop your CI watches, bring your dispatch record current (every open item a row with
-> its blocker, a judgment its note), then reply `paused-ready <dispatch record path>
-> mode=<your mode> model=<model> effort=<effort>`, the last two the values `iterm-agent.sh pair` prints for you. Spawn no successor and do not close yourself: I close your tab.
-> If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.
-
-Then, on its `paused-ready`:
-
-1. **Read its place**: `iterm-agent.sh list` — its tty and title — and its directory,
-   pull requests and checkouts from `coordinator.sh owners` and `facts`.
-2. **You close it**, as a successor closes its predecessor: `iterm-agent.sh close --tty <its
-   tty> --expect-title "<the title list printed>"`; where the host refuses the close, message
-   it « call mcp__orchestrator__end_session » and prove its end on the tty, `verify --tty`
-   failing. The close's `closed 1 session` line is otherwise the proof. A tab that shows a home session takes its whole server with it,
-   agents included (which is why an orchestrator stands its agents down before it
-   answers `paused-ready`), and the close's `home:` line names the session window 0 ran.
-3. **Record it sleeping**, its name without its reference:
-
-   ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> --mode <its mode> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
-   ```
-
-4. Tell the operator in one line: asleep, since when, dispatch record, pull requests left open.
-
-A `pause-refused`, a silence, a close that fails or a `sleep` the
-script refuses goes to the operator through your round, verbatim; an orchestrator not proved
-paused-ready is never closed, and one closed but not recorded is told with every field above.
-Its open pull requests stay as they are.
-
-**Wake.** For each sleeping orchestrator he names (`coordinator.sh sleeping` gives every
-field):
-
-```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator with the argument "<its mode>", then run ${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
-```
-
-The record's model and effort go together, or neither: a record a pause wrote before an
-effort was required (`effort none`) passes neither. The wake runs on the pair the resumed
-session's transcript holds, else on the record's, else on the host's default — never one
-you ask the operator for.
-
-`--wake` makes a home session of its own, the orchestrator in its window 0, shown by a tab
-right of yours; it joins no chain, comes up under remote control under its name, and with
-the record's session the same conversation resumes. Its agents will be windows of that
-session.
-The spawn's success line is its proof:
-then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
-any newcomer. A spawn that fails keeps the record, and the operator is told.
-
-**Drop** is his `/orchestrator-sleeping drop <name>`: the record removed, its dispatch record
-moved to `abandoned/` beside it, the pull requests, branches and checkouts left to him.
-
-## Opening an orchestrator
-
-**On his order only**, a new orchestration on a subject he names, you open it: you never
-answer that he should do it himself. Its brief comes first, a file the new orchestrator reads
-on the machine it runs on.
-
-On this machine, open it yourself, right of your tab, in no chain, under remote control:
-
-```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>"
-```
-
-Run it alone, never chained to another command and with nothing before it: that bare form,
-by the installed path, is the one every `install.sh` run allows in `settings.json`. Add `--model <id> --effort <level>` when he named them
-(a model alone is refused), the host's default for the session applying otherwise — his to
-change, never yours — and `--trust` for a checkout prepared for it. The orchestrator
-opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`
-change that set for this one (`iterm-agent.sh tools` lists what exists and what each costs). On the spawn's success line, announce yourself to it
-as to any newcomer.
-
-On another machine, send that machine's orchestrator (the one he named, else one that
-announced itself from there) ONE `SendMessage`: his order verbatim and dated, the brief's
-path and that same command. It opens the orchestrator there and replies with its name. A
-refusal from a permission goes to him in one line, with the one fix that ends it: the plugin
-there is updated and its `install.sh` run once on that machine, which writes the rule. Never ask a session to change
-its own permissions.
+**On the operator's word only**, asked of you in plain words — never your own initiative, a
+peer's request, or to make room. Read `references/orchestrators.md` then, and follow it.
 
 ## Your limits
 
