@@ -70,7 +70,7 @@ In two weeks:
 ## 5. Non-objectives
 
 - Removing verifications on critical work: the plan can require everything when the scope calls for it.
-- An E2E exemption for a whole repository.
+- An E2E exemption for a whole repository, unless the operator grants it himself with an end (his words of 2026-11-15, 07:15 Paris, « valable jusqu'au 16/11 12h »): it is then recorded once, with `until`.
 - Taking away from the operator the review and the merge in repositories that are not in auto-merge.
 
 ## 6. Anti-objectives (failure even if « it works »)

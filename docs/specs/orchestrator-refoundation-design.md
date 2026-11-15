@@ -155,7 +155,7 @@ takes it.
    not transfer; the method does. The dispatch record holds rounds and escapes per dispatch and
    the measure file the context size: join them, and set each role's gate where rounds or
    escapes start to rise on the operator's own work.
-   Put to him 2026-11-15, cost M (a join of the dispatch record and the measure file, then a gate per role); not taken.
+   Not shown to him on its own; cost M (a join of the dispatch record and the measure file, then a gate per role); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 2. **A restart on behaviour, not only on tokens.** Instructions given in pieces cost 39 % of
    performance on average, models committing early to a guess and not recovering (Laban et al.
    2025, arXiv:2505.06120, over 200,000 simulated conversations; not coding agents). Signs a
@@ -163,7 +163,7 @@ takes it.
    proposing again what an answer of his in the round rejected, re-reading a file it already read
    in the same phase, a second correction round on the same finding. Each is countable by
    code; each could trip the gate as tokens do.
-   Put to him 2026-11-15, cost M (three counters in the gauge, each tripping the gate); not taken.
+   Not shown to him on its own; cost M (three counters in the gauge, each tripping the gate); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 3. **Every brief names the head it was written against.** Stale context misleads: with
    outdated code snippets, two models produced 15 and 13 outputs incompatible with the
    current signature out of the same 17 examples (Weng et al. 2026, arXiv:2605.14478). A phase brief, a resume
@@ -177,13 +177,13 @@ takes it.
    localization produced 15 to 17 times as much repair improvement as the later stages, successes
    clustering around six to ten relevant files for one model family (Sepidband et al. 2026,
    arXiv:2604.05481). A brief is judged first on the files it names.
-   Put to him 2026-11-15, cost S for the rotation brief, M for the succession; taken for the rotation brief only, by the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation: « suis tes recommandations ».
+   Not shown to him on its own; cost S for the rotation brief, M for the succession; taken for the rotation brief only, on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris).
 5. **Tune the succession by its failures.** When a successor misses, misreads or drowns an
    item, classify it — omitted, distorted, buried — and change one rule of the generation at a
    time, re-measured on the same handovers. Failure-driven compression cut peak tokens by 26 to
    54 % while improving success on non-coding agent benchmarks (Kang et al. 2025, ACON,
    arXiv:2510.00615); the transfer to coding agents is an inference to test, not a result.
-   Put to him 2026-11-15, cost M (each miss classified, one rule changed and re-measured on the same handovers); not taken.
+   Not shown to him on its own; cost M (each miss classified, one rule changed and re-measured on the same handovers); left out for now on my recommendation, which he approved in bulk (« suis tes recommandations », 2026-11-15, about 17:40 Paris): open again if he asks.
 6. **Goal 9's next step: the pilot, run twice.** The measure of 2026-11-10 (`measure-1`) ran the
    rebuilt arm once on each of six cases; no case has run twice. The next pilot runs twice on the
    same case with the same model pair:
