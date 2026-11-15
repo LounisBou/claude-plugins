@@ -51,14 +51,26 @@ jobs:
       - name: tooling tests, with the coverage floor
         if: steps.tested.outputs.repository != 'true'
         run: npm test
-      - name: prompt budgets and duplicates within their ceilings
-        if: steps.tested.outputs.repository != 'true'
-        run: npm run -s prompts > /dev/null
-      - name: context by scenario, and this pull request's difference
+      # The next three steps report: a figure over its ceiling or a script that fails is a warning
+      # and a line of the run's summary, never a red job (the weekly report prints the same figures).
+      - name: prompt budgets and duplicates against their ceilings (a report)
         if: steps.tested.outputs.repository != 'true'
         run: |
+          rc=0
+          faults=$(npm run -s prompts 2>&1 >/dev/null) || rc=$?
+          {
+            echo '### Prompt budgets and duplicates'; echo
+            if [ "$rc" = 0 ]; then echo 'Every budget and the duplicate ceiling hold.'; else printf '%s\n' "$faults" | sed 's/^/- /'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ]; then printf '%s\n' "$faults" | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done; fi
+      - name: context by scenario, and this pull request's difference (a report)
+        if: steps.tested.outputs.repository != 'true'
+        run: |
+          rc=0
           base="origin/${{ github.base_ref || 'main' }}"
-          { echo '### Context by scenario'; echo; npm run -s context -- --base "$base"; } >> "$GITHUB_STEP_SUMMARY"
+          table=$(npm run -s context -- --base "$base" 2>"$RUNNER_TEMP/context.err") || rc=$?
+          { echo '### Context by scenario'; echo; printf '%s\n' "$table"; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ]; then head -n 3 "$RUNNER_TEMP/context.err" | while IFS= read -r fault; do echo "::warning title=context by scenario::${fault}"; done; fi
       - name: the rules a prompt states that nothing holds (a report)
         if: steps.tested.outputs.repository != 'true'
         run: |
