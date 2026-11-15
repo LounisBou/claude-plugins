@@ -17,7 +17,10 @@
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
 // and the merged pull requests not installed.
 //
-// The orchestration's name is the record's owner (`<record>.owner`) unless given. Before printing,
+// The orchestration's name is the one given, else the record's owner (`<record>.owner`), else, when
+// that file names no orchestration, the name of the session that runs the takeover. A row names its
+// pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
+// recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
 // the command moves the rulings carried out or superseded, and those for rows the record closed, to
 // the archive beside the rulings file (`prune.ts`), and the round's entries settled over a day ago
 // (round-archive's rule): what a takeover reads is only what is live. Its measure goes to stderr.
@@ -27,8 +30,9 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
-import { openLine, orchForm, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
-import { ledgerLines, prKey, statusText } from '../../../core/pr-ledger.ts'
+import { openLine, orchForm, parseRecord, sessionOrchestration, stateRoot, type Row } from './dispatch-record.ts'
+import { parseSessionName } from '../../../core/names.ts'
+import { ledgerLines, prKey, statusText, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, readAtTakeover, type PruneResult } from './prune.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
@@ -82,7 +86,23 @@ export interface OpenRow {
   readonly ruling?: string
   /** What the row waits on; undefined when none was recorded. */
   readonly blocker?: string
+  /** The pull requests the row names, as written (`<repo>#<n>`, the repository maybe by its short name). */
+  readonly refs?: readonly string[]
+  /** The heads its review recorded, where its pull request stood. */
+  readonly heads?: readonly string[]
+  /** Its pull requests found open, each with where it stands: filled by the live read. */
+  readonly linked?: readonly string[]
 }
+
+/** An open pull request of the forge, with the head it stands at. */
+export interface ForgePr {
+  readonly repo: string
+  readonly pr: number
+  readonly head: string
+}
+
+/** A repository's open pull requests on the forge; undefined when it cannot be read. */
+export type OpenPrReader = (repo: string) => readonly ForgePr[] | undefined
 
 /** What the state holds open for this orchestrator. */
 export interface OpenState {
@@ -107,7 +127,7 @@ function object(text: string | undefined): Fields | undefined {
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [])
 
 /** The deck's orchestrator of that name, local: its pull requests and its agents' names. */
-export function deckOpen(deckText: string | undefined, name: string): { prs: string[]; agents: string[] } {
+export function deckOpen(deckText: string | undefined, name: string): { prs: string[]; agents: string[]; repo?: string } {
   const deck = object(deckText)
   const orchestrators = Array.isArray(deck?.['orchestrators']) ? (deck['orchestrators'] as unknown[]) : []
   for (const entry of orchestrators) {
@@ -117,6 +137,7 @@ export function deckOpen(deckText: string | undefined, name: string): { prs: str
     return {
       prs: strings(orch['prs']),
       agents: agents.map(agent => (typeof agent === 'object' && agent !== null ? (agent as Fields)['name'] : undefined)).filter((n): n is string => typeof n === 'string'),
+      ...(typeof orch['repo'] === 'string' && orch['repo'] !== '' ? { repo: orch['repo'] } : {}),
     }
   }
   return { prs: [], agents: [] }
@@ -155,30 +176,115 @@ export function roundOpen(entries: readonly (Fields | undefined)[], name: string
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
+const PR_REF = /([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?)#([1-9][0-9]*)/g
+
+/** The pull requests a text names, `<repo>#<n>` as written. */
+export const refsOf = (text: string): string[] => [...text.matchAll(PR_REF)].map(match => `${match[1]}#${match[2]}`)
+
+const field = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? (value as Fields)[key] : undefined)
+
+/** The heads a row's review recorded: the one it judged and the one its corrections left. */
+function headsOf(row: Row): string[] {
+  const review = row['review']
+  return [field(review, 'head'), field(field(review, 'fixed'), 'head')].filter((head): head is string => typeof head === 'string' && /^[0-9a-f]{7,40}$/.test(head))
+}
+
 /** The open rows of a record's rows, as the takeover reads them. */
 export function openRows(rows: readonly Row[]): OpenRow[] {
-  return rows.filter(row => row['state'] === 'open').map(row => ({
-    id: String(row['id']),
-    line: openLine(row),
-    label: String(row['label'] ?? ''),
-    ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
-    ...(typeof row['blocker'] === 'string' ? { blocker: row['blocker'] } : {}),
-  }))
+  return rows.filter(row => row['state'] === 'open').map(row => {
+    const surface = field(row['surface'], 'pr')
+    const refs = [...refsOf(String(row['label'] ?? '')), ...(typeof surface === 'string' ? refsOf(surface) : [])]
+    const heads = headsOf(row)
+    return {
+      id: String(row['id']),
+      line: openLine(row),
+      label: String(row['label'] ?? ''),
+      ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
+      ...(typeof row['blocker'] === 'string' ? { blocker: row['blocker'] } : {}),
+      ...(refs.length > 0 ? { refs } : {}),
+      ...(heads.length > 0 ? { heads } : {}),
+    }
+  })
+}
+
+/** The repository a `<repo>#<n>` names: as written when it has an owner, else the one known repository of that name. */
+function repoOf(ref: string, known: readonly string[]): { repo: string; pr: number } | undefined {
+  const [name = '', number = ''] = ref.split('#')
+  const pr = Number(number)
+  if (name.includes('/')) return { repo: name, pr }
+  const found = known.filter(repo => repo.split('/')[1] === name)
+  return found.length === 1 ? { repo: found[0] ?? '', pr } : undefined
+}
+
+const sameHead = (a: string, b: string): boolean => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
+
+/** What the live read found of the pull requests of the open rows: each row's, and the repositories the forge could not tell. */
+export interface Linked {
+  readonly rows: readonly OpenRow[]
+  readonly prs: readonly string[]
+  readonly unread: readonly string[]
+}
+
+/**
+ * The pull requests the open rows hold, read live: the repositories to ask are the project's, the
+ * deck's, the ledger's and those a label names in full; the forge lists each one's open pull
+ * requests, and a row holds those it names (by label or surface) and those standing at a head its
+ * review recorded. A pull request the ledger says someone is on reads by its line, else it is open
+ * with no agent. One no row holds is another orchestration's, and stays out.
+ */
+export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[], seed: readonly (string | undefined)[], open: OpenPrReader): Linked {
+  if (!rows.some(row => (row.refs?.length ?? 0) > 0 || (row.heads?.length ?? 0) > 0)) return { rows, prs: [], unread: [] }
+  const full = rows.flatMap(row => (row.refs ?? []).filter(ref => ref.includes('/')).map(ref => ref.split('#')[0] ?? ''))
+  const repos = [...new Set([...seed, ...ledger.map(line => line.repo), ...full].filter((repo): repo is string => typeof repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(repo)))]
+  const forge: ForgePr[] = []
+  const unread: string[] = []
+  for (const repo of repos) {
+    const read = open(repo)
+    if (read === undefined) unread.push(repo)
+    else forge.push(...read)
+  }
+  const standing = (key: string): string | undefined => {
+    const line = ledger.find(l => prKey(l.repo, l.pr) === key)
+    if (line !== undefined) return `${key} ${statusText(line)}`
+    return forge.some(pr => prKey(pr.repo, pr.pr) === key) ? `${key} open, no agent` : undefined
+  }
+  const described = new Map<string, string>()
+  const linked = rows.map(row => {
+    const keys = new Set<string>()
+    for (const ref of row.refs ?? []) {
+      const found = repoOf(ref, repos)
+      if (found !== undefined) keys.add(prKey(found.repo, found.pr))
+    }
+    for (const pr of forge) if ((row.heads ?? []).some(head => sameHead(head, pr.head))) keys.add(prKey(pr.repo, pr.pr))
+    const lines = [...keys].flatMap(key => {
+      const line = standing(key)
+      if (line === undefined) return []
+      described.set(key, line)
+      return [line]
+    })
+    return lines.length === 0 ? row : { ...row, linked: lines }
+  })
+  return { rows: linked, prs: [...described.values()], unread: unread.map(repo => `${repo} open pull requests unread`) }
 }
 
 /** Reads the state this orchestrator holds open from the files that keep it. */
-export function readOpen(request: Request, env: Env): OpenState {
+export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
   // The ledger names each pull request it attends with its own repository: the deck lists numbers
   // whose repository it cannot tell, and a merged one lingers there. A ledger line leaves the record
   // when it is archived (the Stop hook, or `pr-archive`), so a pull request merged since may still show.
-  const prs = ledgerLines(recordText).map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
-  const { agents } = deckOpen(readText(join(state, 'deck.json')), request.name)
+  const ledger = ledgerLines(recordText)
+  const { agents, repo } = deckOpen(readText(join(state, 'deck.json')), request.name)
+  // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
+  // ones are matched to the open rows, by what a label names and the heads its review recorded.
+  const found = linkRows(openRows(parseRecord(recordText)), ledger, [repo, projectOf(request.worktree, request.record)], openPrs)
+  const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
+  const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const round = join(state, 'round')
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   return {
-    rows: openRows(parseRecord(recordText)),
+    rows: found.rows,
     prs,
     agents,
     questions: roundOpen(names.map(name => object(readText(join(round, name)))), request.name, request.session),
@@ -237,6 +343,7 @@ export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () =
       return own.length >= 3 && (own.startsWith(word) || word.startsWith(own))
     })
     if (agent !== undefined) return `${row.id} ${agent.replace(/^Agent:\s*/, '')}`
+    if ((row.linked ?? []).length > 0) return `${row.id} ${(row.linked ?? []).join(', ')}`
     if (row.blocker === undefined) return `${row.id} NO OWNER`
     const fell = fall(row.blocker)
     return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : fell === 'standing' ? `blocked: ${row.blocker}` : `blocker unread: ${row.blocker}`}`
@@ -285,6 +392,25 @@ export function forgeState(env: Env): (repo: string, pr: number) => string | und
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
       }).trim()
       return state === '' ? undefined : state
+    } catch {
+      return undefined
+    }
+  }
+}
+
+/** A repository's open pull requests as `gh pr list` tells them, undefined when it cannot be read. */
+export function forgeOpenPrs(env: Env): OpenPrReader {
+  return repo => {
+    try {
+      const listed: unknown = JSON.parse(execFileSync('gh', ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200', '--json', 'number,headRefOid'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
+      }))
+      if (!Array.isArray(listed)) return undefined
+      return listed.flatMap(item => {
+        const number = field(item, 'number')
+        const head = field(item, 'headRefOid')
+        return typeof number === 'number' && typeof head === 'string' ? [{ repo, pr: number, head }] : []
+      })
     } catch {
       return undefined
     }
@@ -346,6 +472,7 @@ export interface Deps {
   readonly cwd: string
   readonly now: () => Date
   readonly prState?: (repo: string, pr: number) => string | undefined
+  readonly openPrs?: OpenPrReader
 }
 
 export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
@@ -359,9 +486,12 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     io.err(`succession: no dispatch record at ${parsed.record}\n`)
     return 2
   }
-  const name = orchForm(parsed.name || (readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() || '')
+  const owner = orchForm((readText(ownerFileOf(parsed.record)) ?? '').split('\n')[0]?.trim() ?? '')
+  // An owner file that names no orchestration (empty, torn, a note) leaves the session's own: the
+  // successor's name is the predecessor's, the host's reference left off.
+  const name = parsed.name !== '' ? orchForm(parsed.name) : parseSessionName(owner)?.role === 'orchestrator' ? owner : sessionOrchestration(env)
   if (name === '') {
-    io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration: pass --name "<Orch: x>"\n`)
+    io.err(`succession: ${ownerFileOf(parsed.record)} names no orchestration: pass --name "<Orch: x>" (this session is no orchestration either)\n`)
     return 2
   }
   const template = readText(TEMPLATE)
@@ -375,7 +505,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const rulings = prune(rulingsFile, new Set(all.filter(row => row['state'] === 'closed').map(row => Number(row['id']))), now, io)
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
-  const open = readOpen(request, env)
+  const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env))
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
   const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine }

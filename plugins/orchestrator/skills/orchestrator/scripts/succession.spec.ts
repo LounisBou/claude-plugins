@@ -332,3 +332,72 @@ test('a takeover in a worktree names its project by origin, prints the not-insta
   assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, now: () => NOW, prState: () => undefined }), 0)
   assert.match(out.join(''), /- Row owners: 1 READY NOT STARTED\n/)
 })
+
+/** The record of an orchestration that predates `dispatch-record.sh pr`: its open row names no pull request, only the heads its review recorded; the ledger is empty and the owner file names no orchestration. */
+function flowWorld() {
+  const head = 'b'.repeat(40)
+  const fixed = 'c'.repeat(40)
+  const rows = [
+    JSON.stringify({ id: 41, label: 'review flow#30 P14 tokens', state: 'closed' }),
+    JSON.stringify({ id: 42, label: 'ggf P15 infra sync prod: pre-flight', state: 'open', verdict: '', review: { head, norms: 'tool', at: '2026-11-03T16:03:31Z', fixed: { head: fixed, at: '2026-11-03T16:37:39Z' } }, surface: { kind: 'none', pr: '', reason: '', at: '2026-11-03T16:03:31Z' } }),
+    JSON.stringify({ id: 46, label: 'ggf P16 release in conflict with main', state: 'open', verdict: '' }),
+  ].join('\n') + '\n'
+  const deck = { version: 3, orchestrators: [{ name: 'Orch: flow', machine: null, repo: 'acme/flow', prs: [], agents: [] }] }
+  const w = world({ rows, deck, round: [], todo: '' })
+  writeFileSync(`${w.record}.owner`, '')
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'sessions'), { recursive: true })
+  writeFileSync(join(config, 'sessions', '7.json'), '{"sessionId":"s-flow","name":"Orch: flow [88d177]","updatedAt":9}')
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 's-flow' }
+  const forge: Record<string, { repo: string; pr: number; head: string }[]> = {
+    'acme/flow': [{ repo: 'acme/flow', pr: 31, head: fixed }, { repo: 'acme/flow', pr: 40, head: 'd'.repeat(40) }],
+  }
+  const asked: string[] = []
+  const takeover = (openPrs?: (repo: string) => { repo: string; pr: number; head: string }[] | undefined) => {
+    w.out.length = 0
+    const code = main(['takeover', w.record, '--mode', 'build'], env, { out: t => { w.out.push(t) }, err: t => { w.err.push(t) } }, {
+      cwd: dir, now: () => NOW, prState: () => undefined, openPrs: openPrs ?? (repo => { asked.push(repo); return forge[repo] ?? [] }),
+    })
+    return { code, text: w.text() }
+  }
+  return { w, takeover, asked, record: w.record }
+}
+
+test('a record that names no pull request on its row: the open pull request it holds is found by the head its review recorded, and its row is owned', () => {
+  const f = flowWorld()
+  const { code, text } = f.takeover()
+  assert.equal(code, 0)
+  assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#31 open, no agent\n/)
+  assert.match(text, /- Row owners: 42 acme\/flow#31 open, no agent; 46 NO OWNER\n/)
+  assert.deepEqual(f.asked, ['acme/flow'])
+  assert.match(f.w.err.join(''), /takeover: .* prs=1 /)
+})
+
+test('an owner file that names no orchestration falls back to the session\'s own orchestration, the reference left off; the command line still wins', () => {
+  const f = flowWorld()
+  const { code, text } = f.takeover()
+  assert.equal(code, 0)
+  assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: flow`.'))
+  writeFileSync(`${f.record}.owner`, 'a hand-written note\n')
+  assert.ok(f.takeover().text.includes('of `Orch: flow`.'))
+  assert.equal(main(['takeover', f.record, '--mode', 'build', '--name', 'Orch: other'], {}, { out: t => { f.w.out.push(t) }, err: () => {} }, { cwd: dir, now: () => NOW, prState: () => undefined, openPrs: () => [] }), 0)
+  assert.ok(f.w.text().includes('of `Orch: other`.'))
+})
+
+test('a row\'s pull request named in its label by a short or a full repository, and the ledger\'s word on it; a repository the forge cannot read is said', () => {
+  const rows = [
+    JSON.stringify({ id: 1, label: 'FIX flow#30 tokens', state: 'open' }),
+    JSON.stringify({ id: 2, label: 'LATER acme/site#7 footer', state: 'open' }),
+    JSON.stringify({ id: 3, label: 'NOTE other#9 not a known repository', state: 'open' }),
+    ledger('acme/flow', 30, 'Agent: tokens'),
+  ].join('\n') + '\n'
+  const deck = { version: 3, orchestrators: [{ name: NAME, machine: null, repo: 'acme/flow', prs: [], agents: [] }] }
+  const w = world({ rows, deck, round: [], todo: '' })
+  const out: string[] = []
+  const forge = (repo: string) => (repo === 'acme/flow' ? [{ repo, pr: 30, head: 'a'.repeat(40) }] : undefined)
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
+  const text = out.join('')
+  assert.match(text, /- Row owners: 1 acme\/flow#30 en cours \(agent Agent: tokens\); 2 NO OWNER; 3 NO OWNER\n/)
+  assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#30 en cours \(agent Agent: tokens\); acme\/site open pull requests unread\n/)
+})
