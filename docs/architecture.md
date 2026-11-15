@@ -212,6 +212,7 @@ release still raises the versions other machines install.
 | rules a prompt states that nothing holds (a report in the run's summary; a line of the weekly report) | `npm run rules` |
 | the release prints the balance, then raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |
 | every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
+| each plugin's Python held to its coverage floor, lines and branches together, measured per plugin over every Python process its suite starts; a suite split in parts (the orchestrator's Linux shards) is measured only in the cell that runs it whole | `scripts/python-coverage.ts`, `ci/python-coverage.json` |
 | the repository rules and every blocking cell passed, as one check the default branch requires (`/github:protect apply ci`, once that job runs on `main`) | the `ci` job, named by `packages/core/src/readiness.ts` |
 
 What runs when (a pull request, the release, a push to `main`, the night) is the table at the head of
