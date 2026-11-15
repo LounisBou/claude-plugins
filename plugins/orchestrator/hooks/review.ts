@@ -45,6 +45,48 @@ const ROW_RUN_MS = 10_000
 // What stands in github's answer for the detail the verdict sent, which it repeats.
 const ECHOED_DETAIL = 'the detail sent'
 
+// github's line of the gate, cut to its verdict: « Ready at <head> », or « Not Ready at <head>.
+// Missing: <what> » without the review's own words, which the orchestrator wrote and knows. A line
+// of another shape is left whole.
+export function gateWords(line: string): string {
+  const ready = /^github: \S+ ((?:back to draft, then )?Ready at \w+)(?::|$)/.exec(line)
+  if (ready?.[1] !== undefined) {
+    // What the gate carried from an earlier head, or the operator waived, is not the orchestrator's own review: said.
+    const carried = /\((?:[^()]|\([^()]*\))*(?:carried from|waived by the operator)(?:[^()]|\([^()]*\))*\)\.$/.exec(line)?.[0]
+    return carried === undefined ? ready[1] : `${ready[1]} ${carried.slice(0, -1)}`
+  }
+  const missing = /^github: \S+ (not Ready yet|back to Not Ready) at (\w+)\. (?:.*?\. )?(Missing: .*)$/.exec(line)
+  if (missing?.[1] === undefined || missing[2] === undefined || missing[3] === undefined) return line
+  const state = missing[1] === 'not Ready yet' ? 'Not Ready' : 'back to Not Ready'
+  return `${state} at ${missing[2]}. ${missing[3].split(` by orchestrator, ${ECHOED_DETAIL}`).join('')}`
+}
+
+// The row, as one short piece: the round the count raised and the verdict the row took, when each
+// is said in the form of its writer. What is not that form (a count that raised none, a warning, a
+// row line of another shape) is returned in `extra`, whole. `rowLine` is the record script's output
+// of a row written, null when none was.
+export function rowWords(counted: string, rowLine: string | null): { piece: string; extra: string[] } {
+  const raised = /^rounds: row (\d+) of .+ raised to (\d+)$/.exec(counted)
+  const [first = '', ...rest] = rowLine === null ? [] : rowLine.split('\n')
+  const written = /^row (\d+): (\w+) — /.exec(first)
+  const extra = [...(raised === null ? [counted] : []), ...(rowLine === null ? [] : written === null ? [rowLine] : rest)].filter(Boolean)
+  if (raised !== null && written !== null && raised[1] === written[1]) return { piece: `row ${written[1]}: ${written[2]}, round ${raised[2]}`, extra }
+  const pieces = [raised === null ? '' : `row ${raised[1]} round ${raised[2]}`, written === null ? '' : `row ${written[1]}: ${written[2]}`]
+  return { piece: pieces.filter(Boolean).join(' · '), extra }
+}
+
+// The verdict's answer: the record's path line, which the audit reads, then one line, the gate's
+// verdict and the row. A github line of an unknown shape and every warning stay as they are.
+export function answerLines(gate: string, counted: string, rowLine: string | null): string {
+  const lines = gate.split('\n')
+  const at = lines.map((l) => l.startsWith('github: ')).lastIndexOf(true)
+  const { piece, extra } = rowWords(counted, rowLine)
+  const said = lines.map((l) => (l.startsWith('github: ') ? gateWords(l) : l))
+  if (at >= 0 && piece !== '') said[at] = `${said[at]} · ${piece}`
+  else if (piece !== '') said.push(piece)
+  return [...said, ...extra].join('\n')
+}
+
 type RowTarget = { record: string; row: number; findings: string }
 
 // The dispatch record's row a verdict writes level 1 into: null with no record named, or the line
@@ -90,6 +132,8 @@ async function writeRow($: Held, input: Record<string, unknown>, target: RowTarg
   const argv = [
     'bash', `${$.plugin.root}/skills/orchestrator/scripts/dispatch-record.sh`, 'verdict', target.record, String(target.row),
     '--head', sha, '--result', text(input['verdict']), '--words', wordsOf(input), ...(target.findings ? ['--findings', target.findings] : []),
+    // This verdict is the review of that head: the row needs no `review` first.
+    '--reviewed',
   ]
   const run = await $.process.run(argv, { env, timeoutMs: ROW_RUN_MS })
   // A warning of a write that succeeded (a row no review touched) rides the line.
@@ -230,12 +274,13 @@ export function register(on: On<Held>): void {
     const answer = sent ? { result: written.result.split(`orchestrator (${sent})`).join(`orchestrator (${ECHOED_DETAIL})`)
       .split(`orchestrator, ${sent}`).join(`orchestrator, ${ECHOED_DETAIL}`) } : written
     const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
-    if (target === null) return { result: `${answer.result}\n${counted}` }
+    if (target === null) return { result: answerLines(answer.result, counted, null) }
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
     // fails is a warning on a success, never an error, so the audit trail keeps the verdict
     // (audit-events.ts answerText) and nobody writes the record twice.
     const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
-    return { result: `${answer.result}\n${counted}\n${row.ok ? row.line : `WARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}`}` }
+    if (row.ok) return { result: answerLines(answer.result, counted, row.line) }
+    return { result: `${answerLines(answer.result, counted, null)}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }

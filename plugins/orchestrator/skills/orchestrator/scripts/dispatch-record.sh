@@ -4,7 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--blocker <b>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> [--norms tool|none]
-#   dispatch-record.sh verdict <record> <id> --head <sha> --result <pass|fail|accepted> --words "<a few words>" [--findings <index path>]
+#   dispatch-record.sh verdict <record> <id> --head <sha> --result <pass|fail|accepted> --words "<a few words>" [--findings <index path>] [--reviewed]
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
