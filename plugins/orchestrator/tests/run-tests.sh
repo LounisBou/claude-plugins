@@ -10320,8 +10320,8 @@ check "two orchestrators in one checkout are still a pull request collision; a f
   "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
-mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts"
-cp "$COORD" "$CT/coordinator/scripts/"
+mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts" "$WORK/coord-tree/core"
+cp "$COORD" "$CT/coordinator/scripts/" && cp "$ROOT/core/names.json" "$WORK/coord-tree/core/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"

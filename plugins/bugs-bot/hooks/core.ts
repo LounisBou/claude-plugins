@@ -18,13 +18,13 @@ export const STEP_TIMEOUT_MS = 60_000
 
 // The ListAgents text is core's (orchestration.ts).
 export { peersOf, selfOf } from '../core/orchestration.ts'
+import { currentSessionName } from '../core/names.ts'
 
 // A live row « named as agent_title (or a variant of it) »: the same words, case
-// and spacing aside, or the title followed by more words (a host suffix). A blank
-// before a colon is spacing too: a title registered in the former « Agent : x »
-// names the session the launcher now titles « Agent: x ».
+// and spacing aside, or the title followed by more words (a host suffix); a title in the
+// former « Agent : x » is the session now titled « Agent: x » (core's names.ts).
 export function isAgentRow(name: string, agentTitle: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').replace(/ :/g, ':').trim()
+  const norm = (s: string) => currentSessionName(s.replace(/\s+/g, ' ').trim()).toLowerCase()
   const n = norm(name)
   const t = norm(agentTitle)
   return t !== '' && (n === t || n.startsWith(t + ' '))
