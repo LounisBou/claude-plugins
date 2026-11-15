@@ -62,6 +62,8 @@ export type RecordFile = { name: string; text: string }
 // The record contract is core's (pr-record.json); its kinds are re-exported for the module's readers.
 export { KINDS } from '../core/pr-record.ts'
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
 // The labels, compared without regard to case as GitHub does.
 export const READY = 'ready'
 export const NOT_READY = 'not ready'
@@ -91,13 +93,14 @@ const VALUED: Record<string, string[]> = {
   ],
 }
 
-type Parsed = { repo?: string; opts: Array<[string, string | undefined]>; positionals: string[] }
+// `repo` is present and undefined when `-R` ends the words with no value.
+type Parsed = { repo?: string | undefined; opts: Array<[string, string | undefined]>; positionals: string[] }
 
 // The options and positionals of a gh command's words, -R wherever it stands.
 function parseWords(words: string[], valued: string[]): Parsed {
   const out: Parsed = { opts: [], positionals: [] }
   for (let k = 0; k < words.length; k++) {
-    const word = words[k]
+    const word = words[k] ?? ''
     if (word === '-R' || word === '--repo') {
       out.repo = words[++k]
       continue
@@ -130,12 +133,12 @@ function has(parsed: Parsed, ...flags: string[]): boolean {
 function flagSet(parsed: Parsed, ...flags: string[]): boolean {
   const given = parsed.opts.filter(([flag]) => flags.includes(flag))
   if (given.length === 0) return false
-  const value = given[given.length - 1][1]
+  const value = given[given.length - 1]?.[1]
   return value === undefined || !/^(false|f|0)$/i.test(value)
 }
 
 function values(parsed: Parsed, ...flags: string[]): string[] {
-  return parsed.opts.filter(([flag, value]) => flags.includes(flag) && value !== undefined).map(([, value]) => value as string)
+  return parsed.opts.flatMap(([flag, value]) => (flags.includes(flag) && value !== undefined ? [value] : []))
 }
 
 // The pull request a gh pr command names by its first positional: a number,
@@ -154,15 +157,16 @@ function prAct(argv: string[]): Act | undefined {
   let k = 1
   const named: number[] = []
   while (k < argv.length && named.length < 2) {
-    const word = argv[k]
+    const word = argv[k] ?? ''
     if (word === '-R' || word === '--repo') { k += 2; continue }
     if (word.startsWith('-')) { k++; continue }
     named.push(k++)
   }
-  if (named.length < 2 || argv[named[0]] !== 'pr') return undefined
-  const noun = argv[named[0]]
-  const verb = argv[named[1]]
-  const words = argv.filter((_w, i) => i > 0 && i !== named[0] && i !== named[1])
+  const [nounAt, verbAt] = named
+  if (nounAt === undefined || verbAt === undefined || argv[nounAt] !== 'pr') return undefined
+  const noun = argv[nounAt] ?? ''
+  const verb = argv[verbAt] ?? ''
+  const words = argv.filter((_w, i) => i > 0 && i !== nounAt && i !== verbAt)
   const parsed = parseWords(words, VALUED[verb] ?? [])
   const repo = parsed.repo
   const base: Act = { kind: 'merge', name: 'gh ' + noun + ' ' + verb, ...(repo ? { repo: repoOf(repo) ?? repo } : {}) }
@@ -199,19 +203,18 @@ const GRAPHQL = /^(?:https?:\/\/[^/]+(?:\/api)?\/|\/)?graphql\/?$/
 // `@file` and types the rest.
 function apiFields(parsed: Parsed): Array<{ name: string; value: string; typed: boolean }> {
   return parsed.opts
-    .filter(([flag, value]) => ['-f', '--raw-field', '-F', '--field'].includes(flag) && value !== undefined)
-    .map(([flag, value]) => {
-      const text = value as string
+    .flatMap(([flag, text]) => {
+      if (!['-f', '--raw-field', '-F', '--field'].includes(flag) || text === undefined) return []
       const at = text.indexOf('=')
-      return { name: at === -1 ? text : text.slice(0, at), value: at === -1 ? '' : text.slice(at + 1), typed: flag === '-F' || flag === '--field' }
+      return [{ name: at === -1 ? text : text.slice(0, at), value: at === -1 ? '' : text.slice(at + 1), typed: flag === '-F' || flag === '--field' }]
     })
 }
 
 // The labels one field's value names: a JSON list (`["Ready"]`), or names split on commas.
 function labelsIn(value: string): string[] {
   try {
-    const parsed = JSON.parse(value)
-    if (Array.isArray(parsed)) return parsed.map((item) => (typeof item === 'string' ? item : String(item?.name ?? '')))
+    const parsed: unknown = JSON.parse(value)
+    if (Array.isArray(parsed)) return parsed.map((item: unknown) => (typeof item === 'string' ? item : String((isRecord(item) ? item['name'] : undefined) ?? '')))
     if (typeof parsed === 'string') return [parsed]
   } catch {
     // Not JSON: names split on commas.
@@ -266,7 +269,8 @@ function apiAct(argv: string[]): Act | undefined {
 // opened or put back is the engine's to label, as it does for the tool.
 function engineAct(call: EngineCall): Act | undefined {
   const repo = call.repo ? repoOf(call.repo) ?? call.repo : undefined
-  const number = /^#?\d+$/.test(call.positionals[0] ?? '') ? Number(call.positionals[0].replace('#', '')) : undefined
+  const first = call.positionals[0] ?? ''
+  const number = /^#?\d+$/.test(first) ? Number(first.replace('#', '')) : undefined
   const at = (kind: ActKind, extra: Partial<Act> = {}): Act => ({
     kind, name: 'gh.py ' + call.command, ...(repo ? { repo } : {}), ...(number !== undefined ? { pr: number } : { unreadable: true }), ...extra,
   })
@@ -317,12 +321,12 @@ export function bashActs(line: string): Act[] {
 
 // The act of a call of the tool, or undefined.
 export function toolAct(command: string, args: Record<string, unknown>): Act | undefined {
-  const pr = args.pr === undefined || args.pr === null ? undefined : Number(String(args.pr).replace('#', ''))
+  const pr = args['pr'] === undefined || args['pr'] === null ? undefined : Number(String(args['pr']).replace('#', ''))
   const at = (kind: ActKind, extra: Partial<Act> = {}): Act => ({ kind, name: command, ...(pr !== undefined ? { pr } : {}), ...extra })
   if (command === 'pr-ready') return at('undraft')
   if (command === 'pr-draft') return at('redraft')
-  if (command === 'pr-merge') return at('merge', typeof args.sha === 'string' ? { sha: args.sha } : {})
-  if (command === 'pr-create') return { kind: args.draft === false ? 'create' : 'create-draft', name: command }
+  if (command === 'pr-merge') return at('merge', typeof args['sha'] === 'string' ? { sha: args['sha'] } : {})
+  if (command === 'pr-create') return { kind: args['draft'] === false ? 'create' : 'create-draft', name: command }
   return undefined
 }
 
@@ -354,15 +358,16 @@ function ghLabelling(argv: string[]): Labelling | undefined {
   let k = 1
   const named: number[] = []
   while (k < argv.length && named.length < 2) {
-    const word = argv[k]
+    const word = argv[k] ?? ''
     if (word === '-R' || word === '--repo') { k += 2; continue }
     if (word.startsWith('-')) { k++; continue }
     named.push(k++)
   }
-  if (named.length < 2) return undefined
-  const noun = argv[named[0]]
-  const verb = argv[named[1]]
-  const words = argv.filter((_w, i) => i > 0 && i !== named[0] && i !== named[1])
+  const [nounAt, verbAt] = named
+  if (nounAt === undefined || verbAt === undefined) return undefined
+  const noun = argv[nounAt] ?? ''
+  const verb = argv[verbAt] ?? ''
+  const words = argv.filter((_w, i) => i > 0 && i !== nounAt && i !== verbAt)
   const name = 'gh ' + noun + ' ' + verb
   if (noun === 'label') {
     if (verb !== 'edit' && verb !== 'delete' && verb !== 'clone') return undefined
@@ -403,7 +408,7 @@ function apiLabelling(argv: string[]): Labelling | undefined {
   // A -F value `@file` is read from the file: its labels are not on the line.
   const unread = (...prefixes: string[]) => input || prefixes.some((prefix) => naming(prefix).some((field) => field.typed && field.value.startsWith('@')))
   const one = ONE_LABEL_PATH.exec(path) ?? REPO_LABEL_PATH.exec(path)
-  if (one) return at(one, [decoded(one[3]), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
+  if (one) return at(one, [decoded(one[3] ?? ''), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
   const all = LABELS_PATH.exec(path)
   if (all) return at(all, named('labels'), unread('labels') || method === 'DELETE')
   const issue = ISSUE_PATH.exec(path)
@@ -432,7 +437,7 @@ export function bashLabellings(line: string): Labelling[] {
 // The labelling of a call of the tool: label-add and label-remove.
 export function toolLabelling(command: string, args: Record<string, unknown>): Labelling | undefined {
   if (command !== 'label-add' && command !== 'label-remove') return undefined
-  const named = [args.label, args.names, args.name].flatMap((v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]))
+  const named = [args['label'], args['names'], args['name']].flatMap((v): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]))
   return { name: command, labels: splitLabels(named.map(String)) }
 }
 
@@ -453,7 +458,7 @@ export function pushOf(argv: string[]): Push | undefined {
   }
   const positionals: string[] = []
   for (let k = git.at + 1; k < argv.length; k++) {
-    const word = argv[k]
+    const word = argv[k] ?? ''
     if (word === '--') { positionals.push(...argv.slice(k + 1)); break }
     if (['--all', '--branches', '--mirror', '--tags', '--delete', '-d', '--prune'].includes(word)) {
       return { branches: [], unsure: 'the push names no single branch (' + word + ')' }
@@ -505,9 +510,10 @@ export function createdPr(stdout: string): { repo: string; pr: number } | undefi
 
 // pr-gate's answer, or a throw naming what is wrong with it.
 export function parseGate(text: string): Gate {
-  const gate = JSON.parse(text)
-  if (!gate || typeof gate !== 'object' || typeof gate.head !== 'string' || !/^[0-9a-f]{40}$/.test(gate.head)
-    || typeof gate.state !== 'string' || !Array.isArray(gate.labels) || !gate.ci || typeof gate.ci.result !== 'string') {
+  const gate: unknown = JSON.parse(text)
+  const ci = isRecord(gate) ? gate['ci'] : undefined
+  if (!isRecord(gate) || typeof gate['head'] !== 'string' || !/^[0-9a-f]{40}$/.test(gate['head'])
+    || typeof gate['state'] !== 'string' || !Array.isArray(gate['labels']) || !isRecord(ci) || typeof ci['result'] !== 'string') {
     throw new Error('pr-gate answered no head, state, labels and ci')
   }
   return gate as Gate

@@ -15,7 +15,7 @@ import { logLine } from './module-io.ts'
 import { observed, RENAME_PENDING_CODE } from './observe.ts'
 
 // The nouns naming holds.
-type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt'>
+type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt' | 'fs' | 'clock'>
 
 // The tool's short name: the model calls it as mcp__orchestrator__rename_session.
 export const RENAME_TOOL = 'rename_session'

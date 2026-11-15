@@ -59,7 +59,7 @@ unset CLAUDE_CODE_SESSION_ID TMUX TMUX_PANE
 # it. A suite run from inside an auditor, an agent or a spawned orchestrator must read none of
 # it; a case that needs a role sets it on its own command. `--role-probe` prints the names of
 # the role variables the suite still sees at its start, none when it cleared them all.
-ROLE_VARS='ORCHESTRATOR_SPAWNED ORCHESTRATOR_AUDITOR ORCHESTRATOR_REPORTS_TO ORCHESTRATOR_BRIEF ORCHESTRATOR_CONTEXT_GATE ORCHESTRATOR_CONTEXT_GATE_TOKENS ORCHESTRATOR_SELF_ID ORCHESTRATOR_NEW_SESSION_ID'
+ROLE_VARS='ORCHESTRATOR_SPAWNED ORCHESTRATOR_AUDITOR ORCHESTRATOR_REPORTS_TO ORCHESTRATOR_BRIEF ORCHESTRATOR_TIER ORCHESTRATOR_CONTEXT_GATE ORCHESTRATOR_CONTEXT_GATE_TOKENS ORCHESTRATOR_SELF_ID ORCHESTRATOR_NEW_SESSION_ID'
 # shellcheck disable=SC2086
 unset $ROLE_VARS
 if [ "${1:-}" = --role-probe ]; then
@@ -237,6 +237,7 @@ shaped() {
 # the irreversible acts stay guarded: a merge is never the coordinator's, and a tab is closed
 # only by title, the predecessor's, before the successor registers.
 COORDSKILL="$ROOT/skills/coordination/SKILL.md"
+COORDREF="$ROOT/skills/coordination/references/orchestrators.md"
 COORDCMD="$ROOT/commands/coordinator.md"
 COORDEND="$ROOT/commands/coordinator-end.md"
 COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
@@ -276,6 +277,16 @@ case "${SUITE_SHARD:-1}" in 1|2|3|4) ;; *) echo "SUITE_SHARD is 1, 2, 3 or 4, no
 shard_has() { [ -z "${SUITE_SHARD:-}" ] || [ "$SUITE_SHARD" = "$1" ]; }
 
 if shard_has 1; then
+echo "== the hooks module's tests =="
+
+# The module's own tests (hooks/tests/*.test.ts) run only in the host's kit. Without `claude` the
+# check fails: it does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to run the module's tests" "found" "absent"
+fi
+
 echo "== suite environment =="
 
 # The suite started from inside a role reads the same as one started outside it: every role
@@ -3595,24 +3606,6 @@ check "the command reference states the title shape once" "1|no|no" \
 # transcript with or without --inherit-model, and the measure file feeds no launch.
 check "no text still says the opening takes the deep tier, the succession depends on --inherit-model or the measure file feeds it" "0|0|0" \
   "$(grep -c 'on the deep tier unless told' "$ROOT/docs/design.md")|$(grep -cE 'whether or not (it is typed|--inherit-model)|^ *# +--inherit-model is typed' "$ITERMCMDS")|$(grep -c -- "launcher's \`--inherit-model\` takes the model" "$ROOT/README.md")"
-# One exception, the operator's order: the rulebook and the decision round route a question for
-# him through a running coordinator. They name it in that one paragraph and nowhere else.
-coordinator_named_in() { # <root>
-  ( cd "$1" && grep -rln -i --exclude-dir=__pycache__ 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/succeed.md commands/audit.md | grep -v '^skills/orchestrator/SKILL.md$' )
-}
-check "no orchestrator, launcher or brief-template text names the coordinator" "" \
-  "$(coordinator_named_in "$ROOT")"
-# A byte-compiled script left under __pycache__ by an earlier run is not text of the plugin:
-# the verdict is the same whether or not one lies in the tree.
-PYC="$WORK/pycache-trap"
-mkdir -p "$PYC/skills" "$PYC/templates" "$PYC/commands"
-cp -R "$ROOT/skills/orchestrator" "$ROOT/skills/iterm-agents" "$PYC/skills/"
-cp "$ROOT"/templates/agent-*.md "$ROOT/templates/orchestrator-succession-brief.md" "$PYC/templates/"
-cp "$ROOT/commands/succeed.md" "$ROOT/commands/audit.md" "$PYC/commands/"
-mkdir -p "$PYC/skills/orchestrator/scripts/__pycache__"
-printf 'x\0coordinat\0' > "$PYC/skills/orchestrator/scripts/__pycache__/draft_guard.cpython-311.pyc"
-check "a stray __pycache__ does not change the coordinator check" "" "$(coordinator_named_in "$PYC")"
-rm -rf "$PYC"
 coord_outside_routing() {
   awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
@@ -3702,8 +3695,8 @@ check "the round puts the urgent first, then groups its questions by the orchest
 # a question asked with `ask`; a closing proposal's close sends nothing. The header and the design say so.
 check "the header and the design send a question's answer in the settle call, not at the next reading" "yes|yes|no|yes|no" \
   "$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "sends a question asked with \`ask\` its answer in the same call")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "close of a closing proposal sends nothing")|$(spells "$ROOT/skills/coordinator/scripts/coordinator.sh" "the coordinator's hooks module sends the answer at")|$(spells "$ROOT/docs/design.md" 'sends its asker the answer in the same call')|$(spells "$ROOT/docs/design.md" 'sends that answer at its next round reading')"
-check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>` », then the sender'"'"'s')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')|$(spells "$COORDCMD" 'With your questions, send three to five sentences')"
+check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>` », then the sender'"'"'s')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')"
 # Rule 219: the paragraph on the coordinator, up to its 2026-11-03 sentence, lightened from 650.
 # 400 until the sender's account came back (the operator's ruling of 2026-11-04, « restore
 # everything and fix », after an independent control).
@@ -4029,6 +4022,10 @@ gspawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRAT
 out=$(gspawn --prompt p --gate-tokens 200000)
 check "--gate-tokens exports the gate in the launch" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
 check "without --gate-tokens an agent's launch exports the 240000 gate" "1" "$(gspawn --prompt p | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && ')"
+# The tier a session is launched on is exported by its name, for what records its events; a
+# launch by a model's name exports none.
+check "--tier exports the tier's name in the launch, --model none" "1|0" \
+  "$(gspawn --prompt p --tier light | grep -c '^launch=.*export ORCHESTRATOR_TIER=light && ')|$(gspawn --prompt p --model a-model --effort medium | grep -c 'ORCHESTRATOR_TIER=')"
 check "--gate-tokens on an agent wins over the 240000 default" "1|0" \
   "$(gspawn --prompt p --gate-tokens 150000 | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 && ')|$(gspawn --prompt p --gate-tokens 150000 | grep -c 'GATE_TOKENS=240000')"
 check "an orchestrator's, an auditor's and a coordinator's launch export no gate" "0|0|0" \
@@ -10310,8 +10307,8 @@ check "two orchestrators in one checkout are still a pull request collision; a f
   "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
-mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts"
-cp "$COORD" "$CT/coordinator/scripts/"
+mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts" "$WORK/coord-tree/core"
+cp "$COORD" "$CT/coordinator/scripts/" && cp "$ROOT/core/names.json" "$WORK/coord-tree/core/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
@@ -10389,23 +10386,23 @@ check "the tool's description and the coordinator's rulebook open and close the 
   "$(spells "$ROOT/hooks/supervision.ts" "when the operator says to start, launch or open the supervision, or to end, stop or close it.")|$(flat_has "$COORDSKILL" "When the operator says to start, launch or open the supervision, call \`mcp__orchestrator__supervision\` with \`open\`; to end, stop or close it, with \`close\`.")"
 SLCMD="$ROOT/commands/sleeping.md"
 check "pause, wake and drop are the operator's word only, never the coordinator's or a peer's" "yes|yes" \
-  "$(flat_has "$COORDSKILL" "**Pause, wake and drop are the operator's word only**")|$(flat_has "$COORDSKILL" "Never your own initiative, never a peer's request, never to make room.")"
+  "$(flat_has "$COORDREF" "**Pause, wake and drop are the operator's word only**")|$(flat_has "$COORDREF" "Never your own initiative, never a peer's request, never to make room.")"
 check "the coordinator closes a paused orchestrator, which spawns no successor and closes nothing" "yes|yes|yes" \
-  "$(flat_has "$COORDSKILL" "**You close it**, as a successor closes its predecessor")|$(flat_has "$COORDSKILL" "Spawn no successor and do not close yourself: I close your tab.")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "You spawn NO successor and you do not close yourself")"
+  "$(flat_has "$COORDREF" "**You close it**, as a successor closes its predecessor")|$(flat_has "$COORDREF" "Spawn no successor and do not close yourself: I close your tab.")|$(flat_has "$ORCH_REFS/pause-opening-move.md" "You spawn NO successor and you do not close yourself")"
 check "a pause refused or failing is told to the operator, and that orchestrator is not closed" "yes" \
-  "$(flat_has "$COORDSKILL" "an orchestrator not proved paused-ready is never closed")"
+  "$(flat_has "$COORDREF" "an orchestrator not proved paused-ready is never closed")"
 # A pause is recorded with its model and effort or not at all (coordinator.sh sleep refuses
 # one without its effort): a pair the paused orchestrator cannot read is a refused pause.
 check "a pause whose pair cannot be read is answered pause-refused, in both texts" "yes|yes" \
-  "$(flat_has "$COORDSKILL" 'If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'or a pair `iterm-agent.sh pair` cannot read (it exits 1 and says why) is answered `pause-refused <reason>`')"
-check "a sleeping orchestrator is not missing, and its record outlives the coordinator" "yes|yes|yes" \
-  "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDTPL" "outlives every succession, and nothing in it is woken or dropped but on his word")|$(flat_has "$COORDEND" "the sleeping record is kept")"
+  "$(flat_has "$COORDREF" 'If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'or a pair `iterm-agent.sh pair` cannot read (it exits 1 and says why) is answered `pause-refused <reason>`')"
+check "a sleeping orchestrator is not missing, and its record outlives the coordinator" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDEND" "the sleeping record is kept")"
 check "a woken orchestrator skips the handshake with a predecessor already gone" "yes|yes" \
   "$(flat_has "$SUCC" "**Woken from a pause**")|$(flat_has "$SUCC" "step 4 is void — no « takeover confirmed », nothing to close")"
 # A pause writes no brief: the paused orchestrator replies with its dispatch record and its mode,
 # and the wake runs the takeover on that record, as a successor does.
 check "a pause replies with its dispatch record and mode, and the wake runs the takeover on it" "yes|yes|yes|no|no" \
-  "$(flat_has "$COORDSKILL" 'reply `paused-ready <dispatch record path> mode=<your mode> model=<model> effort=<effort>`')|$(flat_has "$COORDSKILL" 'succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'No brief is written: you reply `paused-ready <dispatch record path> mode=<your mode>')|$(flat_has "$COORDSKILL" 'standing succession brief')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'standing succession brief')"
+  "$(flat_has "$COORDREF" 'reply `paused-ready <dispatch record path> mode=<your mode> model=<model> effort=<effort>`')|$(flat_has "$COORDREF" 'succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'No brief is written: you reply `paused-ready <dispatch record path> mode=<your mode>')|$(flat_has "$COORDSKILL" 'standing succession brief')|$(flat_has "$ORCH_REFS/pause-opening-move.md" 'standing succession brief')"
 check "the sleeping command lists, asks one confirmation before a drop, and leaves the operator's things alone" "yes|yes|yes|yes" \
   "$(flat_has "$SLCMD" "The hooks module answers it on the spot, with no model turn")|$(flat_has "$SLCMD" "**Ask one confirmation**, naming what is left behind")|$(flat_has "$SLCMD" "It does NOT touch the pull requests, their branches or the checkouts: closing those is the operator's.")|$(flat_has "$SLCMD" "moved, never deleted, so a slip loses nothing")"
 check "the drop runs only on his yes, after the turn ends" "1" \
@@ -10586,11 +10583,8 @@ cp "$CS/pane.json" "$GSTATE/pane.json"
 : > "$GCFG/claude-orchestrator/store/sessions/s_odd_1"
 check "round says the sender is gone on the header of an entry whose sessions file is absent, and still prints the entry" \
   "round live | operator | from Orch: live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
-    Ship it?
 round ended | operator | from Orch: ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open | sender gone
-    Ship it?
-round odd | operator | from Orch: odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
-    Ship it?" \
+round odd | operator | from Orch: odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
 # ORCHESTRATOR_MODULE_DIR moves the module's store, as the hooks module reads it: the same
 # round reads its live senders there, and the config dir's store is not read.
@@ -10851,6 +10845,9 @@ mkdir -p "$WORK/coord-openonly/round"
 jq -n '{id:"only", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-24T10:00:00.000Z", blocks:"phase 3", question:"Ask only?", choices:[], recommendation:null, status:"open", at:"2026-10-24T10:00:00.000Z", answer:null}' > "$WORK/coord-openonly/round/only.json"
 check "a round with nothing settled prints no count line" "no|1" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -q '^settled:' && echo yes || echo no)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round 2>&1 | grep -c '^round only ')"
+oround() { ORCHESTRATOR_STATE_DIR="$WORK/coord-openonly" bash "$COORD" round "$@" 2>&1; }
+check "round prints the text of a question only once it is due; --by-urgency and --all always" "1|0|1|1|1" \
+  "$(oround | grep -c '^    Ask only?')|$(printf '{"session":"s-coord","pid":"%s","at":"2026-10-24T10:00:00.000Z"}\n' "$$" > "$WORK/coord-openonly/pane.json"; oround | grep -c '^    Ask only?')|$(oround | grep -c '^round only ')|$(oround --by-urgency | grep -c '^    Ask only?')|$(oround --all | grep -c '^    Ask only?'; rm -f "$WORK/coord-openonly/pane.json")"
 check "the default round is shorter than the round --all prints" "yes" \
   "$(a=$(uround_open | wc -c); b=$(uround | wc -c); [ "$a" -lt "$b" ] && echo yes || echo "$a of $b")"
 # One order everywhere, the ruling's (6.2): round without the flag prints what --by-urgency prints.

@@ -4325,7 +4325,7 @@ def host_cuts(role):
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
                   drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
-                  caller_plugins=None, reports_to="", brief="", extra_settings=None):
+                  caller_plugins=None, reports_to="", brief="", extra_settings=None, tier=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -4354,6 +4354,11 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # names a live owner for this session's tty: a chain outlives its owner's tab, and an
         # orchestrator relaunched without --successor leaves its agents in a dead one.
         parts.insert(2, "export ORCHESTRATOR_REPORTS_TO=%s" % shq(reports_to))
+    if tier:
+        # The capability tier the session was launched on, for what records its events
+        # (telemetry reads it by the name core's ENV declares). A launch by a model's name,
+        # or on the caller's own pair, exports none.
+        parts.insert(2, "export ORCHESTRATOR_TIER=%s" % shq(tier))
     if brief:
         # The brief the session starts on, measured by the module's gauge at its first measure
         # beside the starting context (the measure file's `start`).
@@ -5165,7 +5170,7 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
                            session_words, plugin_dirs, caller_plugins, args.orchestrator,
-                           start_brief)
+                           start_brief, tier=args.tier or "")
 
     if DRY_RUN:
         print("launch=%s" % launch)

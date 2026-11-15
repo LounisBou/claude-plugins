@@ -190,6 +190,25 @@ test('a non-zero gh.py exit returns isError with stderr', async ($, on) => {
   expect(out.result).toBe('error: not found')
 })
 
+test('a call that breaks the tool\'s schema is refused with what is wrong, and nothing runs', async ($, on) => {
+  const runs: any[] = []
+  await stubMod(on, runs, [])
+  await startSession($)
+
+  for (const [call, names] of [
+    [{ command: 5 }, '"command"'],
+    [{ command: '' }, '"command"'],
+    [{ command: 'pr-status', args: 'pr=12' }, '"args"'],
+    [{ command: 'pr-status', args: [12] }, '"args"'],
+    [{ command: 'pr-status', args: { pr: 12 }, repo: 12 }, '"repo"'],
+  ] as [Record<string, unknown>, string][]) {
+    const out = await $.tool.call({ tool: 'mcp__github__gh', ...call })
+    expect(out.isError, JSON.stringify(call)).toBe(true)
+    expect(String(out.result), JSON.stringify(call)).toContain('github: ' + names)
+  }
+  expect(runs).toEqual([])
+})
+
 test('a line gh.py prints on stderr after a success follows the tool output', async ($, on) => {
   const runs: any[] = []
   const writes: any[] = []

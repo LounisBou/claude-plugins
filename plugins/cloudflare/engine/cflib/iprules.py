@@ -156,7 +156,7 @@ def restore(ctx, saved):
 def register(subparsers):
     parser = subparsers.add_parser("ip-rules", help="the IP access rules of a zone")
     parser.add_argument("zone", help="zone name or id")
-    parser.set_defaults(handler=ip_rules, read=True)
+    parser.set_defaults(handler=ip_rules)
 
     for name, handler, what in (("ip-allow", ip_allow, "allow"), ("ip-block", ip_block, "block")):
         parser = subparsers.add_parser(name, help="%s an IP, a range, an AS number or a country" % what)
