@@ -135,7 +135,9 @@ export type Mock = {
 }
 
 export type TestBody = ($: Engine, on: TestOn) => unknown
-export type TestOptions = { readonly timeoutMs?: number }
+// Another plugin loaded beside the one under test, by its name and its entry point.
+export type Plugin = { readonly name: string; register(on: TestOn): void }
+export type TestOptions = { readonly timeoutMs?: number; readonly plugins?: readonly Plugin[] }
 
 export declare const test: (name: string, ...rest: readonly [body: TestBody] | readonly [options: TestOptions, body: TestBody]) => void
 export declare const describe: (name: string, body: () => void) => void
