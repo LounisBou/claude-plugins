@@ -14,7 +14,8 @@
 //   through, anything else (Deny, nobody there to answer) refuses it. A push the line does not show
 //   whole (a variable set before it, `env`, a substitution, xargs, a configuration given with -c)
 //   is read as forced. Words in a prompt never grant it: « don't push » holds the word too;
-// - a subagent's `rm`, `rmdir` or `find -delete`, and a line the reader cannot read, stay refused;
+// - a subagent's `rm`, `rmdir`, `unlink` or `find -delete` (or -exec of one), and a line the reader
+//   cannot read, stay refused;
 // - an interrupted turn ends the mode, and so do /clear and any other slash command the user submits;
 // - the mode is armed by the typed command (command.run) or by the main loop's Skill
 //   tool call that runs it, which no slash prompt follows: that one also ends at the
@@ -76,8 +77,9 @@ const HARMLESS_REDIRECT = /\d?>>?\s*\/dev\/null|\d?>&\d/g
 // The programs that delete a file: what they remove is gone for good.
 const DELETERS = new Set(['rm', 'rmdir', 'unlink'])
 
-export const AGENT_DELETE_REFUSAL = 'norms: a review agent never deletes during a walkthrough: no rm, rmdir or find -delete.'
-  + ' Use Read, Grep and Glob, or the <norms-context> block the plugin gave you.'
+const READ_INSTEAD = ' Use Read, Grep and Glob, or the <norms-context> block the plugin gave you.'
+export const AGENT_DELETE_REFUSAL = 'norms: a review agent never deletes during a walkthrough: no rm, rmdir, unlink or find -delete (find -exec included).' + READ_INSTEAD
+export const AGENT_UNREADABLE_REFUSAL = 'norms: this shell line cannot be read, so it is not known not to delete: a review agent splits it into lines that can be.' + READ_INSTEAD
 
 const baseOf = (word: string | undefined): string => (word ?? '').split('/').pop() ?? ''
 
@@ -95,12 +97,25 @@ function reads(argv: readonly string[]): boolean {
   return READERS.has(name)
 }
 
+// A word that runs a deleter, alone or inside a shell string (`sh -c "rm {}"`).
+const DELETER_WORD = /(^|[\s;&|(\/])(rm|rmdir|unlink)(\s|$)/
+
 // Whether a command deletes: rm, rmdir and unlink, `find -delete`, and a `find` that executes one of them.
 function deletes(argv: readonly string[]): boolean {
   const name = baseOf(argv[0])
   if (DELETERS.has(name)) return true
   if (name !== 'find') return false
-  return argv.some(a => a === '-delete') || (argv.some(a => ['-exec', '-execdir', '-ok', '-okdir'].includes(a)) && argv.some(a => DELETERS.has(baseOf(a))))
+  return argv.some(a => a === '-delete') || (argv.some(a => ['-exec', '-execdir', '-ok', '-okdir'].includes(a)) && argv.some(a => DELETER_WORD.test(a)))
+}
+
+// The argv of every command the line runs, a wrapper written with its directory (`/usr/bin/env rm`) skipped
+// and the line a shell or eval runs from a string read again, at any depth. Throws when it cannot be read.
+function unwrapped(command: string): string[][] {
+  return readCommands(command).flatMap((cmd): string[][] => {
+    const { argv } = unwrapPath(cmd.argv)
+    const inner = innerLine(argv)
+    return inner === undefined ? [[...argv]] : unwrapped(inner)
+  })
 }
 
 // The finding for a subagent's shell line during a walkthrough, or null when it only reads. A line
@@ -108,14 +123,15 @@ function deletes(argv: readonly string[]): boolean {
 export function agentBashDecision(mode: Mode | undefined, command: string): Verdict | null {
   if (!mode) return null
   const deleting: Verdict = { code: 'norms.agent.delete', reason: AGENT_DELETE_REFUSAL, irreversible: true }
+  const unreadable: Verdict = { code: 'norms.agent.unreadable', reason: AGENT_UNREADABLE_REFUSAL, irreversible: true }
   const writing = observe('norms.agent.write', 'norms: a review agent only reads during a walkthrough: no shell command that writes, no redirection.')
   let argvs: string[][]
   try {
     argvs = simpleCommands(command)
+    if (unwrapped(command).some(deletes)) return deleting
   } catch {
-    return deleting
+    return unreadable
   }
-  if (argvs.some(deletes)) return deleting
   if (command.replace(HARMLESS_REDIRECT, '').includes('>')) return writing
   return argvs.every(reads) ? null : writing
 }
@@ -129,7 +145,7 @@ const HIDING = /^(.*\/)?(env|xargs|parallel)$/
 // A variable assigned on the line (`FOO=1 git push`, `export GIT_CONFIG_COUNT=1; git push`): git reads
 // GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n and GIT_CONFIG_PARAMETERS, which can turn a
 // plain push into a forced one without a word of it on the line.
-const ASSIGNMENT = /(^|[\s;&|(){}`])[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/
+const ASSIGNMENT = /(^|[\s;&|(){}`])[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=|\$\{[A-Za-z_][A-Za-z0-9_]*:?=/
 
 // Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push,
 // and so does a configuration given on the line (`git -c remote.origin.push=+HEAD push`).
@@ -150,9 +166,9 @@ function pushes(command: string): boolean[] {
   const assigned = ASSIGNMENT.test(command)
   return readCommands(command).flatMap((cmd): boolean[] => {
     const shown = cmd.substitutions.length === 0 && !assigned
-    const inner = innerLine(cmd.argv)
-    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown)
     const { argv, wrappers } = unwrapPath(cmd.argv)
+    const inner = innerLine(argv)
+    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper)))
     const at = gitSubcommand(argv)?.at
     if (at === undefined || argv[at] !== 'push') return []
     return [shown && ![...cmd.wrappers, ...wrappers].some((wrapper) => HIDING.test(wrapper)) && isPlainArgv(argv, at)]
@@ -326,10 +342,11 @@ export function register(on: any): void {
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     const command = String(e.command ?? '')
+    const verdict = bashDecision(mode, lastPrompt, command, Boolean(e.agentId))
+    // A deletion is refused before the user is asked about a push on the same line: the answer would change nothing.
+    if (verdict?.irreversible) return { deny: verdict.reason }
     const question = pushQuestion(mode, command)
     if (question && !(await userAllows($, question))) return { deny: PUSH_REFUSAL }
-    const verdict = bashDecision(mode, lastPrompt, command, Boolean(e.agentId))
-    if (verdict?.irreversible) return { deny: verdict.reason }
     if (verdict) await observed($, verdict.code)
     return next(e)
   }).catch(pass)

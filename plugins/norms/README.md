@@ -72,7 +72,10 @@ mechanical work the markdown would otherwise hand the model:
   it through and nobody there to answer refuses it (a push whose line does not show it
   whole, with a variable set before it, behind `env`, a substitution or xargs, or
   with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
-  `rm`, `rmdir` or `find -delete`, and a shell line the reader cannot read, are refused.
+  `rm`, `rmdir`, `unlink` or `find -delete` (or `find -exec` of one), and a shell line the reader
+  cannot read, are refused. The rules read the line,
+  not the repository: a push whose words are plain but whose git configuration forces it (a
+  `remote.<name>.push` refspec set in an earlier call) is noted, not asked.
 - The walkthrough is armed by the typed command or by the main loop's Skill tool
   call that runs it; a Skill-armed check ends at its `check_done` once its record
   is written. A spawned session (`ORCHESTRATOR_SPAWNED`) has nobody to walk

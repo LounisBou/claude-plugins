@@ -2,7 +2,7 @@
 // N4: the walkthrough guards, each false-positive case they were narrowed for,
 // and the releases (the user's own words, an interrupted turn, another command).
 import { expect, test } from 'claude-code/testing'
-import { agentBashDecision, bashDecision, AGENT_DELETE_REFUSAL, PUSH_REFUSAL, editDecision, pushQuestion, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
+import { agentBashDecision, bashDecision, AGENT_DELETE_REFUSAL, AGENT_UNREADABLE_REFUSAL, PUSH_REFUSAL, editDecision, pushQuestion, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
 import { register as registerAll } from '../register.ts'
 import { register as registerRecord, markScope } from '../record.ts'
 import { mount, hook, nextOf, fakeDollar, HEAD, type Hook } from './fakes.ts'
@@ -66,13 +66,21 @@ test('a forced or deleting push asks the user, and so does one the line does not
   }
 })
 
+test('a push on a line the reader cannot read asks the user, as a forced one does', () => {
+  for (const command of ['git push {1..100000}', 'git push origin main; cat {1..100000}']) {
+    expect(pushQuestion('check', command), command).toContain('forced push now, during /norms:check?')
+    expect(pushDecision('check', command), command).toBeNull()
+  }
+})
+
 test('a variable set on the line, or an env wrapper, before a push keeps the question: git reads its configuration from the environment', () => {
   for (const command of [
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=+HEAD git push origin',
     "GIT_CONFIG_PARAMETERS=\"'remote.origin.push=+HEAD'\" git push origin",
     'export GIT_CONFIG_COUNT=1; git push origin',
     'FOO=1 git push', 'env git push', 'env GIT_TRACE=1 git push', '/usr/bin/env git push', 'sudo FOO=1 git push', 'sh -c "FOO=1 git push"', 'FOO=1 sh -c "git push"',
-    'bash -lc "GIT_CONFIG_COUNT=1 git push origin"',
+    'bash -lc "GIT_CONFIG_COUNT=1 git push origin"', ': ${GIT_CONFIG_COUNT:=1}; git push origin',
+    '/usr/bin/env bash -c "git push --force"', '/usr/bin/sudo bash -c "git push -f"', '/usr/bin/env sh -c "git push"',
   ]) {
     expect(pushQuestion('check', command), command).toContain('forced push now, during /norms:check?')
     expect(pushDecision('check', command), command).toBeNull()
@@ -304,8 +312,12 @@ test('a review agent\'s deletion stays refused, wherever it hides on the line', 
   for (const line of [
     'rm -rf src', 'rm a.ts', 'rmdir build', 'unlink a', '/bin/rm -f a', 'find . -delete', 'find . -name "*.tmp" -delete',
     'find . -name "*.tmp" -exec rm {} \\;', 'find . -execdir /bin/rm {} +', 'echo $(rm x)', 'cat a && rm -rf b', 'sudo rm -rf b', 'xargs rm', 'bash -c "rm -rf b"',
-    'echo ok; {rm,-rf}{1..1001} build', 'cat {1..100000}',
+    'find . -exec sh -c "rm {}" \\;', '/usr/bin/env rm -rf x', '/usr/bin/env bash -c "rm -rf x"', 'sh -c "sh -c \'rm -rf x\'"',
   ]) expect(agentBashDecision('check', line), line).toEqual({ code: 'norms.agent.delete', irreversible: true, reason: AGENT_DELETE_REFUSAL })
+  // A line the reader cannot read may hide a deletion: refused, and the reason says why.
+  for (const line of ['echo ok; {rm,-rf}{1..1001} build', 'cat {1..100000}']) {
+    expect(agentBashDecision('check', line), line).toEqual({ code: 'norms.agent.unreadable', irreversible: true, reason: AGENT_UNREADABLE_REFUSAL })
+  }
   // The reading `find` and a word that only names rm are not deletions.
   for (const line of ['find . -name rm', 'echo rm -rf src', 'grep -rn "rm -rf" src']) {
     expect(agentBashDecision('check', line)?.irreversible, line).not.toBe(true)
@@ -331,13 +343,23 @@ test('a subagent\'s deletion is refused to its tool call, an unreadable line inc
   const journal = watchJournal($)
   $.ui = { ...$.ui, ask: async () => 'Allow' }
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
-  for (const command of ['echo ok; {rm,-rf}{1..1001} build', 'rm -rf build', 'find . -delete', 'rm -rf build && git push']) {
+  for (const [command, reason] of [
+    ['echo ok; {rm,-rf}{1..1001} build', AGENT_UNREADABLE_REFUSAL], ['rm -rf build', AGENT_DELETE_REFUSAL], ['find . -delete', AGENT_DELETE_REFUSAL], ['rm -rf build && git push', AGENT_DELETE_REFUSAL],
+  ]) {
     const { next, seen } = nextOf()
     const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command, agentId: 'agent-1' }, next)
     expect(seen, command).toEqual([])
-    expect(out.deny, command).toBe(AGENT_DELETE_REFUSAL)
+    expect(out.deny, command).toBe(reason)
   }
   expect(journal()).toEqual([])
+  // The deletion is refused before the user is asked about a push on the same line.
+  const asked: string[] = []
+  $.ui = { ...$.ui, ask: async (question: string) => { asked.push(question); return 'Allow' } }
+  const { next, seen } = nextOf()
+  const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command: 'rm -rf build && git push --force', agentId: 'agent-1' }, next)
+  expect(out.deny).toBe(AGENT_DELETE_REFUSAL)
+  expect(seen).toEqual([])
+  expect(asked).toEqual([])
 })
 
 test('the Bash hook lets a subagent\'s write through during a check with one line, and leaves the main loop and other times alone', async () => {
