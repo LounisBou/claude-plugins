@@ -210,14 +210,14 @@ test('the wait relay uses the learnt coordinator when none is registered here', 
   const chains = mounted()
   const fx = fake()
   for (const handler of chains['turn.complete']) {
-    await handler(fx.dollar, { answer: 'Merge #12?\n\nwaiting: operator — blocks: phase 3\n', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }, (e: any) => e)
+    await handler(fx.dollar, { answer: 'Everything merged.\n\nwaiting: done\n', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }, (e: any) => e)
   }
   const report = fx.sent.find(s => parseQ(s.text)?.event.kind === 'ask')
   expect(report?.to).toBe(COORD_FROM)
-  expect((parseQ(report!.text)!.event as { entry: { blocks: string } }).entry.blocks).toBe('phase 3')
+  expect((parseQ(report!.text)!.event as { entry: { kind: string; blocks: string | null } }).entry).toMatchObject({ kind: 'done', blocks: null })
   // The same turn's end carried the row, its wait included.
   const row = fx.sent.find(s => s.text.startsWith(ROW_MARKER))
-  expect(parseRemoteRow(row!.text)!.waiting).toBe('operator')
+  expect(parseRemoteRow(row!.text)!.waiting).toBe('done')
 })
 
 // --- the receive -----------------------------------------------------------------------

@@ -204,7 +204,13 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   expect(declarations.current()).toBe(null)
   expect((await declare(dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(true)
   expect((await declare(dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })).isError).toBe(undefined)
-  const asked = await declare(dollar, { kind: 'operator', blocks: 'the merge', question: ['**Question 1 of 1**', '_Subject_ : the merge', '- **A** : yes', '- **B** : no'].join('\n') })
+  // An operator wait waits on a question the session asked with `ask` (question.ts).
+  await dollar.fs.write(`${MODULE}/round/q-s-orch-1.json`, JSON.stringify({
+    v: 2, id: 'q-s-orch-1', sender: { session: 's-orch', name: 'Orch: app', role: 'orchestrator', machine: 'box-1' },
+    subject: 'the merge', context: 'what is known', ask: 'Merge it?', choices: [], recommended: null, why: null,
+    blocks: 'the merge', status: 'open', at: '2026-11-14T10:00:00Z', answer: null, seq: 1,
+  }))
+  const asked = await declare(dollar, { kind: 'operator', blocks: 'the merge' })
   expect(asked.isError).toBe(undefined)
   expect(declarations.current()?.kind).toBe('operator')
   const { dollar: clear } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }]) } })

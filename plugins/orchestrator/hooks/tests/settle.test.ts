@@ -254,10 +254,10 @@ test('an answer that asks work records it as a to-do of the asker, in its list, 
   expect(m.sent.length).toBe(2)
 })
 
-// --- an entry the relay wrote --------------------------------------------------------------------
+// --- a closing proposal the relay wrote --------------------------------------------------------------------
 
 const relayed = (over: Record<string, unknown> = {}) => ({
-  id: 'r-1', from: ASKER, session: 's-ask', kind: 'operator', since: '2026-11-14T14:00:00.000Z', blocks: 'phase 3',
+  id: 'r-1', from: ASKER, session: 's-ask', kind: 'done', since: '2026-11-14T14:00:00.000Z', blocks: null,
   question: '**Question 1 of 1**', choices: [], recommendation: null, status: 'open', at: '2026-11-14T14:00:00.000Z', answer: null, ...over,
 })
 
@@ -289,24 +289,35 @@ test('its sender settles only its open relay\'s entry; the coordinator closes on
   const open = relayed({ id: 'r-2' })
   m.files.set(`${ROUND}/r-2.json`, JSON.stringify(open))
   const wait = `${MODULE}/store/${waitKey('s-ask')}`
-  m.files.set(wait, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(open as RoundEntry) }))
+  m.files.set(wait, JSON.stringify({ waiting: 'done', relayed: entryFingerprint(open as RoundEntry) }))
   await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'closed', answer: { text: 'B', by: 'coordinator' } })
   expect(JSON.parse(m.files.get(wait)!).relayed).toBeNull()
 })
 
-test('the coordinator closes a relay\'s entry from another machine: closed with its delivery pending and no answer stamp, as the remote answers are, then sent once', async () => {
+test('the coordinator closes a relay\'s entry, of this machine or of another, and sends its sender nothing', async () => {
   const m = machine()
-  m.files.set(`${ROUND}/r-far.json`, JSON.stringify(relayed({ id: 'r-far', session: 's-far', from: 'Orch: far', origin: { machine: 'box-2' } })))
-  const closes: any[] = []
-  const write = m.coordinator.fs.write
-  m.coordinator.fs.write = async (p: string, text: string) => {
-    if (p.startsWith(`${ROUND}/r-far.json`)) closes.push(JSON.parse(text))
-    return write(p, text)
+  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed()))
+  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ id: 'r-2', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })))
+  const here = await settle(m.coordinator, request('r-1', { text: 'B' }), AT)
+  const there = await settle(m.coordinator, request('r-2', { text: 'B' }), AT)
+  expect([here.result, there.result]).toEqual(['Settled r-1: closed.', 'Settled r-2: closed.'])
+  expect([entryOf(m, 'r-1').status, entryOf(m, 'r-2').status]).toEqual(['closed', 'closed'])
+  expect(m.sent).toEqual([])
+})
+
+// An operator entry of an older release left in the round: the round's wake withdraws it with a
+// notice to its sender (pane.test.ts); the coordinator's settle neither closes it nor sends.
+test('the coordinator\'s settle of an open operator entry of an older release is refused, sends nothing, and leaves it open', async () => {
+  const m = machine()
+  const older = relayed({ id: 'r-3', kind: 'operator', blocks: 'phase 3' })
+  const remote = relayed({ id: 'r-4', kind: 'operator', blocks: 'phase 3', origin: { machine: 'bench-mac', address: 'bridge:peer', line: 'q' } })
+  m.files.set(`${ROUND}/r-3.json`, JSON.stringify(older))
+  m.files.set(`${ROUND}/r-4.json`, JSON.stringify(remote))
+  for (const id of ['r-3', 'r-4']) {
+    const refused = await settle(m.coordinator, request(id, { text: 'B' }), AT)
+    expect(refused.result).toBe(`${id} is an operator question of an older release: the round withdraws it and tells its sender to ask it with ask; nothing to settle.`)
   }
-  await settle(m.coordinator, request('r-far', { text: 'B' }), AT)
-  const close = closes[0]
-  expect([close.status, close.answer.text, close.answer.by]).toEqual(['closed', 'B', 'coordinator'])
-  expect([close.delivery.state, close.delivery.attempts, 'answerAt' in close.delivery]).toEqual(['pending', 0, false])
-  expect([entryOf(m, 'r-far').delivery.state, entryOf(m, 'r-far').delivery.attempts]).toEqual(['sent', 1])
+  expect([entryOf(m, 'r-3'), entryOf(m, 'r-4')]).toEqual([older, remote])
+  expect(m.sent).toEqual([])
 })
