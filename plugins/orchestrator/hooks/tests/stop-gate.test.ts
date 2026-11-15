@@ -1710,6 +1710,17 @@ test('a tool line or a plain ending passes while the session\'s question is open
   }
 })
 
+// Only this session's question wakes it: another session's open in the same round holds the stop
+// as none would.
+test('another session\'s question open in the round wakes no tool line nor plain ending of this session', async () => {
+  const { handlers } = mounted()
+  for (const ending of [TOOL_WAIT, PLAIN]) {
+    const other = fakeDollar({ ps: NOTHING_PS, round: { 'q-d4e5f6-1.json': askedHere({ id: 'q-d4e5f6-1', sender: { session: 'd4e5f6', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
+    const held = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
+    expect(held.passed).toBe(null)
+  }
+})
+
 test('an open question wakes a tool line or a plain ending, and a line spelling no machine line is no refusal of its own', () => {
   const base = { agents: [], resident: false, delivered: [], tasks: [] as string[], questionOpen: true }
   expect(checkWake({ ...base, message: TOOL_WAIT.last_assistant_message })).toEqual({ tool: 'the deploy run' })
