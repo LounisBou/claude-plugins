@@ -825,7 +825,7 @@ test('a note several rows share is printed once, naming the rows; a note one row
 })
 
 test('the project line prints the objective\'s first sentence and the goals count, without the history behind it', () => {
-  assert.equal(objectiveOf('claude-plugins 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z). An early reading leaves time to act. The drift goals G1-G5 are archived.'), 'claude-plugins 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z)')
+  assert.equal(objectiveOf('the belt 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z). An early reading leaves time to act. The drift goals G1-G5 are archived.'), 'the belt 1.0 declared on 2026-11-15 if its figures are in target (his ruling of 2026-11-15T07:00Z)')
   assert.equal(objectiveOf('a belt that holds.'), 'a belt that holds')
   assert.equal(objectiveOf(''), '')
   const w = world({ goals: '# Goals\nspec: /s.md\naim: ship the belt. It was first planned in March. G1-G5 are in the archive.\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | open | b | p2 | |\n' })
