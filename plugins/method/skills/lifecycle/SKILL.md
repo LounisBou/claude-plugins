@@ -5,25 +5,22 @@ description: The development method every role follows - the lifecycle, definiti
 
 # The method
 
-One lifecycle, run by roles: implement in one session, the orchestrator with implementer
-sessions.
-
 ## The lifecycle
 
 1. **Spec.** What and why, with its `## Goals`, settled with the operator first.
-2. **Plan.** One file per phase (`references/plan.md`), every figure with its measuring command.
+2. **Plan.** One file per phase (`references/plan.md`).
 3. **Implementation.** Per step: a failing test first, the code, the gate and its exit code read,
-   one commit; then the self-review.
+   one commit.
 4. **Review on evidence.** By a session that did not write the code; a result without the
    command output that shows it is a claim.
 5. **Ready**, then **merge**: the merge is the operator's, unless in auto-merge.
 
 ## Self-review
 
-Once the gate is green, before the pull request opens, the implementer reviews its change, so the
-outside review confirms: the review round's lenses (correctness, tests,
+Once the gate is green, before the pull request opens, the implementer reviews its change: the
+review round's lenses (correctness, tests,
 silent failures, spec conformity, security if relevant) over `origin/<base>...HEAD`, each a
-read-only `orchestrator:lens`. A finding is fixed (gate rerun) or answered in the pull request
+read-only `orchestrator:lens`. A finding is fixed or answered in the pull request
 body's « Self-review » section, one line each. The outside review reads it first.
 
 ## Done means ready

@@ -124,6 +124,29 @@ The release pull request also asks the operator whether to re-run the outcome me
 awaits its proof, not at each minor version (`docs/specs/learning-design.md`, question 4); nothing
 runs without their yes.
 
+## Continuous deploy
+
+A machine may run every green commit of `main` rather than the last release: `npm run deploy`
+installs the newest commit whose `ci` run for a push to `main` succeeded; the usage, the layout
+under `<config dir>/deploys/` and what is kept are the header of `scripts/deploy.ts`. The host
+reads a plugin of a directory marketplace in place, so each commit is extracted once into a
+directory of its own, never changed after, its manifests' versions stamped with the commit, and
+the marketplace is pointed at it: a new session reads the new directory, a running one keeps the
+one it loaded. `--rollback` points back at the commit installed before; `--status` prints the
+installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
+Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
+`deploy.ts --status` fails is refused before `current` moves), its errors kept in a log:
+
+```
+*/5 * * * * PATH=<node, gh and claude> node --experimental-strip-types --no-warnings ~/.claude/deploys/lounisbou/current/scripts/deploy.ts >/dev/null 2>>~/.claude/deploys/lounisbou/deploy.log
+```
+
+The last failure is also kept in `installed.json` until a run succeeds, and `--status` prints it.
+
+The first run moves the marketplace from its GitHub source, which follows `main` green or not,
+to the directory; `claude plugin marketplace add LounisBou/claude-plugins` moves it back. The
+release still raises the versions other machines install.
+
 ## What CI holds
 
 | Check | Source of truth |

@@ -4,7 +4,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { register } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
-import { CONSENT_GRANT } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
 // The writing rules read this file of the plugin, which no scenario below is about.
@@ -3224,6 +3224,72 @@ test('a consent record of auto-deploy on one environment does not carry another'
   const seen = await world($, on, deployWorld(CONSENT_GRANT, 'staging'))
   const out: any = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'prod'))
   expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(seen.writes).toEqual([])
+})
+
+// The operator answered « Accorder » to the consent question: the grant rests on that record, whatever words the call carries.
+for (const words of [CONSENT_GRANT, 'oui, c\'est bon', 'déploiement automatique : ' + CONSENT_GRANT]) {
+  test('auto-deploy-set on is granted by the recorded « ' + CONSENT_GRANT + ' », whatever its words say: ' + words, async ($, on) => {
+    const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', STAGING_ONLY))
+    const out: any = await $.tool.call(setDeploy(true, words, 'prod'))
+    expect(out.deny).toBeUndefined()
+    expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
+  })
+}
+
+test('auto-deploy-set on with no consent record is refused naming the record, whatever its words say', async ($, on) => {
+  const seen = await world($, on, STAGING_ONLY)
+  const out: any = await $.tool.call(setDeploy(true, CONSENT_GRANT, 'prod'))
+  expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
+  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
+  expect(out.deny).toContain('newest answer is missing or is not « ' + CONSENT_GRANT + ' »')
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set on adds the declared commands on the recorded « ' + CONSENT_GRANT + ' » too, whatever its words say', async ($, on) => {
+  const seen = await world($, on, deployWorld())
+  const declared = { kind: 'script', path: 'scripts/deploy.sh' }
+  const out: any = await $.tool.call(setDeploy(true, 'oui', 'prod', { commands: [declared] }))
+  expect(out.deny).toBeUndefined()
+  expect(JSON.parse(seen.files[AUTO_DEPLOY]).commands).toContainEqual({ repo: INFRA, ...declared })
+})
+
+// Two answers to the same question: the newest one is the operator's word.
+const answers = (older: string, newer: string): World => consentWorld({
+  a: consent({ subject: { kind: 'auto-deploy', repo: INFRA, env: 'prod' }, entry: 'a', answer: older, by: 'coordinator', at: '2026-11-03T10:00:00Z' }),
+  b: consent({ subject: { kind: 'auto-deploy', repo: INFRA, env: 'prod' }, entry: 'b', answer: newer, by: 'coordinator', at: '2026-11-04T10:00:00Z' }),
+}, '/cfg/consents/acme/infra')
+
+test('auto-deploy-set on is refused when the newest recorded answer is « ' + CONSENT_REFUSE + ' », even with the older « ' + CONSENT_GRANT + ' » quoted', async ($, on) => {
+  const seen = await world($, on, { ...answers(CONSENT_GRANT, CONSENT_REFUSE), ...STAGING_ONLY })
+  const out: any = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
+  expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
+  expect(seen.writes).toEqual([])
+})
+
+test('auto-deploy-set on is granted when the newest recorded answer is « ' + CONSENT_GRANT + ' » after an older « ' + CONSENT_REFUSE + ' »', async ($, on) => {
+  const seen = await world($, on, { ...answers(CONSENT_REFUSE, CONSENT_GRANT), ...STAGING_ONLY })
+  const out: any = await $.tool.call(setDeploy(true, CONSENT_GRANT, 'prod'))
+  expect(out.deny).toBeUndefined()
+  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
+})
+
+// A withdrawal quotes a record of its subject, its words naming auto-deploy as the operator writes it, in French too.
+for (const spelling of ['auto-déploiement', 'déploiement automatique', 'Déploiement Automatique', 'deploiement automatique', 'déploiement continu', 'DÉPLOIEMENT CONTINU']) {
+  test('the words « ' + spelling + ' » name auto-deploy in a withdrawal', async ($, on) => {
+    const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', { deployList: deployList([INFRA, 'prod']) }))
+    const out: any = await $.tool.call(setDeploy(false, CONSENT_GRANT + ' : infra sort du ' + spelling, 'prod'))
+    expect(out.deny).toBeUndefined()
+    expect(deployGrants(seen)).toEqual([])
+  })
+}
+
+test('auto-deploy-set off whose words do not name auto-deploy is refused', async ($, on) => {
+  const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', { deployList: deployList([INFRA, 'prod']) }))
+  const out: any = await $.tool.call(setDeploy(false, CONSENT_GRANT + ' : infra sort', 'prod'))
+  expect(out.deny).toContain('"déploiement automatique"')
   expect(seen.writes).toEqual([])
 })
 
