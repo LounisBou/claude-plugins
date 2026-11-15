@@ -1,7 +1,7 @@
 // When a pull request needs no E2E record: files that hold no runtime, and a repository's standing exemption.
 import { expect, test } from 'claude-code/testing'
 import {
-  covers, exemptingLabels, exemptionLine, exemptionPath, globMatches, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
+  covers, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, globMatches, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
 } from './e2e-scope.ts'
 
 const VERSION_ONLY = '@@ -2,3 +2,3 @@\n   "name": "github",\n-  "version": "0.19.4",\n+  "version": "0.19.5",\n   "author": {'
@@ -117,4 +117,33 @@ test('the labels of a list an exemption in force names, without regard to case',
   expect(exemptingLabels(labelled, ['bug'])).toEqual([])
   expect(exemptingLabels({ ...labelled, exempt: false }, ['no-e2e'])).toEqual([])
   expect(exemptingLabels(undefined, ['no-e2e'])).toEqual([])
+})
+
+test('an expiry is an instant in UTC to the second, a real one', () => {
+  expect(isInstant('2026-11-15T22:00:00Z')).toBe(true)
+  for (const text of ['', 'tomorrow', '2026-11-15', '2026-11-15T22:00Z', '2026-11-15T22:00:00', '2026-11-15T22:00:00+01:00', '2026-02-31T00:00:00Z', '2026-11-15T25:00:00Z']) {
+    expect(isInstant(text), text).toBe(false)
+  }
+})
+
+test('an exemption file keeps its expiry, or is none when the expiry cannot be read', () => {
+  const until = '2026-11-15T22:00:00Z'
+  expect(parseExemption({ ...EXEMPTION, until })).toEqual({ ...EXEMPTION, until })
+  expect(parseExemption(EXEMPTION)).not.toHaveProperty('until')
+  for (const bad of ['tomorrow', 7, null, '2026-11-15']) expect(parseExemption({ ...EXEMPTION, until: bad }), String(bad)).toBeUndefined()
+})
+
+test('an exemption with an expiry has run out at that instant, not before; one with none never', () => {
+  const limited = { ...EXEMPTION, until: '2026-11-15T22:00:00Z' }
+  const at = Date.parse(limited.until)
+  expect(expired(limited, at - 1)).toBe(false)
+  expect(expired(limited, at)).toBe(true)
+  expect(expired(limited, at + 1)).toBe(true)
+  expect(expired(EXEMPTION, Number.MAX_SAFE_INTEGER)).toBe(false)
+})
+
+test('the lines of an exemption with an expiry name it, the one that ran out says it no longer excuses E2E', () => {
+  const limited = { ...EXEMPTION, until: '2026-11-15T22:00:00Z' }
+  expect(exemptionLine(limited)).toBe('E2E exemption of acme/thing, 2026-11-13, until 2026-11-15T22:00:00Z: no E2E on thing, 2026-11-13')
+  expect(expiryLine(limited)).toBe('E2E exemption of acme/thing expired at 2026-11-15T22:00:00Z: it no longer excuses E2E')
 })
