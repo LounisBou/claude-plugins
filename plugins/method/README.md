@@ -7,7 +7,7 @@ question. It owns them; no other plugin restates them.
 - `skills/lifecycle/SKILL.md` is the kernel, the skill `method:lifecycle`: loaded once per
   session by a role that plans, implements or reviews. implement's hooks ask its skills to load
   it first; the orchestrator loads it in its `build` mode and leaves it out in `investigate`.
-  Its prompt budget is held by CI (`ci/prompts.json`) and only falls.
+  Its prompt budget is measured by CI (`ci/prompts.json`, a report) and only falls.
 - `skills/lifecycle/references/` holds one file per format (`plan.md`, `report.md`,
   `questions.md`), read only when that artifact is written.
 - The formats that code reads are parsed in `packages/core/src/method.ts` (`parseState`,
