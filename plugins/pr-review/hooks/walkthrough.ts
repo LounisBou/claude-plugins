@@ -1,14 +1,17 @@
 // hooks/walkthrough.ts
 // The Iron Rules of start-review and process-comments, held by the engine
 // rather than by the model's memory. A skill's start opens its rules; the
-// user's own prompts are the only source of a grant; a tool call the rules
-// refuse is denied with the word that lifts it. The band above the prompt
-// shows that a walkthrough holds the session and what it has kept so far.
+// user's own prompts are the only source of a grant. A tool call the rules
+// would stop goes through and leaves one line in the journal, except the
+// irreversible (a forced push, a deleted comment), denied with the word that
+// lifts it. The band above the prompt shows that a walkthrough holds the
+// session and what it has kept so far.
 //
 // Never a trap: "end review" typed by the user, an interrupted turn (Esc), a
 // /clear, or the skill's own closing line ends the rules at once (session.ts
 // holds those lifecycle hooks; this file holds the guard and the band).
 import { GH_TOOL, PUSH_REFUSAL, decide, needsToolList, pushQuestion, scratchDirOf } from './policy.ts'
+import { observed } from './observe.ts'
 import { walkthrough, loop } from './state.ts'
 
 async function isGhListed($: any): Promise<boolean> {
@@ -74,8 +77,9 @@ export function register(on: any): void {
     if (skill === null) return next(e)
     const question = pushQuestion(skill, e)
     if (question && !(await userAllows($, question))) return { deny: `pr-review ${skill}: ${PUSH_REFUSAL}` }
-    const reason = decide(skill, e, walkthrough.lastPrompt, needsToolList(e) ? await isGhListed($) : false)
-    if (reason) return { deny: reason }
+    const verdict = decide(skill, e, walkthrough.lastPrompt, needsToolList(e) ? await isGhListed($) : false)
+    if (verdict?.irreversible) return { deny: verdict.reason }
+    if (verdict) await observed($, verdict.code)
     const dir = typeof e.file_path === 'string' ? scratchDirOf(e.file_path) : undefined
     if (dir && dir !== walkthrough.scratchDir) {
       walkthrough.scratchDir = dir
@@ -89,10 +93,10 @@ export function register(on: any): void {
     // the hook would have refused and passes the rest.
     if (next.called) return next(e)
     try {
-      // Nobody can be asked from the net: a push it meets is refused.
+      // Nobody can be asked from the net: a forced push it meets is refused.
       if (pushQuestion(walkthrough.skill, e)) return { deny: `pr-review ${String(walkthrough.skill)}: ${PUSH_REFUSAL}` }
-      const reason = decide(walkthrough.skill, e, walkthrough.lastPrompt, false)
-      return reason ? { deny: reason } : next(e)
+      const verdict = decide(walkthrough.skill, e, walkthrough.lastPrompt, false)
+      return verdict?.irreversible ? { deny: verdict.reason } : next(e)
     } catch {
       return walkthrough.skill === null ? next(e) : { deny: 'pr-review: its guard failed while a walkthrough holds the session; say "end review" to lift it.' }
     }

@@ -138,7 +138,7 @@ export function stateLine(s: Snapshot): string {
 // assignments, and `sh -c` read again. `eval` joins its words into a line read the same way.
 export { simpleCommands } from '../core/shell.ts'
 
-// What a command line does that implement:check refuses: stage or commit.
+// What a command line does that implement:check observes: stage or commit.
 export type Action = 'stage' | 'commit'
 
 function actionsOf(argv: readonly string[], depth: number): Action[] {
@@ -201,54 +201,73 @@ export function isVerdict(answer: string): boolean {
 }
 
 const LABEL: Record<Action, string> = { 'stage': 'git add', 'commit': 'git commit' }
-const RELEASE = 'Words in a prompt release nothing: a subagent runs when the user allows it when asked, and /implement:release-guard releases every guard.'
-// An orchestrated build has no operator to ask: the orchestrator decides.
-const RELEASE_BY_ORCHESTRATOR = 'Words in a prompt release nothing: your orchestrator decides, not the operator. Name the need to it, last line status: question, and wait; it allows by releasing the guard with /implement:release-guard.'
+const RELEASE = 'Words in a prompt release nothing: /implement:release-guard releases every guard.'
+
+/*
+ * What a rule found in a tool call: the stable code the telemetry holds it under, and the words that
+ * name what was done. Only an irreversible act (a deletion) is refused, with checkDeny's text; any
+ * other lets the call through, and the code is the one line it leaves.
+ */
+export type Verdict = { readonly code: string; readonly what: string; readonly irreversible: boolean }
+
+const observe = (code: string, what: string): Verdict => ({ code, what, irreversible: false })
 
 export function checkDeny(what: string): string {
-  return `implement:check edits, stages and commits nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
-}
-export function agentDeny(type: string, isOrchestrated = false): string {
-  return `implement:phase writes the work itself: a subagent only searches (subagent_type Explore). ${type} refused by the implement plugin: do the work inline, or name the need and wait. ${isOrchestrated ? RELEASE_BY_ORCHESTRATOR : RELEASE}`
+  return `implement:check removes nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
 }
 
 export const READ_ONLY_AGENTS = new Set(['Explore'])
 
-// The commands of a line that write into the tree implement:check reads: a file removed,
-// moved, copied over, created, or edited in place.
-const WRITERS = new Set(['tee', 'rm', 'mv', 'cp', 'touch', 'truncate', 'ln', 'install', 'dd', 'patch', 'rmdir'])
+// The commands of a line that delete from the tree implement:check reads: the one act of the check
+// that cannot be taken back.
+const REMOVERS = new Set(['rm', 'rmdir'])
+// The commands of a line that write into it: a file moved, copied over, created, or edited in place.
+const WRITERS = new Set(['tee', 'mv', 'cp', 'touch', 'truncate', 'ln', 'install', 'dd', 'patch'])
+
+// A word `rm` or `rmdir` of a line the reader cannot read, found by its text: a doubt that may hide a removal.
+const REMOVAL_WORD = /(^|[\s;&|(){}`"'\/])(rm|rmdir)(?=$|[\s;&|(){}`"'])/
+
+const basename = (argv: readonly string[]): string => (argv[0] ?? '').split('/').pop() ?? ''
 
 function writesTree(argv: readonly string[]): string | null {
-  const name = (argv[0] ?? '').split('/').pop() ?? ''
+  const name = basename(argv)
   if (WRITERS.has(name)) return name
   if ((name === 'sed' || name === 'perl') && argv.some(a => /^-[A-Za-z]*i/.test(a) || a.startsWith('--in-place'))) return `${name} -i`
   return null
 }
 
-// A line the reader cannot read (a brace expansion past its limit) is refused during a check: what
-// it hides is not known to stage, commit or write nothing.
-export function bashDecision(g: Guard, command: string): string | null {
+/*
+ * The finding of a shell line during a check, null outside one. A removal is the irreversible act
+ * and wins over any other finding of the line; the others are observed, the first one found naming
+ * the line. A line the reader cannot read (a brace expansion past its limit) is observed too, the
+ * one exception being a word `rm` or `rmdir` anywhere in it: a doubt does not hide a removal.
+ */
+export function bashDecision(g: Guard, command: string): Verdict | null {
   if (!g.checking) return null
   try {
+    const commands = simpleCommands(command)
+    const removal = commands.map(argv => basename(argv)).find(name => REMOVERS.has(name))
+    if (removal) return { code: 'implement.check.remove', what: removal, irreversible: true }
     const write = shellActions(command).find(a => a === 'stage' || a === 'commit')
-    if (write) return checkDeny(LABEL[write])
-    if (redirectsToFile(command)) return checkDeny('a redirection into a file')
-    const writer = simpleCommands(command).map(writesTree).find(w => w !== null)
-    return writer ? checkDeny(writer) : null
+    if (write) return observe(`implement.check.${write}`, LABEL[write])
+    if (redirectsToFile(command)) return observe('implement.check.redirect', 'a redirection into a file')
+    const writer = commands.map(writesTree).find(w => w !== null)
+    return writer ? observe('implement.check.write', writer) : null
   } catch {
-    return checkDeny('a shell line it cannot read')
+    if (REMOVAL_WORD.test(command)) return { code: 'implement.check.remove', what: 'a removal in a shell line it cannot read', irreversible: true }
+    return observe('implement.check.unreadable', 'a shell line it cannot read')
   }
 }
 
-export function agentDecision(g: Guard, subagentType: unknown, isOrchestrated = false): string | null {
+// A subagent other than a search one during a phase: observed, the phase writes the work itself.
+export function agentDecision(g: Guard, subagentType: unknown): Verdict | null {
   if (g.outer !== 'phase') return null
   const type = typeof subagentType === 'string' && subagentType !== '' ? subagentType : 'general-purpose'
-  if (READ_ONLY_AGENTS.has(type)) return null
-  return agentDeny(type, isOrchestrated)
+  return READ_ONLY_AGENTS.has(type) ? null : observe('implement.phase.subagent', type)
 }
 
-export function editDecision(g: Guard, tool: string): string | null {
-  return g.checking ? checkDeny(tool) : null
+export function editDecision(g: Guard, tool: string): Verdict | null {
+  return g.checking ? observe('implement.check.edit', tool) : null
 }
 
 // The commit trailer the engine asks for: none while a skill that commits runs.

@@ -3,6 +3,7 @@
 // the call that records the name and the turn's completion that runs the host's
 // /rename with it — never from the call itself, which the host refuses.
 import { expect, test } from 'claude-code/testing'
+import { journalled, logLineOf } from './fakes.ts'
 import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS } from '../naming.ts'
 
 // A registration is keyed by its event, and a tool call by its tool too: the
@@ -21,7 +22,8 @@ function mounted(): { handlers: Record<string, Function>; matchers: Record<strin
   return { handlers, matchers }
 }
 
-function fakeDollar(): { dollar: any; registered: any[]; runs: any[]; submits: any[]; order: string[] } {
+function fakeDollar(): { dollar: any; registered: any[]; runs: any[]; submits: any[]; order: string[]; logged: string[] } {
+  const logged: string[] = []
   const registered: any[] = []
   const runs: any[] = []
   const submits: any[] = []
@@ -29,13 +31,17 @@ function fakeDollar(): { dollar: any; registered: any[]; runs: any[]; submits: a
   // prompt that resumes the session under it.
   const order: string[] = []
   const dollar = {
+    plugin: { root: '/plugins/orch-root' },
     env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
-    fs: { read: async () => '', write: async () => undefined },
+    fs: { read: async () => '', write: async () => undefined, list: async () => [] },
+    session: { id: async () => 'a1b2c3' },
+    // The module's log lines, kept; any other run answers nothing.
+    process: { run: async (argv: readonly string[]) => { const line = logLineOf(argv); if (line !== null) logged.push(line); return { exitCode: 0, stdout: '', stderr: '' } } },
     tool: { register: async (spec: any) => { registered.push(spec); return {} } },
     command: { run: (input: any) => { runs.push(input); order.push(`command:${input.command}`); return Promise.resolve({ text: '' }) } },
     prompt: { submit: (input: any) => { submits.push(input); order.push('prompt'); return Promise.resolve({ text: input.text }) } },
   }
-  return { dollar, registered, runs, submits, order }
+  return { dollar, registered, runs, submits, order, logged }
 }
 
 test('a session names itself Orch or Coord, the subject in the launcher\'s shape', () => {
@@ -97,35 +103,39 @@ const ROTATE = { tool: 'Bash', command: 'bash /p/skills/iterm-agents/scripts/ite
 const SEND = { tool: 'SendMessage', to: 'Agent: belt', message: 'your brief' }
 const passOn = async (e: any) => ({ result: { ran: e.tool } })
 
-test('while a rename is pending, a spawn, a rotate and a SendMessage are refused until the turn ends', async () => {
+test('while a rename is pending, a spawn, a rotate and a SendMessage run, each with one escape, until the turn ends', async () => {
   const { handlers, matchers } = mounted()
   expect(matchers['tool.call:Bash']).toEqual({ tool: 'Bash' })
   expect(matchers['tool.call:SendMessage']).toEqual({ tool: 'SendMessage' })
   const fx = fakeDollar()
+  const j = journalled(fx.dollar)
   // No rename pending: every call runs.
-  expect(await handlers['tool.call:Bash'](fx.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:SendMessage'](fx.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
-  await handlers['tool.call'](fx.dollar, { name: 'Orch: belt' })
+  expect(await handlers['tool.call:Bash'](j.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
+  expect(await handlers['tool.call:SendMessage'](j.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
+  await handlers['tool.call'](j.dollar, { name: 'Orch: belt' })
   const reason = 'your name "Orch: belt" is taken when this turn ends: end the turn now; the module resumes you under it'
   for (const [key, call] of [['tool.call:Bash', SPAWN], ['tool.call:Bash', ROTATE], ['tool.call:SendMessage', SEND]] as const) {
-    const answer = await handlers[key](fx.dollar, call, passOn)
-    expect(answer.deny).toContain(reason)
+    const answer = await handlers[key](j.dollar, call, passOn)
+    expect(answer.deny).toBeUndefined()
   }
-  // Any other Bash call runs: only what addresses an agent waits for the name.
-  expect(await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command: 'git status' }, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command: 'bash /p/iterm-agent.sh list' }, passOn)).toEqual({ result: { ran: 'Bash' } })
-  await handlers['turn.complete'](fx.dollar, { isAborted: false }, (x: unknown) => x)
-  // The next turn runs under the name: nothing is refused any more.
-  expect(await handlers['tool.call:Bash'](fx.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:SendMessage'](fx.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
+  expect(j.journal()).toEqual(Array(3).fill('escape orchestrator.naming.rename-pending'))
+  expect(fx.logged.filter((line: string) => line.includes(reason)).length).toBe(3)
+  // Any other Bash call runs with no escape: only what addresses an agent is observed.
+  expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command: 'git status' }, passOn)).toEqual({ result: { ran: 'Bash' } })
+  expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command: 'bash /p/iterm-agent.sh list' }, passOn)).toEqual({ result: { ran: 'Bash' } })
+  await handlers['turn.complete'](j.dollar, { isAborted: false }, (x: unknown) => x)
+  // The next turn runs under the name: nothing is observed any more.
+  expect(await handlers['tool.call:Bash'](j.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
+  expect(await handlers['tool.call:SendMessage'](j.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
 })
 
 // The launcher named in a variable on one line and called on the next: the spawn the held
 // rename let through, its agents left as tabs the move into the home session did not take.
-test('while a rename is pending, a spawn or a rotate written over several commands is refused too', async () => {
+test('while a rename is pending, a spawn or a rotate written over several commands is observed too', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar()
-  await handlers['tool.call'](fx.dollar, { name: 'Orch: belt' })
+  const j = journalled(fx.dollar)
+  await handlers['tool.call'](j.dollar, { name: 'Orch: belt' })
   const path = '/p/skills/iterm-agents/scripts/iterm-agent.sh'
   const held = [
     `I=${path}; D=/tmp/briefs\n$I spawn --dir /w --title "Agent: belt" --brief $D/b.md 2>&1 | tail -5`,
@@ -143,16 +153,18 @@ test('while a rename is pending, a spawn or a rotate written over several comman
     `go() { bash ${path} "$@"; }\ngo rotate --tty /dev/ttys003`,
   ]
   for (const command of held) {
-    const answer = await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)
-    expect(answer.deny).toContain('end the turn now')
+    const answer = await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command }, passOn)
+    expect(answer).toEqual({ result: { ran: 'Bash' } })
   }
+  expect(j.journal().length).toBe(held.length)
   // The launcher's other subcommands, and a read of its file, still run.
   // A note that names the launcher and, elsewhere, a variable before « spawn » calls nothing:
   // only a variable given the launcher's path is the launcher.
   const note = `cat > /w/notes.md <<'EOF'\nRun ${path} list first.\nThen $L spawn the agent.\nEOF`
   for (const command of [`I=${path}\n$I list`, `grep -n "def cmd_spawn" /p/skills/iterm-agents/scripts/iterm_agent.py`, `I=${path}\n$I screen --tty /dev/ttys003 | grep spawn`, note]) {
-    expect(await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)).toEqual({ result: { ran: 'Bash' } })
+    expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command }, passOn)).toEqual({ result: { ran: 'Bash' } })
   }
+  expect(j.journal().length).toBe(held.length)
 })
 
 test("a subagent's spawn or message is not the main thread's to hold", async () => {

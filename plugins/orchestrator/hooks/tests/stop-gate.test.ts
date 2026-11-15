@@ -1,22 +1,23 @@
 // hooks/tests/stop-gate.test.ts
-// The stop gate's boundaries: the decision shapes (the module's own `block` field for the
-// classic decision, the summary-level wake decision, the deadline race), the ported checks
+// The stop gate's boundaries: the decision shapes (the summary-level wake decision, the deadline
+// race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
-// test that fails under the wrong spelling. The refusal texts are stop_gate.py's, verbatim
+// test that fails under the wrong spelling. The gate observes, never refuses: what it once held a
+// stop for is its log line, and one escape in the journal; the texts are stop_gate.py's, verbatim
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
 import {
-  refuse, wakeDecision, withDeadline, isDegradedPass,
+  wakeDecision, withDeadline, isDegradedPass,
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait,
 } from '../stop-gate.ts'
-import { register as registerGuards, REFIRED_REFUSALS } from '../guards.ts'
+import { register as registerGuards } from '../guards.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
-import { logLineOf, blockOf } from './fakes.ts'
+import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { machineLine } from '../../core/method.ts'
 import { unnamedReport } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
@@ -35,14 +36,6 @@ const ASKED_HERE = askedHere()
 
 // --- the decision shapes -----------------------------------------------------------------
 
-test('a refusal is the documented shape', () => {
-  // The shipped types map the classic decision `{"decision":"block","reason":…}` onto the
-  // module's own field: `block` carries the reason text (ClassicResult — the doc on `block`
-  // names the decision it answers). A `decision` field is a wrong shape on classic.Stop
-  // and the hook is skipped, so the stop would never be held; the types are the authority.
-  expect(refuse('an agent of yours is still busy')).toEqual({ block: 'an agent of yours is still busy' })
-})
-
 test('a summary with nothing holding the stop passes', () => {
   expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
 })
@@ -52,11 +45,12 @@ test('an orchestrator ending on an operator wait with no question asked with `as
   const { dollar, ran } = fakeDollar({})
   const report = 'the report\n\nwaiting: operator — blocks: ligne 359, ligne 343'
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
-  expect((refused.answer as any).block).toBe(ASK_FIRST)
+  expect(refused.observed).toBe(ASK_FIRST)
   expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
   const coord = fakeDollar({ launchName: 'Coord: machine' })
   const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: report }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 // --- a question asked with `ask` still open in the round --------------------------------------
@@ -66,6 +60,7 @@ test('a last line « handed over » passes with a question still open: the succe
   const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
   const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Takeover confirmed.\nhanded over' }))
   expect(over.answer).toBe(over.passed)
+  expect(over.observed).toBeUndefined()
 })
 
 test('a round that does not answer in time lets the stop go on', async () => {
@@ -74,6 +69,7 @@ test('a round that does not answer in time lets the stop go on', async () => {
     const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
     const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
     expect(out.answer).toBe(out.passed)
+    expect(out.observed).toBeUndefined()
   }
 })
 
@@ -83,17 +79,19 @@ test('a question the operator answered from the pane, or a coordinator\'s turn, 
   const report = `Recorded nothing.\n\n${ASKED}\nwaiting: operator — blocks: the next one`
   const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   const coord = fakeDollar({ launchName: 'Coord: machine', round: { 'q-a1b2c3-1.json': ASKED_HERE } })
   const coordinator = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'the round is read.' }))
   expect(coordinator.answer).toBe(coordinator.passed)
+  expect(coordinator.observed).toBeUndefined()
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({})
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
-  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing')
-  expect((refused.answer as any).block).not.toBe(ASK_FIRST)
+  expect(refused.observed).toContain('Your wait on the operator blocks nothing')
+  expect(refused.observed).not.toBe(ASK_FIRST)
 })
 
 // Rule 241 of the rules review: the refusal says what the line is for, and no more.
@@ -101,8 +99,8 @@ test('the blocks-nothing refusal says what the operator wait is for in one claus
   const { handlers } = mounted()
   const { dollar } = fakeDollar({})
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
-  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing: that wait is for a question he must answer.')
-  expect((refused.answer as any).block).not.toContain('the coordinator would put it to him')
+  expect(refused.observed).toContain('Your wait on the operator blocks nothing: that wait is for a question he must answer.')
+  expect(refused.observed).not.toContain('the coordinator would put it to him')
 })
 
 test('a busy own agent releases the stop — its idle notice will wake the orchestrator', () => {
@@ -669,10 +667,34 @@ const stopEvent = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+// A stop through the gate. The gate observes and never refuses: `observed` is what it once refused
+// the stop for, read off its log line, and every such stop passes with one escape in the journal.
 async function stop(handler: Function, dollar: any, e: object) {
+  return observing(dollar, e, async (seen, pass) => handler(seen, e, pass))
+}
+
+// Runs `through` over a $ whose log lines and journal are read, then checks the gate's observation.
+async function observing(dollar: any, e: object, through: (dollar: any, pass: (x: unknown) => unknown) => Promise<unknown>) {
   let passed: unknown = null
-  const answer = await handler(dollar, e, (x: unknown) => { passed = x; return x })
-  return { answer, passed }
+  const lines: string[] = []
+  const fx = journalled({ ...dollar, process: { ...dollar.process, run: async (argv: readonly string[], ...rest: unknown[]) => {
+    const line = logLineOf(argv)
+    if (line !== null) lines.push(line)
+    return dollar.process.run(argv, ...rest)
+  } } })
+  const answer = await through(fx.dollar, (x: unknown) => { passed = x; return x })
+  const mark = '| stop gate: let through: '
+  const held = lines.find(line => line.includes(mark))
+  const observed = held === undefined ? undefined : held.slice(held.indexOf(mark) + mark.length)
+  if (observed !== undefined) {
+    // The stop passes on: what the gate was handed (the wait's own handler may add to the event).
+    expect(passed).not.toBeNull()
+    expect(answer).toEqual(passed)
+    expect(fx.journal()).toEqual(['escape orchestrator.stop-gate.held'])
+  } else {
+    expect(fx.journal()).toEqual([])
+  }
+  return { answer, passed, observed }
 }
 
 test('the stop gate mounts on classic.Stop with no matcher', () => {
@@ -715,6 +737,7 @@ async function warnsNotRefuses(handlers: any, fx: { dollar: any; written: string
   const before = fx.written.filter(l => l.includes(`| stop gate: warn ${what}`)).length
   const out = await stop(handlers['classic.Stop'], fx.dollar, event)
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.written.filter(l => l.includes(`| stop gate: warn ${what}`)).length).toBe(before + 1)
 }
 
@@ -727,6 +750,7 @@ test('a stop with nothing to wake the orchestrator passes, the log naming nothin
   // is read where the event carries it.
   const declared = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }))
   expect(declared.answer).toBe(declared.passed)
+  expect(declared.observed).toBeUndefined()
 })
 
 test('an idle agent delivered of its merged pull request is not refused: the log names it', async () => {
@@ -749,6 +773,7 @@ test('the transcript is read from the event, not by hunting the projects directo
   const unnamed = fakeDollar({ noLaunchName: true })
   const quiet = await stop(handlers['classic.Stop'], unnamed.dollar, stopEvent({ transcript_path: '' }))
   expect(quiet.answer).toBe(quiet.passed)
+  expect(quiet.observed).toBeUndefined()
   expect(unnamed.written.length).toBe(1)
 })
 
@@ -756,10 +781,11 @@ test('the open rows are the session register\'s, read under the event\'s session
   const { handlers } = mounted()
   const open = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
   const held = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((held.answer as any).block).toContain('row r-12 (the report row) is open')
+  expect(held.observed).toContain('row r-12 (the report row) is open')
   const none = fakeDollar({})
   const passed = await stop(handlers['classic.Stop'], none.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('a checkout left of the project no longer holds a done stop: the log carries a warning, read from the event\'s cwd', async () => {
@@ -770,10 +796,12 @@ test('a checkout left of the project no longer holds a done stop: the log carrie
   })
   const held = await stop(handlers['classic.Stop'], left.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(held.answer).toBe(held.passed)
+  expect(held.observed).toBeUndefined()
   expect(left.written.some(l => l.endsWith('| stop gate: warn working-copies /tmp/h/work/repo/belt'))).toBe(true)
   const gone = fakeDollar({ cwd: '', top: '', workspace: '/tmp/h/work/repo/belt | feat/belt | abc1234 | clean | pushed\n' })
   const passed = await stop(handlers['classic.Stop'], gone.dollar, stopEvent({ last_assistant_message: 'waiting: done', cwd: '' }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('a pending ci-watch log holds the stop once and records the telling', async () => {
@@ -781,8 +809,8 @@ test('a pending ci-watch log holds the stop once and records the telling', async
   const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   const first = fakeDollar({ ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } } })
   const held = await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))
-  expect((held.answer as any).block).toContain('#160')
-  expect((held.answer as any).block).toContain('run_in_background')
+  expect(held.observed).toContain('#160')
+  expect(held.observed).toContain('run_in_background')
   expect(first.wrote[HEADS]).toBe(`160 ${logTell('build\tpending\t9\tu\n')} pending test\n`)
   // Check 2 pays no network at the stop: no gh call on its path either.
   expect(first.ran.filter(l => l.startsWith('gh')).length).toBe(0)
@@ -793,6 +821,7 @@ test('a pending ci-watch log holds the stop once and records the telling', async
   })
   const passed = await stop(handlers['classic.Stop'], second.dollar, stopEvent(message))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('a pull request waited on in the background is not told', async () => {
@@ -803,6 +832,7 @@ test('a pull request waited on in the background is not told', async () => {
   })
   const outcome = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }))
   expect(outcome.answer).toBe(outcome.passed)
+  expect(outcome.observed).toBeUndefined()
   // Nothing recorded for a watched pull request, so a watch that dies is still told once.
   expect(wrote[HEADS]).toBe('')
 })
@@ -930,14 +960,13 @@ test('the interval is read from the environment, a longer one holding the sweep 
   expect(wrote[STAMP]).toBeUndefined()
 })
 
-test('a refused stop runs no sweep', async () => {
+test('an observed stop sweeps as any stop that passes', async () => {
   const { handlers } = mounted()
-  const { dollar, ran, wrote } = fakeDollar({ stampMtimeMs: OLD_STAMP })
-  // A turn with no wait declared, and nothing the host lists in flight, is the refusal left to hold the sweep.
-  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x', background_tasks: [], session_crons: [] }))
-  expect((refused.answer as any).block).toContain('Nothing will wake you')
-  expect(sweepLine(ran)).toBeUndefined()
-  expect(wrote[STAMP]).toBeUndefined()
+  const { dollar, ran } = fakeDollar({ stampMtimeMs: OLD_STAMP })
+  // A turn with no wait declared, and nothing the host lists in flight, is what the gate once refused.
+  const observed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operater blocks x', background_tasks: [], session_crons: [] }))
+  expect(observed.observed).toContain('Nothing will wake you')
+  expect(sweepLine(ran)).toBeDefined()
 })
 
 test('a session outside the orchestration runs no sweep', async () => {
@@ -983,7 +1012,7 @@ test('a failing check named beyond latin-1 is told once for its tell', async () 
   const log = 'build\tpending\t9\tu\n🚀 deploy\tfail\t30\tu\n'
   const first = fakeDollar({ ciLogs: { 'here-pr161.log': { mtimeMs: 1728000000000, text: log }, 'here-pr161.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } } })
   const held = await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))
-  expect((held.answer as any).block).toContain('🚀 deploy')
+  expect(held.observed).toContain('🚀 deploy')
   // The record carries the name as its UTF-8 bytes; the next stop at the same tell
   // decodes the same set back and does not refuse again — the once-per-tell law.
   const second = fakeDollar({
@@ -991,6 +1020,7 @@ test('a failing check named beyond latin-1 is told once for its tell', async () 
   })
   const passed = await stop(handlers['classic.Stop'], second.dollar, stopEvent(message))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test("another session's watch never refuses this stop", async () => {
@@ -1019,8 +1049,8 @@ test("this session's watches are told whatever repository they name", async () =
     },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
-  expect((held.answer as any).block).toContain('#160')
-  expect((held.answer as any).block).toContain('#161')
+  expect(held.observed).toContain('#160')
+  expect(held.observed).toContain('#161')
 })
 
 test('a stop without ITERM_SESSION_ID is told that no chain entry is counted', async () => {
@@ -1052,7 +1082,7 @@ test('a repository that cannot be read filters nothing and is said', async () =>
     ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
-  expect((held.answer as any).block).toContain('1 failing (build)')
+  expect(held.observed).toContain('1 failing (build)')
   expect(written.some(l => l.includes('ignored-checks repository unread'))).toBe(true)
 })
 
@@ -1063,7 +1093,7 @@ test('an ignored-checks file that cannot be read is said, and filters nothing', 
     ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
-  expect((held.answer as any).block).toContain('1 failing (build)')
+  expect(held.observed).toContain('1 failing (build)')
   expect(written.some(l => l.includes('ignored-checks unreadable'))).toBe(true)
 })
 
@@ -1128,12 +1158,13 @@ test('the state root follows ORCHESTRATOR_STATE_DIR, the module\'s own log stayi
     ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], watched.dollar, stopEvent(message))
-  expect((held.answer as any).block).toContain('#160')
+  expect(held.observed).toContain('#160')
   expect(watched.wrote[`${OVER}/stop-gate/a1b2c3.mheads`]).toBe(`160 ${logTell('build\tpending\t9\tu\n')} pending\n`)
-  expect(Object.keys(watched.wrote).every(p => p.startsWith(OVER))).toBe(true)
-  // The refusal's own two lines land in the module's log — the blocks line, the
-  // ci-not-finished one — which the config dir still holds.
-  expect(watched.written.length).toBe(2)
+  // The journal is the config dir's, as the module's log: every other write moves with the root.
+  expect(Object.keys(watched.wrote).filter(p => !p.includes('/.claude/orchestrator/journal/')).every(p => p.startsWith(OVER))).toBe(true)
+  // The observation's own three lines land in the module's log — the blocks line, the
+  // ci-not-finished one, the let-through — which the config dir still holds.
+  expect(watched.written.length).toBe(3)
   expect(watched.written.every(l => l.includes('| guards |'))).toBe(true)
   expect(watched.written.some(l => l.includes('check1 blocks the report'))).toBe(true)
   expect(watched.written.some(l => l.includes('ci-not-finished'))).toBe(true)
@@ -1143,11 +1174,12 @@ test('the state root follows ORCHESTRATOR_STATE_DIR, the module\'s own log stayi
     records: ['{"id":"r-12","label":"the report row","state":"open"}\n'],
   })
   const rows = await stop(handlers['classic.Stop'], deferred.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((rows.answer as any).block).toContain('row r-12 (the report row) is open')
+  expect(rows.observed).toContain('row r-12 (the report row) is open')
   // A due sweep's stamp is the shell gate's own file, written under the same root.
   const swept = fakeDollar({ env: { ORCHESTRATOR_STATE_DIR: OVER }, stampMtimeMs: OLD_STAMP })
   const passed = await stop(handlers['classic.Stop'], swept.dollar, stopEvent(message))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   expect(swept.wrote[`${OVER}/sweep.stamp`]).toMatch(/^\d{10}\n$/)
   expect(swept.wrote[`${OVER}/stop-gate/a1b2c3.mheads`]).toBe('')
 })
@@ -1161,6 +1193,7 @@ test("an agent whose tab still reads idle but whose session the host records bus
   const busy = fakeDollar({ listing: IDLE_ROW, chain, hostRecord: '{"pid":77,"status":"busy"}' })
   const released = await stop(handlers['classic.Stop'], busy.dollar, stopEvent({}))
   expect(released.answer).toBe(released.passed)
+  expect(released.observed).toBeUndefined()
   // Recorded idle, or with no record at all, the glyph's idle stands and the log says so.
   const idle = fakeDollar({ listing: IDLE_ROW, chain, hostRecord: '{"pid":77,"status":"idle"}' })
   await warnsNotRefuses(handlers, idle, stopEvent({}), 'idle-agents Agent: idle-p3')
@@ -1206,6 +1239,7 @@ test("a declared block is honoured before « stand it down »: the idle agent ma
   })
   const outcome = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the choice of A or B' }))
   expect(outcome.answer).toBe(outcome.passed)
+  expect(outcome.observed).toBeUndefined()
 })
 
 test('the predecessor of a succession may stop: its last line « handed over », or its done line once it handed over', async () => {
@@ -1215,15 +1249,17 @@ test('the predecessor of a succession may stop: its last line « handed over »,
   const last = fakeDollar(open)
   const over = await stop(handlers['classic.Stop'], last.dollar, stopEvent({ last_assistant_message: 'Takeover confirmed.\nhanded over' }))
   expect(over.answer).toBe(over.passed)
+  expect(over.observed).toBeUndefined()
   // Before the hand-over, a done line is held on the rows still open.
   const before = fakeDollar(open)
-  expect(((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+  expect((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
   // The successor's spawn, run through Bash without error, is the hand-over.
   const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](before.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const after = fakeDollar(open)
   const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(done.answer).toBe(done.passed)
+  expect(done.observed).toBeUndefined()
 })
 
 // The « handed over » the predecessor sends its successor, delivered, is the hand-over too: a spawn this
@@ -1234,11 +1270,12 @@ test('a delivered « handed over » message lets the done line pass, as the succ
   const { handlers } = mounted()
   const open = { records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] }
   const before = fakeDollar(open)
-  expect(((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+  expect((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
   await handlers['session.send'](before.dollar, HANDED_OVER_SEND, async () => ({ isDelivered: true }))
   const after = fakeDollar(open)
   const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(done.answer).toBe(done.passed)
+  expect(done.observed).toBeUndefined()
 })
 
 test('a « handed over » that was refused, or any other message, hands nothing over', async () => {
@@ -1249,7 +1286,7 @@ test('a « handed over » that was refused, or any other message, hands nothing 
   await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, text: 'takeover confirmed' }, async () => ({ isDelivered: true }))
   await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, origin: { kind: 'user' } }, async () => ({ isDelivered: true }))
   await handlers['session.send'](fx.dollar, { ...HANDED_OVER_SEND, agentId: 'a-1' }, async () => ({ isDelivered: true }))
-  expect(((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+  expect((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
 })
 
 test('a successor spawn that failed hands nothing over', async () => {
@@ -1257,7 +1294,7 @@ test('a successor spawn that failed hands nothing over', async () => {
   const fx = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
   const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash iterm-agent.sh spawn --successor' }
   await handlers['tool.call'](fx.dollar, spawn, async () => ({ isError: true, result: 'never started', text: 'Exit code 1' }))
-  expect(((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
+  expect((await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).observed).toContain('row r-12')
 })
 
 // Live, both sides of a succession were refused « Nothing will wake you » while each waited on
@@ -1272,6 +1309,7 @@ test('the predecessor that spawned its successor is never told nothing will wake
   await handlers['tool.call'](fx.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const waiting = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Successor spawned; waiting for its « takeover confirmed ».' }))
   expect(waiting.answer).toBe(waiting.passed)
+  expect(waiting.observed).toBeUndefined()
 })
 
 const SUBSCRIBE = { tool: 'SendMessage', tool_use_id: 't7', to: 'Orch: belt [b7f1]', message: 'takeover confirmed', notify_when_idle: true }
@@ -1288,10 +1326,12 @@ test("a peer's idle notice the session subscribed to will wake it, until the not
   await handlers['tool.call:SendMessage'](fx.dollar, SUBSCRIBE, SENT)
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(WAITING))
   expect(held.answer).toBe(held.passed)
+  expect(held.observed).toBeUndefined()
   // A prompt from someone else leaves the subscription standing.
   await handlers['prompt.submit'](fx.dollar, { text: 'what is the state?', origin: { kind: 'composer' }, wait: false }, (x: unknown) => x)
   const still = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(WAITING))
   expect(still.answer).toBe(still.passed)
+  expect(still.observed).toBeUndefined()
   // The peer's message arrives: the wait is over, and the gate reads the session again.
   await handlers['prompt.submit'](fx.dollar, { text: 'Message from Orch: belt [b7f1]: handed over', origin: { kind: 'peer-send-message' }, wait: false }, (x: unknown) => x)
   await warnsNotRefuses(handlers, fx, stopEvent(WAITING), 'nothing-will-wake')
@@ -1340,6 +1380,7 @@ test('a ci-watch this session started, still running, will wake it; a stranger\'
   const own = fakeDollar({ ps: `  800   501 /bin/zsh -c bash ${CI_WATCH} 160\n  900   800 /bin/bash ${CI_WATCH} 160\n` })
   const released = await stop(handlers['classic.Stop'], own.dollar, stopEvent({}))
   expect(released.answer).toBe(released.passed)
+  expect(released.observed).toBeUndefined()
   const stranger = fakeDollar({ ps: `  900   1 /bin/bash ${CI_WATCH} 160\n` })
   await warnsNotRefuses(handlers, stranger, stopEvent({}), 'nothing-will-wake')
 })
@@ -1349,14 +1390,15 @@ test('a failing set is told once per watch, whatever the log\'s mtime does while
   const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   const at = (mtimeMs: number, text: string) => ({ 'here-pr160.log': { mtimeMs, text }, 'here-pr160.log.session': { mtimeMs, text: 'a1b2c3\n' } })
   const first = fakeDollar({ ciLogs: at(1, 'build\tpending\t9\tu\ntest\tfail\t30\tu\n') })
-  expect(((await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))).answer as any).block).toContain('1 failing (test)')
+  expect((await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))).observed).toContain('1 failing (test)')
   // Ten seconds on the watch appended a snapshot: a new mtime, the same failing set.
   const later = fakeDollar({ ciLogs: at(2, 'build\tpending\t9\tu\ntest\tfail\t30\tu\nbuild\tpending\t19\tu\n'), heads: first.wrote[HEADS] })
   const passed = await stop(handlers['classic.Stop'], later.dollar, stopEvent(message))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   // A new watch (a new head) truncates the log: a new first line, told again.
   const fresh = fakeDollar({ ciLogs: at(3, 'build\tpending\t2\tv\ntest\tfail\t4\tv\n'), heads: later.wrote[HEADS] })
-  expect(((await stop(handlers['classic.Stop'], fresh.dollar, stopEvent(message))).answer as any).block).toContain('#160')
+  expect((await stop(handlers['classic.Stop'], fresh.dollar, stopEvent(message))).observed).toContain('#160')
 })
 
 test('the successor spawn is the launcher\'s spawn with --successor alone', () => {
@@ -1428,7 +1470,7 @@ test('a registered record whose goals.md holds an open goal refuses waiting: don
   const { handlers } = mounted()
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
-  expect((held.answer as any).block).toContain('Not done against the spec: G3 open')
+  expect(held.observed).toContain('Not done against the spec: G3 open')
   expect(fx.ran).toContain(`python3 ${GOALS_PY} check ${GOALS_FILE} --json`)
 })
 
@@ -1437,6 +1479,7 @@ test('the same goals, all met, pass at once: the operator is not shown their tab
   const fx = fakeDollar({ ...NO_ROWS, goals: ALL_MET })
   const passed = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   expect(fx.wrote[`${STATE}/stop-gate/a1b2c3.goals`]).toBeUndefined()
 })
 
@@ -1445,6 +1488,7 @@ test('a declared block passes with goals open, and the goals are never read', as
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: G3: plan it or rule it out' }))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
 })
 
@@ -1453,12 +1497,14 @@ test('a predecessor that handed over passes with goals open, the goals never rea
   const last = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const over = await stop(handlers['classic.Stop'], last.dollar, stopEvent({ last_assistant_message: 'handed over' }))
   expect(over.answer).toBe(over.passed)
+  expect(over.observed).toBeUndefined()
   expect(last.ran.some(l => l.startsWith('python3'))).toBe(false)
   const spawned = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](spawned.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const done = await stop(handlers['classic.Stop'], spawned.dollar, stopEvent(DONE))
   expect(done.answer).toBe(done.passed)
+  expect(done.observed).toBeUndefined()
   expect(spawned.ran.some(l => l.startsWith('python3'))).toBe(false)
 })
 
@@ -1467,6 +1513,7 @@ test('an agent session with open goals stops untouched, nothing read', async () 
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS, launchName: 'Agent: belt' })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
 })
 
@@ -1475,6 +1522,7 @@ test('no record registered: the done passes and no goals check runs', async () =
   const fx = fakeDollar({ goals: OPEN_GOALS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
 })
 
@@ -1483,6 +1531,7 @@ test('a legacy record with no goals.md passes and is said in one line', async ()
   const fx = fakeDollar(NO_ROWS)
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.written.filter(l => l.endsWith('| stop gate: /tmp/h/rec has no goals.md')).length).toBe(1)
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
 })
@@ -1492,11 +1541,13 @@ test('a goals check that hangs or exits 2 lets the stop pass, said, and still sw
   const broken = fakeDollar({ ...NO_ROWS, goals: { exitCode: 2, stdout: '{"ok":false,"error":"x"}' }, stampMtimeMs: Date.now() - 3600 * 1000 })
   const out = await stop(handlers['classic.Stop'], broken.dollar, stopEvent(DONE))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(broken.written.some(l => l.endsWith(`| stop gate: goals unread: ${GOALS_FILE}: it exited 2`))).toBe(true)
   expect(broken.ran.some(l => l.includes('workspace.sh sweep'))).toBe(true)
   const hung = fakeDollar({ ...NO_ROWS, goals: 'hang', env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
   const late = await stop(handlers['classic.Stop'], hung.dollar, stopEvent(DONE))
   expect(late.answer).toBe(late.passed)
+  expect(late.observed).toBeUndefined()
   expect(hung.written.some(l => l.includes('goals unread') || l.includes('did not answer in time'))).toBe(true)
 })
 
@@ -1505,6 +1556,7 @@ test('the stop re-fired this turn passes with goals open, nothing read', async (
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...DONE, stop_hook_active: true }))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(fx.ran.length).toBe(0)
 })
 
@@ -1539,6 +1591,7 @@ test('a stop that ends on no machine line while a background process of the sess
   const fx = fakeDollar({ ps: MONITOR_PS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Both deploys are running; the monitor will tell.' }))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
 })
 
 // The host's own list of the session's background work, carried on the stop, decides what will
@@ -1575,11 +1628,11 @@ test('a plain ending is refused when the host lists nothing in flight, the short
   const { handlers } = mounted()
   const fx = fakeDollar({ ps: NOTHING_PS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [], session_crons: [] }))
-  const reason = String((held.answer as any).block)
+  const reason = String(held.observed)
   expect(reason.startsWith('Nothing will wake you')).toBe(true)
   expect(reason).toContain('run_in_background')
   expect(reason).toContain('declare done')
-  expect(held.passed).toBe(null)
+  expect(held.observed).toBeDefined()
   expect(fx.written.some(l => l.endsWith('| stop gate: check1 nothing-will-wake'))).toBe(true)
 })
 
@@ -1588,8 +1641,9 @@ test('a plain ending passes while the host lists work in flight, and is refused 
   const fx = fakeDollar({ ps: NOTHING_PS })
   const running = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [SHELL_TASK] }))
   expect(running.answer).toBe(running.passed)
+  expect(running.observed).toBeUndefined()
   const done = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
-  expect(String((done.answer as any).block)).toContain('Nothing will wake you')
+  expect(String(done.observed)).toContain('Nothing will wake you')
 })
 
 test('a plain ending passes with a subscription not yet fired, or after the hand-over, the host listing nothing', async () => {
@@ -1598,11 +1652,13 @@ test('a plain ending passes with a subscription not yet fired, or after the hand
   await subscribed.handlers['tool.call:SendMessage'](fx.dollar, SUBSCRIBE, SENT)
   const waiting = await stop(subscribed.handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
   expect(waiting.answer).toBe(waiting.passed)
+  expect(waiting.observed).toBeUndefined()
   const handed = mounted()
   const hx = fakeDollar({ ps: NOTHING_PS })
   await handed.handlers['tool.call'](hx.dollar, SUCCESSOR_SPAWN, async () => ({ result: { stdout: 'spawned' } }))
   const after = await stop(handed.handlers['classic.Stop'], hx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
   expect(after.answer).toBe(after.passed)
+  expect(after.observed).toBeUndefined()
 })
 
 // A question still open in the round blocks only the work that depends on its answer: the turns that
@@ -1613,9 +1669,10 @@ test('a plain ending passes while the session\'s question is open in the round, 
     const open = fakeDollar({ ps: NOTHING_PS, round: { 'q-a1b2c3-1.json': ASKED_HERE } })
     const waiting = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
     expect(waiting.answer).toBe(waiting.passed)
+  expect(waiting.observed).toBeUndefined()
     const answered = fakeDollar({ ps: NOTHING_PS, round: { 'q-a1b2c3-1.json': askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } }) } })
     const held = await stop(handlers['classic.Stop'], answered.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
-    expect(held.passed).toBe(null)
+    expect(held.observed).toBeDefined()
   }
 })
 
@@ -1626,7 +1683,7 @@ test('another session\'s question open in the round wakes no plain ending of thi
   for (const ending of [PLAIN]) {
     const other = fakeDollar({ ps: NOTHING_PS, round: { 'q-d4e5f6-1.json': askedHere({ id: 'q-d4e5f6-1', sender: { session: 'd4e5f6', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
     const held = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ ...ending, background_tasks: [], session_crons: [] }))
-    expect(held.passed).toBe(null)
+    expect(held.observed).toBeDefined()
   }
 })
 
@@ -1758,17 +1815,18 @@ test('the deferred line passes at the stop when every open row and goal is defer
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DEFER_END))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
 })
 
 test('the deferred line is refused beside a row that is not deferred, and the done line beside a deferred one', async () => {
   const { handlers } = mounted()
   const live = fakeDollar({ records: [DEFERRED_ROW + '{"id":6,"label":"the live row","state":"open"}\n'], goals: DEFERRED_GOALS })
   const held = await stop(handlers['classic.Stop'], live.dollar, stopEvent(DEFER_END))
-  expect((held.answer as any).block).toContain('row 6 (the live row) is open')
+  expect(held.observed).toContain('row 6 (the live row) is open')
   const done = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((refused.answer as any).block).toContain('deferred by the operator')
-  expect((refused.answer as any).block).toContain('Declare a deferred wait, not done')
+  expect(refused.observed).toContain('deferred by the operator')
+  expect(refused.observed).toContain('Declare a deferred wait, not done')
 })
 
 // The ids after « waiting: deferred — » are compared with the deferred items: a line that names
@@ -1825,8 +1883,8 @@ test('the deferred line that names nothing of what is deferred is refused at the
   const { handlers } = mounted()
   const wrong = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const held = await stop(handlers['classic.Stop'], wrong.dollar, stopEvent({ last_assistant_message: 'Nothing left.\nwaiting: deferred — nothing' }))
-  expect((held.answer as any).block).toContain('missing row 5, G5, G6')
-  expect((held.answer as any).block).toContain('unknown nothing')
+  expect(held.observed).toContain('missing row 5, G5, G6')
+  expect(held.observed).toContain('unknown nothing')
 })
 
 test('the items line passes at the stop when its count is the deferred rows and goals', async () => {
@@ -1834,13 +1892,14 @@ test('the items line passes at the stop when its count is the deferred rows and 
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'All that can move has moved.\nwaiting: deferred — 3 items' }))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
 })
 
 test('the items line with a wrong count is refused at the stop, naming the total', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'All that can move has moved.\nwaiting: deferred — 2 items' }))
-  expect((held.answer as any).block).toContain('the right count is 3 items.')
+  expect(held.observed).toContain('the right count is 3 items.')
 })
 
 // A deferred line with no ids is no machine line and no longer has a refusal naming the form: it
@@ -1854,7 +1913,7 @@ test('waiting: deferred with no ids is no malformed machine line, at the gate an
   const { handlers } = mounted()
   const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
   const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Nothing left.\nwaiting: deferred' }))
-  expect((held.answer as any).block).not.toContain('Your last line is not the machine line')
+  expect(held.observed).not.toContain('Your last line is not the machine line')
 })
 
 // The message that sent a session to « waiting: operator » for goals the operator had deferred
@@ -1875,13 +1934,14 @@ test('goals alone deferred, no open row: the deferred line passes and the done l
   const ended = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
   const passed = await stop(handlers['classic.Stop'], ended.dollar, stopEvent(GOALS_ONLY))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   const done = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
   const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((refused.answer as any).block).toContain('G5, G6 deferred by the operator')
-  expect((refused.answer as any).block).toContain('Declare a deferred wait, not done')
+  expect(refused.observed).toContain('G5, G6 deferred by the operator')
+  expect(refused.observed).toContain('Declare a deferred wait, not done')
   const unnamed = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
   const short = await stop(handlers['classic.Stop'], unnamed.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — G5' }))
-  expect((short.answer as any).block).toContain('missing G6')
+  expect(short.observed).toContain('missing G6')
 })
 
 // Every window of a tmux server inherits the server's ITERM_SESSION_ID, so the owner of a
@@ -1967,6 +2027,7 @@ test('a session is never made to answer for the rows and goals of a record anoth
   const foreign = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: other', goals: FOREIGN_GOALS }] })
   const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   expect(foreign.ran.filter(line => line.startsWith('python3'))).toEqual([])
   expect(foreign.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch: other: not read`)
 })
@@ -1975,8 +2036,8 @@ test('the same record, owned by the session\'s own orchestration, is read and it
   const { handlers } = mounted()
   const own = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: belt', goals: FOREIGN_GOALS }] })
   const held = await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))
-  expect((held.answer as any).block).toContain(`row 35 (to implement by Orch: other) is open in ${FOREIGN_RECORD}.`)
-  expect((held.answer as any).block).toContain('Not done against the spec: G1, G2 open in /tmp/h/other/goals.md.')
+  expect(held.observed).toContain(`row 35 (to implement by Orch: other) is open in ${FOREIGN_RECORD}.`)
+  expect(held.observed).toContain('Not done against the spec: G1, G2 open in /tmp/h/other/goals.md.')
 })
 
 test('a record with no owner yet is read as before, beside a foreign one that is not', async () => {
@@ -1989,9 +2050,9 @@ test('a record with no owner yet is read as before, beside a foreign one that is
     ],
   })
   const held = await stop(handlers['classic.Stop'], mixed.dollar, stopEvent(DONE))
-  expect((held.answer as any).block).toContain('row 2 (mine) is open in /tmp/h/mine/dispatch-record.jsonl.')
-  expect((held.answer as any).block).not.toContain('row 35')
-  expect((held.answer as any).block).not.toContain('Not done against the spec')
+  expect(held.observed).toContain('row 2 (mine) is open in /tmp/h/mine/dispatch-record.jsonl.')
+  expect(held.observed).not.toContain('row 35')
+  expect(held.observed).not.toContain('Not done against the spec')
 })
 
 test('an orchestrator whose name carries no subject owns no owned record, and answers for none of its rows', async () => {
@@ -1999,6 +2060,7 @@ test('an orchestrator whose name carries no subject owns no owned record, and an
   const owned = fakeDollar({ ...NO_ROWS, launchName: 'Orch:', shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: belt', goals: FOREIGN_GOALS }] })
   const passed = await stop(handlers['classic.Stop'], owned.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   expect(owned.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch: belt: not read`)
 })
 
@@ -2008,8 +2070,9 @@ test('the register\'s own record is held to its owner file too', async () => {
   const foreign = fakeDollar({ records: [ROW], recordOwner: 'Orch: other' })
   const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   const own = fakeDollar({ records: [ROW], recordOwner: 'Orch: belt [a1b2c3]' })
-  expect(((await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))).answer as any).block).toContain('row r-12 (the report row) is open')
+  expect((await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))).observed).toContain('row r-12 (the report row) is open')
 })
 
 // --- the declared wait (hooks/wait.ts) ---------------------------------------------------------
@@ -2030,9 +2093,7 @@ function waitMounted(): Record<string, Function> {
 // The stop as the engine chains it: the declared wait's handler first, then the gate.
 async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
   const gate = mounted(WAITS.get(wait)).handlers['classic.Stop']
-  let passed: unknown = null
-  const answer = await wait['classic.Stop'](dollar, e, (x: unknown) => gate(dollar, x, (y: unknown) => { passed = y; return y }))
-  return { answer, passed }
+  return observing(dollar, e, async (seen, pass) => wait['classic.Stop'](seen, e, (x: unknown) => gate(seen, x, pass)))
 }
 
 const declare = (wait: Record<string, Function>, dollar: any, input: object) =>
@@ -2082,18 +2143,18 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.
   const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('Nothing will wake you')
+  expect(String(held.observed)).toContain('Nothing will wake you')
 })
 
 test('with no wait declared, the last line the model wrote decides nothing, and the refusal teaches the call', async () => {
   const wait = waitMounted()
   const { dollar } = fakeDollar({})
   const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('`declare_wait` tool')
+  expect(String(held.observed)).toContain('`declare_wait` tool')
   const done = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'All of it shipped.\nwaiting: done', ...NOTHING_RUNS }))
-  expect(String((done.answer as any).block)).toContain('Nothing will wake you')
+  expect(String(done.observed)).toContain('Nothing will wake you')
   const asked = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the report`, ...NOTHING_RUNS }))
-  expect(String((asked.answer as any).block)).toBe(ASK_FIRST)
+  expect(String(asked.observed)).toBe(ASK_FIRST)
 })
 
 test('a declared operator wait releases the stop whatever the last line says', async () => {
@@ -2107,7 +2168,7 @@ test('a declared operator wait releases the stop whatever the last line says', a
   // A declared operator wait that blocks nothing is refused as the line would be.
   await declare(wait, fx.dollar, { kind: 'operator', blocks: 'nothing' })
   const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: ASKED, ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('blocks nothing')
+  expect(String(held.observed)).toContain('blocks nothing')
 })
 
 
@@ -2116,10 +2177,11 @@ test('a declared done is held to the open rows, and passes once none is', async 
   const open = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
   await declare(wait, open.dollar, { kind: 'done' })
   const held = await chainedStop(wait, open.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('row r-12 (the report row) is open')
+  expect(String(held.observed)).toContain('row r-12 (the report row) is open')
   const none = fakeDollar({})
   const passed = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('a declared deferred wait is refused when nothing is deferred, and passes on the right count', async () => {
@@ -2127,10 +2189,11 @@ test('a declared deferred wait is refused when nothing is deferred, and passes o
   const none = fakeDollar({})
   await declare(wait, none.dollar, { kind: 'deferred', blocks: '1 items' })
   const held = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('Nothing is deferred')
+  expect(String(held.observed)).toContain('Nothing is deferred')
   const put = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open","deferred":"later, 2026-11-08"}\n'] })
   const passed = await chainedStop(wait, put.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('a wait declared in an earlier turn is stale and never read', async () => {
@@ -2139,12 +2202,13 @@ test('a wait declared in an earlier turn is stale and never read', async () => {
   await declare(wait, dollar, { kind: 'done' })
   await turnStarts(wait, dollar)
   const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('Nothing will wake you')
+  expect(String(held.observed)).toContain('Nothing will wake you')
   // A subagent's turn starting is not the session's: the declaration stands.
   await declare(wait, dollar, { kind: 'done' })
   await wait['turn.start'](dollar, { turnId: 's', agentId: 'a-1' }, (x: unknown) => x)
   const passed = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('the turn\'s end hands the declared wait to its readers, and shows the answer unchanged', async () => {
@@ -2175,7 +2239,7 @@ test("an agent's turn over the verdict limit that names no report file is refuse
   const { handlers } = mounted()
   const { dollar, ran } = fakeDollar({ launchName: 'Agent: belt-p3' })
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${LONG}\nstatus: done — PR 12` }))
-  expect((refused.answer as any).block).toBe(unnamedReport(LONG.length + '\nstatus: done — PR 12'.length))
+  expect(refused.observed).toBe(unnamedReport(LONG.length + '\nstatus: done — PR 12'.length))
   expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
   const again = stopEvent({ stop_hook_active: true, last_assistant_message: LONG })
   expect((await stop(handlers['classic.Stop'], dollar, again)).answer).toBe(again)
@@ -2186,8 +2250,10 @@ test("an agent's turn that names its report, or stays under the limit, passes", 
   const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
   const named = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${LONG} — report: ${REPORT}\nstatus: done — PR 12` }))
   expect(named.answer).toBe(named.passed)
+  expect(named.observed).toBeUndefined()
   const short = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'demo#12 abc1234 — gate green\nstatus: done — PR 12' }))
   expect(short.answer).toBe(short.passed)
+  expect(short.observed).toBeUndefined()
 })
 
 test("a coordinator's long turn is never held to the agents' limit", async () => {
@@ -2195,6 +2261,7 @@ test("a coordinator's long turn is never held to the agents' limit", async () =>
   const { dollar } = fakeDollar({ launchName: 'Coord: machine' })
   const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: LONG }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 const message = (to: string, text: string) => ({ tool: 'SendMessage', to, message: text })
@@ -2207,12 +2274,15 @@ test("an agent's long message to its orchestrator is cut to the limit with the p
   expect(out.result.sent).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
 })
 
-test("an agent's long message to its orchestrator that names no report is refused, a short one goes whole", async () => {
+test("an agent's long message to its orchestrator that names no report goes whole with one escape, a short one goes whole with none", async () => {
   const { handlers } = mounted()
-  const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
-  expect(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)).toEqual({ deny: unnamedReport(LONG.length) })
+  const fx = journalled(fakeDollar({ launchName: 'Agent: belt-p3' }).dollar)
+  const dollar = fx.dollar
+  expect((await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)).result.sent).toBe(LONG)
+  expect(fx.journal()).toEqual(['escape orchestrator.message.report-unnamed'])
   const short = `demo#12 abc1234 — gate green — blocking: none — report: ${REPORT}`
   expect((await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered)).result.sent).toBe(short)
+  expect(fx.journal().length).toBe(1)
 })
 
 test("the coordinator's and an orchestrator's long messages are never cut", async () => {
@@ -2243,81 +2313,35 @@ test('a turn that asked with ask and declared its wait without question passes t
   expect(declared).toEqual({ result: 'Wait declared: waiting: operator — blocks: the mode. End the turn now.' })
   const first = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends votre choix.', ...NOTHING_RUNS }))
   expect(first.answer).toBe(first.passed)
+  expect(first.observed).toBeUndefined()
   const refired = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'J\'attends toujours.', stop_hook_active: true, ...NOTHING_RUNS }))
   expect(refired.answer).toBe(refired.passed)
+  expect(refired.observed).toBeUndefined()
   expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
   // With no question asked here, the same call is refused, as before.
   const bare = fakeDollar({})
   expect((await declare(waitMounted(), bare.dollar, { kind: 'operator', blocks: 'the mode' })).isError).toBe(true)
 })
 
-// The coordinator of the machine, as its record names it, and the messages the module sent it.
-function withCoordinator(fx: ReturnType<typeof fakeDollar>): string[] {
-  const sent: string[] = []
-  const read = fx.dollar.fs.read
-  fx.dollar.fs.read = async (p: string) => (p === `${STATE}/coordinator.json` ? '{"name":"Coord: ops [a1b2c3]"}' : read(p))
-  fx.dollar.session.send = async ({ text }: { to: unknown; text: string }) => { sent.push(text); return { isDelivered: true } }
-  return sent
-}
+// A stop re-fired after another gate held it: this gate, which only observes, steps aside before
+// reading anything, an operator wait with no question included; nothing is sent, nothing journalled.
 const UNASKED = 'the report\n\nwaiting: operator — blocks: the mode'
 
-test('a re-fired stop whose operator wait still holds no question is refused twice more, then passes with a log line and a notice', async () => {
+test('a re-fired stop whose operator wait holds no question passes untouched, nothing read, nothing sent', async () => {
   const { handlers } = mounted(new Declarations())
   const fx = fakeDollar({})
-  const sent = withCoordinator(fx)
-  const refired = () => stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  expect(REFIRED_REFUSALS).toBe(2)
+  const sent: string[] = []
+  fx.dollar.session.send = async ({ text }: { to: unknown; text: string }) => { sent.push(text); return { isDelivered: true } }
   const first = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
-  expect((first.answer as any).block).toBe(ASK_FIRST)
-  for (let i = 0; i < REFIRED_REFUSALS; i++) expect(((await refired()).answer as any).block).toBe(ASK_FIRST)
+  expect(first.observed).toBe(ASK_FIRST)
+  const ran = fx.ran.length
+  for (let i = 0; i < 3; i++) {
+    const refired = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+    expect(refired.answer).toBe(refired.passed)
+    expect(refired.observed).toBeUndefined()
+  }
+  expect(fx.ran.length).toBe(ran)
   expect(sent).toEqual([])
-  const last = await refired()
-  expect(last.answer).toBe(last.passed)
-  expect(fx.written.filter(l => l.includes('an operator wait with no question let through after 2 more refusals')).length).toBe(1)
-  expect(sent.length).toBe(1)
-  expect(sent[0]).toContain('Orch: belt')
-  expect(sent[0]).toContain('no question asked with `ask`')
-  // A later turn starts over: its first stop is refused, and so is its re-fired one.
-  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
-  expect(((await refired()).answer as any).block).toBe(ASK_FIRST)
-})
-
-test('a fresh stop starts the refusal count over: the next re-fired stops are refused the whole bound again', async () => {
-  const { handlers } = mounted(new Declarations())
-  const fx = fakeDollar({})
-  const sent = withCoordinator(fx)
-  const refired = () => stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
-  expect(((await refired()).answer as any).block).toBe(ASK_FIRST)
-  // Without the reset the count stands at one, and only one more refusal would come.
-  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
-  for (let i = 0; i < REFIRED_REFUSALS; i++) expect(((await refired()).answer as any).block).toBe(ASK_FIRST)
-  expect(sent).toEqual([])
-  const last = await refired()
-  expect(last.answer).toBe(last.passed)
-})
-
-test('a notice to the coordinator that never resolves does not hold the stop past its deadline', async () => {
-  const { handlers } = mounted(new Declarations())
-  const fx = fakeDollar({ env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.3' } })
-  withCoordinator(fx)
-  fx.dollar.session.send = () => new Promise(() => {})
-  for (let i = 0; i < REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  const started = Date.now()
-  const last = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  expect(last.answer).toBe(last.passed)
-  expect(Date.now() - started).toBeLessThan(3000)
-  expect(fx.written.some(l => l.includes('the notice to the coordinator did not finish within the deadline'))).toBe(true)
-})
-
-test('a notice to the coordinator whose send throws is logged as that failure, never as a missed deadline', async () => {
-  const { handlers } = mounted(new Declarations())
-  const fx = fakeDollar({})
-  withCoordinator(fx)
-  fx.dollar.session.send = async () => { throw new Error('peer socket closed') }
-  for (let i = 0; i <= REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  expect(fx.written.some(l => l.includes('the notice to the coordinator failed: peer socket closed'))).toBe(true)
-  expect(fx.written.some(l => l.includes('did not finish within the deadline'))).toBe(false)
 })
 
 test('a re-fired stop the gate used to step aside from still does when nothing asks the operator, or the session is no orchestrator', async () => {
@@ -2325,18 +2349,14 @@ test('a re-fired stop the gate used to step aside from still does when nothing a
   const fx = fakeDollar({})
   const quiet = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'stopped.', stop_hook_active: true }))
   expect(quiet.answer).toBe(quiet.passed)
+  expect(quiet.observed).toBeUndefined()
   const asked = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: operator — blocks: the mode`, stop_hook_active: true }))
   expect(asked.answer).toBe(asked.passed)
+  expect(asked.observed).toBeUndefined()
   const coord = fakeDollar({ launchName: 'Coord: machine' })
   const relay = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
   expect(relay.answer).toBe(relay.passed)
-})
-
-test('the notice to the coordinator is only a log line when there is none to tell', async () => {
-  const { handlers } = mounted(new Declarations())
-  const fx = fakeDollar({})
-  for (let i = 0; i <= REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
-  expect(fx.written.some(l => l.includes('no coordinator to tell'))).toBe(true)
+  expect(relay.observed).toBeUndefined()
 })
 
 // --- the to-do list beside the record (todo.ts) -------------------------------------------------
@@ -2370,11 +2390,12 @@ test('the stop of an orchestrator ending on done is refused while its list holds
   const { handlers } = mounted()
   const open = fakeDollar({ todos: todoLine(1) + todoLine(2, { state: 'closed', verdict: 'row 5' }) })
   const held = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((held.answer as any).block).toContain('to-do 1 (item 1) is open')
-  expect((held.answer as any).block).not.toContain('item 2')
+  expect(held.observed).toContain('to-do 1 (item 1) is open')
+  expect(held.observed).not.toContain('item 2')
   const closed = fakeDollar({ todos: todoLine(1, { state: 'closed', verdict: 'acme/app#230' }) })
   const passed = await stop(handlers['classic.Stop'], closed.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 test('the deferred line takes a to-do he put off, counted with the rows, and refuses one he did not', async () => {
@@ -2382,29 +2403,34 @@ test('the deferred line takes a to-do he put off, counted with the rows, and ref
   const putOff = fakeDollar({ todos: todoLine(1, { deferred: 'after the release, 2026-11-14' }) })
   const passed = await stop(handlers['classic.Stop'], putOff.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — 1 items' }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
   const done = await stop(handlers['classic.Stop'], putOff.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
-  expect((done.answer as any).block).toContain('deferred by the operator')
+  expect(done.observed).toContain('deferred by the operator')
   const live = fakeDollar({ todos: todoLine(1) })
   const refused = await stop(handlers['classic.Stop'], live.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — 1 items' }))
-  expect((refused.answer as any).block).toContain('to-do 1 (item 1) is open')
+  expect(refused.observed).toContain('to-do 1 (item 1) is open')
 })
 
 test('an auditor stopping with an open to-do and no declared wait is refused once, the item named; a declared wait or an empty list lets it go', async () => {
   const { handlers } = mounted()
   const audit = fakeDollar({ launchName: 'Audit: todo', todos: todoLine(1) })
   const held = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
-  expect((held.answer as any).block).toContain('to-do 1 (item 1) is open')
+  expect(held.observed).toContain('to-do 1 (item 1) is open')
   // The refusal is made once: the host re-fires the stop with the marker set, and it passes.
   const again = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'The report is written.', stop_hook_active: true }))
   expect(again.answer).toBe(again.passed)
+  expect(again.observed).toBeUndefined()
   const declared = await stop(handlers['classic.Stop'], audit.dollar, stopEvent({ last_assistant_message: 'Asked.\n\nwaiting: operator — blocks: the answer' }))
   expect(declared.answer).toBe(declared.passed)
+  expect(declared.observed).toBeUndefined()
   const empty = fakeDollar({ launchName: 'Audit: todo' })
   const none = await stop(handlers['classic.Stop'], empty.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
   expect(none.answer).toBe(none.passed)
+  expect(none.observed).toBeUndefined()
   const closed = fakeDollar({ launchName: 'Audit: todo', todos: todoLine(1, { state: 'closed', verdict: 'the report' }) })
   const finished = await stop(handlers['classic.Stop'], closed.dollar, stopEvent({ last_assistant_message: 'The report is written.' }))
   expect(finished.answer).toBe(finished.passed)
+  expect(finished.observed).toBeUndefined()
 })
 
 test('a coordinator\'s stop is never held by its list: only its end command is', async () => {
@@ -2412,6 +2438,7 @@ test('a coordinator\'s stop is never held by its list: only its end command is',
   const coord = fakeDollar({ launchName: 'Coord: machine', todos: todoLine(1) })
   const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'Nothing more.' }))
   expect(passed.answer).toBe(passed.passed)
+  expect(passed.observed).toBeUndefined()
 })
 
 // --- the waits the module reads itself: no declaration for them ------------------------------
@@ -2433,6 +2460,7 @@ test('declare_wait takes no tool wait: what the module reads in flight passes wi
   for (const task of [SHELL_TASK, SUBAGENT, MONITOR]) {
     const out = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', background_tasks: [task], session_crons: [] }))
     expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   }
   expect(fx.written.some(l => l.includes('| stop gate: warn') || l.includes('| stop gate: check1'))).toBe(false)
 })
@@ -2460,23 +2488,23 @@ test('an idle agent whose pull request is open is not dismissed: with something 
   const armed = { background_tasks: [{ command: 'bash ci-watch.sh 160', status: 'running' }], session_crons: [] }
   const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...armed }))
   expect(out.answer).toBe(out.passed)
+  expect(out.observed).toBeUndefined()
   expect(open.written.some(l => l.includes('idle-delivered') || l.includes('idle-agents') || l.includes('nothing-will-wake'))).toBe(false)
   expect(open.written.some(l => l.endsWith('| stop gate: warn awaiting-merge Agent: idle-p3'))).toBe(true)
   // Its done is still held through the handler: it is still there until the merge.
   const done = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
   const held = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done', ...NOTHING_RUNS }))
-  expect(String((held.answer as any).block)).toContain('Agent: idle-p3 is still there')
+  expect(String(held.observed)).toContain('Agent: idle-p3 is still there')
   const merged = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"MERGED"}' })
   await warnsNotRefuses(handlers, merged, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
 })
 
-test('an executor with its pull request open and nothing armed to wake the session is refused as nothing-will-wake', async () => {
+test('an executor with its pull request open and nothing armed to wake the session is observed as nothing-will-wake', async () => {
   const { handlers } = mounted()
   const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}' }
   const open = fakeDollar(pr)
   const out = await stop(handlers['classic.Stop'], open.dollar, stopEvent({ ...NOTHING_RUNS }))
-  expect(out.answer).not.toBe(out.passed)
-  expect(String((out.answer as any).block)).toContain('Nothing will wake you')
+  expect(String(out.observed)).toContain('Nothing will wake you')
   expect(open.written.some(l => l.includes('warn awaiting-merge'))).toBe(false)
 })
 
