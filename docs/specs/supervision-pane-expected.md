@@ -22,3 +22,26 @@ ou fermé, les questions doivent apparaître et je dois pouvoir y répondre dans
 d'orchestration. Mais ces questions qui sont dans les sessions d'orchestration et qui doivent
 également remonter dans la session du coordinateur si ce coordinateur est ouvert, doivent à partir du
 moment ou le panneau est ouvert, arriver dans ce panneau et pas dans la session de coordinateur »
+
+Asked two precisions (does a question answered in the orchestrator's session leave the pane; is an
+answer given in the pane shown in the orchestrator's session), he added:
+
+« Oui, peu importe où je réponds. Donc là, je réponds à tes deux précisions que tu demandes sur le
+panneau de supervision. Peu importe où je réponds. Si je réponds dans le panneau de supervision, la
+question disparaît automatiquement de l'orchestrateur et du panneau de supervision. Si le panneau de
+supervision était fermé et que je réponds à l'orchestrateur, la question disparaît de la session du
+coordinateur. Si le panneau de supervision était ouvert et que je réponds à l'orchestrateur, la
+question disparaît du panneau de supervision. Bref, peu importe où apparaît la question, elle est
+considérée comme répondue et elle disparaît automatiquement des autres endroits, peu importe
+l'endroit où j'y réponds. »
+
+## A session's reading (not his words), for checking
+
+| Where the question shows | Rule |
+|---|---|
+| The asking orchestrator's session | always, whatever the pane's state, and he can answer there |
+| The coordinator's pane | when a coordinator runs and its pane is open; then not in the coordinator's conversation |
+| The coordinator's conversation | when a coordinator runs and its pane is closed |
+
+Answered in any one of these places, the question is answered everywhere: it leaves the pane, the
+coordinator's conversation is told it is settled, and the asking orchestrator receives the answer.
