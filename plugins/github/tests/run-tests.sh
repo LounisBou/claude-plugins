@@ -317,6 +317,15 @@ runs = json.loads(sys.argv[2])
 ci = fmt.gate_ci({"statuses": []}, runs, False, {})
 print(ci["result"], len(ci["failed"]), ci["total"], ci["running"])
 ' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"failure"},{"id":2,"name":"a","status":"in_progress"},{"id":3,"name":"b","app":{"slug":"s"},"status":"completed","conclusion":"success"}]')"
+# No check at a head: CI not started (PENDING), or, in a repository with no CI configured, NONE.
+check "gate_ci reads no check as PENDING, and as NONE where the repository has no CI" "PENDING NONE PENDING" \
+  "$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+print(fmt.gate_ci({"statuses": []}, [], False, {})["result"], fmt.gate_ci({"statuses": []}, [], False, {}, no_ci=True)["result"],
+      fmt.gate_ci({"statuses": []}, [], False, {}, required=["ci"], no_ci=True)["result"])
+' "$GHDIR")"
 # A run without an integer id, or tied on the greatest id, is never dropped.
 check "gate_ci keeps a success and a running run without an id" "PENDING 2" \
   "$(python3 -c '

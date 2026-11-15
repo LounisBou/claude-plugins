@@ -113,14 +113,16 @@ def _latest_runs(runs, workflows, suite_runs=None):
     return kept
 
 
-def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None):
+def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None, no_ci=False):
     """CI at one head, as the ready guard reads it. Only the latest run of each
     check counts, and none skipped or neutral in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is not green either: CI has not started on that head, so the result
-    is PENDING. A check the base branch requires (required: its contexts) that
+    is PENDING, unless the repository has no CI configured (no_ci, read by the caller: no
+    workflow, no required check, no check on the default branch): the result is then NONE, which
+    the gate reads as no CI to wait for. A check the base branch requires (required: its contexts) that
     has not reported at the head, as a run or a status, is running: its workflow
     may start after another check has passed. A read of the required checks that failed
     (unverified: what it read and why) leaves the result at best PENDING: a check the
@@ -142,6 +144,8 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     running += unreported
     if failed:
         result = "FAILURE"
+    elif no_ci and not (runs or commit_statuses or unreported or unverified):
+        result = "NONE"
     elif running or skipped or unverified or not (runs or commit_statuses):
         result = "PENDING"
     else:
@@ -169,6 +173,7 @@ def _checks_status(obj):
         obj.get("workflow_runs"),
         obj.get("required"),
         obj.get("unverified"),
+        bool(obj.get("no_ci")),
     )
     return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
 
