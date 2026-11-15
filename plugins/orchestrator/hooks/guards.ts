@@ -21,7 +21,7 @@ import {
   roleOf, walkName, hostOn, scanTail, hostBasenames, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
+import { tripGate, parseMeasure, measureFilePath, newerInstalled, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { ASK_FIRST, DECLARATIONS, type Declarations } from './wait.ts'
@@ -81,6 +81,12 @@ function pluginFile(root: string, path: string): string {
 export function gateAnnouncement(gate: { tripped: boolean; words: string }, role: string, root = '', set: readonly string[] = []): string {
   if (!gate.tripped) return ''
   return `CONTEXT GATE: this session is at ${gate.words}.${setLine(set)} ${roleLine(role, root)}`
+}
+
+// A newer commit installed under a running session: only a successor loads it, so the session is
+// told to hand over, by its role's own line. The commits are named short, as the deploy's status does.
+export function versionAnnouncement(newer: Newer, role: string, root = ''): string {
+  return `NEWER VERSION: commit ${newer.installed.slice(0, 7)} of the plugins is installed and this session still runs ${newer.own.slice(0, 7)}; only a successor runs the newer one. Hand over at the end of the step in progress, at once when a defect of the running version blocks you. ${roleLine(role, root)}`
 }
 
 // A threshold the session's environment set is the gate, however low: a session
@@ -258,7 +264,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // place and the unmeasured line are the session's own, keyed by its id: after a
   // /clear the id changes and no session.start fires, so a memo held across it
   // would name the old session's transcript and keep the line already said.
-  let memo: { sessionId: string; transcript: string | null; saidUnmeasured: boolean } | null = null
+  let memo: { sessionId: string; transcript: string | null; saidUnmeasured: boolean; toldCommit: string | null } | null = null
   // The session id that handed over (it spawned its successor), the stop gate's
   // release: keyed by id like the memo above, a /clear's new session has not.
   let handedOverIn: string | null = null
@@ -299,7 +305,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     const answer = () => next(blocks.length === 0 ? e : { ...e, context: blocks.reduce<readonly string[]>(joinContext, e.context ?? []) })
     try {
       const sessionId = await $.session.id()
-      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, saidUnmeasured: false }
+      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, saidUnmeasured: false, toldCommit: null }
       if (memo.transcript === null) {
         // A miss is looked up again: a young session's transcript appears with
         // its first turn, and a memo of the miss would pin it forever.
@@ -314,6 +320,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // carries no CLAUDE_PLUGIN_ROOT (the host sets it for hook processes
       // only), so the root is the engine's own $.plugin.root.
       const root = role === 'auditor' || role === 'coordinator' ? $.plugin.root : ''
+      // A newer installed commit is said to the sessions that last, once per commit; an agent
+      // ends at its merge and is not told.
+      if (role === 'orchestrator' || role === 'coordinator') {
+        const newer = await newerInstalled($.plugin.root, (path: string) => $.fs.read(path), memo.toldCommit)
+        if (newer) {
+          memo.toldCommit = newer.installed
+          blocks.push(versionAnnouncement(newer, role, root))
+        }
+      }
       let raw: string | null = null
       try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))) } catch { /* no file yet: unmeasured */ }
       const reading = parseMeasure(String(raw ?? ''))
