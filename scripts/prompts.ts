@@ -100,11 +100,15 @@ export function loweredOutsideRelease(ceilings: Ceilings, base: Ceilings, releas
   return faults
 }
 
+/** A release commit's subject: `chore(release): …`, or `chore: release <n>` as releases 2 to 3.1 read. */
+const RELEASE_GREP = '^chore(\\(release\\):|: release )'
+export const isReleaseSubject = (subject: string): boolean => new RegExp(RELEASE_GREP).test(subject)
+
 /** The ceilings at `ref`, and whether a commit since `ref` is a release. */
 function sinceBase(root: string, ref: string): { readonly base: Ceilings; readonly released: boolean } {
   const git = (args: readonly string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
   const base = parseCeilings(JSON.parse(git(['show', `${ref}:${CEILINGS_PATH}`]))).ceilings
-  const released = git(['log', '--format=%s', `${ref}..HEAD`]).split('\n').some(subject => subject.startsWith('chore(release):'))
+  const released = git(['log', '--format=%s', `${ref}..HEAD`]).split('\n').some(isReleaseSubject)
   return { base, released }
 }
 
@@ -149,13 +153,13 @@ function promptFilesAt(root: string, ref: string): PromptFile[] {
 
 /**
  * The tokens the plugins' prompt files weigh now against the last release (the last commit whose
- * subject starts `chore(release):`), in the estimate the budgets use: program figure 8, read as
- * what a session loads. Undefined outside a git history holding a release.
+ * subject is a release's, `isReleaseSubject`), in the estimate the budgets use: program figure 8,
+ * read as what a session loads. Undefined outside a git history holding a release.
  */
 export function balance(root: string): Balance | undefined {
   let since: string
   try {
-    since = execFileSync('git', ['log', '-1', '--format=%H', '--grep=^chore(release):', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    since = execFileSync('git', ['log', '-1', '-E', '--format=%H', `--grep=${RELEASE_GREP}`, 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   } catch {
     return undefined
   }
