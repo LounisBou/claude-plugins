@@ -11,13 +11,15 @@ import { waitLine, type DeclaredWait } from './stop-gate.ts'
 import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { logLine } from './module-io.ts'
+import { configDir, logLine } from './module-io.ts'
+import { recordedInstallPaths } from '../core/install-record.ts'
+import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
 import { holdsDone } from './unattended.ts'
 import { holdsTodos } from './todo.ts'
 import { readAsked } from './question.ts'
 
 // The nouns the declaration holds.
-type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
+type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'settings'>
 
 // Why an operator wait is refused with no question of the session's open.
 export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'
@@ -111,6 +113,32 @@ async function openAsked($: Held): Promise<{ id: string; blocks: string }[]> {
   }
 }
 
+const LEARNING = 'learning@lounisbou'
+export const RETROSPECTIVE_TIMEOUT_MS = 30_000
+
+const lastLine = (text: string): string => text.trim().split('\n').at(-1)?.trim() ?? ''
+
+// The orchestrator's last goal met (a `done` wait at its turn's end) is a boundary where the learning
+// plugin's retrospective may start (docs/specs/learning-design.md, section 2): this runs the one
+// command the learning plugin answers, which decides by itself whether enough candidates wait and
+// starts another session. Nothing runs where the learning plugin is not enabled. An observation: it
+// never throws, and says what it did in one line of the module's log.
+export async function startRetrospective($: Held): Promise<void> {
+  try {
+    if ((await $.settings.read())?.enabledPlugins?.[LEARNING] !== true) return
+    const config = await configDir($)
+    const recorded = recordedInstallPaths(await $.fs.read(`${config}/plugins/installed_plugins.json`), 'learning', ['lounisbou'])
+    for (const root of 'problem' in recorded ? [] : recorded.paths) {
+      if (!(await $.fs.exists(`${root}/${RETROSPECTIVE_CONTRACT.script}`))) continue
+      const run = await $.process.run(retrospectiveStartArgv(root, config), { timeoutMs: RETROSPECTIVE_TIMEOUT_MS })
+      await logLine($, 'wait', lastLine(run.stdout) || lastLine(run.stderr) || `the learning retrospective's start exited ${run.exitCode}`)
+      return
+    }
+  } catch (err) {
+    await logLine($, 'wait', `the learning retrospective was not started: ${messageOf(err)}`)
+  }
+}
+
 // Mounted before the supervision: a chain answers in registration order, so the turn's end reads
 // the answer this module hands on.
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
@@ -183,6 +211,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (wait === null) return next(e)
     const handed = withDeclaredWait(String(e.answer ?? ''), wait)
     const result = await next({ ...e, answer: handed })
+    if (wait.kind === 'done') await startRetrospective($)
     // The line is the readers' beneath, never shown: a text the chain left as handed is the answer's own.
     return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: String(e.answer ?? '') } : result
   }).catch(async ($, e, next) => {
