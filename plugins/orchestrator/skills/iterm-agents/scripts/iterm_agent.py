@@ -4205,6 +4205,23 @@ def default_removed(role):
             + (ORCH_UNUSED if role == ORCH else WATCHER_UNUSED if role in (COORD, AUDIT) else ()))
 
 
+def carried_tools(words, title):
+    """`(keep, drop)`: what a running session's launch line (`words`, its host's argv) removed
+    beyond, or left out of, the default set of `title`'s role, so a rotation's replacement is
+    given the same tools. A launch that removed nothing by `--disallowedTools` carries nothing:
+    it was not made by this launcher."""
+    words = list(words or [])
+    if "--disallowedTools" not in words:
+        return [], []
+    at = words.index("--disallowedTools") + 1
+    removed = []
+    while at < len(words) and not words[at].startswith("-"):
+        removed.append(words[at])
+        at += 1
+    default = default_removed(title_role(title))
+    return ([n for n in default if n not in removed], [n for n in removed if n not in default])
+
+
 def removed_tools(title, keep=(), drop=()):
     """The default set for this title's role, less what the spawn keeps, plus what it drops;
     each name once, in the order they were first given."""
@@ -5705,6 +5722,19 @@ def cmd_rotate(args):
     found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
     # And who the old session is, read before the spawn too: after it, the tty may hold another.
     old = old_session(args.old_tty, found_on, title, window, args.expect)
+    # The tools the old agent's launch kept or dropped beyond its role's default set follow it to
+    # the replacement, read on its host's launch line; a --keep-tool or --drop-tool given to the
+    # rotation wins over what is carried.
+    if old["host"]:
+        keep, drop = carried_tools(host_argv(old["host"][0]), asked.title or old["title"])
+        given = set(asked.keep_tool or []) | set(asked.drop_tool or [])
+        keep = [n for n in keep if n not in given]
+        drop = [n for n in drop if n not in given]
+        asked.keep_tool = list(asked.keep_tool or []) + keep
+        asked.drop_tool = list(asked.drop_tool or []) + drop
+        if keep or drop:
+            print("rotate: tools carried from the old launch: kept %s; dropped %s"
+                  % (", ".join(keep) or "none", ", ".join(drop) or "none"), file=sys.stderr)
     # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
     # live model and effort, read on that agent's transcript — not on its tier's, which its
     # orchestrator may have escalated since. A tier, or a model with its effort, is the

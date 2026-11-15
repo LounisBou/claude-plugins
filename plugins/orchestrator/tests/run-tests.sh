@@ -3883,6 +3883,21 @@ check "without --gate-tokens the startup prompt says no gate" "0" \
   "$(gspawn --brief "$B/good.md" --orchestrator "$ORCHREF" | grep -c 'Your context gate')"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_PS_TABLE=/dev/null bash "$AGENT" rotate --tier light --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: gate" --prompt p --gate-tokens 200000 2>&1)
 check "rotate passes --gate-tokens to the replacement" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
+# A rotation's replacement is given the tools its old agent was launched with: what the old
+# launch kept or dropped beyond its role's default set is read on its host's launch line.
+res=$("$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+default = list(ia.default_removed('Agent'))
+kept = default[0]
+words = ['claude', '--name', 'Agent: x', '--disallowedTools'] + default[1:] + ['mcp__extra', '--permission-mode', 'auto']
+print(ia.carried_tools(words, 'Agent: x') == ([kept], ['mcp__extra']))
+print(ia.carried_tools(['claude', '--name', 'Agent: x'], 'Agent: x') == ([], []))
+print(ia.carried_tools(None, 'Agent: x') == ([], []))
+a = ia.args_from_line('rotate', ['--old-tty', '/dev/ttys901', '--tier', 'light', '--dir', '/tmp', '--title', 'Agent: r', '--prompt', 'p', '--keep-tool', 'mcp__pr-review'])
+print(a.spawn.keep_tool, a.spawn.drop_tool)" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+check "rotate carries the old launch's kept and dropped tools, and reads the rotation's own flags" "True|True|True|['mcp__pr-review'] []" \
+  "$(printf '%s\n' "$res" | paste -sd'|' -)"
 
 check_status "--brief with --prompt is mutually exclusive" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x

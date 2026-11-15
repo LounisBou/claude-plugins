@@ -212,9 +212,10 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --mode
     # One of --prompt, --prompt-file or --brief is required, as for a spawn. A refusal comes
     # before the replacement's tab exists, the old session untouched.
     # --no-verify is refused: the old tab is closed only on a replacement verified running.
-    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp, and only
-    # those given to `rotate`: the replacement is opened with the default set, so a rotation
-    # of an agent that was given Artifact or the synced skills gives them again.
+    # What the old agent's launch line (its host's argv) kept or dropped beyond its role's
+    # default set is carried to the replacement, said on stderr (`rotate: tools carried …`).
+    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp; the synced
+    # skills are given again only when `rotate` is given --keep-synced-skills.
 
 $SCRIPT pair
     # read-only: the calling session's model and effort now, `model=<model> effort=<level>`,
