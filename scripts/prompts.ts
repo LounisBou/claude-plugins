@@ -42,7 +42,12 @@ export interface Ceilings {
   readonly duplicates: number
 }
 
-/** The estimate every budget is kept in: stable, cheap, close to a tokenizer for prose. */
+/**
+ * The estimate every budget is kept in: stable and cheap. Four characters a token reads about
+ * 1.4 times low on prose, where 2.9 characters a token was measured on the host's own count, and
+ * about right on tool schemas; budgets and scenarios stay in this estimate, so they compare with
+ * each other, and a figure meant as real tokens on prose is this one times 1.4.
+ */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
