@@ -15,7 +15,7 @@
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
-import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, leadingChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
 import { machineLabel } from './remote-row.ts'
@@ -322,7 +322,7 @@ export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 's
 
 /**
  * The asker's turn ended: each question claimed in it is answered in its tab with his words, its
- * consent recorded when they name « Accorder » alone, unless the turn's operator wait keeps it
+ * consent recorded when they name « Accorder » alone (in the coordinator's tab, when they open with it), unless the turn's operator wait keeps it
  * (`kept`): then it is open again, drawn again.
  */
 export async function settleClaimed($: Held, kept: readonly string[], now: Date = new Date()): Promise<void> {
@@ -334,11 +334,14 @@ export async function settleClaimed($: Held, kept: readonly string[], now: Date 
     return { ...rest, seq: entry.seq + 1 }
   })
   const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
+  // In the coordinator's own tab every order of his counts: words that open with a choice answer it.
+  const coordinator = await sessionRole($, session) === 'coordinator'
   for (const id of await openAskedIds($, takes)) {
     let refused = false
     const done = await closeOwnAsked($, id, takes, at, entry => {
       const asked = entry as unknown as Asked
-      const chosen = asked.consent ? answersChoice(asked.claimed?.typed ?? '', asked.choices) : null
+      const typed = asked.claimed?.typed ?? ''
+      const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? (coordinator && asked.consent ? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : undefined) : null
       refused = !!asked.consent && (!chosen || !grants(chosen.text))
       return planClaimed(entry, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at)
     })
