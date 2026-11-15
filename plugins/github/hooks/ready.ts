@@ -685,6 +685,14 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   return missing
 }
 
+// An item of missingItems that names a record absent at the head: no run, no verdict, nothing that failed.
+const ABSENT_RECORD = new RegExp('^(?:' + KINDS.join('|') + '): no record at ')
+
+/** Whether what a pull request misses is only records absent at its head: what the gate observes on an act, and does not refuse. */
+export function onlyAbsentRecords(missing: readonly string[]): boolean {
+  return missing.length > 0 && missing.every((item) => ABSENT_RECORD.test(item))
+}
+
 // What a stacked pull request misses with neither a tests record nor its checks green: the light CI's run.
 function lightCiMissing(gate: Gate): string {
   return SCRIPTED.kind + ': no record at ' + head7(gate.head) + ' and its checks not green: stacked on ' + (gate.base || 'another pull request')

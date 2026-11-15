@@ -68,10 +68,10 @@ it. `/github:doctor` then confirms everything is ready.
   draft unless the call says otherwise. Opening out of draft (`draft: false`)
   is observed; outside a repository in auto-merge (below), so is leaving draft
   (`pr-ready`), the operator's act on GitHub after their review, and it is asked
-  as any write no rule allows, the readiness gate refusing a pull request that is
-  not ready (« Ready pull requests »); a merge
+  as any write no rule allows, the readiness gate refusing a pull request whose CI is
+  not green or whose record failed (« Ready pull requests »); a merge
   (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
-  the pull request is ready. An existing
+  the gate lets it. An existing
   description is replaced without asking, under the writing rules.
 - **Ready and Not Ready labels** — `pr-readiness <pr> ready|not-ready` puts
   the `Ready` (`27e760`) or `Not Ready` (`8c1455`) label on a pull request and
@@ -266,12 +266,14 @@ The gate reads that key alone, never the command.
 ## Guards
 
 **Ready.** Taking a pull request out of draft and merging it
-(`gh pr merge --auto` included) need the `Ready` label, which the gate puts itself
+(`gh pr merge --auto` included) meet the gate, which puts the `Ready` label itself
 just before the act when the whole contract holds at the head, CI green included (a check the base
 branch requires that has not reported at the head yet is not green), through the tool (`pr-ready`, `pr-merge`) and through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
-The act is refused before anyone is asked, and a pull request still carrying
+An act that misses only records absent at the head (`<kind>: no record at <head7>`) goes through
+without `Ready`, observed (`github.ready.no-record`). On anything else missing (CI not green, a
+record that failed at the head) the act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
 ```
@@ -320,7 +322,7 @@ record is older than 90 days.
 
 The guards of this module refuse only what cannot be taken back: a merge, the auto-merge and deploy
 lists, a deploy, a deletion of the records, of the E2E exemptions or of the check plans, a pull request
-that is not ready (the gate every merge and undraft meets), a readiness that cannot be read. Every other guard observes: the call goes through and one refusal
+whose CI is not green or whose record failed (the gate every merge and undraft meets), a readiness that cannot be read. Every other guard observes: the call goes through and one refusal
 event is written into the module's journal (`<config dir>/github/journal/`, core's learning
 contract, under the guard's stable code), with no command or text in it. A journal that cannot be
 written is one line in the transcript, and the call still goes through.
@@ -333,6 +335,7 @@ written is one line in the transcript, and the call still goes through.
 | `github.draft.open-out` | opens a pull request out of draft |
 | `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
 | `github.writing.rule` | carries a text that breaks a writing rule |
+| `github.ready.no-record` | merges or takes out of draft a pull request that misses only records absent at its head |
 
 ## Tests
 
