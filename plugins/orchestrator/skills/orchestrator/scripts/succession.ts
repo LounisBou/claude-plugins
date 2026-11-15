@@ -497,6 +497,29 @@ export interface Deps {
   readonly now: () => Date
   readonly prState?: (repo: string, pr: number) => string | undefined
   readonly openPrs?: OpenPrReader
+  /** The window index of the home session's pane on a tty; undefined when no tmux pane runs there. */
+  readonly paneWindow?: (tty: string) => number | undefined
+}
+
+/**
+ * The window of the tmux pane on a tty, read from the server (`tmux list-panes -a`): an
+ * orchestrator of a home session sits in its window 0. Undefined where tmux runs no pane there, a
+ * tab of iTerm2.
+ */
+export function tmuxWindow(tty: string): number | undefined {
+  try {
+    const lines = execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_tty} #{window_index}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).split('\n')
+    const found = lines.map(line => line.split(' ')).find(([pane]) => pane === tty)
+    return found === undefined ? undefined : Number(found[1])
+  } catch {
+    return undefined
+  }
+}
+
+/** The launcher's verb that closes the predecessor's place: `takeover` for window 0 of a home session, `close` for a tab. */
+export function closeVerb(tty: string, paneWindow: (tty: string) => number | undefined): { verb: string; where: string } {
+  if (tty !== 'none' && paneWindow(tty) === 0) return { verb: 'takeover', where: 'window 0 of a home session: `takeover` kills it and moves yours to index 0, where `close` is refused' }
+  return { verb: 'close', where: 'a tab, no window 0 of a home session runs on it' }
 }
 
 export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
@@ -536,6 +559,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)
+  const close = closeVerb(parsed.tty, deps.paneWindow ?? tmuxWindow)
   const text = fill(template, {
     PROJECT: project,
     MODE: parsed.mode,
@@ -546,6 +570,8 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     DISPATCH_RECORD: parsed.record,
     LAUNCHER: join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh'),
     PREDECESSOR_TTY: parsed.tty,
+    CLOSE_VERB: close.verb,
+    CLOSE_WHERE: close.where,
     LIVE_ROWS: list(open.rows.map(row => row.line)),
     LIVE_OWNERS: list(owners),
     LIVE_PULL_REQUESTS: list(open.prs),

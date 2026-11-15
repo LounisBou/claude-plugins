@@ -1917,46 +1917,32 @@ class path_lock:
         return False
 
 
-def chain_write(tty, entries):
-    os.makedirs(CHAINS_DIR, exist_ok=True)
-    chain_prune({tty, self_tty() or ""})
-    path = chain_path(tty)
-    tmp = "%s%s%d-%s" % (path, STORE["temporary_mark"], os.getpid(), uuid.uuid4().hex[:8])
-    try:
-        with open(tmp, "x") as fh:
-            for e in entries:
-                line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
-                if is_resident(e):
-                    line["resident"] = True
-                fh.write(json.dumps(line) + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+CHAINS_WRITER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chains.ts")
 
 
-def chain_change(tty, change):
-    """The chain read again and written under its lock: `change` takes the entries as they
-    stand and answers those to write, or None to leave the file as it is. Every launcher
-    process rewrites chains (a spawn, a close, a move, a takeover): read outside the lock,
-    one's change was lost under another's."""
-    with path_lock(chain_path(tty)):
-        entries = chain_read(tty)
-        changed = change(entries)
-        if changed is not None:
-            chain_write(tty, changed)
-        return changed
+def chain_store(*argv):
+    """One change of the chains, made by core's store (chains.ts beside this file): the lock, the
+    atomic replace and the line format are core's. The node is the one the entry ran on
+    (ORCHESTRATOR_ADAPTER_NODE), else the first on PATH. Answers {"written": [ttys], "count": n};
+    raises when the change was not made. The chain files whose owner no longer runs are then
+    pruned (chain_prune), the ones just written and the caller's own kept."""
+    node = os.environ.get("ORCHESTRATOR_ADAPTER_NODE") or "node"
+    done = subprocess.run([node, "--experimental-strip-types", "--no-warnings", CHAINS_WRITER,
+                           argv[0], STATE_DIR] + [str(a) for a in argv[1:]],
+                          capture_output=True, text=True, timeout=30)
+    if done.returncode != 0:
+        raise RuntimeError((done.stderr or "").strip() or "chains: exit %d" % done.returncode)
+    result = json.loads(done.stdout)
+    if result.get("written"):
+        chain_prune(set(result["written"]) | {self_tty() or ""})
+    return result
 
 
 def chain_drop(tty, tab_ids):
     """The entries naming those tabs removed from the chain; an entry written meanwhile stays."""
-    gone = set(tab_ids)
+    gone = sorted(set(tab_ids))
     if gone:
-        chain_change(tty, lambda entries: [e for e in entries if e["tab_id"] not in gone]
-                     if any(e["tab_id"] in gone for e in entries) else None)
+        chain_store("drop", tty, *gone)
 
 
 def is_resident(entry):
@@ -1966,8 +1952,7 @@ def is_resident(entry):
 
 
 def chain_append(tty, tab_id, new_tty, owner, resident=False):
-    chain_change(tty, lambda entries: entries + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
-                                                  "resident": resident}])
+    chain_store("append", tty, tab_id, new_tty, owner or "", *(["resident"] if resident else []))
 
 
 def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
@@ -1981,21 +1966,8 @@ def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
     (`merge`) comes after the successor has launched agents of its own: they are kept, and the
     predecessor's follow them. The predecessor's file is removed: its tty's other occupants
     are gone, and a file left behind is a chain no live session owns."""
-    # Both files under their locks, taken in one order so two transfers never wait on each other.
-    first, second = sorted({chain_path(old_tty), chain_path(new_tty)}) + [None] * (old_tty == new_tty)
-    with path_lock(first), path_lock(second or first):
-        moved = chain_owned(chain_read(old_tty), old_owner)
-        own = chain_owned(chain_read(new_tty), new_owner) if merge and new_owner else []
-        have = {e["tab_id"] for e in own}
-        chain_write(new_tty, own + [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
-                                     "resident": is_resident(e)}
-                                    for e in moved if e["tab_id"] not in have])
-        if old_tty != new_tty:
-            try:
-                os.remove(chain_path(old_tty))
-            except OSError:
-                pass
-    return len(moved)
+    return chain_store("transfer", old_tty, old_owner or "", new_tty, new_owner or "",
+                       *(["merge"] if merge else []))["count"]
 
 
 def chain_owned(entries, owner):
@@ -2128,12 +2100,7 @@ def opener_name():
 def chain_drop_tab(tab_id):
     """Every chain, every entry naming this tab. `close` does not know which orchestrator
     the tab belonged to, and a tab id names exactly one tab."""
-    if not os.path.isdir(CHAINS_DIR):
-        return
-    for name in os.listdir(CHAINS_DIR):
-        if not name.endswith(".jsonl"):
-            continue
-        chain_drop("/dev/" + name[:-len(".jsonl")], [tab_id])
+    chain_store("drop-tab", tab_id)
 
 
 def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
@@ -2144,24 +2111,7 @@ def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
     orchestrator spawned it. Left alone it names a tab about to be closed — and once the
     tty is recycled, a stranger's — as the orchestrator's resident agent. Owner and the
     resident mark are kept; no other entry and no file that holds none is touched."""
-    if not os.path.isdir(CHAINS_DIR):
-        return 0
-    count = 0
-    for name in os.listdir(CHAINS_DIR):
-        if not name.endswith(".jsonl"):
-            continue
-        hits = []
-
-        def repoint(entries):
-            hit = [e for e in entries if e["tab_id"] == old_tab_id]
-            for e in hit:
-                e["tab_id"] = new_tab_id
-                e["tty"] = new_tty
-            hits.append(len(hit))
-            return entries if hit else None
-        chain_change("/dev/" + name[:-len(".jsonl")], repoint)
-        count += sum(hits)
-    return count
+    return chain_store("repoint-tab", old_tab_id, new_tab_id, new_tty)["count"]
 
 
 async def move_is_owned(app, tty, own, owner=None):

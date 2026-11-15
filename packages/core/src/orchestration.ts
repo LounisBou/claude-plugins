@@ -15,6 +15,15 @@ export const ROUND_DIR = 'round'
 /** Under the round directory, the one that keeps the old round files. */
 export const ROUND_ARCHIVE_DIR = 'archive'
 
+/**
+ * The file of one round entry under the orchestrator's state directory, `<state>/round/<id>.json`:
+ * one JSON object, read and rewritten only under the store's lock (store-io.ts `updateOver`,
+ * store.ts `update`), replaced whole in one rename.
+ */
+export function roundEntryPath(state: string, id: string): string {
+  return `${state}/${ROUND_DIR}/${id}.json`
+}
+
 /** The tool by which a turn declares what will wake it, and the kinds it takes. */
 export const WAIT_TOOL = 'declare_wait'
 export const WAIT_KINDS = ['operator', 'done', 'deferred'] as const

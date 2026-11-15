@@ -10,7 +10,8 @@
 // With ORCHESTRATOR_PRINT_REQUEST set, the request is printed on stdout instead (the suite's
 // cases that drive the adapter in its own process read it so).
 //
-// The interpreter is ORCHESTRATOR_ADAPTER_PYTHON, which `iterm-agent.sh` resolves. The adapter's
+// The interpreter is ORCHESTRATOR_ADAPTER_PYTHON, which `iterm-agent.sh` resolves; the adapter is
+// handed this node as ORCHESTRATOR_ADAPTER_NODE, for its chain writes (chains.ts). The adapter's
 // exit code is this command's; a signal that ends it ends this command with 128 + its number.
 // SIGTERM and SIGHUP sent to this process are passed on; SIGINT is not, since the terminal sends
 // it to the whole group and the adapter handles its own.
@@ -69,7 +70,9 @@ export function requestOf(argv: readonly string[]): { request: LauncherRequest }
 /** The adapter run on the request, its stdio this process's; resolves to the exit code. */
 export function runAdapter(python: string, request: LauncherRequest, adapter: string = ADAPTER): Promise<number> {
   return new Promise(resolve => {
-    const child = spawn(python, [adapter, '--request', JSON.stringify(request)], { stdio: 'inherit' })
+    // The adapter makes its chain writes through core's store (chains.ts), on this same node.
+    const env = { ...process.env, ORCHESTRATOR_ADAPTER_NODE: process.env['ORCHESTRATOR_ADAPTER_NODE'] || process.execPath }
+    const child = spawn(python, [adapter, '--request', JSON.stringify(request)], { stdio: 'inherit', env })
     const pass = (signal: NodeJS.Signals): void => {
       child.kill(signal)
     }
