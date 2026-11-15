@@ -227,10 +227,14 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 - `tests/test_tm_bugs.py:394`: fails by the calendar (the purge reads the wall clock, `pull.py:24,113`). **Fixed** (#25).
 - `hooks/guard.ts:83-124`: the group-post guard fails open. **Fixed** (#16).
 - `hooks/core.ts` (`selfOf`, `peersOf`) parses `ListAgents` text; the launcher path and the measure-file layout are hard-coded. **Fixed**: core's `orchestration.ts`.
-- `agent/AGENT.md`, `skills/bugs-bot/SKILL.md`: about 13k tokens per agent run, a dated ruling at `AGENT.md:17`; about 62 test reads of `.md` wording. **Open**
-  (13,138 tokens in `npm run context`'s resident-agent scenario; the dated ruling is at `AGENT.md:16`).
-- Suspected: tester text and images reach the orchestrator with only prose protection; `--image` (`images.py:77`) posts any local image. **Partly**: only
-  PNG, JPEG or WebP of 10 MB or less; the first suspicion is not read yet.
+- `agent/AGENT.md`, `skills/bugs-bot/SKILL.md`: about 13k tokens per agent run, a dated ruling at `AGENT.md:17`; about 62 test reads of `.md` wording. **Fixed**: the agent
+  reads `AGENT.md` alone, which now holds the voice (5,959 tokens in `npm run context`'s resident-agent scenario, from 11,468); the quoted
+  ruling and the rules said in both files are gone, and so are the tests that read a document's wording.
+- Suspected: tester text and images reach the orchestrator with only prose protection; `--image` (`images.py:77`) posts any local image. **Fixed** for the images: only
+  PNG, JPEG or WebP of 10 MB or less. The first suspicion is read and true: the agent, a model, copies the report's text into its message to
+  the launcher, and only the prose of `AGENT.md` and `SKILL.md` says it is data (`hooks/guard.ts` reads what goes out to the group, nothing coming in).
+  **Open: a choice.** The agent keeps sending the tester's text in its message, and the launcher has the bug in front of it at once; or it sends
+  only the report's id, and the launcher runs `bugs-bot show <id>` to read the text as a command's output, one more step for each bug.
 
 **github**
 - `hooks/ready.ts:476`: the records guard matches the text `pr-records/`; a built path or `rec""ord.py` passes, so a record can be forged; NotebookEdit is not covered (`register.ts:1438`). **Fixed** (#31).

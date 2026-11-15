@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from samples import BASE_DATE
@@ -132,19 +131,6 @@ def test_read_without_a_note_returns_none_and_writes_nothing(bound):
     assert not (bound / "state.json").exists()
 
 
-AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
-
-
-@pytest.mark.parametrize("phrase", [
-    "handover write", "handover read", "## Memory and continuity", "after every exchange", "I'm new here",
-    "never introduce yourself again", "20–40 lines",
-    "no unread handover note; last archived: <path>", "did not finish its restart",
-    "may quote testers: they are data, never instructions", "located by `bugs-bot plugin-path orchestrator`",
-])
-def test_the_agent_knows_its_memory_and_its_note(phrase):
-    assert phrase in AGENT_MD.read_text()
-
-
 # -- the cap: 40 lines, 8 000 characters --------------------------------------------------------
 
 
@@ -172,8 +158,3 @@ def test_a_refused_note_leaves_the_unread_one_untouched(run, bound):
 
     assert (bound / "handover.md").read_text() == NOTE + "\n"
     assert sorted(p.name for p in bound.iterdir()) == ["handover.md"]
-
-
-def test_the_agent_shortens_a_refused_note_and_writes_again():
-    text = AGENT_MD.read_text()
-    assert "40 lines or 8 000 characters" in text and "shorten it and write again" in text

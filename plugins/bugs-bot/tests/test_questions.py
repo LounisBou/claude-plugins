@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from samples import BASE_DATE, FakeTelegram
 from test_followup import person_message
-from test_mention import DOCS, STAMP, write_report
+from test_mention import STAMP, write_report
 
 HOUR = 3600
 FIRST, SECOND, MATHIS = f"{STAMP}-5", f"{STAMP}-6", f"{STAMP}-9"
@@ -328,19 +328,3 @@ def test_person_shows_the_queued_questions(queued, run, capsys):
 
     out = capsys.readouterr().out
     assert f"question queued 2026-10-02T08:30 for {SECOND}: Il répond au deuxième appui ?" in out.splitlines()
-
-
-@pytest.mark.parametrize("phrase", [
-    "One message carries one question, in its own sentence",
-    "One subject per person at a time.",
-    "`ask <id>`",
-    "A queued question that no longer needs asking (the subject moved on): `unask <id>`.",
-    "queued <id>: <author> already awaits <other id>",
-    "Their other subjects are worked on in parallel without asking",
-])
-def test_the_agent_asks_one_question_at_a_time(phrase):
-    assert phrase in DOCS["AGENT.md"].read_text()
-
-
-def test_the_skill_states_one_question_at_a_time():
-    assert "One question at a time" in DOCS["SKILL.md"].read_text()
