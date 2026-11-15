@@ -8,7 +8,9 @@
 // first question drawn under its rows, the
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
-import { expect, test } from 'claude-code/testing'
+import { expect, test, type Reply } from 'claude-code/testing'
+import { capture, hostOf, type Captured } from '../../core/capture.ts'
+import { fieldsOf, type Events, type FsEntry, type Host, type Noun, type On, type ProcessRunInit, type UiElements } from '../../core/host.ts'
 import { agentPaneRows, paneRows, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { readAsked, settle } from '../question.ts'
 import { type RoundEntry } from '../round.ts'
@@ -31,8 +33,8 @@ test('rows sort by rotation urgency', () => {
     'sessions/a': { role: 'agent', name: 'Agent: low', context_percent: 30, context_tokens: 30000, window: 100000, model: 'a-model', busy: false, updated_at: 't', repo: 'r' },
     'sessions/b': { role: 'agent', name: 'Agent: hot', context_percent: 85, context_tokens: 85000, window: 100000, model: 'a-model', busy: true, updated_at: 't', repo: 'r' },
   })
-  expect(rows[0].label).toContain('Agent: hot')
-  expect(rows[0].label).toContain('85%')
+  expect(rows[0]!.label).toContain('Agent: hot')
+  expect(rows[0]!.label).toContain('85%')
 })
 
 // A row with every figure a real measure writes, overridable field by field.
@@ -68,11 +70,11 @@ test('a row past the token gate outranks a fuller row still below the percent ga
     'sessions/big': row({ context_percent: 35, context_tokens: 350000, window: 1000000 }),
     'sessions/small': row({ context_percent: 50, context_tokens: 50000, window: 100000 }),
   })
-  expect(rows[0].label).toContain('35%')
-  expect(rows[0].label).toContain('past the gate')
-  expect(rows[1].label).toContain('50%')
-  expect(rows[1].label).not.toContain('past the gate')
-  expect(rows[0].urgency).toBeGreaterThan(rows[1].urgency)
+  expect(rows[0]!.label).toContain('35%')
+  expect(rows[0]!.label).toContain('past the gate')
+  expect(rows[1]!.label).toContain('50%')
+  expect(rows[1]!.label).not.toContain('past the gate')
+  expect(rows[0]!.urgency).toBeGreaterThan(rows[1]!.urgency)
 })
 
 test('on each side of the gate the fill descends', () => {
@@ -109,8 +111,8 @@ test('an orchestrator\'s agents sort like the store rows, an unmeasured one last
     { name: 'Agent: full', status: 'busy', row: row({ context_percent: 35, context_tokens: 350000, window: 1000000 }) },
   ])
   expect(rows.map(r => r.label.split(' · ')[0])).toEqual(['Agent: full', 'Agent: low', 'Agent: fresh'])
-  expect(rows[0].label).toContain('busy · 35% past the gate')
-  expect(rows[2].label).toBe('Agent: fresh · busy · not measured yet')
+  expect(rows[0]!.label).toContain('busy · 35% past the gate')
+  expect(rows[2]!.label).toBe('Agent: fresh · busy · not measured yet')
 })
 
 test('the host record gives the id, the name without a quoted rename\'s quotes, the status', () => {
@@ -126,7 +128,7 @@ test('the host record gives the id, the name without a quoted rename\'s quotes, 
 // among its nouns — so the pane is exercised over a complete fake: an
 // in-memory file map holding the store, recorded runs, a recorded ui.open.
 type Fx = {
-  dollar: any
+  dollar: World
   files: Map<string, string>
   ran: string[]
   written: string[]
@@ -169,7 +171,7 @@ function fakeDollar(over: {
   const notices: string[] = []
   // The host's $.state for the session: it outlives the module's own variables.
   const state = new Map<string, unknown>()
-  const dollar = {
+  const dollar = hostOf({
     state: {
       get: async (ref: { plugin: string; key: string }) => ({ value: state.get(`${ref.plugin}/${ref.key}`), version: 0 }),
       set: async (ref: { plugin: string; key: string }, value: unknown) => {
@@ -181,16 +183,16 @@ function fakeDollar(over: {
       id: async () => 's-one',
       usage: async () => ({ context: { tokens: 30000, window: 100000, percent: 30 } }),
       model: async () => 'a-model',
-      surfaces: async () => ['terminal'],
     },
     env: { get: async (name: string) => env[name] },
-    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    plugin: { root: '/plugins/orch-root' },
     prompt: { submit: async (args: { text: string }) => { submitted.push(args.text) } },
     tool: { register: async (spec: { name: string }) => { tools.push(spec) } },
     fs: {
       read: async (p: string) => {
-        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return files.get(p)
+        const text = files.get(p)
+        if (text === undefined) throw new Error(`ENOENT: ${p}`)
+        return text
       },
       write: async (p: string, text: string) => {
         files.set(p, text)
@@ -198,16 +200,16 @@ function fakeDollar(over: {
       stat: async (p: string) => {
         const text = files.get(p)
         if (text === undefined) throw new Error(`ENOENT: ${p}`)
-        return { kind: 'file', size: text.length, mtimeMs: 0, isLink: false }
+        return { kind: 'file', size: text.length, mtimeMs: 0 }
       },
       list: async (dir: string) => {
         const names = new Set<string>()
         for (const p of files.keys()) {
           if (!p.startsWith(`${dir}/`)) continue
           const rest = p.slice(dir.length + 1)
-          if (rest) names.add(rest.split('/')[0])
+          if (rest) names.add(rest.split('/')[0] ?? rest)
         }
-        return [...names].map(name => {
+        return [...names].map((name): FsEntry => {
           const text = files.get(`${dir}/${name}`)
           return text !== undefined
             ? { name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }
@@ -229,9 +231,10 @@ function fakeDollar(over: {
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
         // The module's atomic write renames its temporary file into place.
-        if (argv[0] === 'mv' && argv[1] === '-f' && files.has(argv[2])) {
-          files.set(argv[3], files.get(argv[2])!)
-          files.delete(argv[2])
+        const [, , from = '', to = ''] = argv
+        if (argv[0] === 'mv' && argv[1] === '-f' && files.has(from)) {
+          files.set(to, files.get(from)!)
+          files.delete(from)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'rm' && argv[1] === '-f') {
@@ -239,7 +242,7 @@ function fakeDollar(over: {
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'sh') {
-          if (over.hangWalk) return new Promise(() => undefined)
+          if (over.hangWalk) return new Promise<never>(() => undefined)
           return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
         }
         if (argv[0] === 'ps' && argv[1] === '-A') {
@@ -296,51 +299,59 @@ function fakeDollar(over: {
       },
       // The mobile table has no Input and no Select, as the reference says; the terminal's,
       // the desktop's and the editor's have both.
-      resolve: (e: { surface?: string }) => ({
-        Box: (props: { flexDirection?: string; children?: unknown[] }) => ({ type: 'Box', props }),
-        Text: (props: { color?: string; bold?: boolean; children?: string }) => ({ type: 'Text', props }),
-        Button: (props: { key?: string; label?: string; hotkey?: string; onPress: () => void }) => ({ type: 'Button', props }),
-        Link: (props: { href: string; children?: string }) => ({ type: 'Link', props }),
-        ...(e.surface === 'mobile' ? {} : {
-          Input: (props: { key: string; label?: string; onSubmit: (value: string) => void }) => ({ type: 'Input', props }),
-          Select: (props: { key: string; label?: string; options: { value: string; label?: string }[]; value?: string; onSelect: (value: string) => void }) => ({ type: 'Select', props }),
+      resolve: (e): UiElements => ({
+        Box: props => ({ type: 'Box', props }),
+        Text: props => ({ type: 'Text', props }),
+        Button: props => ({ type: 'Button', props }),
+        Link: props => ({ type: 'Link', props }),
+        ...(fieldsOf(e)?.['surface'] === 'mobile' ? {} : {
+          Input: props => ({ type: 'Input', props }),
+          Select: props => ({ type: 'Select', props }),
         }),
       }),
     },
-  }
+  })
   return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, scrolled, later, state, submitted, tools, notices }
 }
 
-function mounted(register: (on: any) => void): {
-  handlers: Record<string, Function>
-  matchers: Record<string, object | undefined>
+// The host every hook under test is handed: each noun, those the fake does not set throwing.
+type World = Host<Noun>
+// A captured hook as a test calls it: the fake's $, an event as the test writes it, a next of the
+// test's own. A hook the module does not register reads undefined at run time.
+type Call = (dollar: World, e: object, next?: (e: never) => unknown) => Promise<Reply>
+type Handlers = { readonly [K in keyof Events]: Call }
+const callOf = <H>(hook: Captured<H>): Call =>
+  async (dollar, e, next) => (await hook.handler(dollar as H, e as never, next as never)) as Reply
+
+function mounted<H>(register: (on: On<H>) => void): {
+  handlers: Handlers
+  matchers: Partial<Record<keyof Events, object | undefined>>
 } {
-  const handlers: Record<string, Function> = {}
-  const matchers: Record<string, object | undefined> = {}
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    handlers[args[0]] = args[args.length - 1] as Function
-    matchers[args[0]] = args.length === 3 ? args[1] : undefined
-    return { catch: () => undefined }
-  })
-  return { handlers, matchers }
+  const handlers: Partial<Record<keyof Events, Call>> = {}
+  const matchers: Partial<Record<keyof Events, object | undefined>> = {}
+  for (const hook of capture(register)) {
+    handlers[hook.event] = callOf(hook)
+    matchers[hook.event] = hook.matcher
+  }
+  return { handlers: handlers as Handlers, matchers }
 }
 
 const startEvent = { cwd: '/tmp/w', surface: 'terminal', isInteractive: true }
 
 // The composed chain, one list per event, driven in registration order — the
 // order the host drives the chain itself.
-function composedChains(): Record<string, Function[]> {
-  const chains: Record<string, Function[]> = {}
-  registerAll((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
-    return { catch: () => undefined }
-  })
+function composedChains(): Partial<Record<keyof Events, Call[]>> {
+  const chains: Partial<Record<keyof Events, Call[]>> = {}
+  for (const hook of capture(registerAll)) (chains[hook.event] ??= []).push(callOf(hook))
   return chains
 }
 
-async function drive(chains: Record<string, Function[]>, event: string, dollar: any, e: object) {
-  const run = async (i: number, ev: any): Promise<any> =>
-    i >= (chains[event] ?? []).length ? ev : chains[event][i](dollar, ev, (x: any) => run(i + 1, x))
+async function drive(chains: Partial<Record<keyof Events, Call[]>>, event: keyof Events, dollar: World, e: object) {
+  const chain = chains[event] ?? []
+  const run = async (i: number, ev: object): Promise<unknown> => {
+    const hook = chain[i]
+    return hook === undefined ? ev : hook(dollar, ev, (x: object) => run(i + 1, x))
+  }
   return run(0, e)
 }
 
@@ -359,13 +370,8 @@ test('no start opens the pane, whatever the role', async () => {
 })
 
 // Every command.run registration, in order: the supervision answers to two commands.
-function commandRuns(register: (on: any) => void): { matcher: object | undefined; handler: Function }[] {
-  const runs: { matcher: object | undefined; handler: Function }[] = []
-  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
-    if (args[0] === 'command.run') runs.push({ matcher: args.length === 3 ? args[1] : undefined, handler: args[args.length - 1] as Function })
-    return { catch: () => undefined }
-  })
-  return runs
+function commandRuns<H>(register: (on: On<H>) => void): { matcher: { readonly [field: string]: unknown } | undefined; handler: Call }[] {
+  return capture(register).filter(hook => hook.event === 'command.run').map(hook => ({ matcher: hook.matcher, handler: callOf(hook) }))
 }
 
 // Measured live: the host hands the plugin's command as `orchestrator:<file>` and the
@@ -379,8 +385,8 @@ test('the supervision answers to every form of its one short name, one pane whic
     { command: 'orchestrator:supervision' },
     { command: 'orchestrator-supervision' },
   ])
-  const [shortForm, pluginForm] = runs.map(run => run.handler)
-  for (const [opener, closer] of [[shortForm, pluginForm], [pluginForm, shortForm]]) {
+  const [shortForm, pluginForm] = [runs[0]!.handler, runs[1]!.handler]
+  for (const [opener, closer] of [[shortForm, pluginForm], [pluginForm, shortForm]] as const) {
     const coord = fakeDollar({ launchName: 'Coord: main' })
     expect((await opener(coord.dollar, { command: 'orchestrator:orchestrator-supervision', args: '' })).text).toContain('pane opened')
     expect(await closer(coord.dollar, { command: 'orchestrator:supervision', args: '' })).toEqual({ text: 'Supervision pane closed.' })
@@ -394,7 +400,7 @@ test('a bare short name toggles the pane when its user command is the plugin\'s 
   const runs = commandRuns(registerSupervision)
   const passed = (x: unknown) => ({ passed: x })
   for (const command of ['orchestrator-supervision']) {
-    const hook = runs.find(run => (run.matcher as any).command === command)!.handler
+    const hook = runs.find(run => run.matcher?.['command'] === command)!.handler
     const e = { command, args: '' }
     const marked = fakeDollar({ launchName: 'Coord: main' })
     marked.files.set(`${HOME}/.claude/commands/${command}.md`, '---\ninstalled-by: claude-orchestrator\ndescription: Open or close the supervision pane\n---\n')
@@ -408,7 +414,7 @@ test('a bare short name toggles the pane when its user command is the plugin\'s 
     expect(await hook(none.dollar, e, passed)).toEqual({ passed: e })
   }
   // The plugin's own file, `/orchestrator:supervision`, needs no copy.
-  const plugin = runs.find(run => (run.matcher as any).command === 'orchestrator:supervision')!.handler
+  const plugin = runs.find(run => run.matcher?.['command'] === 'orchestrator:supervision')!.handler
   const orch = fakeDollar({ launchName: 'Orch: phase-3' })
   expect((await plugin(orch.dollar, { command: 'orchestrator:supervision', args: '' }, passed)).text).toContain('pane opened')
 })
@@ -450,7 +456,7 @@ test('the supervision tool is registered at every start, loaded with its schema,
     const fx = fakeDollar({ launchName })
     await handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
     expect(fx.tools.map(spec => [spec.name, spec.isDeferred])).toEqual([['supervision', false]])
-    expect(JSON.stringify(fx.tools[0].inputSchema)).toContain('"enum":["open","close"]')
+    expect(JSON.stringify(fx.tools[0]?.inputSchema)).toContain('"enum":["open","close"]')
     expect(fx.opened).toEqual([])
   }
   const { matchers } = mounted(registerSupervision)
@@ -459,7 +465,7 @@ test('the supervision tool is registered at every start, loaded with its schema,
 
 test('the supervision tool opens and closes the pane the commands toggle, by the word it is given', async () => {
   const { handlers } = mounted(registerSupervision)
-  for (const [launchName, title] of [['Coord: main', 'Orchestrators'], ['Orch: phase-3', 'Agents']]) {
+  for (const [launchName, title] of [['Coord: main', 'Orchestrators'], ['Orch: phase-3', 'Agents']] as const) {
     const fx = fakeDollar({ launchName })
     expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
     expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'Supervision pane opened.' })
@@ -532,7 +538,7 @@ test('a coordinator\'s pane lists the live orchestrators alone, the urgent first
 test('an orchestrator\'s pane lists the agents its own tab spawned, read from the host\'s records', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = fakeDollar({ launchName: 'Orch: phase-3' })
-  fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
+  fx.env['ITERM_SESSION_ID'] = 'w0t1p0:OWNER-1'
   // The walk's seed puts this session on ttys001; its chain holds one agent of
   // its own and one a recycled tty's previous owner wrote.
   fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, [
@@ -544,8 +550,8 @@ test('an orchestrator\'s pane lists the agents its own tab spawned, read from th
   fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt-p3', context_percent: 40 })) + '\n')
   await handlers['command.run'](fx.dollar, supervisionRun)
   // The row is the name (bold) and the rest in two pieces: read as the text they draw together.
-  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
-  const text = tree.props.children.map((kid: any) => pieces(kid).map((p: any) => p.text).join('')).join('\n')
+  const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  const text = kidsOf(tree).map(kid => pieces(kid).map(p => p.text).join('')).join('\n')
   expect(text).toContain('Agent: belt-p3 · busy · 40%')
   expect(text.match(/Agent: belt-p3/g)?.length).toBe(1)
   expect(fx.ran).toContain('ps -t ttys009 -o pid=')
@@ -572,7 +578,7 @@ test('a name walk that cannot answer in time costs the row its name, never the m
   // the figures still land, the measure still answers.
   const chains = composedChains()
   const fx = fakeDollar({ hangWalk: true, origin: 'git@github.com:me/belt.git' })
-  fx.env.ORCHESTRATOR_SIDE_READ_MS = '50'
+  fx.env['ORCHESTRATOR_SIDE_READ_MS'] = '50'
   const e = {}
   const answered = await drive(chains, 'session.measure', fx.dollar, e)
   expect(answered).toBe(e)
@@ -589,7 +595,7 @@ test('with the module directory overridden, the measure and the pane use it, and
   // rows and measures stay in its sandbox, and the operator's store never sees them.
   const SANDBOX = '/sandbox/module'
   const fx = fakeDollar({ launchName: 'Coord: main' })
-  fx.env.ORCHESTRATOR_MODULE_DIR = SANDBOX
+  fx.env['ORCHESTRATOR_MODULE_DIR'] = SANDBOX
   await drive(composedChains(), 'session.measure', fx.dollar, {})
   expect(fx.files.has(`${SANDBOX}/store/sessions/s-one`)).toBe(true)
   expect(fx.files.has(`${SANDBOX}/measure/s-one.json`)).toBe(true)
@@ -610,16 +616,16 @@ test('an open pane redraws on its own clock while its session waits, and the clo
   const fx = fakeDollar({ launchName: 'Coord: main' })
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.timers.length).toBe(1)
-  expect(fx.timers[0].ms).toBe(2000)
-  fx.timers[0].fn()
+  expect(fx.timers[0]!.ms).toBe(2000)
+  fx.timers[0]!.fn()
   expect(fx.invalidated).toEqual(['ui.render'])
   await handlers['command.run'](fx.dollar, supervisionRun)
-  expect(fx.timers[0].cancelled).toBe(true)
+  expect(fx.timers[0]!.cancelled).toBe(true)
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.timers.length).toBe(2)
   const e = { id: 'supervision', origin: { kind: 'person' } }
   expect(await handlers['ui.close'](fx.dollar, e, (x: unknown) => x)).toBe(e)
-  expect(fx.timers[1].cancelled).toBe(true)
+  expect(fx.timers[1]!.cancelled).toBe(true)
 })
 
 test('an open coordinator\'s pane redraws within one tick of a write in its round, and a tick that sees none draws nothing', async () => {
@@ -636,13 +642,13 @@ test('an open coordinator\'s pane redraws within one tick of a write in its roun
   fx.dollar.fs.stat = async (p: string) => {
     if (p !== roundDir) return stat(p)
     stats++
-    return { kind: 'directory', size: 0, mtimeMs: mtime, isLink: false }
+    return { kind: 'dir', size: 0, mtimeMs: mtime }
   }
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.timers.map(t => t.ms)).toEqual([2000])
   await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   const tick = async () => {
-    fx.timers[0].fn()
+    fx.timers[0]!.fn()
     for (let i = 0; i < 10; i++) await Promise.resolve()
   }
   await tick()
@@ -672,7 +678,7 @@ test('a coordinator\'s pane whose draw throws is not redrawn at every tick, its 
     fx.dollar.fs.stat = async (p: string) => {
       if (p !== roundDir) return stat(p)
       if (mtime === null) throw new Error(`ENOENT: ${p}`)
-      return { kind: 'directory', size: 0, mtimeMs: mtime, isLink: false }
+      return { kind: 'dir', size: 0, mtimeMs: mtime }
     }
     const read = fx.dollar.fs.read
     fx.dollar.fs.read = (p: string) => {
@@ -681,7 +687,7 @@ test('a coordinator\'s pane whose draw throws is not redrawn at every tick, its 
     }
     await handlers['command.run'](fx.dollar, supervisionRun)
     const tick = async () => {
-      fx.timers[0].fn()
+      fx.timers[0]!.fn()
       for (let i = 0; i < 10; i++) await Promise.resolve()
     }
     await tick()
@@ -713,7 +719,7 @@ const CHOICES = [
 
 async function coordinatorRender(fx: Fx, handlers = mounted(registerSupervision).handlers) {
   await handlers['command.run'](fx.dollar, supervisionRun)
-  return handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  return drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
 }
 
 test('no open question: nothing is drawn below the rows, and an orchestrator\'s pane never draws the round', async () => {
@@ -726,7 +732,7 @@ test('no open question: nothing is drawn below the rows, and an orchestrator\'s 
   const settledTree = await coordinatorRender(settled)
   expect(JSON.stringify(settledTree)).toBe(JSON.stringify(await coordinatorRender(bare)))
   // The title, the block and the section's `none`: no question line below the block.
-  expect(settledTree.props.children.length).toBe(3)
+  expect(kidsOf(settledTree).length).toBe(3)
   expect(JSON.stringify(settledTree)).not.toContain('Merge it?')
 
   const orch = fakeDollar({ launchName: 'Orch: phase-3' })
@@ -879,7 +885,7 @@ test('with the pane closed by his word, the successor presents each due question
   const successor = successorOf(fx)
   await mounted(registerSupervision).handlers['turn.complete'](successor.dollar, firstTurn, (x: unknown) => x)
   expect(successor.opened).toEqual([])
-  await successor.later.filter(t => t.ms === 30000)[0].fn()
+  await successor.later.filter(t => t.ms === 30000)[0]!.fn()
   expect(successor.submitted.length).toBe(1)
   expect(successor.submitted[0]).toContain(asked.from)
 })
@@ -936,19 +942,77 @@ test('a coordinator recorded after the first turn: the wake is armed at the firs
 
 // --- the coordinator's pane, readable -----------------------------------------------------------
 
+// An element of a drawn tree, as the fake's `ui.resolve` builds it: its component and its props,
+// the ones the tests read named.
+type El = { readonly type: string; readonly props: Props }
+type Props = {
+  readonly children?: unknown
+  readonly key?: string
+  readonly color?: string
+  readonly bold?: boolean
+  readonly dimColor?: boolean
+  readonly position?: string
+  readonly right?: number
+  readonly top?: number
+  readonly width?: number
+  readonly href?: string
+  readonly label?: string
+  readonly value?: string
+  readonly paddingLeft?: number
+  readonly paddingRight?: number
+  readonly paddingTop?: number
+  readonly marginTop?: number
+  readonly flexDirection?: string
+  readonly flexGrow?: number
+  readonly flexShrink?: number
+  readonly autoFocus?: boolean
+  readonly options?: readonly { readonly value: string; readonly label?: string }[]
+  readonly onSelect?: (value: string) => unknown
+  readonly onPress?: () => unknown
+  readonly onSubmit?: (value: string) => unknown
+  readonly [prop: string]: unknown
+}
+// A render's answer, the tree it drew.
+function drawnTree(answer: unknown): El {
+  return answer as El
+}
+const isEl = (node: unknown): node is El => typeof node === 'object' && node !== null && 'type' in node && 'props' in node
+// An element's children as the elements they are, in their places.
+function kidsOf(node: El): El[] {
+  const children = node.props.children
+  return (Array.isArray(children) ? children : [children]) as El[]
+}
+// The element at `path` under `node`, each step a child's index.
+function elAt(node: El, ...path: number[]): El {
+  return path.reduce((parent, index) => {
+    const child = kidsOf(parent)[index]
+    if (!isEl(child)) throw new Error(`no element at ${path.join('.')}`)
+    return child
+  }, node)
+}
+// An element's one text child.
+function saidBy(node: El | undefined): string {
+  const children = node?.props.children
+  if (typeof children !== 'string') throw new Error('not a text element')
+  return children
+}
+
 // A node's drawn pieces, depth first: the text, its colour and whether it is bold.
-function pieces(node: any): { text: string; color?: string; bold: boolean }[] {
+type Piece = { text: string; color?: string; bold: boolean }
+function pieces(node: unknown): Piece[] {
   if (typeof node === 'string') return [{ text: node, bold: false }]
-  const kids = [node.props.children].flat().filter((kid: unknown) => kid !== undefined)
-  if (node.type === 'Text' && kids.every((kid: unknown) => typeof kid === 'string')) {
-    return [{ text: kids.join(''), color: node.props.color, bold: node.props.bold === true }]
+  if (!isEl(node)) return []
+  const children = [node.props.children].flat().filter((kid: unknown) => kid !== undefined)
+  if (node.type === 'Text' && children.every((kid: unknown) => typeof kid === 'string')) {
+    const color = node.props.color
+    return [{ text: children.join(''), ...(color === undefined ? {} : { color }), bold: node.props.bold === true }]
   }
-  return kids.flatMap(pieces)
+  return children.flatMap(pieces)
 }
 
 const AGO = () => new Date(Date.now() - 3 * 60000).toISOString()
 const SINCE = '2026-10-19T08:05:00.000Z'
-const paneTree = async (rows: Record<string, SessionRow>, round: RoundEntry[] = []) => {
+const paneTree = async (rows: Record<string, SessionRow>, round: readonly { readonly id: string }[] = []) => {
   const fx = fakeDollar({ launchName: 'Coord: main' })
   for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   for (const e of round) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
@@ -958,19 +1022,19 @@ const orch = (name: string, over: Partial<SessionRow> = {}) => ({ ...row({ role:
 
 test('the coordinator\'s pane opens with a bold title above the orchestrator blocks, and says when there is none', async () => {
   const tree = await paneTree({ low: orch('Orch: low') })
-  expect(pieces(tree.props.children[1])).toEqual([{ text: 'Orchestrators', bold: true }])
+  expect(pieces(elAt(tree, 1))).toEqual([{ text: 'Orchestrators', bold: true }])
   const empty = await paneTree({})
-  expect(pieces(empty.props.children[1])).toEqual([{ text: 'Orchestrators', bold: true }])
-  expect(pieces(empty.props.children[2])).toEqual([{ text: 'no live orchestrator', bold: false }])
+  expect(pieces(elAt(empty, 1))).toEqual([{ text: 'Orchestrators', bold: true }])
+  expect(pieces(elAt(empty, 2))).toEqual([{ text: 'no live orchestrator', bold: false }])
 })
 
 const text = (nodes: { text: string }[]) => nodes.map(p => p.text).join('')
 
 test('a plain orchestrator is one line: a dot, its bold name, then its figures in the normal colour', async () => {
   const tree = await paneTree({ low: orch('Orch: low') })
-  const block = tree.props.children[2]
-  expect(block.props.children.length).toBe(1)
-  expect(pieces(block.props.children[0])).toEqual([
+  const block = elAt(tree, 2)
+  expect(kidsOf(block).length).toBe(1)
+  expect(pieces(elAt(block, 0))).toEqual([
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
@@ -983,16 +1047,16 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
 
 test('an orchestrator waiting for the operator draws a warning dot, a Status line and a Blocks line, both indented', async () => {
   const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: 'the merge' }) })
-  const block = tree.props.children[2]
-  expect(block.props.children.length).toBe(3)
-  expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'warning', bold: false })
-  const [, status, blocks] = block.props.children
+  const block = elAt(tree, 2)
+  expect(kidsOf(block).length).toBe(3)
+  expect(pieces(elAt(block, 0))[0]).toEqual({ text: '●', color: 'warning', bold: false })
+  const [status, blocks] = [elAt(block, 1), elAt(block, 2)]
   expect(status.props.paddingLeft).toBe(2)
-  expect(status.props.children[0].props).toMatchObject({ width: 8, flexShrink: 0 })
+  expect(elAt(status, 0).props).toMatchObject({ width: 8, flexShrink: 0 })
   const [label, words] = pieces(status)
   expect(label).toEqual({ text: 'Status:', bold: false })
-  expect(words.color).toBe('warning')
-  expect(words.text).toMatch(/^waiting for the operator since \d\d:\d\d$/)
+  expect(words?.color).toBe('warning')
+  expect(words?.text).toMatch(/^waiting for the operator since \d\d:\d\d$/)
   expect(blocks.props.paddingLeft).toBe(2)
   expect(pieces(blocks)).toEqual([{ text: 'Blocks:', bold: false }, { text: 'the merge', bold: false }])
 })
@@ -1000,8 +1064,8 @@ test('an orchestrator waiting for the operator draws a warning dot, a Status lin
 test('a long blocks text stays in a column of its own, wrapping under its first character and not under the label', async () => {
   const long = 'release out of draft and squash merge of geonative-api#1749, geonative-api#1751 and front-office#1545 (G2/G5 with #1751, G6 with #1749 + #1545)'
   const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: long }) })
-  const line = tree.props.children[2].props.children[2]
-  const [labelColumn, textColumn] = line.props.children
+  const line = elAt(tree, 2, 2)
+  const [labelColumn, textColumn] = [elAt(line, 0), elAt(line, 1)]
   expect(line.props.flexDirection).toBe('row')
   expect(labelColumn.props.width).toBe(8)
   expect(labelColumn.props.flexShrink).toBe(0)
@@ -1012,23 +1076,23 @@ test('a long blocks text stays in a column of its own, wrapping under its first 
 
 test('an operator wait that carries no blocks text says unsaid', async () => {
   const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE }) })
-  expect(pieces(tree.props.children[2].props.children[2])[1].text).toBe('unsaid')
+  expect(pieces(elAt(tree, 2, 2))[1]?.text).toBe('unsaid')
 })
 
 test('a done orchestrator draws a success dot and one Status line in success, with no Blocks line', async () => {
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) })
-  const block = tree.props.children[2]
-  expect(block.props.children.length).toBe(2)
-  expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'success', bold: false })
-  const [label, words] = pieces(block.props.children[1])
-  expect(label.text).toBe('Status:')
-  expect(words.color).toBe('success')
-  expect(words.text).toMatch(/^done since \d\d:\d\d, proposes to be closed$/)
+  const block = elAt(tree, 2)
+  expect(kidsOf(block).length).toBe(2)
+  expect(pieces(elAt(block, 0))[0]).toEqual({ text: '●', color: 'success', bold: false })
+  const [label, words] = pieces(elAt(block, 1))
+  expect(label?.text).toBe('Status:')
+  expect(words?.color).toBe('success')
+  expect(words?.text).toMatch(/^done since \d\d:\d\d, proposes to be closed$/)
 })
 
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
-  expect(pieces(tree.props.children[2].props.children[0]).slice(3)).toEqual([
+  expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
     { text: ' · orchestrator · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
@@ -1037,49 +1101,49 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(tree.props.children[2].props.children[0]))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
   const tree = await paneTree({ a: orch('Orch: a', { context_percent: 40 }), b: orch('Orch: b') })
-  const [, , first, second] = tree.props.children
+  const [first, second] = [elAt(tree, 2), elAt(tree, 3)]
   expect(first.props.marginTop).toBeUndefined()
   expect(second.props.marginTop).toBe(1)
-  expect(pieces(first.props.children[0])[2].text).toBe('Orch: a')
+  expect(pieces(elAt(first, 0))[2]?.text).toBe('Orch: a')
 })
 
 test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
-  const line = pieces(tree.props.children[2].props.children[0])
+  const line = pieces(elAt(tree, 2, 0))
   expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
 test('no question: the section says none, or counts the orchestrators waiting when the round holds none', async () => {
   const none = await paneTree({ low: orch('Orch: low') })
-  expect(pieces(none.props.children[0])).toEqual([
+  expect(pieces(elAt(none, 0))).toEqual([
     { text: 'Questions for you', color: 'suggestion', bold: true },
     { text: 'none', bold: false },
     { text: '─'.repeat(40), bold: false },
   ])
   const waits = { w1: orch('Orch: w1', { waiting: 'operator', waiting_since: SINCE }), w2: orch('Orch: w2', { waiting: 'operator', waiting_since: SINCE }), d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }
   const two = await paneTree(waits)
-  expect(pieces(two.props.children[0])[1]).toEqual({ text: 'none in the pane — 2 orchestrators wait for you: ask the coordinator', bold: false })
+  expect(pieces(elAt(two, 0))[1]).toEqual({ text: 'none in the pane — 2 orchestrators wait for you: ask the coordinator', bold: false })
   const one = await paneTree({ w1: waits.w1 })
-  expect(pieces(one.props.children[0])[1].text).toBe('none in the pane — 1 orchestrator waits for you: ask the coordinator')
+  expect(pieces(elAt(one, 0))[1]?.text).toBe('none in the pane — 1 orchestrator waits for you: ask the coordinator')
 })
 
 test('an orchestrator\'s own pane says no agent running in the default text colour, with no title', async () => {
   const fx = fakeDollar({ launchName: 'Orch: phase-3' })
-  fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
+  fx.env['ITERM_SESSION_ID'] = 'w0t1p0:OWNER-1'
   const tree = await coordinatorRender(fx)
-  expect(tree.props.children.map((kid: any) => [kid.props.color, kid.props.children])).toEqual([[undefined, 'no agent running']])
+  expect(kidsOf(tree).map(kid => [kid.props.color, kid.props.children])).toEqual([[undefined, 'no agent running']])
 })
 
 test('an orchestrator\'s own pane draws an agent past the gate in warning and the other in the default text colour, each name bold, with no title', async () => {
   const fx = fakeDollar({ launchName: 'Orch: phase-3' })
-  fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
+  fx.env['ITERM_SESSION_ID'] = 'w0t1p0:OWNER-1'
   fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, [
     JSON.stringify({ tab_id: 't-9', tty: '/dev/ttys009', owner: 'OWNER-1' }),
     JSON.stringify({ tab_id: 't-10', tty: '/dev/ttys010', owner: 'OWNER-1' }),
@@ -1093,30 +1157,36 @@ test('an orchestrator\'s own pane draws an agent past the gate in warning and th
   fx.files.set(`${SESSIONS}/s-past`, JSON.stringify(row({ role: 'agent', name: 'Agent: past', context_percent: 35, context_tokens: 350000, window: 1000000 })) + '\n')
   fx.files.set(`${SESSIONS}/s-under`, JSON.stringify(row({ role: 'agent', name: 'Agent: under', context_percent: 20 })) + '\n')
   const tree = await coordinatorRender(fx)
-  const [past, under] = tree.props.children.map((kid: any) => pieces(kid))
-  expect(past.map((p: any) => p.text).join('')).toMatch(/^Agent: past · busy · 35% past the gate · /)
-  expect(past.every((p: any) => p.color === 'warning')).toBe(true)
-  expect(past.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent: past'])
-  expect(under.map((p: any) => p.text).join('')).toMatch(/^Agent: under · busy · 20% · /)
-  expect(under.some((p: any) => p.color !== undefined)).toBe(false)
-  expect(under.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent: under'])
+  const [past, under] = [pieces(elAt(tree, 0)), pieces(elAt(tree, 1))]
+  expect(past.map(p => p.text).join('')).toMatch(/^Agent: past · busy · 35% past the gate · /)
+  expect(past.every(p => p.color === 'warning')).toBe(true)
+  expect(past.filter(p => p.bold).map(p => p.text)).toEqual(['Agent: past'])
+  expect(under.map(p => p.text).join('')).toMatch(/^Agent: under · busy · 20% · /)
+  expect(under.some(p => p.color !== undefined)).toBe(false)
+  expect(under.filter(p => p.bold).map(p => p.text)).toEqual(['Agent: under'])
 })
 
 // --- answering from the coordinator's pane ------------------------------------------------------
 
 // Every element of a tree whose props match, depth first.
-function findAll(node: any, match: (node: any) => boolean): any[] {
-  if (!node || typeof node !== 'object') return []
-  const kids = [node.props?.children].flat().filter((kid: unknown) => kid !== undefined)
-  return [...(match(node) ? [node] : []), ...kids.flatMap((kid: any) => findAll(kid, match))]
+function findAll(node: unknown, match: (node: El) => boolean): El[] {
+  if (!isEl(node)) return []
+  const kids = [node.props.children].flat().filter((kid: unknown) => kid !== undefined)
+  return [...(match(node) ? [node] : []), ...kids.flatMap(kid => findAll(kid, match))]
 }
-const button = (tree: any, key: string) => findAll(tree, n => n.type === 'Button' && n.props.key === key)[0]
-const picker = (tree: any) => findAll(tree, n => n.type === 'Select')[0]
-const pick = (tree: any, value: string) => picker(tree).props.onSelect(value)
-const texts = (tree: any) => findAll(tree, n => n.type === 'Text' && typeof n.props.children === 'string').map(n => n.props.children as string)
+// The first element of a tree that matches; none fails the test.
+function firstOf(tree: unknown, match: (node: El) => boolean): El {
+  const found = findAll(tree, match)[0]
+  if (found === undefined) throw new Error('no such element')
+  return found
+}
+const button = (tree: unknown, key: string) => firstOf(tree, n => n.type === 'Button' && n.props.key === key)
+const picker = (tree: unknown) => firstOf(tree, n => n.type === 'Select')
+const pick = (tree: unknown, value: string) => picker(tree).props.onSelect!(value)
+const texts = (tree: unknown) => findAll(tree, n => n.type === 'Text' && typeof n.props.children === 'string').map(n => n.props.children as string)
 // A tree's rows as the terminal shows them, each cleared of the card's border and of the spaces
 // around its words.
-const shown = (tree: any, width = 200) => drawScreen(tree, width).map(line => line.replace(/^[│ ]+|[│ ]+$/g, ''))
+const shown = (tree: El, width = 200) => drawScreen(tree, width).map(line => line.replace(/^[│ ]+|[│ ]+$/g, ''))
 
 // A coordinator with one live orchestrator asking, its send recorded (or refused), its pane drawn.
 async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?: string; surface?: string } = {}) {
@@ -1131,7 +1201,7 @@ async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?:
   }
   const { handlers } = mounted(registerSupervision)
   await handlers['command.run'](fx.dollar, supervisionRun)
-  const render = (props: object = {}) => handlers['ui.render'](fx.dollar, { ...renderEvent, props, surface: over.surface ?? 'terminal' }, (x: unknown) => ({ passed: x }))
+  const render = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props, surface: over.surface ?? 'terminal' }, (x: unknown) => ({ passed: x })))
   const stored = (id: string) => JSON.parse(String(fx.files.get(`${ROUND}/${id}.json`))) as RoundEntry
   // The pane's ring moved onto `element`, or off its elements when absent, by the operator.
   const ring = (element?: string) => handlers['ui.focus'](fx.dollar,
@@ -1160,7 +1230,7 @@ test('a question asked with ask is drawn from its fields, its asker once, and co
   const lines = shown(tree)
   const at = (text: string) => lines.findIndex(line => line.includes(text))
   expect(['Question 1 of 2: merge order', 'Two pull requests touch one file.', 'Which merges first?', '[A] acme/app#1 first  ★', '[B] acme/app#2 first', '★ Recommendation: A — no rebase', 'Blocks: acme/app#1', 'Question 2 of 2: tag order']
-    .map(at).every((index, i, all) => index > 0 && (i === 0 || index > all[i - 1]))).toBe(true)
+    .map(at).every((index, i, all) => index > 0 && (i === 0 || index > all[i - 1]!))).toBe(true)
 })
 
 test('a question asked with ask alone takes the place of the none line, and one whose asker has no live row is not drawn', async () => {
@@ -1179,7 +1249,7 @@ test('a question asked with ask alone takes the place of the none line, and one 
 
 test('beside questions asked with ask alone, the section still counts the orchestrators waiting with none drawn, never the asker the pane draws', async () => {
   const rows = { low: orch('Orch: low', { waiting: 'operator', waiting_since: SINCE }), w1: orch('Orch: w1', { waiting: 'operator', waiting_since: SINCE }) }
-  const asked = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z') as unknown as RoundEntry
+  const asked = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
   const drawn = texts(await paneTree(rows, [asked]))
   expect(drawn).toContain('1 orchestrator waits for you: ask the coordinator')
   expect(drawn).toContain('Orch: low · orchestrator · box-1')
@@ -1201,7 +1271,7 @@ test('with no card, the first question asked with ask takes a picker under its o
   const tree = await render()
   expect(texts(tree)).toContain('Orch: low · orchestrator · box-1')
   expect(findAll(tree, n => n.type === 'Select').length).toBe(1)
-  expect(picker(tree).props.options.map((o: any) => o.value)).toEqual(['A', 'B', 'other'])
+  expect(picker(tree).props.options!.map(o => o.value)).toEqual(['A', 'B', 'other'])
   expect(picker(tree).props.value).toBe('A')
   const lines = shown(tree)
   const at = (text: string) => lines.findIndex(line => line.includes(text))
@@ -1236,9 +1306,9 @@ test('the Other answer of a question asked with ask is its field once picked, it
   await pick(await render(), 'other')
   const field = input(await render())
   expect(field.props).toMatchObject({ key: `answer:${first.id}`, label: 'Other answer', rows: 4 })
-  await field.props.onSubmit('   ')
+  await field.props.onSubmit!('   ')
   expect(sent).toEqual([])
-  await field.props.onSubmit('  neither, merge both  ')
+  await field.props.onSubmit!('  neither, merge both  ')
   expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).answer.text).toBe('neither, merge both')
   expect(sent.length).toBe(1)
 })
@@ -1256,7 +1326,7 @@ test('on a surface without a picker, a question asked with ask takes a Button pe
   const { fx, sent, render } = await askedPane([first], { surface: 'mobile' })
   const tree = await render()
   expect(button(tree, 'choice:A').props.label).toBe('[A] acme/app#1 first  ★')
-  await button(tree, 'choice:A').props.onPress()
+  await button(tree, 'choice:A').props.onPress!()
   expect(JSON.parse(String(fx.files.get(`${ROUND}/${first.id}.json`))).answer.text).toBe('A : acme/app#1 first')
   expect(sent.length).toBe(1)
 })
@@ -1280,7 +1350,7 @@ test('the pane\'s answer to a question asked with ask that asks consent is writt
   await pick(await render(), 'A')
   const records = [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
   expect(records).toEqual([`${HOME}/.claude/consents/acme/thing/${first.id}.json`])
-  expect(JSON.parse(String(fx.files.get(records[0])))).toMatchObject({ subject: consent, entry: first.id, question: 'Which merges first?', answer: 'Accorder', by: 'pane' })
+  expect(JSON.parse(String(fx.files.get(records[0]!)))).toMatchObject({ subject: consent, entry: first.id, question: 'Which merges first?', answer: 'Accorder', by: 'pane' })
 })
 
 test('an answer to a question asked with ask not delivered is written failed on it and said in the pane while its asker has a row', async () => {
@@ -1308,7 +1378,7 @@ test('the coordinator shown a question asked with ask is told in its own session
 
 // --- the selector ---------------------------------------------------------------------------
 
-const input = (tree: any) => findAll(tree, n => n.type === 'Input')[0]
+const input = (tree: unknown) => firstOf(tree, n => n.type === 'Input')
 
 test('the first draw of a question requests the focus on its picker and brings it into view once drawn, a redraw nothing more', async () => {
   const asked = askedObject('low', 'Orch: low', '2026-10-18T10:03:00.000Z')
@@ -1363,10 +1433,10 @@ test('a refused or failing focus or scroll request never blocks the draw', async
 
 // The fake host's screen draws an Input on one row whatever its `rows`, so the pane's own count
 // is read from where its scroll track appears: the fewest window rows that need none.
-async function countedRows(render: (props?: object) => Promise<any>): Promise<number> {
+async function countedRows(render: (props?: object) => Promise<El>): Promise<number> {
   for (let bodyRows = 1; bodyRows < 400; bodyRows++) {
     const tree = await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 })
-    if (tree.props.children.every((k: any) => k.props?.position !== 'absolute')) return bodyRows
+    if (kidsOf(tree).every(k => k.props?.position !== 'absolute')) return bodyRows
   }
   throw new Error('the pane never fits')
 }
@@ -1450,7 +1520,7 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   const tick = async () => {
     const armed = fx.later.filter(t => t.ms === 30000)
-    await armed[armed.length - 1].fn()
+    await armed[armed.length - 1]!.fn()
   }
   return { fx, handlers, tick }
 }
@@ -1501,8 +1571,8 @@ test('questions recorded while no pane is open, one already presented in the tab
   expect(fx.files.has(PANE_FILE)).toBe(false)
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.files.has(PANE_FILE)).toBe(true)
-  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
-  expect(tree.props.children[0].props.children[0].props.children).toBe('Questions for you — 2 pending')
+  const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  expect(elAt(tree, 0, 0).props.children).toBe('Questions for you — 2 pending')
   expect(JSON.stringify(tree)).toContain('Ship the first?')
   expect(JSON.stringify(tree)).toContain('Ship the second?')
   expect(JSON.parse(String(fx.files.get(`${ROUND}/${presented.id}.json`))).status).toBe('open')
@@ -1548,7 +1618,7 @@ test('a question whose sender has ended wakes nothing, and a session that is no 
   fx.files.set(`${ROUND}/${gone.id}.json`, JSON.stringify(gone) + '\n')
   const { handlers } = mounted(registerSupervision)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
-  await fx.later.filter(t => t.ms === 30000)[0].fn()
+  await fx.later.filter(t => t.ms === 30000)[0]!.fn()
   expect(fx.submitted).toEqual([])
   const orch = fakeDollar({ launchName: 'Orch: belt' })
   orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
@@ -1590,7 +1660,7 @@ test('a successor over the same state directory, its host state its own, wakes f
   const next = coordinatorSession()
   for (const [path, text] of fx.files) next.files.set(path, text)
   await mounted(registerSupervision).handlers['turn.complete'](next.dollar, firstTurn, (x: unknown) => x)
-  await next.later.filter(t => t.ms === 30000)[0].fn()
+  await next.later.filter(t => t.ms === 30000)[0]!.fn()
   expect(next.submitted).toEqual([])
 })
 
@@ -1620,19 +1690,20 @@ test('a reload arms the wake with no turn after it; a second arm starts no secon
   const { handlers } = mounted(registerSupervision)
   const start = mounted(registerWake).handlers
   const wakes = () => fx.later.filter(t => t.ms === 30000)
+  const wake = (i: number) => wakes()[i]!
   expect(await start['session.start'](fx.dollar, startEvent, (x: unknown) => x)).toBe(startEvent)
   expect(wakes().length).toBe(1)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   await start['session.start'](fx.dollar, startEvent, (x: unknown) => x)
   expect(wakes().length).toBe(1)
-  await wakes()[0].fn()
+  await wake(0).fn()
   expect([fx.submitted.length, wakes().length]).toEqual([1, 2])
   // A reading already fired, run again, is no chain of its own: it arms nothing.
-  await wakes()[0].fn()
+  await wake(0).fn()
   expect(wakes().length).toBe(2)
   await handlers['session.end'](fx.dollar, endEvent, (x: unknown) => x)
-  expect(wakes()[1].cancelled).toBe(true)
-  await wakes()[1].fn()
+  expect(wake(1).cancelled).toBe(true)
+  await wake(1).fn()
   expect(wakes().length).toBe(2)
   // No coordinator, no wake at the start.
   const orch = fakeDollar({ launchName: 'Orch: belt' })
@@ -1759,8 +1830,8 @@ test('the questions are drawn first, above the orchestrators, the title counting
   const asked = ['merge order', 'tag order', 'release order'].map((subject, i) => askedObject('low', 'Orch: low', `2026-10-18T10:0${i + 3}:00.000Z`, { subject }))
   const { render } = await askedPane(asked)
   const tree = await render()
-  const [section, title] = tree.props.children
-  expect(section.props.children[0].props.children).toBe('Questions for you — 3 pending')
+  const [section, title] = [elAt(tree, 0), elAt(tree, 1)]
+  expect(elAt(section, 0).props.children).toBe('Questions for you — 3 pending')
   expect(title.props.children).toBe('Orchestrators')
   expect(JSON.stringify(tree).split('pending').length - 1).toBe(1)
 })
@@ -1770,17 +1841,17 @@ test('answers not delivered are one line at the section\'s foot, below the next 
   const { render } = await askedPane(asked, { refuse: 'nobody by that name' })
   await pick(await render(), 'A')
   await pick(await render(), 'B')
-  const kids = (await render()).props.children[0].props.children
-  const notices = kids.filter((k: any) => k.type === 'Text' && String(k.props.children).startsWith('not delivered:'))
+  const kids = kidsOf(elAt(await render(), 0))
+  const notices = kids.filter(k => k.type === 'Text' && String(k.props.children).startsWith('not delivered:'))
   expect(notices.length).toBe(1)
-  expect(notices[0].props.children.split(' · ').length).toBe(2)
+  expect(saidBy(notices[0]).split(' · ').length).toBe(2)
   expect(kids.at(-2)).toBe(notices[0])
   expect(texts(kids[1])[0]).toBe('Orch: low · orchestrator · box-1')
 })
 
 test('once the pane holds the keys the key line no longer says how to give them, and it is dim', async () => {
   const { render } = await askedPane([askedObject('low', 'Orch: low', '2026-10-18T10:03:00.000Z')])
-  const keys = (await render({ isFocused: true })).props.children.at(-1)
+  const keys = kidsOf(await render({ isFocused: true })).at(-1)!
   expect(keys.props.children).toBe('arrows: move · Enter: choose · Esc: back to the prompt')
   expect(keys.props.dimColor).toBe(true)
 })
@@ -1805,18 +1876,18 @@ test('a line is cut into rows at its spaces, a word longer than a row cut where 
 test('the person\'s move gives the tree\'s height for the content it measured, and goes on; until then the module counts the rows', async () => {
   const { render, handlers, fx } = await askedPane([askedObject('low', 'Orch: low', '2026-10-18T10:03:00.000Z')])
   const props = { scroll: { offset: 0, bodyRows: 8 }, bodyColumns: 50 }
-  const counted = (await render(props)).props.children.find((k: any) => k.props?.position === 'absolute' && k.props.right === 0)
-  expect(counted.props.children.length).toBe(8)
+  const counted = kidsOf(await render(props)).find(k => k.props?.position === 'absolute' && k.props.right === 0)!
+  expect(kidsOf(counted).length).toBe(8)
   let moved = false
   await handlers['ui.scroll'](fx.dollar, { component: 'Pane', requestId: 'supervision', offset: 1, by: 1, bodyRows: 8, contentRows: 80, origin: { kind: 'person' } }, () => { moved = true; return {} })
   expect(moved).toBe(true)
-  const thumb = (tree: any) => tree.props.children.find((k: any) => k.props?.position === 'absolute' && k.props.right === 0).props.children.filter((t: any) => t.props.children === '█').length
+  const thumb = (tree: El) => kidsOf(kidsOf(tree).find(k => k.props?.position === 'absolute' && k.props.right === 0)!).filter(t => t.props.children === '█').length
   expect(thumb(await render(props))).toBe(1)
   // Other content drawn: the measure was of the old one, and the module counts again.
   expect(thumb(await render({ ...props, isFocused: true }))).toBeGreaterThan(1)
   // A tree that fits draws no track.
   const fits = await render({ scroll: { offset: 0, bodyRows: 200 }, bodyColumns: 50 })
-  expect(fits.props.children.filter((k: any) => k.props?.position === 'absolute')).toEqual([])
+  expect(kidsOf(fits).filter(k => k.props?.position === 'absolute')).toEqual([])
   expect(fits.props.paddingRight).toBeUndefined()
 })
 
@@ -1824,28 +1895,28 @@ test('over a tree taller than its window, the track and the key line are drawn a
   const { render } = await askedPane([askedObject('low', 'Orch: low', '2026-10-18T10:03:00.000Z', { context: 'Two pull requests touch one file. '.repeat(20).trim() })])
   const at = async (offset: number) => {
     const tree = await render({ scroll: { offset, bodyRows: 12 }, bodyColumns: 50 })
-    const absolute = tree.props.children.filter((k: any) => k.props?.position === 'absolute')
-    return { tree, track: absolute[0], keys: absolute[1] }
+    const absolute = kidsOf(tree).filter(k => k.props?.position === 'absolute')
+    return { tree, track: absolute[0]!, keys: absolute[1]! }
   }
   const top = await at(0)
   expect(top.tree.props.paddingRight).toBe(2)
   expect(top.track.props).toMatchObject({ top: 0, right: 0, width: 1 })
-  expect(top.track.props.children.length).toBe(12)
-  expect(top.track.props.children[0].props.children).toBe('█')
-  expect(top.track.props.children[11].props.children).toBe('│')
-  const rows = top.keys.props.children.length
+  expect(kidsOf(top.track).length).toBe(12)
+  expect(elAt(top.track, 0).props.children).toBe('█')
+  expect(elAt(top.track, 11).props.children).toBe('│')
+  const rows = kidsOf(top.keys).length
   expect(rows).toBe(wrapWords('ctrl+x tab or a click: give the pane the keys · arrows: move · Enter: choose · Esc: back to the prompt', 48).length)
   expect(top.tree.props.paddingTop).toBe(rows)
   expect(top.keys.props).toMatchObject({ top: 0, left: 0, width: 48 })
-  expect(top.keys.props.children.every((t: any) => t.props.children.length === 48 && t.props.dimColor === true)).toBe(true)
-  expect(top.keys.props.children.map((t: any) => t.props.children.trimEnd()).join(' ')).toContain('Enter: choose')
+  expect(kidsOf(top.keys).every(t => saidBy(t).length === 48 && t.props.dimColor === true)).toBe(true)
+  expect(kidsOf(top.keys).map(t => saidBy(t).trimEnd()).join(' ')).toContain('Enter: choose')
   // The key line is pinned: not drawn a second time in the flow.
   expect(texts(top.tree).filter(t => t.includes('Enter: choose')).length).toBe(1)
   const down = await at(28)
   expect(down.track.props.top).toBe(28)
   expect(down.keys.props.top).toBe(28)
-  expect(down.track.props.children[11].props.children).toBe('█')
-  expect(down.track.props.children[0].props.children).toBe('│')
+  expect(elAt(down.track, 11).props.children).toBe('█')
+  expect(elAt(down.track, 0).props.children).toBe('│')
 })
 
 test('the pane opens asking the keys, so its picker answers at once over an empty prompt', async () => {
@@ -1859,8 +1930,8 @@ test('the rows the module counts are the rows the tree draws: a track exactly wh
   // At 200 columns nothing wraps: the window that holds every drawn row needs no track, one row less does.
   const { render } = await askedPane([askedObject('low', 'Orch: low', '2026-10-18T10:03:00.000Z')])
   const rows = drawScreen(await render({ bodyColumns: 200 }), 198).length
-  const track = async (bodyRows: number) => (await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 }))
-    .props.children.filter((k: any) => k.props?.position === 'absolute').length
+  const track = async (bodyRows: number) => kidsOf(await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 }))
+    .filter(k => k.props?.position === 'absolute').length
   expect(await track(rows)).toBe(0)
   expect(await track(rows - 1)).toBe(2)
 })
@@ -1869,7 +1940,7 @@ test('the rows the module counts are the rows the tree draws: a track exactly wh
 
 // --- the references to a pull request --------------------------------------------------------
 
-const links = (tree: any) => findAll(tree, n => n.type === 'Link').map(n => [n.props.children, n.props.href])
+const links = (tree: El) => findAll(tree, n => n.type === 'Link').map(n => [n.props.children, n.props.href])
 
 test('each pull request a blocks text names is a link of its own, a glued pair two links', async () => {
   const tree = await paneTree({
@@ -1884,8 +1955,8 @@ test('each pull request a blocks text names is a link of its own, a glued pair t
     ['geo-git-flow#22', 'https://github.com/acme/geo-git-flow/pull/22'],
   ])
   // The text reads as it was written, the slash between the two links plain.
-  const blocks = findAll(tree, n => n.type === 'Box' && n.props.flexDirection === 'row' && n.props.paddingLeft === 2).at(-1)
-  expect(textOf(blocks.props.children[1])).toBe(GLUED_BLOCKS)
+  const blocks = findAll(tree, n => n.type === 'Box' && n.props.flexDirection === 'row' && n.props.paddingLeft === 2).at(-1)!
+  expect(textOf(elAt(blocks, 1))).toBe(GLUED_BLOCKS)
 })
 
 test('a reference whose owner the module does not know stays plain text', async () => {
@@ -1897,11 +1968,13 @@ test('a reference whose owner the module does not know stays plain text', async 
 
 // The host tells nothing of a surface's hyperlinks: where one is not drawn, it writes the URL after
 // the link's text. The module counts that case, the longer one, so its track is never short.
-const withUrls = (node: any): any => {
-  if (!node || typeof node !== 'object') return node
-  if (node.type === 'Link') return { type: 'Text', props: { children: `${textOf(node)} ${node.props.href}` } }
+function withUrls(node: El): El
+function withUrls(node: unknown): unknown
+function withUrls(node: unknown): unknown {
+  if (!isEl(node)) return node
+  if (node.type === 'Link') return { type: 'Text', props: { children: `${textOf(node)} ${String(node.props.href)}` } }
   const kids = node.props.children
-  return { ...node, props: { ...node.props, ...(kids === undefined ? {} : { children: Array.isArray(kids) ? kids.map(withUrls) : withUrls(kids) }) } }
+  return { ...node, props: { ...node.props, ...(kids === undefined ? {} : { children: Array.isArray(kids) ? kids.map(kid => withUrls(kid)) : withUrls(kids) }) } }
 }
 
 test('at 60 columns the rows counted for a text of links are the rows drawn where the URL is written after each', async () => {
@@ -1913,8 +1986,8 @@ test('at 60 columns the rows counted for a text of links are the rows drawn wher
   })) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   const rows = drawScreen(withUrls(await render({ bodyColumns: 60 })), 58).length
   expect(rows).toBeGreaterThan(drawScreen(await render({ bodyColumns: 60 }), 58).length)
-  const track = async (bodyRows: number) => (await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 60 }))
-    .props.children.filter((k: any) => k.props?.position === 'absolute' && k.props.right === 0).length
+  const track = async (bodyRows: number) => kidsOf(await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 60 }))
+    .filter(k => k.props?.position === 'absolute' && k.props.right === 0).length
   expect(await track(rows)).toBe(0)
   expect(await track(rows - 1)).toBe(1)
 })
@@ -1923,11 +1996,11 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
   for (const [props, width] of [[{}, 40], [{ bodyColumns: 60 }, 58]] as const) {
     const { render } = await askingPane([entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])
     const tree = await render(props)
-    const [section, heading] = tree.props.children
-    const rule = section.props.children.at(-1)
+    const [section, heading] = [elAt(tree, 0), elAt(tree, 1)]
+    const rule = kidsOf(section).at(-1)!
     expect(rule.props.marginTop).toBe(1)
     expect(rule.props.children).toHaveLength(1)
-    expect(rule.props.children[0].props).toMatchObject({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width) })
+    expect(elAt(rule, 0).props).toMatchObject({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width) })
     expect(texts(heading)).toEqual(['Orchestrators'])
   }
 })
@@ -2006,7 +2079,7 @@ test('a remote withdrawal writes no consent record, whatever words it quotes', a
   const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
   const asked = remoteEntry({ consent })
   const { fx, handlers, stored } = await askingPane([asked])
-  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, CHOICES[0].text)
+  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, CHOICES[0]!.text)
   const envelope = `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
   await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
   expect(stored(asked.id).status).toBe('withdrawn')
@@ -2143,14 +2216,14 @@ test('a question asked with ask claimed by his prompt in its asker\'s tab is not
   fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: a' })) + '\n')
   await tick()
   expect(fx.submitted).toEqual([])
-  const { claimed: _typed, ...given } = claimed
+  const given = { ...claimed, claimed: undefined }
   fx.files.set(`${ROUND}/${claimed.id}.json`, JSON.stringify(given) + '\n')
   await tick()
   expect(fx.submitted.length).toBe(1)
 })
 
 // A render driven again on the same handlers.
-const redraw = (fx: Fx, handlers: Record<string, Function>) => handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+const redraw = async (fx: Fx, handlers: Handlers) => drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
 
 // --- a question moved to a successor not measured yet ------------------------------------------
 
@@ -2353,7 +2426,7 @@ test('an origin read that timed out is read again at the next render, one that a
   fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low' })) + '\n')
   let gits = 0
   let answer: 'thrown' | 'ended' | 'none' | 'origin' = 'thrown'
-  const gitAnswering = (run: Function) => async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+  const gitAnswering = (run: World['process']['run']) => async (argv: readonly string[], init?: ProcessRunInit) => {
     if (argv[0] !== 'git') return run(argv, init)
     gits++
     if (answer === 'thrown') throw new Error(`still running after ${init?.timeoutMs} ms`)
@@ -2395,12 +2468,12 @@ test('an orchestrator with pull requests nobody attends draws them under its blo
   const said = `PR délaissées : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`
   expect(rows.map(r => [r.name, r.unattended])).toEqual([['Orch: u', said], ['Orch: c', null]])
   const tree = await paneTree({ u: orch('Orch: u', { unattended: UNATTENDED }) })
-  const block = tree.props.children[2]
-  expect(block.props.children.length).toBe(2)
-  expect(text(pieces(block.props.children[1]))).toBe(said)
-  expect(pieces(block.props.children[1])[0]?.color).toBe('warning')
+  const block = elAt(tree, 2)
+  expect(kidsOf(block).length).toBe(2)
+  expect(text(pieces(elAt(block, 1)))).toBe(said)
+  expect(pieces(elAt(block, 1))[0]?.color).toBe('warning')
   const none = await paneTree({ c: orch('Orch: c', { unattended: { at: SINCE, line: null, prs: [], unread: [] } }) })
-  expect(none.props.children[2].props.children.length).toBe(1)
+  expect(kidsOf(elAt(none, 2)).length).toBe(1)
 })
 
 test('an orchestrator\'s own pane draws its pull requests nobody attends above its agents', async () => {
@@ -2410,8 +2483,8 @@ test('an orchestrator\'s own pane draws its pull requests nobody attends above i
   const bare = await coordinatorRender(fx, handlers)
   expect(JSON.stringify(bare)).not.toContain('PR délaissées')
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: UNATTENDED }) + '\n')
-  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
-  expect(pieces(tree.props.children[0])).toEqual([{ text: `PR délaissées : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`, color: 'warning', bold: false }])
+  const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  expect(pieces(elAt(tree, 0))).toEqual([{ text: `PR délaissées : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`, color: 'warning', bold: false }])
 })
 
 // --- a consent question worded with unlettered choices draws them once ----------------------------
