@@ -257,8 +257,9 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 - `hooks/policy.ts:43,60`: `grantsEdit`, `grantsPush` match the word (« don't fix this one », « do not push yet » grant). **Fixed** (#17).
 - `runsGitPush` misses `sh -c` and `eval`. **Fixed** (#29).
 - `install.sh:49-150` installs and signs in gh a second way; the fallback writes the fixed `/tmp/claude-pr-review-request.json`. **Fixed** (#29, #37).
-- `skills/auto-fix-loop`: up to 5 review passes, against the orchestrator's one review and one correction round; aligned when it runs under orchestration. **Open**: `MAX_PASSES` is 5; the one-pass
-  reviewer mode (`review_only`) exists and `/implement:review` uses it, the orchestrator's templates do not.
+- `skills/auto-fix-loop`: up to 5 review passes, against the orchestrator's one review and one correction round; aligned when it runs under orchestration. **Fixed**: `MAX_PASSES` is core's cap
+  of review rounds, 3 (`hooks/state.ts:84`), and a session the orchestrator spawned runs the rounds of its pull request's check plan
+  (`hooks/loop.ts:439-455,559`). The orchestrator's review brief runs its own readers and never the loop, so `review_only` has no place in it.
 
 **implement**
 - The implementer runs `implement:check` on its own work. **Partly** (#20): kept as a
