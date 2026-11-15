@@ -19,7 +19,7 @@ function fake(over: { orchestrator?: boolean; drop?: boolean } = {}) {
   const logged: string[] = []
   const env: Record<string, string> = { HOME, ORCHESTRATOR_CONTEXT_GATE_TOKENS: '200000' }
   if (over.orchestrator !== false) {
-    env.ORCHESTRATOR_REPORTS_TO = `${ORCH} [a1b2c3]`
+    env['ORCHESTRATOR_REPORTS_TO'] = `${ORCH} [a1b2c3]`
     files.set(`${HOME}/.claude/sessions/620.json`, JSON.stringify({ pid: 620, sessionId: 's-orch', name: ORCH, startedAt: 1, kind: 'interactive', entrypoint: 'cli' }))
   }
   const dollar = {
