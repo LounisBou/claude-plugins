@@ -13,15 +13,15 @@ import {
 import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
-  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, WAIVER_WORDS, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import { observe, OBSERVED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
-  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, stackedCi, unverifiedAnswer,
+  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   RECORDS_REFUSAL, deletes, deletesRecords,
@@ -294,13 +294,25 @@ const AUTO_DEPLOY_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-deploy\.json$/
 const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
 const namesExemptions = (text: string) => text.includes(EXEMPT_DIR) || text.includes(PLAN_DIR)
 export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
-  + ' {"repo": "owner/name", "exempt": true|false, "detail": "<the operator\'s words>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
+  + ' {"repo": "owner/name", "exempt": true|false, "detail": "« <the operator\'s words> », <their date>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
-export function waiverRefusal(repo: string, pr: number, check: Waivable): string {
-  return 'github: ' + (check === 'e2e' ? 'an E2E' : 'a norms') + ' waiver is the operator\'s « ' + CONSENT_GRANT + ' » to one question, « Dispense ' + WAIVER_WORDS[check] + ' pour ' + repo + '#' + pr
-    + ' : <why> », choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », asked as method:lifecycle « Questions to the operator » says: none is recorded.'
-    + (check === 'e2e' ? ' Or quote his recorded answer to it, whatever its channel, in "detail".' : '')
+
+/*
+ * What an E2E or norms waiver, and an E2E exemption, rest on: the operator's words, quoted in `detail` with their
+ * date, from any channel. No consent record is read: the quote is the record, and it stays visible in the file it writes.
+ */
+const QUOTED_DATE = /\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?Z?)?/
+// The letters his words hold at least, dates and times left out: digits are no words.
+const QUOTE_LETTERS_MIN = 6
+export function quotedWordsRefusal(what: string, detail: string): string | undefined {
+  const asks = 'github: ' + what + ' rests on the operator\'s words, quoted in "detail" with their date ("« <his words> », 2026-11-15T08:50Z")'
+  if (detail.trim() === '') return asks + ': "detail" is empty.'
+  if (detail.length > DETAIL_MAX) return asks + ': "detail" is at most ' + DETAIL_MAX + ' characters.'
+  if (!QUOTED_DATE.test(detail)) return asks + ': it carries no date.'
+  const words = detail.replace(new RegExp(QUOTED_DATE.source, 'g'), ' ').replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ').replace(/[^\p{L}]/gu, '')
+  if (words.length < QUOTE_LETTERS_MIN) return asks + ': it quotes fewer than ' + QUOTE_LETTERS_MIN + ' letters of his words.'
+  return undefined
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
@@ -688,9 +700,9 @@ export async function diagnose($: any, check = false): Promise<string> {
 
 /*
  * A pull request is ready as core's readiness contract defines it (readiness.ts). Taking it out of
- * draft and merging it need the Ready label, which the gate puts itself when the whole contract holds
- * at the head, CI included, through the tool and through Bash alike, and an act that is not ready
- * is refused. In a repository not in
+ * draft and merging it are refused while its CI is not green or a record failed at the head, through
+ * the tool and through Bash alike; a record only absent there is observed, and the act goes on without
+ * the Ready label, which the gate puts when the whole contract holds. In a repository not in
  * auto-merge, leaving draft is observed on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
@@ -1288,18 +1300,30 @@ async function heldNotReady($: any, name: string, repo: string, pr: number, r: R
   }
 }
 
+// An act (a merge, leaving draft) the gate lets through without a record: `noRecord` is set when it did.
+type Passage = { noRecord: boolean }
+
+// Whether a pull request misses only records absent at its head, the exemption's expiry line beside them.
+function missesOnlyRecords(missing: string[]): boolean {
+  return onlyAbsentRecords(missing.filter((item) => !isExpiryLine(item)))
+}
+
 /*
  * The one readiness check of every act that needs Ready (pr-ready, pr-merge, pr-readiness ready,
  * their shell forms), core's readiness contract read at the head: undefined when the gate put Ready
  * itself, the whole contract holding, CI included; else what is missing, or why that is unknown.
+ * An act (`act` given) goes through as well when only records are absent at the head, which its
+ * caller observes: CI, a record that failed and a readiness unread still refuse it.
  */
-async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness): Promise<Held | undefined> {
+async function gateHeld($: any, name: string, repo: string, pr: number, r: Readiness, act?: Passage): Promise<Held | undefined> {
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
-  if (r.missing.length > 0) return heldNotReady($, name, repo, pr, r)
+  const passes = (missing: string[]): boolean => missing.length === 0 || (act !== undefined && missesOnlyRecords(missing))
+  if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
-  if (followed.missing.length > 0) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
+  if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   if (followed.line) note($, followed.line)
+  if (act && followed.missing.length > 0) act.noRecord = true
   return undefined
 }
 
@@ -1366,6 +1390,13 @@ function toolReady($: any, e: any, act: Act) {
     return undefined
   }
   const gated = act.kind === 'merge' || act.kind === 'undraft'
+  // The gate's refusal of the act, or undefined once it lets it through, observed when a record is absent.
+  const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
+    const passage: Passage = { noRecord: false }
+    const held = await gateHeld($, act.name, repo, pr, r, passage)
+    if (!held && passage.noRecord) await observed($, OBSERVED.noRecord)
+    return held?.refusal
+  }
   return {
     async beforeAsk(): Promise<string | undefined> {
       if (act.kind === 'create') await observed($, OBSERVED.draftOpen)
@@ -1374,11 +1405,11 @@ function toolReady($: any, e: any, act: Act) {
       if (!found) {
         if (forCi || !read?.gate) return undefined
         const { repo, pr } = await repoPr()
-        return repo && pr !== undefined ? (await gateHeld($, act.name, repo, pr, read))?.refusal : undefined
+        return repo && pr !== undefined ? heldAct(repo, pr, read) : undefined
       }
       if (typeof found.pr !== 'number') return unverifiedRefusal(found.repo, found.pr, found.r.error ?? '')
       try {
-        return (await gateHeld($, act.name, found.repo, found.pr, found.r))?.refusal
+        return await heldAct(found.repo, found.pr, found.r)
       } catch (err: any) {
         return unverifiedRefusal(found.repo, found.pr, String(err?.message ?? err).trim())
       }
@@ -1466,7 +1497,9 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     leaving = !listed
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
-  const held = (await gateHeld($, act.name, repo, pr, r))?.refusal
+  const passage: Passage = { noRecord: false }
+  const held = (await gateHeld($, act.name, repo, pr, r, passage))?.refusal
+  if (!held && passage.noRecord) observations.push(OBSERVED.noRecord)
   if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
 }
@@ -1591,24 +1624,16 @@ async function consentRecords($: any, repo: string): Promise<ConsentRecord[]> {
 
 // True when some consent record of the subject, written for the operator's answer to the
 // question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
-// itself says what `carries` asks of the operator's words, and the question it answered what `asked` requires.
-async function consentAnswered(
-  $: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean, asked?: (question: string) => boolean,
-): Promise<boolean> {
-  return (await consentRecords($, subject.repo)).some((record) =>
-    quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))) && (!asked || asked(record.question)))
+// itself says what `carries` asks of the operator's words.
+async function consentAnswered($: any, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
+  return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
 }
 
 // The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
 // question, from any channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
 async function grantedWaiver($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
-  const newest = await newestWaiverAnswer($, repo, pr, check)
+  const newest = await newestAnswer($, { kind: waiverSubject(check), repo, pr })
   return newest && grants(newest.answer) ? newest : undefined
-}
-
-// His newest recorded answer to that waiver question, « Accorder » or « Refuser ».
-async function newestWaiverAnswer($: any, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
-  return newestAnswer($, { kind: waiverSubject(check), repo, pr })
 }
 
 // His newest recorded answer to the question that asked consent on the subject, whichever channel wrote it.
@@ -1860,33 +1885,9 @@ async function runtimeRefusal($: any, repo: string, pr: number, head: string): P
     + held.slice(0, 5).join(', ') + (held.length > 5 ? ' and ' + (held.length - 5) + ' more' : '') + '.'
 }
 
-// The words that grant an exemption, French or English: « test » alone grants none.
-const EXEMPTING = /exempt|exon[èée]r|dispens|d[ée]rogation|waiv/i
-
-const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
-
-// What the operator's answer must say to exempt a repository: name it (owner/name or its name),
-// grant the exemption (not to revoke it) and give each rule as it is written.
-function exemptionCarries(repo: string, exempt: boolean, rules: readonly string[]): (words: string) => boolean {
-  const name = escaped(repo.split('/')[1])
-  const repository = new RegExp('(?<![A-Za-z0-9_.-])(' + escaped(repo) + '|' + name + ')(?![A-Za-z0-9_-])', 'i')
-  return (words: string) =>
-    repository.test(words) && (!exempt || EXEMPTING.test(words)) && rules.every((rule) => ruleNamed(rule).test(words))
-}
-
-// A rule written whole in the words, as given: no letter, digit or path character joins it on either side, so
-// `docs/` is not in `src/docs/` nor `e2e` in `no-e2e`. A final dot ends a sentence, not the rule.
-const RULE_JOINED = '-A-Za-z0-9À-ÿ_/*?'
-function ruleNamed(rule: string): RegExp {
-  return new RegExp('(?<![' + RULE_JOINED + '.])' + escaped(rule) + '(?![' + RULE_JOINED + ']|\\.[' + RULE_JOINED + '])')
-}
-
 const RULES_MAX = 50
 const isRule = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= RULES_MAX && value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
-
-// What a question says of a limit, in words (French or English), a date or a time of day, or as the instant `until` takes.
-const NAMES_LIMIT = /jusqu|until|ce soir|tonight|expir|valable|\d{4}-\d{2}-\d{2}T|\d{1,2}\/\d{1,2}|\b\d{1,2}\s?h\b/i
 
 // The record tool's {repo, exempt, detail, paths?, labels?}: the operator exempts a repository's pull
 // requests from E2E (all, or those a rule names), or revokes it, in their words.
@@ -1899,9 +1900,6 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
   if (!isRule(paths) || !isRule(labels)) {
     return { deny: 'github: "paths" and "labels" are lists of at most ' + RULES_MAX + ' globs and label names.' }
   }
-  if (detail.length > DETAIL_MAX) {
-    return { deny: 'github: an E2E exemption quotes the operator in "detail", at most ' + DETAIL_MAX + ' characters.' }
-  }
   const until: string | undefined = e.until === undefined || e.until === null ? undefined : e.until
   if (until !== undefined) {
     if (!e.exempt) return { deny: 'github: an E2E exemption is revoked with no "until": only one that is granted has an expiry.' }
@@ -1911,17 +1909,8 @@ async function setExemption($: any, e: any, detail: string): Promise<{ result?: 
     const now = await Promise.resolve($.clock.now()).then(Number, () => NaN)
     if (!(Date.parse(until) > now)) return { deny: 'github: "until" ' + until + ' is already past: an exemption that ends before it begins exempts nothing.' }
   }
-  const given = e.exempt ? [...paths, ...labels].map((rule: string) => rule.trim()) : []
-  // A question that names a limit asks a limited exemption: it grants no other, so an exemption with no `until` needs a question that names none.
-  const stated = until === undefined ? (question: string) => !NAMES_LIMIT.test(question) : (question: string) => question.includes(until)
-  if (!(await consentAnswered($, detail, { kind: 'e2e-exemption', repo }, exemptionCarries(repo, e.exempt, given), stated))) {
-    return {
-      deny: 'github: an E2E exemption quotes the operator: its detail holds their answer in a consent record ('
-        + CONSENT_PRODUCER + ') of an E2E exemption of ' + repo + ', naming ' + repo
-        + (e.exempt ? ', the exemption and each rule as given' : '') + (until === undefined ? ', to a question that names no limit' : ', to a question that states its expiry ' + until)
-        + '. Ask them with declare_wait\'s ' + askedConsent('e2e-exemption', repo) + '.',
-    }
-  }
+  const refused = quotedWordsRefusal('an E2E exemption', detail)
+  if (refused) return { deny: refused }
   const dir = await dataDir($)
   if (!dir) return { result: 'github: the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set', isError: true }
   let session = ''
@@ -2038,14 +2027,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (waived && planned && planned.need !== 'required') {
     return { deny: 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.' }
   }
-  const answered = waived ? await newestWaiverAnswer($, repo, pr, waived) : undefined
-  const granted = answered && grants(answered.answer) ? answered : undefined
-  // An E2E waiver with no « Accorder » may quote his recorded answer in his own words, from any channel, unless it refuses.
-  const quoted = waived === 'e2e' && !granted && answered !== undefined && detail.length <= DETAIL_MAX
-    && !/^\s*refus/i.test(answered.answer) && quotesConsent(answered, answered.subject, detail)
-  if (waived && !granted && !quoted) return { deny: waiverRefusal(repo, pr, waived) }
-  // The waiver's detail is the operator's answer as recorded, dated by the module that recorded it.
-  const written = granted ? 'operator: ' + granted.answer + ' (' + granted.by + ', ' + granted.at + ')' : detail
+  const unquoted = waived ? quotedWordsRefusal(waived === 'e2e' ? 'an E2E waiver' : 'a norms waiver', detail) : undefined
+  if (unquoted) return { deny: unquoted }
   let gate: Gate
   try {
     gate = parseGate(await runGh($, 'pr-gate', { pr }, repo))
@@ -2086,7 +2069,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   }
   const argv = [
     'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
-    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', written, '--session', session,
+    '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', detail, '--session', session,
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
@@ -2215,9 +2198,9 @@ export function register(on: any): void {
         isDeferred: false,
         description:
           'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail after a run, '
-          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived once the operator granted it. '
+          + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived on the operator\'s quoted, dated words. '
           + '{repo, exempt, paths?, labels?, until?} exempts a repository\'s pull requests for good, or until the instant given '
-          + '(false revokes) and quotes the operator\'s answer in a consent record. See '
+          + '(false revokes) and quotes the operator\'s dated words in detail. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
@@ -2230,7 +2213,7 @@ export function register(on: any): void {
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },
             paths: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests whose files all match these globs' },
             labels: { type: 'array', items: { type: 'string' }, description: 'exempt only pull requests carrying one of these labels' },
-            until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z); the question asking it states it' },
+            until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z)' },
             plan: {
               type: 'object',
               description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,

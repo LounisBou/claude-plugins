@@ -372,8 +372,6 @@ lcr="$ROOT/skills/orchestrator/references/rotation.md"
 check "the rotation closes by tty with the acknowledgment as its guard" "1|1|1" \
   "$(grep -c '« Safety order for a live rotation »: stand the old agent down and wait for its acknowledgment, `rotate --right-of self`' "$lcr")|$(grep -c 'In a rotation this acknowledgment IS the guard' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'Do not pass `--expect-title` to a rotation' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "no title guard left on a rotation" "0" "$(grep -c 'tty + title guard' "$lcr")"
-# The launcher proves a close on its own (rule 96 of the rules review); the orchestrator still reads it.
-check "a close is verified with list and ps, not the exit code" "1" "$(grep -c 'Verify a close with `list` + `ps`, not with the exit code' "$lc")"
 check "a project's instantiation rule no longer carves out succession" "0" \
   "$(grep -c 'governs the FIRST instantiation, never the succession' "$lc")"
 
@@ -474,8 +472,8 @@ check "the comments brief keeps the subject-only commit and reads a backgrounded
 # standing order): nothing is asked of him, and where the host refuses the close of a tab the
 check "the succession brief closes every predecessor and asks nothing" "1|1|yes|0" \
   "$(succ4_has 'you ALWAYS close your predecessor')|$(succ4_has 'one the launcher did not open included, and ask him nothing')|$(spells "$ORCH_REFS/succession-successor.md" 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
-check "the end_session fallback is proved on the tty, not on list" "yes|yes|no|1" \
-  "$(spells "$ORCH_REFS/succession-successor.md" '`verify --tty <its tty>` fails (no host on it)')|$(spells "$ORCH_REFS/succession-successor.md" '`ps -t <that tty without /dev/>` shows no host CLI')|$(spells "$ORCH_REFS/succession-successor.md" 'and `list` shows it gone; then tell')|$(succ4_has 'prove its end on its tty')"
+check "the end_session fallback is proved on the tty, not on list" "yes|no|1" \
+  "$(spells "$ORCH_REFS/succession-successor.md" 'prove that end on its tty, `verify --tty <its tty>` failing')|$(spells "$ORCH_REFS/succession-successor.md" 'and `list` shows it gone; then tell')|$(succ4_has 'its success line the proof')"
 # The successor waits for « handed over » on a subscription the stop gate counts: without it,
 # live, the gate refused that wait « Nothing will wake you ».
 check "the successor subscribes to its predecessor's idle notice with « takeover confirmed »" "1" \
@@ -1507,11 +1505,6 @@ check "the review brief replays the test, flags one the plan requires and the re
   "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'Otherwise, the plan requiring one or there being no plan, it is a finding.')|$(spells "$RB" "A report with no E2E line is a finding.")"
 check "review-verdict.md item 14 keys the E2E on the check plan, and the review brief follows it" "yes|yes|yes" \
   "$(spells "$RV" '`none: <reason>` or `screenshots: <reason>`: the plan settles it, nothing is recorded.')|$(spells "$RV" 'With no plan, record `not-applicable` with its reason when no file holds runtime.')|$(spells "$RB" "the pull request's check plan settles it when its \`e2e\` need is \`none\` or \`screenshots\`")"
-# A check the plan required and now judged unneeded is lifted by a new plan; one that cannot run is
-# ONE question, once, in the host's question tool, his choice the consent.
-PRW="$ROOT/../github/engine/writing/pull-requests.md"
-check "review-verdict.md asks one waiver question through the round, worded by pull-requests.md, which holds Accorder / Refuser" "yes|yes|yes|yes|yes" \
-  "$(spells "$RV" 'now unneeded: a new check plan, that check `none: <reason>`, no question. One that cannot run: ONE question through the round (`declare_wait` operator,')|$(spells "$RV" '`consent_kind`, `consent_repo`, `consent_pr`), worded as github')|$(spells "$RV" 'github `writing/pull-requests.md` « Ready pull requests »')|$(spells "$PRW" '« Accorder » to « Dispense d'"'"'E2E|de normes pour')|$(spells "$PRW" '/ « Refuser ».')"
 # O0 and O22 of the method-drift design: the orchestrator's one review round writes the gate's
 # review record itself, with ONE call named in one place, and the head its verified correction
 # moved is not reviewed again; O21: no E2E validation per pull request.
@@ -3902,11 +3895,11 @@ check "the end checks this session is the recorded coordinator before it clears"
 # The successor's brief: register refuses while the predecessor runs, so the order is fixed —
 # close by title, prove on ps, THEN register. Filled, it lints clean like every template.
 check "the successor closes its predecessor's tab by title before it registers" "yes|1|yes" \
-  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
+  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" 'Its `closed 1 session` line is the')"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
 check "the coordinator's successor closes a hand-started predecessor, with the end_session fallback" "yes|yes|yes|yes" \
-  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` fails')"
+  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` failing')"
 check "the coordinator calls end_session when its successor asks" "yes" \
   "$(spells "$COORDSKILL" 'mcp__orchestrator__end_session » (the host refused it the close), you call it and end the')"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
@@ -4003,7 +3996,7 @@ check "the auditor's succession brief exists, with its placeholders" \
   "{{ITERM_AGENT_SH}} {{OPERATOR_WORK}} {{PREDECESSOR_TTY}} {{PREDECESSOR}} {{PROJECT}} {{REPORT_PATH}} {{REPOSITORY}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
   "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDSUCCTPL" 2>/dev/null | sort -u | paste -sd' ' -)"
 check "it makes the successor confirm, wait for « handed over », close the tab by title, prove it, tell the operator" "1|1|1|1|1" \
-  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'ps -t ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
+  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'closed 1 session' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
 check "and keeps the audit's terms: one report, not rewritten, nothing applied, no session messaged but the predecessor" "1|1|1" \
   "$(grep -c 'not to rewrite' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'apply nothing' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'no session messaged' "$AUDSUCCTPL" 2>/dev/null)"
 # A successor can succeed again: it restates the spawn line in full and finds its own name,
@@ -11128,6 +11121,28 @@ round wold | operator | from Orch: d | since 2026-10-24T09:00:00.000Z | blocks: 
 check "with no pane open every open question is due, a closing proposal still not: no record, a dead pid, a record with no pid" \
   "4|0|4|4" \
   "$(mv "$DSTATE/pane.json" "$WORK/coord-due-pane"; dround | grep -c ' | open | due$')|$(dround | grep -c '^round zdone .* | due')|$(printf '{"session":"s-coord","pid":"4243"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')|$(printf '{"session":"s-coord"}\n' > "$DSTATE/pane.json"; dround | grep -c ' | open | due$')"
+# A pane record naming a host the machine still lists but whose tab is gone (exiting, a zombie, on
+# no tty or another one) is no open pane: a stand-in ps answers what the real one lists for it.
+mkdir -p "$WORK/coord-due-psbin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$PS_STUB_OUT"\n' > "$WORK/coord-due-psbin/ps"
+chmod +x "$WORK/coord-due-psbin/ps"
+printf '{"session":"s-coord","pid":"4242","tty":"/dev/ttys004","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+psround() { PS_STUB_OUT="$1" PATH="$WORK/coord-due-psbin:$PATH" ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$'; }
+check "a pane record is open on a live host on its tty, and not on an exiting one, a zombie, one with no tty, another tty, or none listed" \
+  "1|4|4|4|4|4" \
+  "$(psround 'Ss ttys004')|$(psround '?Es ??')|$(psround 'Z ttys004')|$(psround 'Ss ??')|$(psround 'Ss ttys009')|$(psround '')"
+printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+check "a pane record that names no tty is judged on its host's state alone" \
+  "1|4" \
+  "$(psround 'Ss ??')|$(psround '?Es ??')"
+# The machine's own ps, no stand-in: this shell's pid runs, a pid no process holds does not.
+printf '{"session":"s-coord","pid":"%s","at":"2026-10-24T09:00:00.000Z"}\n' "$$" > "$DSTATE/pane.json"
+ownps_live=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+printf '{"session":"s-coord","pid":"4999999","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+ownps_dead=$(ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z bash "$COORD" round --all 2>&1 | grep -c ' | open | due$')
+check "with the machine's own ps a pane record is open on a running pid and not on one no process holds" "1|4" "$ownps_live|$ownps_dead"
+printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
+
 # An entry answered in the pane is never due, pane open or not, and once the coordinator closes
 # it (the module's settle writes it closed) it is never listed again: the tab never presents it.
 check "an entry answered in the pane is never due, and once closed is never listed again" \

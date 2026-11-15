@@ -65,8 +65,8 @@
 # sender on another machine whose remote row is in the store, « sender gone » one with neither a row
 # nor a session. « due » marks an open question
 # the coordinator presents in its tab: its sender marked it urgent, or no pane of the
-# coordinator is open (<state>/pane.json, written by the hooks module while it is, names a pid
-# that is not running, or is absent); any other open question is the pane's alone, however long
+# coordinator is open (<state>/pane.json, written by the hooks module while it is; pane_open
+# below says when its record counts); any other open question is the pane's alone, however long
 # it waits. COORDINATOR_NOW, when the suite pins one, must be a UTC time. The entries are read from
 # <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
@@ -585,18 +585,28 @@ live_sessions() {
 }
 
 # pane_open: whether the coordinator's pane is open, from the record the hooks module keeps at
-# <state>/pane.json while it is ({"session","pid","at"}): open while that pid is in the process
-# table (COORDINATOR_PS_TABLE when the suite gives one). A record absent, unreadable or naming
-# no pid is no open pane.
+# <state>/pane.json while it is ({"session","pid","tty","at"}): open while that pid still runs a
+# session, as hooks/supervision.ts runsLive reads it: listed, neither exiting (an E among its
+# state flags) nor a zombie, and on the record's tty when it names one. A host whose tab was
+# closed stays listed for days, exiting, on no tty: its record is no open pane. COORDINATOR_PS_TABLE
+# is a file of lines starting with a pid, when the suite gives one (the pid alone judges). A record
+# absent, unreadable or naming no pid is no open pane.
 pane_open() {
-    local pid
+    local pid tty info stat listed
     pid=$(jq -r 'select(type == "object") | .pid // empty | tostring' "$STATE/pane.json" 2>/dev/null) || return 1
     printf '%s' "$pid" | grep -qE '^[0-9]+$' || return 1
     if [ -n "${COORDINATOR_PS_TABLE:-}" ]; then
         awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }' "$COORDINATOR_PS_TABLE" 2>/dev/null
-    else
-        ps -p "$pid" -o pid= >/dev/null 2>&1
+        return
     fi
+    tty=$(jq -r 'select(type == "object") | .tty // empty | tostring' "$STATE/pane.json" 2>/dev/null) || tty=''
+    info=$(ps -p "$pid" -o stat=,tty= 2>/dev/null) || return 1
+    read -r stat listed <<< "$info"
+    [ -n "$stat" ] || return 1
+    stat=${stat#"${stat%%[!?]*}"}
+    case "$stat" in Z*|*E*) return 1 ;; esac
+    tty=${tty#/dev/}
+    [ -z "$tty" ] || [ -z "$listed" ] || [ "$listed" = "$tty" ]
 }
 
 # remote_machines: the machine each remote row of the module's store names, by its orchestrator's name,

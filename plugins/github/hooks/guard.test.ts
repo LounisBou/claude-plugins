@@ -5,7 +5,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { EXEMPT_REFUSAL, register } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { parseLearningEvent } from '../core/learning.ts'
-import { CONSENT_GRANT, CONSENT_REFUSE, consentRecordOf } from '../core/consent-record.ts'
+import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
 // The writing rules read this file of the plugin, which no scenario below is about.
@@ -305,6 +305,9 @@ const commands = (seen: Seen) => seen.runs.map((r) => r.command ?? r.argv.join('
 const gates = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-gate').length
 // No record at all: review, norms and E2E missing, CI green.
 const NO_RECORDS = { records: {} }
+// A review that failed at the head, beside an E2E that passed.
+const REVIEW_FAILED = { records: Object.fromEntries([record('review', 'fail'), record('e2e', 'pass')]) }
+const REVIEW_FAILED_ITEM = 'review: fail at 0123456 by p-review'
 
 // The four sections a description ends with.
 const SECTIONS = '**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none'
@@ -323,10 +326,9 @@ test('refused by the person, the gate is read once and nothing runs', async ($, 
 })
 
 test('a not-ready pr-ready outside auto-merge is refused before anyone is asked', async ($, on) => {
-  const seen = await world($, on, NO_RECORDS)
+  const seen = await world($, on, REVIEW_FAILED)
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
-  expect(out.deny).toBe('github: pr-ready refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
-    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(out.deny).toBe('github: pr-ready refused on acme/thing#12 at 0123456: not ready. Missing: ' + REVIEW_FAILED_ITEM + '.' + REFUSAL_END)
   expect(seen.asked.length).toBe(0)
   expect(commands(seen)).toEqual(['pr-gate'])
 })
@@ -384,9 +386,10 @@ test('pr-readiness ready refused by a permission rule stays refused: only the ga
  * One readiness contract: pr-readiness ready, pr-ready and pr-merge read the same head through the
  * same function, so where one is held the others are, for the same missing conditions. On
  * claude-plugins at one head, pr-readiness ready put Ready while pr-ready and pr-merge refused it.
+ * A record absent at the head is the one difference: the label is not put, the acts are observed.
  */
 for (const [label, w, missing] of [
-  ['no review', { records: Object.fromEntries([record('e2e', 'pass')]) }, 'Missing: review: no record at 0123456.'],
+  ['a failed review', REVIEW_FAILED, 'Missing: ' + REVIEW_FAILED_ITEM + '.'],
   // A check that passed beside them: no CI undraft, which pr-ready may run on a pull request none of whose checks passed.
   ['CI still running', { ci: { result: 'PENDING', running: 1, total: 2 } }, 'Missing: CI still running.'],
   ['CI failed', { ci: { result: 'FAILURE', failed: ['lint'], total: 2 } }, 'Missing: CI failed: lint.'],
@@ -410,18 +413,45 @@ test('pr-readiness not-ready is let through with the gate unread', async ($, on)
   expect(gates(seen)).toBe(0)
 })
 
-test('in auto-merge a not-ready merge is refused before anyone is asked, nothing run', async ($, on) => {
+test('in auto-merge a merge whose records are only absent goes through, observed, Ready never put', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
-  expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
-    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(out).toEqual({ result: 'ok' })
   expect(seen.asked.length).toBe(0)
+  expect(seen.journal).toEqual(['github.ready.no-record'])
+  expect(commands(seen)).toEqual(['pr-gate', 'pr-merge'])
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('in auto-merge a merge whose review failed at the head is refused before anyone is asked, nothing run', async ($, on) => {
+  const seen = await world($, on, { ...REVIEW_FAILED, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
+  const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: ' + REVIEW_FAILED_ITEM + '.' + REFUSAL_END)
+  expect(seen.asked.length).toBe(0)
+  expect(seen.journal).toEqual([])
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
+test('in auto-merge a merge with a record absent and CI failed is refused, both named, nothing observed', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], ci: { result: 'FAILURE', failed: ['lint'] }, verdict: { decision: 'ask' } })
+  const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
+    + ' 0123456, e2e: no record at 0123456, CI failed: lint.' + REFUSAL_END)
+  expect(seen.journal).toEqual([])
+  expect(commands(seen)).toEqual(['pr-gate'])
+})
+
+test('a merge of a pull request carrying Ready whose records are absent goes through observed, Ready taken off', async ($, on) => {
+  const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'], autoMerge: ['acme/thing'] })
+  const out: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out).toEqual({ result: 'ok' })
+  expect(seen.journal).toEqual(['github.ready.no-record'])
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
 /*
- * These merges ran when CI was left to GitHub alone. A merge now needs the Ready label, which the
- * gate puts only with CI green: a merge whose CI failed or still runs is refused, CI named.
+ * These merges ran when CI was left to GitHub alone. The gate now reads CI at the head: a merge
+ * whose CI failed or still runs is refused, CI named.
  */
 for (const [state, ci, item] of [['failed', { result: 'FAILURE', failed: ['lint'] }, 'CI failed: lint'], ['still runs', { result: 'PENDING', running: 1 }, 'CI still running']] as const) {
   test('in auto-merge a merge whose CI ' + state + ' is refused: Ready needs CI green', async ($, on) => {
@@ -442,8 +472,9 @@ test('in auto-merge a ready merge runs with no question, the gate putting Ready 
   expect(seen.runs.find((r) => r.command === 'pr-readiness')?.args).toEqual({ pr: 12, state: 'ready' })
 })
 
-// No route merges a pull request the gate has not labelled Ready: the label lands before the merge
-// runs, or the merge is refused and the pull request keeps Not Ready.
+// No route merges a pull request whose CI is not green or whose record failed: the Ready label lands
+// before the merge runs, or the merge is refused and the pull request keeps Not Ready. A pull request
+// that misses only records absent at its head is merged without the label, observed.
 const MERGE_ACTS = [
   ['tool', gh('pr-merge', { pr: 12 })],
   ['Bash', bash('gh pr merge 12 -R acme/thing --squash')],
@@ -451,7 +482,7 @@ const MERGE_ACTS = [
 
 for (const [route, call] of MERGE_ACTS) {
   for (const [label, w] of [
-    ['no review', NO_RECORDS],
+    ['a failed review', REVIEW_FAILED],
     ['CI failed', { ci: { result: 'FAILURE', failed: ['lint'] } }],
     ['CI still running', { ci: { result: 'PENDING', running: 1 } }],
   ] as const) {
@@ -463,6 +494,15 @@ for (const [route, call] of MERGE_ACTS) {
       expect(seen.pull?.labels).toEqual(['Not Ready'])
     })
   }
+
+  test('a ' + route + ' merge in auto-merge with no record at the head runs, observed once, and Not Ready stays', async ($, on) => {
+    const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
+    const out: any = await $.tool.call(call)
+    expect(out.deny).toBeUndefined()
+    expect(actRan(seen, route, 'pr-merge')).toBe(1)
+    expect(seen.journal).toEqual(['github.ready.no-record'])
+    expect(seen.pull?.labels).toEqual(['Not Ready'])
+  })
 
   test('a ' + route + ' merge in auto-merge of a ready pull request runs once the gate put Ready', async ($, on) => {
     const seen = await world($, on, { autoMerge: ['acme/thing'] })
@@ -598,7 +638,7 @@ test('an undraft outside auto-merge that is no CI undraft goes through when read
 })
 
 test('an undraft outside auto-merge of a pull request not ready is still refused by the gate', async ($, on) => {
-  const seen = await world($, on, { ...NO_RECORDS })
+  const seen = await world($, on, { ...REVIEW_FAILED })
   const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out.deny).toContain('github: pr-ready refused on acme/thing#12 at 0123456: not ready.')
   expect(seen.journal).toEqual([])
@@ -634,9 +674,12 @@ test('going back to draft through the tool is not asked outside auto-merge', asy
 })
 
 test('a pull request that carries Ready, or whose CI is green, is no CI undraft', async ($, on) => {
-  await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
+  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
   const green: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
-  expect(green.deny).toContain('not ready')
+  expect(green).toEqual({ result: 'ok' })
+  expect(seen.runs.find((r) => r.command === 'pr-ready')?.args).toEqual({ pr: 12 })
+  expect(seen.logs.some((l) => l.includes('out of draft to run CI'))).toBe(false)
+  expect(seen.journal).toEqual(['github.ready.no-record'])
 })
 
 // ---- the undraft against CI ----
@@ -662,12 +705,21 @@ for (const [route, call] of UNDRAFT_ACTS) {
     expect(seen.pull?.labels).toEqual(['Not Ready'])
   })
 
-  test('a ' + route + ' undraft of a pull request carrying Ready with no review is refused, never a CI undraft', async ($, on) => {
+  test('a ' + route + ' undraft of a pull request carrying Ready with no review and CI not green is refused, never a CI undraft', async ($, on) => {
     const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'], autoMerge: ['acme/thing'], ci: { result: 'PENDING', running: 1 } })
     const out: any = await $.tool.call(call)
-    expect(out.deny).toContain('refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at 0123456')
-    expect(out.deny).not.toContain('CI still running')
+    expect(out.deny).toContain('refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at 0123456, e2e: no record at 0123456, CI still running')
     expect(actRan(seen, route, 'pr-ready')).toBe(0)
+    expect(seen.journal).toEqual([])
+    expect(seen.pull?.labels).toEqual(['Not Ready'])
+  })
+
+  test('a ' + route + ' undraft in auto-merge with no record at the head and CI green runs, observed', async ($, on) => {
+    const seen = await world($, on, { ...NO_RECORDS, labels: [], autoMerge: ['acme/thing'] })
+    const out: any = await $.tool.call(call)
+    expect(out.deny).toBeUndefined()
+    expect(actRan(seen, route, 'pr-ready')).toBe(1)
+    expect(seen.journal).toEqual(['github.ready.no-record'])
   })
 }
 
@@ -742,17 +794,16 @@ test('a Bash merge in auto-merge whose CI failed is refused: Ready needs CI gree
 })
 
 test('a not-ready Bash merge in auto-merge is refused, --auto too', async ($, on) => {
-  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
+  const seen = await world($, on, { ...REVIEW_FAILED, autoMerge: ['acme/thing'] })
   const refused: any = await $.tool.call(bash('gh pr merge 12 -R acme/thing --squash'))
-  expect(refused.deny).toBe('github: gh pr merge refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
-    + ' 0123456, e2e: no record at 0123456.' + REFUSAL_END)
+  expect(refused.deny).toBe('github: gh pr merge refused on acme/thing#12 at 0123456: not ready. Missing: ' + REVIEW_FAILED_ITEM + '.' + REFUSAL_END)
   const auto: any = await $.tool.call(bash('gh pr merge 12 -R acme/thing --auto'))
   expect(auto.deny).toContain('github: gh pr merge refused on acme/thing#12 at 0123456: not ready.')
   expect(seen.bash.length).toBe(0)
 })
 
 test('a not-ready Bash undraft in auto-merge, out of CI undraft, is refused', async ($, on) => {
-  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], labels: [] })
+  const seen = await world($, on, { ...REVIEW_FAILED, autoMerge: ['acme/thing'], labels: [] })
   const out: any = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
   expect(out.deny).toContain('not ready')
   expect(seen.bash.length).toBe(0)
@@ -833,7 +884,7 @@ test('a Bash merge through gh.py is refused outside auto-merge, as gh pr merge i
 })
 
 test('a Bash merge through gh.py in auto-merge meets the ready guard', async ($, on) => {
-  const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
+  const seen = await world($, on, { ...REVIEW_FAILED, autoMerge: ['acme/thing'] })
   for (const command of [ENGINE + ' --repo=acme/thing pr-merge 12', '/plugins/github/engine/gh.py pr-merge 12 --repo acme/thing']) {
     const out: any = await $.tool.call(bash(command))
     expect(out.deny, command).toContain('github: gh.py pr-merge refused on acme/thing#12 at 0123456: not ready.')
@@ -2224,9 +2275,14 @@ test('records that cannot be listed leave the label as it is, never Not Ready, a
   expect(seen.logs[0]).toContain('EACCES: permission denied')
 })
 
-// A merge in auto-merge: refused with what the pull request misses at its head.
+// A merge in auto-merge: refused with what the pull request misses at its head, unless only records are absent there.
 async function mergeProbe($: any): Promise<any> {
   return $.tool.call(gh('pr-merge', { pr: 12 }))
+}
+
+// pr-readiness ready: its result answers everything the pull request misses at its head, absent records included.
+async function missingProbe($: any): Promise<any> {
+  return $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
 }
 
 test('records that cannot be listed are an unverified readiness to the guard', async ($, on) => {
@@ -2295,8 +2351,8 @@ for (const [label, exemption] of [
     const seen = await world($, on, { records: TWO, exemption, autoMerge: ['acme/thing'] })
     await $.tool.call(gh('pr-gate', { pr: 12 }))
     expect(readinessRuns(seen)).toEqual([])
-    const merge: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
-    expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
+    const missing: any = await missingProbe($)
+    expect(missing.result).toContain('Missing: e2e: no record at 0123456')
   })
 }
 
@@ -2346,10 +2402,13 @@ for (const [label, until] of [['an expiry behind', BEHIND], ['an expiry that is 
     const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until }, autoMerge: ['acme/thing'] })
     await $.tool.call(gh('pr-gate', { pr: 12 }))
     expect(readinessRuns(seen)).toEqual([])
-    const merge: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
-    expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
-    expect(merge.deny).toContain('E2E exemption of acme/thing expired at ' + until + ': it no longer excuses E2E')
-    expect(merge.deny.split('expired at').length).toBe(2)
+    const missing: any = await missingProbe($)
+    expect(missing.result).toContain('Missing: e2e: no record at 0123456')
+    expect(missing.result).toContain('E2E exemption of acme/thing expired at ' + until + ': it no longer excuses E2E')
+    expect(missing.result.split('expired at').length).toBe(2)
+    // The expiry line beside the absent record is no reason of its own: the merge is observed.
+    expect(await $.tool.call(gh('pr-merge', { pr: 12 }))).toEqual({ result: 'ok' })
+    expect(seen.journal).toEqual(['github.ready.no-record'])
   })
 }
 
@@ -2394,21 +2453,8 @@ const exemptCall = (exempt: boolean, detail: string, over: Record<string, unknow
   ({ tool: 'mcp__github__record', repo: 'acme/thing', exempt, detail, ...over }) as any
 const exemptionOf = (seen: Seen) => JSON.parse(seen.files[EXEMPTION])
 const HIS_EXEMPTION = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
-const answeredExemption = (answer: string) => consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, answer })
-// The operator's answers to round questions asking an exemption of acme/thing, one record each.
-const exemptionWorld = (...answers: string[]) => consentWorld(Object.fromEntries(answers.map((answer, i) => ['a' + i, answeredExemption(answer)])))
-
-test('words the operator typed are no consent: with no consent record they exempt nothing', async ($, on) => {
+test('the operator\'s quoted, dated words exempt a repository through the record tool, with its rules, and revoke it: no consent record is read', async ($, on) => {
   const seen = await world($, on)
-  await typed($, HIS_EXEMPTION)
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(out.deny).toContain('declare_wait\'s consent_kind "e2e-exemption" and consent_repo "')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('the operator\'s recorded answer exempts a repository through the record tool, with its rules, and revokes it', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
   const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'] }))
   expect(set.deny).toBeUndefined()
   expect(set.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/')
@@ -2417,39 +2463,18 @@ test('the operator\'s recorded answer exempts a repository through the record to
   expect(revoke.result).toBe('github: acme/thing no longer exempt from E2E')
   expect(exemptionOf(seen)).toMatchObject({ exempt: false, paths: [], labels: [] })
   expect(recordRun(seen)).toBeUndefined()
+  expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
 test('an exemption with no rule covers every pull request of the repository', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+  const seen = await world($, on)
   const set: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
   expect(set.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
   expect(exemptionOf(seen).exempt).toBe(true)
 })
 
-test('an exemption may quote the operator\'s answer in a consent record of the repository\'s exemption, not of a waiver', async ($, on) => {
-  const words = 'exempt thing from E2E, 2026-11-13'
-  const seen = await world($, on, exemptionWorld(words))
-  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + words))
-  expect(out.deny).toBeUndefined()
-  expect(exemptionOf(seen).exempt).toBe(true)
-})
-
-test('a consent record of a waiver of one pull request does not exempt the repository', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent() }))
-  const out: any = await $.tool.call(exemptCall(true, CONSENT_WORDS))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('the operator\'s answer exempts a repository with no date in it', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('plus de dérogation E2E sur thing'))
-  const undated: any = await $.tool.call(exemptCall(true, 'plus de dérogation E2E sur thing'))
-  expect(undated.deny).toBeUndefined()
-  expect(exemptionOf(seen).exempt).toBe(true)
-})
-
-test('an exemption is refused without a repository, with rules that are not lists of names, or from a review plugin', async ($, on) => {
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+test('an exemption is refused without a repository or with rules that are not lists of names', async ($, on) => {
+  const seen = await world($, on)
   const unnamed: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { repo: 'thing' }))
   expect(unnamed.deny).toContain('{"repo": "owner/name"}')
   const ruled: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: 'docs/' }))
@@ -2457,68 +2482,22 @@ test('an exemption is refused without a repository, with rules that are not list
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
-test('the repository named outside the operator\'s quoted answer does not count', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('plus de dérogation E2E pour docs/', 'plus de dérogation E2E sur thing pour docs/'))
-  const outside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E pour docs/ » — operator about acme/thing', { paths: ['docs/'] }))
-  expect(outside.deny).toContain('an E2E exemption quotes the operator')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const inside: any = await $.tool.call(exemptCall(true, '« plus de dérogation E2E sur thing pour docs/ » — operator', { paths: ['docs/'] }))
-  expect(inside.deny).toBeUndefined()
-})
-
-// The operator's answer to a question stating the expiry, in a consent record the question of which says it.
-const untilWorld = (question: string, answer = HIS_EXEMPTION) =>
-  consentWorld({ a: consent({ subject: { kind: 'e2e-exemption', repo: 'acme/thing' }, question, answer }) })
-
-test('an exemption with an expiry is written with it when the question the operator answered states it', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + AHEAD + '?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'], until: AHEAD }))
-  expect(out.deny).toBeUndefined()
-  expect(out.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/ until ' + AHEAD)
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, until: AHEAD, detail: HIS_EXEMPTION })
-})
-
 test('an exemption with no expiry is written as before, with no until in the file', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
+  const seen = await world($, on)
   const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
   expect(out.result).toBe('github: acme/thing exempt from E2E for all its pull requests')
   expect(exemptionOf(seen)).not.toHaveProperty('until')
 })
 
-test('an expiry the operator\'s question did not state is refused', async ($, on) => {
+test('an exemption with a limit rests on the operator\'s quoted, dated words, with no consent record', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until 2026-11-03T18:00:00Z?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: AHEAD }))
-  expect(out.deny).toContain('to a question that states its expiry ' + AHEAD)
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-test('an exemption with no expiry is refused to an answer whose question stated one', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + AHEAD + '?'))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
-  expect(out.deny).toContain('to a question that names no limit')
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-})
-
-for (const question of ['Exempt thing from E2E jusqu\'à ce soir?', 'Exempt thing from E2E, valid 16/11 12h Paris?', 'Exempt thing from E2E for today only, expires 18h?']) {
-  test('an exemption with no expiry is refused to an answer whose question limits it in words: ' + question, async ($, on) => {
-    mock.clock(on, { now: RECEIVED })
-    const seen = await world($, on, untilWorld(question))
-    const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION))
-    expect(out.deny).toContain('to a question that names no limit')
-    expect(seen.files[EXEMPTION]).toBeUndefined()
-  })
-}
-
-test('an expiry is refused to an answer whose question states none', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, exemptionWorld(HIS_EXEMPTION))
-  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: AHEAD }))
-  expect(out.deny).toContain('to a question that states its expiry ' + AHEAD)
-  expect(seen.files[EXEMPTION]).toBeUndefined()
+  const seen = await world($, on)
+  const out: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { paths: ['docs/'], labels: ['no-e2e'], until: AHEAD }))
+  expect(out.deny).toBeUndefined()
+  expect(out.result).toBe('github: acme/thing exempt from E2E for its pull requests carrying no-e2e or whose files all match docs/ until ' + AHEAD)
+  expect(exemptionOf(seen)).toMatchObject({ exempt: true, until: AHEAD, detail: HIS_EXEMPTION })
+  expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
 // The operator's case at the gate: until 2026-11-16T11:00:00Z (Paris noon), it excuses E2E before that instant and nothing at it.
@@ -2535,49 +2514,29 @@ for (const [label, now, covered] of [
       expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
     } else {
       expect(readinessRuns(seen)).toEqual([])
-      const merge: any = await $.tool.call(gh('pr-merge', { pr: 12 }))
-      expect(merge.deny).toContain('Missing: e2e: no record at 0123456')
-      expect(merge.deny).toContain('E2E exemption of acme/thing expired at ' + OPERATOR_UNTIL)
+      const missing: any = await missingProbe($)
+      expect(missing.result).toContain('Missing: e2e: no record at 0123456')
+      expect(missing.result).toContain('E2E exemption of acme/thing expired at ' + OPERATOR_UNTIL)
     }
   })
 }
 
-// The operator's own answer, as relayed, to a question asking the exemption until the Paris noon of 2026-11-16 (11:00 UTC).
-test('the operator\'s answer « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris » is quoted for an exemption until 11:00 UTC, the instant its question states', async ($, on) => {
+// The operator's own sentence, quoted with its date: the exemption until the Paris noon of 2026-11-16 (11:00 UTC).
+test('the operator\'s sentence « Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris », quoted and dated, exempts a repository until 11:00 UTC', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
   const repo = 'geonativefr/geo-git-flow'
   const until = '2026-11-16T11:00:00Z'
-  const words = 'Accorder la dispense de geo-git-flow et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris !'
-  const seen = await world($, on, consentWorld({
-    a: consent({ subject: { kind: 'e2e-exemption', repo }, question: 'Exempt ' + repo + ' from E2E until ' + until + ' (16/11/2026 12h00, Paris)?', answer: words }),
-  }, '/cfg/consents/' + repo))
-  const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', { repo, until }))
+  const words = '« Accorder la dispense de geo-git-flow et fusionner les PRS. Dispense valable jusqu\'au 16/11/2026 12h00 heure de Paris ! » — operator, 2026-11-15T08:06:00Z'
+  const seen = await world($, on)
+  const out: any = await $.tool.call(exemptCall(true, words, { repo, until }))
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
-  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until, detail: '« ' + words + ' » — operator' })
-})
-
-// The record core writes from the operator's answer relayed by the coordinator (consentRecordOf, as the orchestrator's settle calls it), read by the record tool.
-test('the record core writes from the operator\'s sentence exempts a repository until 11:00 UTC, the instant its question states', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const repo = 'acme/thing'
-  const until = '2026-11-16T11:00:00Z'
-  const words = "Accorder la dispense de thing et fusionner les PRS. Dispense valable jusqu'au 16/11/2026 12h00 heure de Paris !"
-  const record = consentRecordOf({
-    subject: { kind: 'e2e-exemption', repo }, entry: 'q-a', question: 'Exempt ' + repo + ' from E2E until ' + until + '?', answer: words,
-    choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], by: 'coordinator', at: '2026-11-03T10:00:00Z',
-  })
-  expect(record?.answer).toBe(words)
-  const seen = await world($, on, consentWorld({ a: record }, '/cfg/consents/' + repo))
-  const out: any = await $.tool.call(exemptCall(true, '« ' + words + ' » — operator', { repo, until }))
-  expect(out.deny).toBeUndefined()
-  expect(out.result).toBe('github: ' + repo + ' exempt from E2E for all its pull requests until ' + until)
-  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until })
+  expect(JSON.parse(seen.files['/data/e2e-exempt/' + repo + '.json'])).toMatchObject({ repo, exempt: true, until, detail: words })
 })
 
 test('an expiry that is past, unreadable or given to a revocation is refused', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, untilWorld('Exempt thing from E2E until ' + BEHIND + ', tomorrow, 2026-02-31T00:00:00Z?'))
+  const seen = await world($, on)
   const past: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: BEHIND }))
   expect(past.deny).toContain('already past')
   const now: any = await $.tool.call(exemptCall(true, HIS_EXEMPTION, { until: '2026-11-02T12:00:00Z' }))
@@ -2591,75 +2550,53 @@ test('an expiry that is past, unreadable or given to a revocation is refused', a
   expect(seen.files[EXEMPTION]).toBeUndefined()
 })
 
-test('each rule of an exemption is in the operator\'s answer as given', async ($, on) => {
-  const words = 'plus de dérogation E2E sur thing, 2026-11-13'
-  const given = 'plus de dérogation E2E sur thing pour docs/ et no-e2e, 2026-11-13'
-  const seen = await world($, on, exemptionWorld(words, given))
-  for (const rule of [{ paths: ['docs/'] }, { labels: ['no-e2e'] }]) {
-    const out: any = await $.tool.call(exemptCall(true, words, rule))
-    expect(out.deny, JSON.stringify(rule)).toContain('each rule as given')
-  }
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const quoted: any = await $.tool.call(exemptCall(true, given, { paths: ['docs/'], labels: ['no-e2e'] }))
-  expect(quoted.deny).toBeUndefined()
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'], labels: ['no-e2e'] })
-})
-
-test('a rule found only inside a longer word of the operator\'s answer is not given', async ($, on) => {
-  const cases = [
-    ['plus de dérogation E2E sur thing pour src/docs/, 2026-11-13', { paths: ['docs/'] }],
-    ['plus de dérogation E2E sur thing pour docs/api, 2026-11-13', { paths: ['docs/'] }],
-    ['plus de dérogation E2E sur thing avec no-e2e, 2026-11-13', { labels: ['e2e'] }],
-    ['plus de dérogation E2E sur thing avec e2e-skip, 2026-11-13', { labels: ['e2e'] }],
-  ] as const
-  const whole = 'plus de dérogation E2E sur thing pour docs/, avec e2e. 2026-11-13'
-  const seen = await world($, on, exemptionWorld(...cases.map(([words]) => words), whole))
-  for (const [words, rule] of cases) {
-    const out: any = await $.tool.call(exemptCall(true, words, rule))
-    expect(out.deny, words).toContain('each rule as given')
-  }
-  expect(seen.files[EXEMPTION]).toBeUndefined()
-  const given: any = await $.tool.call(exemptCall(true, whole, { paths: ['docs/'], labels: ['e2e'] }))
-  expect(given.deny).toBeUndefined()
-})
-
-for (const [answer, rule] of [
-  ['lance les tests du dépôt, 2026-11-13', {}],
-  ['lance les tests de thing, 2026-11-13', {}],
-  ['plus de dérogation E2E sur ce dépôt, 2026-11-13', {}],
-  ['exempt thing from E2E, 2026-11-13', { paths: ['docs/'] }],
-  ['exempt thing from E2E for no-e2e, 2026-11-13', { labels: ['e2e'] }],
-] as const) {
-  test('a consent answer that grants no exemption, names no repository or misses a rule exempts nothing: ' + answer + ' ' + JSON.stringify(rule), async ($, on) => {
-    const seen = await world($, on, exemptionWorld(answer))
-    const out: any = await $.tool.call(exemptCall(true, 'operator ruled: ' + answer + ' — on acme/thing, exempt, docs/ e2e', rule))
-    expect(out.deny).toContain('an E2E exemption quotes the operator')
-    expect(seen.files[EXEMPTION]).toBeUndefined()
+// The limits of «quoted with its date», at their edges: accepted forms, one by one.
+const QUOTED_FORMS: Array<[string, string]> = [
+  ['the documented time with no seconds', '« plus de dérogation », 2026-11-15T08:50Z'],
+  ['a date alone', 'plus de dérogation E2E, 2026-11-15'],
+  ['six letters', 'abcdef 2026-11-15'],
+  ['500 characters', 'plus de dérogation E2E, 2026-11-15 '.padEnd(500, 'x')],
+]
+for (const [why, detail] of QUOTED_FORMS) {
+  test('a quote with ' + why + ' stands for an E2E waiver and an exemption', async ($, on) => {
+    const seen = await world($, on, { git: CLEAN })
+    expect(((await $.tool.call(waiveCall(detail))) as any).deny).toBeUndefined()
+    expect(((await $.tool.call(exemptCall(true, detail))) as any).deny).toBeUndefined()
+    expect(recordRun(seen)).toBeDefined()
   })
 }
 
-test('a consent answer that does not name the repository revokes nothing', async ($, on) => {
-  const seen = await world($, on, { exemption: EXEMPT, ...exemptionWorld('remets les E2E, 2026-11-13') })
-  const out: any = await $.tool.call(exemptCall(false, 'operator ruled: remets les E2E, 2026-11-13 — acme/thing'))
-  expect(out.deny).toContain('an E2E exemption quotes the operator')
-  expect(exemptionOf(seen).exempt).toBe(true)
+test('a recorded « Accorder » of the E2E waiver does not stand for an unquoted detail', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, ...consentWorld({ a: granted() }) })
+  const out: any = await $.tool.call(waiveCall(''))
+  expect(out.deny).toContain('an E2E waiver rests on the operator\'s words, quoted in "detail" with their date')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
-test('a consent answer with the exemption, the repository and each rule exempts', async ($, on) => {
-  const seen = await world($, on, exemptionWorld('exempt thing from E2E for docs/, 2026-11-13'))
-  const out: any = await $.tool.call(exemptCall(true, 'operator ruled: exempt thing from E2E for docs/, 2026-11-13', { paths: ['docs/'] }))
-  expect(out.deny).toBeUndefined()
-  expect(exemptionOf(seen)).toMatchObject({ exempt: true, paths: ['docs/'] })
-})
-
-test('a revocation names the repository in the operator\'s answer', async ($, on) => {
-  const seen = await world($, on, { exemption: EXEMPT, ...exemptionWorld('plus de dérogation E2E sur ce dépôt, 2026-11-13', 'remets les E2E sur thing, 2026-11-13') })
-  const unnamed: any = await $.tool.call(exemptCall(false, 'plus de dérogation E2E sur ce dépôt, 2026-11-13'))
-  expect(unnamed.deny).toContain('an E2E exemption quotes the operator')
-  expect(exemptionOf(seen).exempt).toBe(true)
-  const named: any = await $.tool.call(exemptCall(false, 'remets les E2E sur thing, 2026-11-13'))
-  expect(named.result).toBe('github: acme/thing no longer exempt from E2E')
-})
+// What «quoted with its date» means for an exemption and for a waiver: words, and a date.
+const UNQUOTED: Array<[string, string]> = [
+  ['an empty detail', ''],
+  ['a blank detail', '   \n '],
+  ['words with no date', 'plus de dérogation E2E sur thing'],
+  ['a date with no words', '2026-11-13'],
+  ['a date with a few characters', 'ok, 2026-11-13T10:00:00Z'],
+  ['digits for words', '12345678 2026-11-13'],
+  ['two dates and no words', '2026-11-13, 2026-11-13'],
+  ['a time and no words', '2026-11-13 08:50:00 UTC'],
+  ['501 characters', 'plus de dérogation E2E sur thing, 2026-11-13 '.padEnd(501, 'x')],
+  ['a detail past the record\'s limit', 'plus de dérogation E2E sur thing, 2026-11-13 ' + 'x'.repeat(500)],
+]
+for (const [why, detail] of UNQUOTED) {
+  test('an exemption is refused with ' + why + ', and a revocation too: nothing is written', async ($, on) => {
+    const seen = await world($, on, { exemption: EXEMPT })
+    const set: any = await $.tool.call(exemptCall(true, detail, { repo: 'acme/other' }))
+    expect(set.deny).toContain('an E2E exemption rests on the operator\'s words, quoted in "detail" with their date')
+    const revoke: any = await $.tool.call(exemptCall(false, detail))
+    expect(revoke.deny).toContain('rests on the operator\'s words, quoted in "detail" with their date')
+    expect(seen.files['/data/e2e-exempt/acme/other.json']).toBeUndefined()
+    expect(exemptionOf(seen).exempt).toBe(true)
+  })
+}
 
 test('an exemption of a repository named with a dot segment is refused before any file is written', async ($, on) => {
   const seen = await world($, on)
@@ -2920,8 +2857,8 @@ test('a review failed at a later head of the same diff is not carried from an ea
     ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
   }
   await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
-  const out: any = await mergeProbe($)
-  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+  const out: any = await missingProbe($)
+  expect(out.result).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
 })
 
 test('a second gate read with the records unchanged still reads Ready with the same carried kinds', async ($, on) => {
@@ -2954,9 +2891,9 @@ test('the records of another pull request with the same diff are never carried, 
 
 test('a refused merge names the records carried beside what is missing', async ($, on) => {
   const tree = earlier([at('review', 'pass'), at('norms', 'pass')])
-  await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME }, ci: { result: 'FAILURE', failed: ['lint'] } })
   const out: any = await mergeProbe($)
-  expect(out.deny).toContain('Missing: e2e: no record at 0123456; review carried from abcdef0, norms carried from abcdef0.')
+  expect(out.deny).toContain('Missing: e2e: no record at 0123456, CI failed: lint; review carried from abcdef0, norms carried from abcdef0.')
 })
 
 test('an earlier head whose commits cannot be fingerprinted carries nothing, and says so in one line', async ($, on) => {
@@ -3010,8 +2947,8 @@ test('a review failed at a later head that cannot be fingerprinted is not carrie
     ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
   }
   const seen = await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
-  const out: any = await mergeProbe($)
-  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+  const out: any = await missingProbe($)
+  expect(out.result).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
   expect(seen.logs[0]).toBe('github: acme/thing#12: no review record carried to 0123456: 1111111\'s commits cannot be fingerprinted:'
     + ' error: commit 1234567 is a merge')
 })
@@ -3052,8 +2989,8 @@ test('a review record that does not parse at a later head of the same diff is no
   }
   const seen = await world($, on, { autoMerge: ['acme/thing'], records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
   for (const read of [1, 2]) {
-    const out: any = await mergeProbe($)
-    expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+    const out: any = await missingProbe($)
+    expect(out.result).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
     expect(seen.logs[read - 1]).toBe('github: acme/thing#12: no review record carried to 0123456:'
       + ' 1111111\'s record review.20261101T110000Z.p-review.json does not parse')
   }
@@ -3333,52 +3270,34 @@ test('a run that failed at an earlier head before the « Accorder » leaves it s
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
 })
 
-test('a waived record with no « Accorder » recorded is refused, and names the question to put and where it goes', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
-  const out: any = await $.tool.call(waiveCall('the operator said so'))
-  expect(out.deny).toContain('github: an E2E waiver is the operator\'s « Accorder » to one question, « Dispense d\'E2E pour acme/thing#12 : <why> »')
-  expect(out.deny).toContain('asked as method:lifecycle « Questions to the operator » says')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a waived record over an « Accorder » carries his answer, dated by the module that recorded it', async ($, on) => {
-  const seen = await world($, on, consentWorld({ a: granted() }))
-  const out: any = await $.tool.call(waiveCall(''))
-  expect(out.deny).toBeUndefined()
-  const argv = recordRun(seen)!
-  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
-})
-
-// ---- the operator's recorded answer, quoted: his own words, from any channel ----
+// ---- the operator's quoted words, with their date: from any channel, no consent record ----
 
 const QUOTED = 'operator, 2026-11-03: ' + CONSENT_WORDS
-const NOT_RECORDED = 'github: an E2E waiver is the operator\'s « Accorder »'
-const QUOTE_SAYS = 'quote his recorded answer to it, whatever its channel, in "detail"'
+const NO_CONSENT_FILE = (seen: Seen) => Object.keys(seen.files).filter((path) => path.includes('/consents/'))
 
-for (const by of ['pane', 'tab', 'coordinator']) {
-  test('an E2E waiver quoting his recorded answer given by ' + by + ' is written as given', async ($, on) => {
-    const seen = await world($, on, consentWorld({ a: consent({ by }) }))
-    const out: any = await $.tool.call(waiveCall(QUOTED))
-    expect(out.deny).toBeUndefined()
-    const argv = recordRun(seen)!
-    expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
-  })
-}
+test('an E2E waiver quoting the operator\'s dated words is written as given, with no consent record', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out: any = await $.tool.call(waiveCall(QUOTED))
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[argv.indexOf('--kind') + 1]).toBe('e2e')
+  expect(argv[argv.indexOf('--result') + 1]).toBe('waived')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
+  expect(NO_CONSENT_FILE(seen)).toEqual([])
+})
 
-for (const [why, records, detail] of [
-  ['no consent record', {}, QUOTED],
-  ['an answer that is no part of the quote', { a: consent() }, 'operator, 2026-11-03: waive it, he said'],
-  ['his « Refuser »', { a: consent({ answer: 'Refuser' }) }, QUOTED],
-  ['a free-text refusal, quoted whole', { a: consent({ answer: 'Refuser, no waiver for this one' }) }, 'operator: Refuser, no waiver for this one'],
-  ['a record naming another pull request', { a: consent({ subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }) }, QUOTED],
-  ['a record of the norms waiver', { a: consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 } }) }, QUOTED],
-  ['a newer « Refuser » than the answer quoted', { a: consent(), b: consent({ answer: 'Refuser', entry: 'b', at: '2026-11-04T10:00:00Z' }) }, QUOTED],
-] as const) {
-  test('an E2E waiver quoting ' + why + ' is refused', async ($, on) => {
-    const seen = await world($, on, consentWorld(records as Record<string, unknown>))
+test('an E2E waiver is written over a recorded « Refuser »: his later words, quoted, stand', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ answer: 'Refuser' }) }))
+  const out: any = await $.tool.call(waiveCall(QUOTED))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toBeDefined()
+})
+
+for (const [why, detail] of UNQUOTED) {
+  test('an E2E waiver with ' + why + ' is refused, and says what to quote', async ($, on) => {
+    const seen = await world($, on)
     const out: any = await $.tool.call(waiveCall(detail))
-    expect(out.deny).toContain(NOT_RECORDED)
-    expect(out.deny).toContain(QUOTE_SAYS)
+    expect(out.deny).toContain('github: an E2E waiver rests on the operator\'s words, quoted in "detail" with their date')
     expect(recordRun(seen)).toBeUndefined()
   })
 }
@@ -3428,20 +3347,21 @@ test('a norms check that failed at an earlier head after his « Accorder » void
   expect(seen.logs).toEqual([NORMS_MISSING])
 })
 
-test('a waived norms record with no « Accorder » to the norms question is refused', reviewing('norms'), async ($, on) => {
-  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: granted() }) })
-  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
-  expect(out.deny).toContain('github: a norms waiver is the operator\'s « Accorder » to one question, « Dispense de normes pour acme/thing#12 : <why> »')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a waived norms record over his « Accorder » to the norms question is written', reviewing('norms'), async ($, on) => {
-  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
-  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+test('a norms waiver quoting the operator\'s dated words is written as given, with no consent record', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, git: CLEAN })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: QUOTED })
   expect(out.deny).toBeUndefined()
   const argv = recordRun(seen)!
   expect(argv[argv.indexOf('--kind') + 1]).toBe('norms')
-  expect(argv[argv.indexOf('--detail') + 1]).toBe('operator: Accorder (pane, 2026-11-03T10:00:00Z)')
+  expect(argv[argv.indexOf('--detail') + 1]).toBe(QUOTED)
+  expect(NO_CONSENT_FILE(seen)).toEqual([])
+})
+
+test('a norms waiver with no quoted words is refused', reviewing('norms'), async ($, on) => {
+  const seen = await world($, on, { plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
+  const out: any = await verdict($, { kind: 'norms', result: 'waived', detail: '' })
+  expect(out.deny).toContain('github: a norms waiver rests on the operator\'s words, quoted in "detail" with their date')
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 // ---- the deploy list ----

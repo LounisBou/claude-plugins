@@ -30,7 +30,7 @@ contract (`core/readiness.ts`) says what that needs, `pr-readiness` what is miss
 
 ## Consent
 
-The operator's consent is a structured act (a dialog answer, a recorded ruling), never read from a prompt's words. Pushing a branch and opening a draft pull request need none.
+The operator's consent is a structured act (a dialog answer, a recorded ruling), never read from a prompt's words. A waiver or an exemption rests on his words quoted with their date. Pushing a branch and opening a draft pull request need none.
 Outside auto-merge, leaving draft, after their review, and the merge need it; `Ready` is the gate's.
 
 ## Reports

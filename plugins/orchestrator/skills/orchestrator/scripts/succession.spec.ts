@@ -80,6 +80,27 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   assert.deepEqual(['succession-brief.md', 'state.md'].filter(f => existsSync(join(w.briefs, f))), [])
 })
 
+test('a takeover from the state alone: a state file, an earlier succession brief or a handover note left anywhere around the record changes nothing of the print', () => {
+  const w = world()
+  assert.equal(w.run(), 0)
+  const alone = w.text()
+  // What the state holds is all of it: the open rows, their owners, the pull requests, the agents, the open question.
+  for (const part of ['open=2 label=API: routes', '2 api; ', 'acme/app#12 en cours (agent Agent: pr)', 'Agent: api', '[q-2] **Question 1 of 1**\nWhich schema?'])
+    assert.ok(alone.includes(part), `the print holds ${part}`)
+  assert.ok(!/\{\{[A-Z_]+\}\}/.test(alone), 'every placeholder filled')
+  // What a handover would leave, in the shape of what it would be read for, saying what the state does not. The
+  // record, the rulings, the goals and the owner file are the state itself and stay as they are.
+  const lie = '- Rows open (id, label, what remains): open=99 label=GHOST\n- Row owners: 99 ghost\n- Agents running (name and reference, brief path): Agent: ghost\n'
+  const note = `## Live state\n\n${lie}\n{"id":99,"label":"GHOST","state":"open"}\n[q-99] **Question 1 of 1**\nIs this read?\n`
+  const names = ['state.md', 'state-archive.md', 'succession-brief.md', 'succession-brief.prev.md', 'handover.md', 'HANDOVER.md', 'notes.md', 'dispatch-record.jsonl.handover', 'dispatch-record.jsonl.state']
+  for (const dirOf of [w.briefs, w.state, join(w.state, 'round'), join(w.state, 'todo'), dir])
+    for (const f of names) writeFileSync(join(dirOf, f), note)
+  w.out.length = 0
+  assert.equal(w.run(), 0)
+  assert.equal(w.text(), alone)
+  assert.ok(!/GHOST|ghost|open=99|Is this read/.test(w.text()))
+})
+
 test('the Live state: the open rows at level 1, their owners by agent, ruling or blocker, the ledger, the agents, the questions', () => {
   const w = world()
   assert.equal(w.run(), 0)
@@ -211,6 +232,27 @@ test('a blocker is checked on its artifact: a row closed, a pull request merged,
   assert.equal(fallOf('release installed', facts({ installed: () => '2 merged PRs not installed, oldest 3 h' })), 'standing')
   assert.equal(fallOf('release installed', facts()), 'unread')
   assert.equal(fallOf('after lunch', facts()), 'unread')
+})
+
+test('a moment blocker falls once its until time has passed, a measure stands and never falls by itself', () => {
+  const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+  const facts = (now: number): Artifacts => ({ rows: [], prState: () => undefined, installed: () => '', now })
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT - 1)), 'standing')
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT)), 'fallen')
+  assert.equal(fallOf('until 2026-11-15T11:00:00Z', facts(MOMENT + 86_400_000)), 'fallen')
+  assert.equal(fallOf('measure dashboard p95 under 300 ms', facts(MOMENT + 86_400_000)), 'standing')
+  assert.equal(fallOf('until 2026-02-30T00:00:00Z', facts(MOMENT + 86_400_000)), 'unread')
+})
+
+test('ownersOf: a row whose until has passed reads READY NOT STARTED, a row on a measure reads blocked', () => {
+  const MOMENT = Date.parse('2026-11-15T11:00:00Z')
+  const rows = [
+    { id: '1', line: '', label: 'WAKE: at eleven', blocker: 'until 2026-11-15T11:00:00Z' },
+    { id: '2', line: '', label: 'SPEED: p95', blocker: 'measure p95 under 300 ms' },
+  ]
+  const at = (now: number) => (blocker: string) => fallOf(blocker, { rows: [], prState: () => undefined, installed: () => '', now })
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT - 1)), ['1 blocked: until 2026-11-15T11:00:00Z', '2 blocked: measure p95 under 300 ms'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT)), ['1 READY NOT STARTED', '2 blocked: measure p95 under 300 ms'])
 })
 
 test('ownersOf names each open row\'s live agent by its label word, a deferred row\'s ruling, its fallen or standing blocker, and flags a row with none recorded', () => {

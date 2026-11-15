@@ -11,7 +11,8 @@
 //
 // The Live state: the open rows at level 1; their owners, an open row's live agent by its label
 // word, « ruling » for a deferred one, else its blocker checked on its artifact (the pull request
-// merged, the row closed, the release installed): fallen and with no agent, READY NOT STARTED; an
+// merged, the row closed, the release installed, the `until` time passed; a `measure` never falls):
+// fallen and with no agent, READY NOT STARTED; an
 // open row with no blocker recorded reads NO OWNER; the record's pull request ledger; the deck's
 // agents of this orchestration; the round's open questions, verbatim; the to-do items pointing to a
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
@@ -32,7 +33,7 @@ import { readText } from '../../../core/store.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { openLine, orchForm, parseRecord, sessionOrchestration, stateRoot, type Row } from './dispatch-record.ts'
 import { parseSessionName } from '../../../core/names.ts'
-import { ledgerLines, prKey, statusText, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { pruneFile, pruneRulings, readAtTakeover, type PruneResult } from './prune.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
@@ -311,11 +312,16 @@ export interface Artifacts {
   readonly prState: (repo: string, pr: number) => string | undefined
   /** `notInstalled`'s line: '' when it cannot be read. */
   readonly installed: () => string
+  /** The clock an `until` is read on, in ms; the current time when absent. */
+  readonly now?: number
 }
 
-/** A blocker checked on its artifact. */
+/** A blocker checked on its artifact. A `measure` never falls by itself: the orchestrator sets it to `none` or closes the row. */
 export function fallOf(blocker: string, facts: Artifacts): Fall {
   if (blocker === 'none') return 'fallen'
+  const at = untilOf(blocker)
+  if (at !== undefined) return at <= (facts.now ?? Date.now()) ? 'fallen' : 'standing'
+  if (/^measure \S/.test(blocker)) return 'standing'
   const row = /^row ([0-9]+) closed$/.exec(blocker)
   if (row) {
     const found = facts.rows.find(r => r['id'] === Number(row[1]))
@@ -518,7 +524,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env))
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
-  const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine }
+  const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine, now: now.getTime() }
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)

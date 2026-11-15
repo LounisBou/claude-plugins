@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -41,6 +41,24 @@ test('each missing condition is named alone', () => {
   expect(missingItems(gate(), ALL.filter((r) => !r.name.startsWith('e2e')))).toEqual(['e2e: no record at 0123456'])
   expect(missingItems(gate({}, { result: 'FAILURE', failed: ['lint', 'test'] }), ALL)).toEqual(['CI failed: lint, test'])
   expect(missingItems(gate({}, { result: 'PENDING', running: 1 }), ALL)).toEqual(['CI still running'])
+})
+
+test('a missing list is only absent records when every item names a record absent at the head', () => {
+  const none = missingItems(gate(), [])
+  expect(none).toEqual(['review: no record at 0123456', 'e2e: no record at 0123456'])
+  expect(onlyAbsentRecords(none)).toBe(true)
+  // A stacked pull request with neither its tests record nor its checks green: its CI is not green, which refuses.
+  const stacked = missingItems(gate({ stacked: true, base: 'feat-a' }, { result: 'PENDING', running: 1 }), ALL)
+  expect(stacked.length).toBe(1)
+  expect(stacked[0]).toStartWith('tests: no record at 0123456')
+  expect(onlyAbsentRecords(stacked)).toBe(false)
+  // Nothing missing is no absent record; CI, a record that failed, an unreadable one and a closed pull request are not either.
+  expect(onlyAbsentRecords([])).toBe(false)
+  expect(onlyAbsentRecords(missingItems(gate({}, { result: 'FAILURE', failed: ['lint'] }), []))).toBe(false)
+  expect(onlyAbsentRecords(missingItems(gate({}, { result: 'PENDING', running: 1 }), []))).toBe(false)
+  expect(onlyAbsentRecords(missingItems(gate(), [record('review', 'fail')]))).toBe(false)
+  expect(onlyAbsentRecords(missingItems(gate(), [{ name: 'review.x.json', text: 'not json' }]))).toBe(false)
+  expect(onlyAbsentRecords(missingItems(gate({ state: 'closed' }), []))).toBe(false)
 })
 
 test('a later fail overrides an earlier pass, and names its producer and detail', () => {

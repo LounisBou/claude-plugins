@@ -8,7 +8,7 @@ user-invocable: false
 
 ## Overview
 
-`${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives the places agents run in — windows of the orchestrator's tmux home session, and iTerm2 tabs through the app's own API — so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the terminal, never typed into a shell. Closing a window or a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
+`${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives the places agents run in — windows of the orchestrator's tmux home session, and iTerm2 tabs through the app's own API — so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the terminal, never typed into a shell. Closing a window or a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the launcher's success line is its proof.
 
 Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier`, `pair`, `trust prune` and `tools`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
 
@@ -16,9 +16,9 @@ Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`,
 
 `list` prints each tab's title, the session's name, and `self` on your own tab. Read self before you anchor, move or close.
 
-- **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a stored tty across a close — re-`list` every time.
+- **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a session's tty after its close.
 - **A fresh tab is titled « Chat » for a few seconds**: to find a session right after a spawn, read `list`'s name column, not its title.
-- The spawned session takes a few seconds to appear in `ListAgents`; `list` shows the tab immediately, `verify` the process as soon as the CLI has started.
+- The spawned session takes a few seconds to appear in `ListAgents`.
 
 ## An agent is a window of its orchestrator's home session, or a tab
 
@@ -56,9 +56,9 @@ Name an anchor when you know a better place than that default, and name the one 
 
 1. The brief exists at a path the fresh session can open on this machine. Say in the agent's brief which servers it was given: it cannot see the file.
 2. `spawn --brief <path> --orchestrator "<name [ref]>"`, with `--right-of self` so the tab lands beside yours rather than at the end of a window you do not own. `--brief` lints the brief (a finding warns on stderr, the launch goes on) and builds the startup prompt — the brief's path and your exact `ListAgents` name and reference. You never hand-build that prompt; a launch with no prompt at all is refused.
-3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** `--trust` is for a checkout you prepared yourself, never for anything else; the launch loads the catalogue's default set plus `--mcp`, and `--account-connectors` every connector of the operator's account (`references/commands.md` says how each dialog is pre-answered). Any other startup question (a migration notice) is read in the tab's contents and answered through the tab — a session stuck on a dialog is not launched, whatever the script printed.
-5. Rely on that verification and on the module's reports, not on a first message. An agent idle before its work is reported is inspected, not waited for: `verify` for the process, `list` for the tab, and `screen --tty` for what that tab is showing right now — how you tell an agent stopped on a question from one at work.
+3. Read the result once: `spawn` exits 0 and prints the new tty only once the host CLI runs on it and the session's mode is read on its transcript, and that line is the proof. `list`, `verify --tty` or `screen --tty` only when it failed, timed out or warned on stderr.
+4. **No startup dialog may stand between the launch and the brief.** `--trust` is for a checkout you prepared yourself, never for anything else; the launch loads the catalogue's default set plus `--mcp`, and `--account-connectors` every connector of the operator's account (`references/commands.md` says how each dialog is pre-answered). Any other startup question (a migration notice) is read in the tab's contents and answered through the tab — a session stuck on a dialog is not launched.
+5. Rely on that line and on the module's reports, not on a first message. An agent idle before its work is reported is inspected, not waited for: `verify` for the process, `list` for the tab, and `screen --tty` for what that tab is showing right now — how you tell an agent stopped on a question from one at work.
 
 **Every launched session carries its model and its effort** (decision 3 of `docs/agent-dispatches.md`): an agent's pair is yours to name, `--tier <t>` or `--model <id> --effort <level>`, and a succession of any role runs on its predecessor's live pair, read on its transcript. How a tier's effort is chosen is `orchestrator:model-routing`, « Pairs, tiers and the map », and each form's flags and refusals are in `references/commands.md`.
 
@@ -77,18 +77,18 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 ## Window and tab hygiene
 
-**A finished agent's window or tab is closed, not left open.** The merge that closes a phase stands the agent down and closes its place in the same move (`list`, `close --tty --expect-title`, `ps`). Until then the implementer stays, the kept review findings sent to it. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, the hidden-pane entry).
+**A finished agent's window or tab is closed, not left open.** The merge that closes a phase stands the agent down and closes its place in the same move (`close --tty --expect-title`, its `closed 1 session on <tty>` line the proof). Until then the implementer stays, the kept review findings sent to it. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, the hidden-pane entry).
 
-**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title read from `list` seconds before (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
+**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title its spawn was given, `list`'s for a session you did not spawn (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
 
 ## Safety order for a live rotation
 
 1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
 2. `list` to confirm the tty is the one you mean.
 3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **Do not pass `--expect-title` to a rotation**: a working session rewrites its title during the ten seconds of the spawn. The tty is the identity; a stood-down agent that acknowledged is what makes closing it safe.
-4. Verify with `list` (the old tab gone, the new one present) AND `ListAgents` (new peer session visible, old one gone) before reporting the rotation done.
+4. Its two lines, the new tty then `closed 1 session on <old tty>`, are the proof; `list` only when it failed, timed out or warned on stderr.
 
-`--expect-title` remains right for a STANDALONE `close`, where you read the title from `list` seconds before and nothing runs in between.
+`--expect-title` remains right for a STANDALONE `close`.
 
 ## Common mistakes
 

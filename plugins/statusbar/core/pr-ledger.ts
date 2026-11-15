@@ -234,9 +234,31 @@ function agentSubject(name: string | undefined): string | null {
 }
 
 /**
- * The open rows ready with nobody on them: `blocker: none`, not deferred, and neither a live agent
- * (`live`, the session names the launcher lists running) nor an open pull request (`lines`, the
- * ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
+ * The instant (ms) a row's blocker `until <ISO UTC time>` waits for, to the second, `Z` only; undefined
+ * for any other blocker and for a time that does not exist (`2026-02-30T00:00:00Z`).
+ */
+export function untilOf(blocker: string): number | undefined {
+  const match = /^until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$/.exec(blocker)
+  if (match === null) return undefined
+  const at = Date.parse(match[1] ?? '')
+  return Number.isNaN(at) || new Date(at).toISOString() !== match[1]?.replace('Z', '.000Z') ? undefined : at
+}
+
+/**
+ * Whether a blocker is fallen on the clock alone: `none`, or an `until` whose time has passed. A
+ * `measure` never falls by itself, and the forms checked on an artifact (`PR … merged`, `row … closed`,
+ * `release installed`) are the takeover's to check, so none of them is fallen here.
+ */
+export function blockerFallen(blocker: unknown, now: number): boolean {
+  if (blocker === 'none') return true
+  const at = typeof blocker === 'string' ? untilOf(blocker) : undefined
+  return at !== undefined && at <= now
+}
+
+/**
+ * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), not deferred,
+ * and neither a live agent (`live`, the session names the launcher lists running) nor an open pull
+ * request (`lines`, the ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
  * agent's subject (a whole word of it), or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
  * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
  */
@@ -244,7 +266,9 @@ export function readyRows(input: {
   readonly texts: readonly string[]
   readonly lines: readonly LedgerLine[]
   readonly live: ReadonlySet<string>
+  readonly now?: number
 }): ReadyRow[] {
+  const now = input.now ?? Date.now()
   const alive = [...input.live].flatMap(name => agentSubject(name) ?? [])
   const ready: ReadyRow[] = []
   for (const text of input.texts) {
@@ -258,7 +282,7 @@ export function readyRows(input: {
       if (typeof value !== 'object' || value === null || Array.isArray(value) || isLedgerMarked(value)) continue
       const row = value as Record<string, unknown>
       const { id, state, blocker, deferred, label, note } = row
-      if (typeof id !== 'number' || state !== 'open' || blocker !== 'none') continue
+      if (typeof id !== 'number' || state !== 'open' || !blockerFallen(blocker, now)) continue
       if (typeof deferred === 'string' && deferred.trim() !== '') continue
       const words = typeof label === 'string' ? label.trim() : ''
       const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''

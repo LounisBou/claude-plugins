@@ -245,7 +245,7 @@ A multi-file call without one `--title` per file is a usage error.
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's waiver (newest consent record `<kind>-waiver`) at every head with none of its kind; named in `Ready`; a `fail` holds.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's answer to the waiver question, from any channel (newest consent record `<kind>-waiver`, « Accorder ») at every head with none of its kind; named in `Ready`; a `fail` holds.
 - A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record; one of an unpushed commit counts once that sha is on the PR.
 - Pruning: once a day at `session.start`, `<head>` directories and fingerprints untouched for 90 days go.
@@ -279,14 +279,12 @@ Both routes are `hooks/e2e-scope.ts`'s.
   `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON), or `no check plan for <owner/name>#<n>`.
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator's answer in a consent record
-  of subject `e2e-exemption`. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
+  `exempt: false` revokes it. `detail` quotes the operator's words with their date (see
+  « Records », below); no consent record is read. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`;
   one that does not parse exempts nothing. `until` (ISO, UTC, to the second: `2026-11-15T22:00:00Z`), on
-  `exempt: true` only and still ahead, ends it at that instant: the question of the consent record states the
-  same `until`, and `detail` quotes the operator's answer to it; past it the exemption excuses nothing (its
+  `exempt: true` only and still ahead, ends it at that instant; past it the exemption excuses nothing (its
   labels are free again) and the gate adds one line, `E2E exemption of <repo> expired at <until>`, beside the
-  missing `e2e` item. Without `until` it stands until revoked, and its question then names no limit (no
-  `until`, date, time of day or « jusqu'à »): a question that limits it asks a limited exemption only.
+  missing `e2e` item. Without `until` it stands until revoked.
 
 ### Light CI
 
@@ -302,7 +300,7 @@ its review and a `tests` pass at its head or its checks green; a failed run or c
 
 ### What the contract does not stop
 
-The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards stop a forgotten review, norms check or E2E, not a forger.
+The records guard (« Guards » below) does not see a script writing under the root or running `record.py`: the guards observe a forgotten review, norms check or E2E, and stop no forger.
 
 ## Pushing from the sandbox
 
@@ -314,14 +312,15 @@ Never « external terminal ».
 
 ## Guards
 
-**Ready.** These acts need the pull request ready at its head (core's readiness contract, « Records »
-above), CI included; the gate puts `Ready` just before the act, which runs on that label only: `pr-ready`,
+**Ready.** These acts meet the gate at the pull request's head (core's readiness contract, « Records »
+above), CI included; it puts `Ready` just before the act, which runs on that label, or without it, observed
+(`github.ready.no-record`), when only records are absent at the head (`<kind>: no record`): `pr-ready`,
 `pr-merge`; in the shell `gh pr ready` (not `--undo`; `--undo=false` is none),
 `gh pr merge` (not `--disable-auto`), `gh api` `PUT`/`POST` on
 `repos/<o>/<r>/pulls/<n>/merge` (path or URL), `gh api graphql` naming `mergePullRequest`,
 `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the engine's same subcommands from Bash.
 A `--match-head-commit` or `pr-merge --sha` off that head is not ready; a `Ready` put by `label-add` or the
-shell is no act. Refused before any question with `github: <act> refused on <owner/name>#<n> at <head7>:
+shell is no act. Refused before any question, on CI not green or a record that failed, with `github: <act> refused on <owner/name>#<n> at <head7>:
 not ready. Missing: <item>, …`, `Ready` going back to `Not Ready`, or `github: readiness of
 <owner/name>#<n> unverified: <error>`. Refused too: a shell merge or undraft naming
 no repository (`-R`, `--repo`, a URL); a GraphQL merge or undraft (no pull request named; the tool call is
@@ -372,8 +371,11 @@ the exemptions or the plans (`rm`, `unlink`, `find -delete`, a `mv` out of them)
 
 `mcp__github__record {pr, repo?, result, detail, kind?, dir?}` writes one record through `record.py` when
 the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate` reads and its tracked files are
-clean, else names both shas. A session writes `e2e` only. `waived` needs his answer as recorded, or for E2E
-its free text quoted in `detail`.
+clean, else names both shas. A session writes `e2e` only. `waived` (E2E or norms) and `exempt` rest on his
+words quoted in `detail` with their date, from any channel: « « <his words> », 2026-11-15T08:50Z ». The
+refusal is an empty `detail`, one with no date (`YYYY-MM-DD`, with or without a time), one with fewer than
+6 letters besides its dates and times, or one past 500 characters. No consent record is read; the quote stays
+in the record or the exemption file. Auto-merge and auto-deploy keep their recorded consent.
 
 **Auto-merge and deploy lists.** A Write, Edit, MultiEdit or NotebookEdit of `auto-merge.json` or
 `auto-deploy.json` in a plugin's data directory, and a shell command naming one there (the data

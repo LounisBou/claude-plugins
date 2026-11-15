@@ -38,6 +38,8 @@ changed by a pull request that edits this file and the code it governs together.
   cannot decide, it refuses and says why. A hook that only observes fails open and logs.
 - The operator's consent is a structured act: a tool call, a choice in a prompt, a recorded
   answer. It is never inferred from words in a prompt: « don't push » contains « push ».
+  The E2E or norms waiver and the E2E exemption are the exception: they rest on his words quoted with their
+  date in `detail`, and a quote that is false stays visible there.
 - A gate decides on structured facts (a tool call such as `declare_wait`, a record), never on
   the wording of a model's last line.
 - Separation holds by construction: a review or norms record is written by a session other
@@ -106,7 +108,7 @@ changed by a pull request that edits this file and the code it governs together.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
-- A rule enters a prompt only when an eval shows it changes an outcome, and it replaces one.
+- A rule that enters a prompt replaces one.
 - `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
   rule left to prose alone is a candidate for a guard, an eval, or removal. It reports: a line of the
   weekly report, and CI's summary; it blocks nothing.

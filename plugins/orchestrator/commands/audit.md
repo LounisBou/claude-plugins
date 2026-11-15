@@ -41,8 +41,7 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    never closes this tab.
    On a non-zero exit, run the `move` the line on stdout prints and never relaunch; on
    « unverified » or « API is not available », read `list` and move the tab only if misplaced.
-4. **Verify** that `iterm-agent.sh list` shows the `Audit: <subject>` tab and
-   `iterm-agent.sh verify --tty <its tty>` its process.
+4. **The spawn's success line is its proof**, read once.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
    own work: the auditor messages nobody but an orchestrator he orders it to, ends by itself,
    and the operator closes its tab; a successor closes its predecessor's.

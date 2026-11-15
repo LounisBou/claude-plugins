@@ -187,7 +187,7 @@ test('rounds, reviews, corrections, closes, deferrals', async () => {
 test('blocker and note: set at open or later on an open row, checked against their forms, printed on the open line', async () => {
   await withGoals()
   const r = rec()
-  assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', 'after lunch']), /open: --blocker takes `none`, `PR <owner\/repo>#<n> merged`, `row <n> closed` or `release installed`, got: after lunch/)
+  assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', 'after lunch']), /open: --blocker takes `none`, `PR <owner\/repo>#<n> merged`, `row <n> closed`, `release installed`, `until <ISO UTC time>` or `measure <what>`, got: after lunch/)
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'one', '--blocker', 'PR acme/app#12 merged']), '0|1\n|')
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'two']), '0|2\n|')
   assert.equal(rows()[0]?.['blocker'], 'PR acme/app#12 merged')
@@ -208,6 +208,24 @@ test('blocker and note: set at open or later on an open row, checked against the
   await cli(['close', r, '2', '--verdict', 'done'])
   assert.equal(await cli(['blocker', r, '2', 'none']), '1||ERROR: blocker: row 2 is not open\n')
   assert.equal(await cli(['note', r, '2', 'x']), '1||ERROR: note: row 2 is not open\n')
+})
+
+test('blocker: the moment (until, an existing ISO UTC time) and the measure (free words) are accepted by open and blocker, the rest refused', async () => {
+  await withGoals()
+  const r = rec()
+  assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'moment', '--blocker', 'until 2026-11-15T11:00:00Z']), '0|1\n|')
+  assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'measure', '--blocker', 'measure dashboard p95 under 300 ms']), '0|2\n|')
+  assert.equal(rows()[0]?.['blocker'], 'until 2026-11-15T11:00:00Z')
+  assert.equal(rows()[1]?.['blocker'], 'measure dashboard p95 under 300 ms')
+  assert.equal(await cli(['blocker', r, '1', 'until 2026-11-15T12:30:00Z']), '0||')
+  assert.equal(await cli(['blocker', r, '2', 'measure 3 runs green']), '0||')
+  assert.equal(rows()[0]?.['blocker'], 'until 2026-11-15T12:30:00Z')
+  assert.equal(rows()[1]?.['blocker'], 'measure 3 runs green')
+  // An until that is not an existing instant, or not in the form, and a measure with no words, are refused.
+  for (const bad of ['until 2026-02-30T00:00:00Z', 'until 2026-11-15 11:00', 'until 2026-11-15T11:00:00+02:00', 'measure ', 'measure']) {
+    assert.match(await cli(['blocker', r, '2', bad]), /blocker: `none`, .* got: /, bad)
+    assert.match(await cli(['open', r, '--class', 'c', '--tier', 'deep', '--blocker', bad]), /open: --blocker takes `none`, .* got: /, bad)
+  }
 })
 
 test('verdict: the row carries the verdict, its few words and the findings index, level 1 of the review', async () => {
@@ -239,6 +257,42 @@ test('verdict: the row carries the verdict, its few words and the findings index
   assert.equal(openLine(rows()[0] ?? {}), 'open=1 label= verdict=accepted@def5678 — 2 set aside — findings=none')
   await cli(['review', r, '1', '--head', 'aaa1111'])
   assert.equal((rows()[0]?.['review'] as Record<string, unknown>)['verdict'], undefined)
+})
+
+test('verdict --reviewed is itself the review at its head: it records the head when none is, and warns of nothing', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'pass', '--words', 'clean', '--reviewed']), '0|row 1: pass — clean — findings: none\n|')
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'abc1234', norms: '', at: '2026-11-08T10:11:12Z',
+    verdict: { head: 'abc1234', result: 'pass', words: 'clean', findings: null, rounds: 0, at: '2026-11-08T10:11:12Z' },
+  })
+  // A review the row already holds at the verdict's head is kept, as is its correction round.
+  await cli(['fixed', r, '1', '--head', 'abc1234'])
+  await cli(['verdict', r, '1', '--head', 'abc1234', '--result', 'accepted', '--words', 'ok', '--reviewed'])
+  const kept = rows()[0]?.['review'] as Record<string, unknown>
+  assert.equal(kept['head'], 'abc1234')
+  assert.deepEqual(kept['fixed'], { head: 'abc1234', at: '2026-11-08T10:11:12Z' })
+  // A review of another head is the review of an earlier round: the verdict replaces it, its correction round with it.
+  await cli(['verdict', r, '1', '--head', 'def5678', '--result', 'accepted', '--words', 'ok', '--reviewed'])
+  assert.deepEqual(rows()[0]?.['review'], {
+    head: 'def5678', norms: '', at: '2026-11-08T10:11:12Z',
+    verdict: { head: 'def5678', result: 'accepted', words: 'ok', findings: null, rounds: 1, at: '2026-11-08T10:11:12Z' },
+  })
+  const again = await cli(['fixed', r, '1', '--head', '9990000'])
+  assert.doesNotMatch(again, /already has its correction round/)
+  // The same commit abbreviated on one side is the same head: the review keeps its norms and its correction round, no review step is said.
+  const long = `abc1234${'0'.repeat(33)}`
+  await cli(['review', r, '1', '--head', 'abc1234', '--norms', 'tool'])
+  await cli(['fixed', r, '1', '--head', 'abc1234'])
+  await cli(['verdict', r, '1', '--head', long, '--result', 'pass', '--words', 'ok', '--reviewed'])
+  const abbreviated = rows()[0]?.['review'] as Record<string, unknown>
+  assert.deepEqual([abbreviated['head'], abbreviated['norms'], (abbreviated['fixed'] as Record<string, unknown>)['head']], ['abc1234', 'tool', 'abc1234'])
+  // Without the flag the warning stays: a person who forgot `review` is told.
+  const second = await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(second.startsWith('0|2'), true)
+  assert.match(await cli(['verdict', r, '2', '--head', 'abc1234', '--result', 'pass', '--words', 'clean']), /row 2 has no review recorded/)
 })
 
 test('surface and audit', async () => {
@@ -474,6 +528,25 @@ test('a row\'s life is written to the journal: each step with its time, its reco
     assert.ok(parseJournalEvent(event), JSON.stringify(event))
   }
   assert.ok(!JSON.stringify(d.events).includes('secret'))
+})
+
+test('a verdict --reviewed is the review of its head: it leaves the review step in the journal, the head with it', async () => {
+  await withGoals()
+  const d = journaled()
+  const head = 'd'.repeat(40)
+  const none = { repo: null, pr: null, head: null }
+  await cli(['open', rec(), '--class', 'feature', '--tier', 'deep'], d)
+  d.events.length = 0
+  // A row with no review: the verdict records the head and says so.
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean', '--reviewed'], d)
+  assert.deepEqual(factsOf(d.events), [
+    ['step', 'orchestrator.dispatch.review', { step: 'review', edge: 'end', record: 'p/r.jsonl', row: 1, result: null }, { ...none, head }],
+  ])
+  // Without the flag, or with the review already at that head, the verdict says no review step.
+  d.events.length = 0
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean', '--reviewed'], d)
+  await cli(['verdict', rec(), '1', '--head', head, '--result', 'pass', '--words', 'clean'], d)
+  assert.deepEqual(d.events, [])
 })
 
 test('a row is linked to the sessions that worked it, its pull request and the goals it met, by names alone', async () => {
