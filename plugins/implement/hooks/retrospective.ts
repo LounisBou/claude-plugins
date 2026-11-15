@@ -6,6 +6,7 @@
 // enabled: disabling it is the switch. An observation: it never throws, and says what it did in the
 // host's log.
 import { configDirOf } from '../core/env.ts'
+import { fieldsOf } from '../core/host.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
 
@@ -14,7 +15,7 @@ export const START_TIMEOUT_MS = 30_000
 
 /** The part of the host's `$` the start calls. */
 export interface Host {
-  readonly settings: { read(): Promise<{ readonly enabledPlugins?: Readonly<Record<string, unknown>> } | undefined> }
+  readonly settings: { read(): Promise<unknown> }
   readonly env: { get(name: string): Promise<string | undefined> }
   readonly fs: { read(path: string): Promise<unknown>; exists(path: string): Promise<boolean> }
   readonly process: { run(argv: readonly string[], init?: { timeoutMs?: number }): Promise<{ exitCode: number; stdout: string; stderr: string }> }
@@ -25,7 +26,7 @@ const lastLine = (text: string): string => text.trim().split('\n').at(-1)?.trim(
 
 export async function startRetrospective($: Host): Promise<void> {
   try {
-    if ((await $.settings.read())?.enabledPlugins?.[LEARNING] !== true) return
+    if (fieldsOf(fieldsOf(await $.settings.read())?.['enabledPlugins'])?.[LEARNING] !== true) return
     const config = configDirOf({ CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') }, (await $.env.get('HOME')) ?? '')
     const recorded = recordedInstallPaths(String(await $.fs.read(`${config}/plugins/installed_plugins.json`)), 'learning', ['lounisbou'])
     for (const root of 'problem' in recorded ? [] : recorded.paths) {
