@@ -351,7 +351,7 @@ export function noStatusText(name: string, context: string | null, text: string 
 // told once per stop, never left waiting on a reply that cannot come.
 export type HostStop = { kind: 'limit' | 'error'; text: string }
 
-// The host's limit and spend texts: « You've hit your session|weekly|Opus|Sonnet|monthly spend… limit »,
+// The host's limit and spend texts: « You've hit your session|weekly|<model>|monthly spend… limit »,
 // « …team's shared budget », a credit balance too low.
 const LIMIT_TEXT = /^(?:You['’]ve hit your\b|Credit balance is too low\b)/i
 // The host's error texts: « API Error: … », and a session logged out of the API.

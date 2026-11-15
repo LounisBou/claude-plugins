@@ -10,7 +10,7 @@ Rotation = a **resume brief** (`agent-rotation-brief.md`) for a fresh session, w
 
 ## An agent the host stopped
 
-`[module] <agent> stopped: usage limit (resets …)` or `stopped: API error …` means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on another tier when the limit is a model's (`You've hit your Opus limit`), its resume brief written by you from the branch, the pull request and the dispatch record, since it cannot write one. An API error that leaves its tab answering: send it one prompt to resume first.
+`[module] <agent> stopped: …` (the host's limit text, or an API error) means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on another tier when the limit the host named is one model's, its resume brief written by you from the branch, the pull request and the dispatch record, since it cannot write one. An API error that leaves its tab answering: send it one prompt to resume first.
 
 ## Your own context (the orchestrator is not exempt)
 

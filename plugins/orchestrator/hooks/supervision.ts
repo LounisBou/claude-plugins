@@ -2268,7 +2268,7 @@ export function entersRound(role: string | null): boolean {
 // its wait is written, so its row shows it waiting, and no entry is entered or sent.
 // An agent's turn without a status line that ended with work still in flight (`inFlight`, what the
 // host listed at the stop) is no idle agent: nothing is sent; its next turn's end reports.
-// An agent's turn the host ended in its own words (a usage limit, an API error: relay.ts hostStopOf,
+// An agent's turn the host ended in its own words (its limit or spend text, an API error: relay.ts hostStopOf,
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer'): Promise<void> {

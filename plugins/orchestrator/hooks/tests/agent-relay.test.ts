@@ -555,11 +555,12 @@ test('a turn without a status line that ends on subagents or background work sti
 // --- a turn the host ended in its own words ---------------------------------------------
 
 const LIMIT = "You've hit your weekly limit · resets Nov 20 at 8pm (Europe/Paris)"
-const LIMIT_LINE = `[module] ${AGENT} stopped: usage limit (resets Nov 20 at 8pm (Europe/Paris)) — « ${LIMIT} »`
+const LIMIT_LINE = `[module] ${AGENT} stopped: `
+  + `usage limit (resets Nov 20 at 8pm (Europe/Paris)) — « ${LIMIT} »`
 
 test('the host\'s limit and error texts read as stops, the model\'s words as none', () => {
   expect(hostStopOf(LIMIT)).toEqual({ kind: 'limit', text: LIMIT })
-  expect(hostStopOf("You've hit your monthly spend limit · raise it at https://claude.ai/settings/usage")?.kind).toBe('limit')
+  expect(hostStopOf("You've hit your monthly spend limit · raise it in the settings")?.kind).toBe('limit')
   expect(hostStopOf('Credit balance is too low')?.kind).toBe('limit')
   expect(hostStopOf('API Error: 500 Internal server error.')).toEqual({ kind: 'error', text: 'API Error: 500 Internal server error.' })
   expect(hostStopOf('Not logged in · Please run /login')?.kind).toBe('error')
@@ -575,7 +576,7 @@ test('the host\'s limit and error texts read as stops, the model\'s words as non
   expect(stopInTail(JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { content: 'Something new broke' } }))).toEqual({ kind: 'error', text: 'Something new broke' })
 })
 
-test('an agent stopped by a usage limit is told to its orchestrator once, its background work running or not', async () => {
+test('an agent the host halted at its weekly limit is told to its orchestrator once, its background work running or not', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'classic.Stop', fx.dollar, { last_assistant_message: LIMIT, background_tasks: [{ type: 'local_agent', description: 'lens: tests', status: 'running' }], session_crons: [] })
