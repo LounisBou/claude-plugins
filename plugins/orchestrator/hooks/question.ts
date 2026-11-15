@@ -2,19 +2,18 @@
 // The `ask` tool: a question to the operator made by one call, its fields flat (the host once dropped a
 // nested field), validated against the method's question format
 // (plugins/method/skills/lifecycle/references/questions.md) and stored as its own object in the
-// round, `round/<id>.json`, with a format version that tells it from the entries the relay writes
-// out of a turn's text (round.ts). The id is the module's, given at creation; each call is one
+// round, `round/<id>.json`, with a format version that tells it from the closing proposals the relay
+// writes (round.ts). The id is the module's, given at creation; each call is one
 // object, settled and delivered on its own. The module writes the question block into the
 // transcript itself, so the model does not write it. Any main session that keeps a list asks with
 // it: an orchestrator, a coordinator, an auditor; an agent asks the session that launched it.
-// The old path, a block written in the turn's text, stays as it is beside it.
 //
 // The `settle` tool closes a question by its id, here: its one closure function writes every close
 // of a round question, the object `ask` stored or the relay's entry (settle.ts decides what it
-// writes), then records the consent it asked, sends the answer to its asker at once when another
-// session settles it, and records the work the answer asks as a to-do of the asker. It replaces
-// `answered-by-message` and `coordinator.sh round-close`; the relay's other closures (the pane, the
-// prompt typed in the asker's tab, its turn's end) stay as they are until the text path goes.
+// writes), then records the consent it asked, sends the answer of a question asked with `ask` to its
+// asker at once when another session settles it, and records the work the answer asks as a to-do of
+// the asker. The pane, the words typed in the asker's tab and its session's end close through the
+// same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
 import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
@@ -681,7 +680,7 @@ export function register(on: On<Held>): void {
           + 'subject (a few words), context (two to six sentences: the stake, what is known), question (one sentence ending in « ? »), '
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
-          + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as declare_wait takes them, and offers choice_a "Accorder", choice_b "Refuser". '
+          + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as its kind needs, and offers choice_a "Accorder", choice_b "Refuser". '
           + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -768,7 +767,7 @@ export function registerSettle(on: On<Held>): void {
       await $.tool.register({
         name: SETTLE_TOOL,
         isDeferred: false,
-        description: 'Closes a question of the round by its id, and sends the answer to its asker at once. '
+        description: 'Closes a question of the round by its id; one asked with ask is sent its answer at once. '
           + 'outcome: `answered-here` (he answered in this tab; answer: his words or letter), `answered-by-message` (his answer to your own question reached you by a message; answer, and author: that session), '
           + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker. '
           + 'For an orchestrator, a coordinator or an auditor.',
