@@ -2,10 +2,10 @@
 // carries before it leaves the machine. Only what code can decide without
 // judgement is here: a semicolon in prose, a trailer of any kind, a title on
 // more than one line or far past « about sixty characters », a heading in a
-// pull request description, a TODO item that points to another or joins two
+// pull request description other than « Self-review », a TODO item that points to another or joins two
 // actions, a CVE id that is no link, a security update without its tables,
-// the four sections a description ends with and any text after them, a pull request reference, a
-// negative phrase or a bold label in its summary, a horizontal rule other
+// the four sections a description of a GeoNative repository ends with and any text after them, a
+// pull request reference, a negative phrase or a bold label in its summary, a horizontal rule other
 // than the `---` between two screenshots.
 // The workflow vocabulary is left out: « session » and « agent » are also real
 // product words, and a refusal there would be a guess. Pure functions only:
@@ -34,8 +34,24 @@ const KIND: Record<string, 'pr' | 'comment'> = {
   'review-pending-add': 'comment',
 }
 
+// The GitHub organisation that holds GeoNative's repositories: a repository is GeoNative's when its
+// owner is this one, whatever the case.
+export const GEONATIVE_OWNER = 'geonativefr'
+
+// Whether `repo`, as `owner/name`, is a GeoNative repository: its owner is GEONATIVE_OWNER.
+export function isGeonative(repo: string): boolean {
+  const [owner, name] = repo.trim().toLowerCase().split('/')
+  return owner === GEONATIVE_OWNER && !!name
+}
+
 export function carriesText(command: string): boolean {
   return command in KIND
+}
+
+// Whether the command writes a pull request description, which the four sections of a GeoNative
+// repository bind: the only text whose rules depend on the repository.
+export function writesDescription(command: string): boolean {
+  return KIND[command] === 'pr'
 }
 
 // The text fields of a call, by name. Only strings are read: anything else is
@@ -96,12 +112,14 @@ function strip(line: string): string {
 // Reviewed-by…), Claude-Session and Change-Id.
 const TRAILER = /^\s*([a-z]+(-[a-z]+)*-by|claude-session|change-id)\s*:/i
 const HEADING = /^ {0,3}#{1,6}(\s|$)/
+// The one heading a description may carry: the « Self-review » section the method requires of its author.
+const SELF_REVIEW = /^ {0,3}#{1,6}[ \t]+Self-review[ \t]*#*[ \t]*$/i
 
 const SEMICOLON_RULE = 'no semicolon in prose (writing/pull-requests.md and writing/comments.md); code in backticks or a fenced block may keep one'
 const TRAILER_RULE = 'no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session (writing/commits.md)'
 const TITLE_LINE_RULE = 'a title is one line (writing/pull-requests.md, « Pull request titles »)'
 const TITLE_LENGTH_RULE = 'a title is about sixty characters at most, this one has '
-const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (writing/pull-requests.md, « Pull request descriptions »)'
+const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (writing/pull-requests.md, « Pull request descriptions »); the one heading allowed is « Self-review », the section the method requires'
 const TODO_RULE = 'a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet (writing/pull-requests.md, « Pull request descriptions »)'
 const TODO_LABEL = /^\*\*TODO (Staging|Prod):\*\*\s*$/
 // A bold label leading a line, `**Label:**`, alone or with text after it.
@@ -346,8 +364,9 @@ function negative(pattern: RegExp, line: string): boolean {
   return pattern.test(strip(withoutImages(line)).replace(/\u2019/g, "'"))
 }
 
-// Every rule one field breaks, each named once.
-function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases: readonly string[]): Violation[] {
+// Every rule one field breaks, each named once. `geonative`: whether the four sections and their rules
+// apply, which they do in a GeoNative repository only.
+function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases: readonly string[], geonative: boolean): Violation[] {
   const found: Violation[] = []
   const add = (rule: string) => found.push({ field, rule })
   if (field === 'title') {
@@ -360,18 +379,22 @@ function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases:
   const lines = proseLines(text)
   if (lines.some((l) => strip(l).includes(';'))) add(SEMICOLON_RULE)
   if (lines.some((l) => TRAILER.test(l))) add(TRAILER_RULE)
-  if (kind === 'pr' && field === 'body' && lines.some((l) => HEADING.test(l))) add(HEADING_RULE)
-  if (kind === 'pr' && field === 'body' && bareTodoItem(lines)) add(TODO_RULE)
+  if (kind === 'pr' && field === 'body' && lines.some((l) => HEADING.test(l) && !SELF_REVIEW.test(l))) add(HEADING_RULE)
+  if (kind === 'pr' && field === 'body' && geonative && bareTodoItem(lines)) add(TODO_RULE)
   if (kind === 'pr' && field === 'body') {
-    const items = todoItems(lines)
-    if (items.some((i) => POINTER.test(i))) add(TODO_ALONE_RULE)
-    if (items.some((i) => JOINED.test(i))) add(TODO_ONE_RULE)
+    if (geonative) {
+      const items = todoItems(lines)
+      if (items.some((i) => POINTER.test(i))) add(TODO_ALONE_RULE)
+      if (items.some((i) => JOINED.test(i))) add(TODO_ONE_RULE)
+    }
     if (bareCve(lines)) add(CVE_LINK_RULE)
     if (missingCveTables(lines)) add(CVE_TABLE_RULE)
-    sectionFaults(lines).forEach(add)
-    if (textAfterSections(text)) add(AFTER_RULE)
+    if (geonative) {
+      sectionFaults(lines).forEach(add)
+      if (textAfterSections(text)) add(AFTER_RULE)
+    }
     const summary = summaryLines(lines)
-    if (summary.some(bareReference)) add(REF_RULE)
+    if (geonative && summary.some(bareReference)) add(REF_RULE)
     if (lines.some((l, i) => HORIZONTAL_RULE.test(l) && !shotSeparator(lines, i, summary.length))) add(RULE_LINE_RULE)
     const pattern = negativePattern(phrases)
     if (pattern && summary.some((l) => negative(pattern, l))) add(negativeRule(phrases))
@@ -382,8 +405,13 @@ function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases:
 // Every rule the call's text breaks. A field whose text the user typed
 // verbatim in the prompt passed as `typed` is the user's own words and is
 // never refused. `phrases` are the negative phrasings a summary may not hold: with
-// none, that rule is not checked.
-export function lint(command: string, args: Record<string, unknown>, typed = '', phrases: readonly string[] = []): Violation[] {
+// none, that rule is not checked. `geonative`: the four sections and the rules that name them
+// (their order, their items, the references above them, the text after them) are GeoNative's own
+// template and apply to a repository of GeoNative only (isGeonative); a caller that does not say
+// gets the template.
+export function lint(
+  command: string, args: Record<string, unknown>, typed = '', phrases: readonly string[] = [], geonative = true,
+): Violation[] {
   const kind = KIND[command]
   if (!kind) return []
   const said = squash(typed)
@@ -391,7 +419,7 @@ export function lint(command: string, args: Record<string, unknown>, typed = '',
   for (const { field, text } of textFields(command, args)) {
     const own = squash(text)
     if (own !== '' && said.includes(own)) continue
-    found.push(...lintField(kind, field, text, phrases))
+    found.push(...lintField(kind, field, text, phrases, geonative))
   }
   return found
 }

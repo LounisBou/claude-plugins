@@ -49,14 +49,13 @@ it. `/github:doctor` then confirms everything is ready.
   `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
   URLs are not prose), no trailer of any kind (`Co-Authored-By`,
   `Signed-off-by`, `Claude-Session`, any `<word>-by`, `Change-Id`), a
-  title on one line and within 72 characters, no heading in a PR description,
+  title on one line and within 72 characters, no heading in a PR description but `Self-review`,
   every CVE id in a PR description a link to its advisory, and a security
-  update's tables, one per advisory. A PR description ends with the four
+  update's tables, one per advisory. In a GeoNative repository (owner `geonativefr`) a PR description ends with the four
   sections `TODO Staging`, `TODO Prod`, `PRs Dependency` and `Related PRs`, in
-  that order, `none` where empty, with nothing after them, and carries no horizontal rule but the `---`
-  between two screenshots, no other bold label (a screenshot's bold title, with
-  no colon at its end, is none), and in its summary no pull request reference and no negative phrasing
-  from a fixed list. The same rules hold for `gh pr create`, `gh pr edit`,
+  that order, `none` where empty, with nothing after them, carries no other bold label (a screenshot's bold title, with
+  no colon at its end, is none), and has in its summary no pull request reference; in any repository it carries no horizontal rule but the `---`
+  between two screenshots and no negative phrasing from a fixed list in its summary. The same rules hold for `gh pr create`, `gh pr edit`,
   `gh pr comment` and `gh pr review` run through Bash, their `--body-file` read,
   and for the engine's own subcommands run there (`python3 engine/gh.py
   pr-update 12 --body-file body.md`). A request the engine would read from

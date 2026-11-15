@@ -2194,7 +2194,7 @@ test('a norms record written from the norms module puts Ready through the record
 
 test('a pr-create out of draft outside auto-merge with a body that breaks the writing rules is observed twice, asked write', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' }, answer: 'Allow' })
-  const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false })
+  const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false }, 'geonativefr/thing')
   const out = await $.tool.call(call)
   expect(out).toEqual({ result: 'ok' })
   expect(seen.journal).toEqual(['github.draft.open-out', 'github.writing.rule'])

@@ -11,7 +11,10 @@ after the conventional prefix, no clause on how or why — that belongs in the d
 
 ## Pull request descriptions
 
-Follow this exact template:
+In a repository of the `geonativefr` GitHub organisation (its owner, whatever the case) follow this exact
+template. In any other repository the description is the summary text alone, then what a pull request
+may carry (screenshots, the « Self-review » section): the four sections below, and every rule that
+names them, are GeoNative's own.
 
 ```
 <summary: what it is about, what it does, in 3-5 lines>
@@ -39,7 +42,7 @@ Follow this exact template:
 - <url of the next one>
 ```
 
-The four sections are mandatory in every description, so an empty one reads as checked,
+The four sections are mandatory in every description of a GeoNative repository, so an empty one reads as checked,
 never as forgotten. A section with nothing in it is written `none`, lowercase
 in one word, on its label's line.
 With nothing to do at deployment and no linked PR, a description ends with:
@@ -52,7 +55,9 @@ With nothing to do at deployment and no linked PR, a description ends with:
 ```
 
 No heading: the description starts directly with the summary text, never
-with `## Summary` or any other title. State what the PR does, never what it does not
+with `## Summary` or any other title. The one heading allowed is `## Self-review`, the section the
+method requires of the author: it sits after the summary and the screenshots, and before the four
+sections where the repository has them. State what the PR does, never what it does not
 do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
 a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
 plugin observes, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do. The summary names no pull request: no

@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Found, NounEvents, TestOn } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, selfReviewRefusal, writeNetRefusal } from './register.js'
-import { lint as lintWith, parsePhrases, proseLines, TITLE_MAX } from './writing.js'
+import { isGeonative, lint as lintWith, parsePhrases, proseLines, TITLE_MAX } from './writing.js'
 import { touchesRecords } from './ready.js'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { dialogOf, fieldsOf, listOf, type ProcessRunResult } from '../core/host.ts'
@@ -705,6 +705,38 @@ test('a heading in a pull request description is refused, a hash in a comment or
   expect(lint('pr-create', { title: 't', body: 'Fixes #12\n#hashtag\n```sh\n# a shell comment\n```\n\n' + NONE })).toEqual([])
 })
 
+test('the « Self-review » heading is the one heading a pull request description may carry', () => {
+  const review = '## Self-review\n- Correctness: one finding, fixed in a1b2c3d.\n- Tests: none missing.'
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n' + review + '\n\n' + NONE })).toEqual([])
+  expect(lint('pr-update', { pr: 1, body: 'Adds the reset.\n\n### self-review ###\n- Tests: none missing.\n\n' + NONE })).toEqual([])
+  expect(lintWith('pr-create', { title: 't', body: 'Adds the reset.\n\n' + review }, '', NEGATIVE_PHRASES, false)).toEqual([])
+  for (const other of ['## Summary', '## Self-review notes', '# Self reviewed', '## Self-review: done']) {
+    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + other + '\n- x\n\n' + NONE }), other)
+      .toEqual(['body: no heading of any kind in a pull request description, it starts with the summary text'])
+  }
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds it.\n\n' + review + '\n\n## Notes\nmore\n\n' + NONE }).length).toBe(1)
+})
+
+test('the four sections bind a GeoNative repository only, every other rule binds all', () => {
+  const body = 'Adds the reset.\n\nSee #12 for the cause.\n\n- [ ] note\n\n**Note:** done'
+  expect(rulesOf('pr-create', { title: 't', body }).length).toBeGreaterThan(0)
+  const outside = (text: string) => lintWith('pr-create', { title: 't', body: text }, '', NEGATIVE_PHRASES, false).map((v) => v.rule.split(' (')[0])
+  expect(outside(body)).toEqual([])
+  expect(outside('Adds the reset; at last.')).toEqual(['no semicolon in prose'])
+  expect(outside('## Summary\nAdds the reset.')).toEqual(['no heading of any kind in a pull request description, it starts with the summary text'])
+  expect(outside('Adds the reset.\n\nCo-Authored-By: someone <a@b.c>')).toEqual(['no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session'])
+  expect(outside('Adds the reset, unchanged otherwise.')[0]).toContain('state what the PR does')
+  expect(outside('Adds the reset.\n\n---\n\nmore')[0]).toContain('no horizontal rule')
+  // A title is a title wherever the repository is.
+  expect(lintWith('pr-create', { title: 'fix: a; b' }, '', NEGATIVE_PHRASES, false).length).toBe(1)
+})
+
+test('a repository is GeoNative\'s by its owner, whatever the case', () => {
+  expect(isGeonative('geonativefr/geonative-api')).toBe(true)
+  expect(isGeonative(' GeoNativeFr/front-office ')).toBe(true)
+  for (const other of ['LounisBou/claude-plugins', 'acme/thing', 'acme/geonativefr', 'geonative/api', 'geonativefr', '']) expect(isGeonative(other), other).toBe(false)
+})
+
 test('a TODO item that points to another or joins two actions is refused, two full items are not', () => {
   const alone = 'a TODO item stands alone, it never points to another item'
   const one = 'one checkbox, one action: an edit and the restart, reload or deploy that applies it are two checkboxes, never joined by « then » or « and run »'
@@ -1065,6 +1097,21 @@ test('a text breaking a rule goes as it is, with one journal line', async ($, on
   expect(journaled).toEqual(['github.writing.rule'])
 })
 
+
+test('a description without the four sections is observed for a GeoNative repository, not for another', async ($, on) => {
+  const runs: GhRun[] = []
+  cfg(on)
+  await stubMod(on, runs, [])
+  await startSession($)
+
+  for (const [repo, observed] of [['geonativefr/geonative-api', true], ['LounisBou/claude-plugins', false]] as const) {
+    journaled.length = 0
+    const body = 'Adds the reset.\n\n## Self-review\n- Tests: none missing.'
+    const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', repo, args: { title: 'feat: add the reset', body } })
+    expect(out, repo).toEqual({ result: 'ok' })
+    expect(journaled, repo).toEqual(observed ? ['github.writing.rule'] : [])
+  }
+})
 
 test('a journal that cannot be written costs one log line and the call goes as it is', async ($, on) => {
   const runs: GhRun[] = []
@@ -2117,12 +2164,34 @@ test('a gh pr edit whose -b body lacks the sections goes as it is, observed', as
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Deny')
 
-  const command = 'gh pr edit 3 -R acme/front -b \'Adds the reset.\''
+  const command = 'gh pr edit 3 -R geonativefr/front -b \'Adds the reset.\''
   const out = await $.tool.call({ tool: 'Bash', command })
   expect(out.deny).toBeUndefined()
   expect(journaled).toEqual(['github.writing.rule'])
   expect(bash).toEqual([command])
   expect(asked).toEqual([])
+})
+
+test('a gh pr edit body without the sections is observed in a GeoNative repository, in the other cases of its owner, and not elsewhere', async ($, on) => {
+  const bash: string[] = []
+  const asked: string[] = []
+  await stubBashLint($, on, bash, asked, 'Deny')
+
+  for (const [repo, observed] of [['geonativefr/front', true], ['GeoNativeFr/Front', true], ['acme/front', false], ['LounisBou/claude-plugins', false]] as const) {
+    journaled.length = 0
+    const out = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R ' + repo + ' -b \'Adds the reset.\'' })
+    expect(out.deny, repo).toBeUndefined()
+    expect(journaled, repo).toEqual(observed ? ['github.writing.rule'] : [])
+  }
+  // A rule that binds every repository is still observed outside GeoNative's.
+  journaled.length = 0
+  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --repo acme/front -b \'Adds the reset; at last.\'' })
+  expect(journaled).toEqual(['github.writing.rule'])
+  // The Self-review heading is no fault, in a repository of GeoNative's with its sections or in another without.
+  journaled.length = 0
+  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R acme/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\'' })
+  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R geonativefr/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\n\n' + NONE + '\'' })
+  expect(journaled).toEqual([])
 })
 
 test('a Bash title and body that keep the rules run with no question', async ($, on) => {
