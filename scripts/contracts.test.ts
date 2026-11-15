@@ -193,9 +193,10 @@ describe('learning events: the orchestrator\'s scripts write, core reads', () =>
     run('close', record, id, '--verdict', 'thing#12 merged')
     const dir = join(config, 'orchestrator', 'journal')
     const events = readdirSync(dir).map(name => parseJournalEvent(JSON.parse(readFileSync(join(dir, name), 'utf8'))))
-    assert.equal(events.length, 7)
+    assert.equal(events.length, 15)
     assert.ok(events.every(event => event !== undefined))
-    assert.deepEqual(events.map(event => event?.kind).sort(), ['escape', 'link', 'link', 'step', 'step', 'step', 'step'])
+    // Each of the eight writes is published as a dispatch event beside its step, link or escape.
+    assert.deepEqual(events.map(event => event?.kind).sort(), [...Array(8).fill('dispatch'), 'escape', 'link', 'link', 'step', 'step', 'step', 'step'])
     rmSync(config, { recursive: true, force: true })
   })
 })

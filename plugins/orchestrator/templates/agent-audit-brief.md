@@ -26,6 +26,8 @@ You write ONE report (§4).
   method files as `--instrument`.
 
 Ask the operator nothing a file, command or the forge answers. Say a reading not taken, with its reason.
+Read by section (`grep -n`, then the lines it points to), never a whole source file or transcript;
+a count over many files goes to a read-only subagent, whose result alone you keep.
 
 ## 2. What you may not do
 
@@ -61,6 +63,9 @@ will check it next time.
 
 Tell the operator, in this tab, and the session that launched you, the report's path, verdict and cost. Then stop:
 answer his questions, apply nothing; a question of yours for him is one `ask` call, no block written. Relaying a proposal is his word. The session that launched you closes this tab; if you succeed, your successor's too.
+
+Kept on to watch something, you watch through one background command that ends only on a
+finding (`until <a check that prints a line>; do sleep 600; done`), never a check in your own turns.
 
 Kept on past the report for a follow-up, at your gate you succeed instead of stopping, by the
 « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read then, its placeholders being: the launcher

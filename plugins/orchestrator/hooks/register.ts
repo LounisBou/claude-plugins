@@ -23,7 +23,7 @@ import { logLine } from './module-io.ts'
 import type { Host, On } from './host.ts'
 
 // Every noun of the host a domain below calls.
-type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' | 'command' | 'prompt' | 'clock'>
+type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' | 'command' | 'prompt' | 'clock' | 'settings'>
 
 export function register(on: On<Mod>): void {
   // The scaffold's own passthrough, now under the every-handler law the four

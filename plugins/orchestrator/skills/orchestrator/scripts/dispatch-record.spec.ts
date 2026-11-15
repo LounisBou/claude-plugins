@@ -498,9 +498,15 @@ test('the owner: claimed by the first write, refused to another orchestration, g
 
 // ----- the audit trail: each write leaves its fact in the journal, never its words -----
 
-function journaled(env: Record<string, string> = {}, answers: Answers = {}): Deps & World & { events: Record<string, unknown>[] } {
+/** The journal a test reads: the dispatch events (one per write) apart from the steps, links and escapes. */
+function journaled(env: Record<string, string> = {}, answers: Answers = {}): Deps & World & { events: Record<string, unknown>[]; dispatches: Record<string, unknown>[] } {
   const events: Record<string, unknown>[] = []
-  return { ...deps({ CLAUDE_CODE_SESSION_ID: 'orch-1', ...env }, answers), journal: event => { events.push(event as unknown as Record<string, unknown>) }, events }
+  const dispatches: Record<string, unknown>[] = []
+  const journal = (event: object): void => {
+    const e = event as Record<string, unknown>
+    ;(e['kind'] === 'dispatch' ? dispatches : events).push(e)
+  }
+  return { ...deps({ CLAUDE_CODE_SESSION_ID: 'orch-1', ...env }, answers), journal, events, dispatches }
 }
 
 const factsOf = (events: readonly Record<string, unknown>[]) =>
@@ -583,6 +589,42 @@ test('an escape is the version 1 event the record points at; a refused write and
   await cli(['summary', rec()], d)
   await cli(['goals', rec(), 'met', 'G1', '--evidence', 'x#1'], journaled({}, { goals: 1 }))
   assert.deepEqual(d.events, [])
+})
+
+test('each write is published as a dispatch event: the row, its class and pair, a one-word verdict, a full head; a read or a refused write publishes none', async () => {
+  await withGoals()
+  const d = journaled()
+  const head = 'e'.repeat(40)
+  await cli(['open', rec(), '--class', 'feature', '--model', 'model-x-1[1m]', '--effort', 'high', '--label', 'A: secret'], d)
+  await cli(['open', rec(), '--class', 'Odd Class', '--tier', 'light'], d)
+  await cli(['review', rec(), '1', '--head', head], d)
+  await cli(['verdict', rec(), '1', '--head', 'abc1234', '--result', 'fail', '--words', 'secret words'], d)
+  await cli(['close', rec(), '1', '--verdict', 'merged'], d)
+  await cli(['close', rec(), '2', '--verdict', 'thing#12 merged, the secret said'], d)
+  await cli(['pr', rec(), 'acme/app#7', '--working', 'Agent: secret'], d)
+  await cli(['goals', rec(), 'met', 'G1', '--evidence', 'x#1'], d)
+  await cli(['summary', rec()], d)
+  await cli(['goals', rec(), 'status'], d)
+  assert.match(await cli(['round', rec(), '9'], d), /^1\|/)
+  const record = 'p/r.jsonl'
+  const pair = { class: 'feature', tier: null, model: 'model-x-1[1m]', effort: 'high' }
+  const bare = { class: null, tier: null, model: null, effort: null, verdict: null }
+  assert.deepEqual(d.dispatches.map(e => [(e['source'] as { code: string }).code, e['fact'], (e['subject'] as { head: string | null }).head]), [
+    ['orchestrator.dispatch.open', { sub: 'open', record, row: 1, ...pair, verdict: null }, null],
+    ['orchestrator.dispatch.open', { sub: 'open', record, row: 2, ...bare, tier: 'light' }, null],
+    ['orchestrator.dispatch.review', { sub: 'review', record, row: 1, ...pair, verdict: null }, head],
+    ['orchestrator.dispatch.verdict', { sub: 'verdict', record, row: 1, ...pair, verdict: 'fail' }, null],
+    ['orchestrator.dispatch.close', { sub: 'close', record, row: 1, ...pair, verdict: 'merged' }, null],
+    ['orchestrator.dispatch.close', { sub: 'close', record, row: 2, ...bare, tier: 'light' }, null],
+    ['orchestrator.dispatch.pr', { sub: 'pr', record, row: null, ...bare }, null],
+    ['orchestrator.dispatch.goals', { sub: 'goals', record, row: null, ...bare }, null],
+  ])
+  for (const event of d.dispatches) {
+    assert.equal(event['v'], 3)
+    assert.equal((event['context'] as { session: string }).session, 'orch-1')
+    assert.ok(parseJournalEvent(event), JSON.stringify(event))
+  }
+  assert.ok(!JSON.stringify(d.dispatches).includes('secret'))
 })
 
 test('the record is named under the configuration directory when it lies there', async () => {
