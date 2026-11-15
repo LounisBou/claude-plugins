@@ -178,6 +178,14 @@ describe('the lettered choices and the recommendation', () => {
     assert.equal(parseChoices(choices).recommendation, null)
   })
 
+  it('records the first numbered question\'s choices only, a bold line that numbers nothing splitting none', () => {
+    const second = '**Question 2 of 2**\n- **A** : two-a\n- **B** : two-b\n_Recommendation_ : B'
+    const first = 'Above the questions.\n**Question 1 of 2**\n- **A** : one-a\n- **B** : one-b\n_Recommendation_ : A'
+    assert.deepEqual(parseChoices(`${first}\n${second}`), { choices: [{ letter: 'A', text: 'one-a' }, { letter: 'B', text: 'one-b' }], recommendation: 'A' })
+    // `**Version 1.2**` twice is no numbering: the text stays whole, its choices read across it.
+    assert.deepEqual(parseChoices('**Version 1.2**\n- **A** : x\n**Version 1.3**\n- **B** : y').choices.map(c => c.text), ['x', 'y'])
+  })
+
   it('reads a recommendation whose label holds several words', () => {
     const question = 'Merge it?\n- **A** : one\n- **B** : two\n_Recommandation de l\'orchestrateur_ : B — the reason'
     assert.equal(parseChoices(question).recommendation, 'B')
