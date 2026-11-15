@@ -11,6 +11,13 @@
 import { fingerprint, type Wait } from './relay.ts'
 import { type ConsentSubject } from '../core/consent-record.ts'
 import { parseChoices, type Choice } from '../core/method.ts'
+import { ROUND_DIR, type WaitKind } from '../core/orchestration.ts'
+
+// The declared waits a round entry is written for (core's WAIT_KINDS): a question for the operator, or a closing proposal.
+export type RoundKind = Extract<WaitKind, 'operator' | 'done'>
+export function isRoundKind(value: unknown): value is RoundKind {
+  return value === 'operator' || value === 'done'
+}
 
 export type RoundChoice = Choice   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
@@ -28,7 +35,7 @@ export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
   session: string               // the sender's session id, as its $.session.id() answers: the answer's address, `{ sessionId }`, one session even when two share the name
-  kind: 'operator' | 'done'
+  kind: RoundKind
   since: string                 // the wait's waiting_since, ISO
   blocks: string | null         // null for 'done'
   question: string              // the turn's whole text above the machine line: the pane shows it whole (relayText cuts the message a remote coordinator receives)
@@ -67,6 +74,7 @@ export function plainText(text: string): string {
 // always found them, then read as an opening and a closing mark around each span.
 export type TextSpan = { text: string; code?: true; bold?: true; italic?: true }
 const MARK = { code: ['\uE000', '\uE001'], bold: ['\uE002', '\uE003'], italic: ['\uE004', '\uE005'] } as const
+const MARK_NAMES = ['code', 'bold', 'italic'] as const
 export function textSpans(text: string): TextSpan[] {
   const marked = text
     .replace(/`([^`\n]+)`/g, `${MARK.code[0]}$1${MARK.code[1]}`)
@@ -82,7 +90,7 @@ export function textSpans(text: string): TextSpan[] {
     run = ''
   }
   for (const char of marked) {
-    const mark = (Object.keys(MARK) as (keyof typeof MARK)[]).find(name => MARK[name].includes(char as never))
+    const mark = MARK_NAMES.find(name => MARK[name][0] === char || MARK[name][1] === char)
     if (!mark) {
       run += char
       continue
@@ -104,8 +112,8 @@ export function prReferences(text: string): PrReference[] {
     const owner = found[1]?.replace(/^[.-]+/, '')
     const repo = (found[2] ?? '').replace(/^[.-]+/, '')
     if (repo === '') return []
-    const start = found.index! + found[0].length - `${repo}#${found[3]}`.length - (owner ? owner.length + 1 : 0)
-    return [{ at: start, text: text.slice(start, found.index! + found[0].length), repo, number: Number(found[3]), ...(owner ? { owner } : {}) }]
+    const start = (found.index ?? 0) + found[0].length - `${repo}#${found[3]}`.length - (owner ? owner.length + 1 : 0)
+    return [{ at: start, text: text.slice(start, (found.index ?? 0) + found[0].length), repo, number: Number(found[3]), ...(owner ? { owner } : {}) }]
   })
 }
 
@@ -188,7 +196,7 @@ export function roundEntry(sessionId: string, from: string, wait: Wait, since: s
 }
 
 export function roundPath(stateDir: string, id: string): string {
-  return `${stateDir}/round/${id}.json`
+  return `${stateDir}/${ROUND_DIR}/${id}.json`
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no

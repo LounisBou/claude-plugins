@@ -15,6 +15,7 @@
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
 import { updateOver } from '../core/store-io.ts'
+import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../core/orchestration.ts'
 import { answersChoice, consentPath, leadingChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
@@ -22,7 +23,7 @@ import { machineLabel } from './remote-row.ts'
 import { plainText, type RoundEntry } from './round.ts'
 import { parseSessionName } from '../core/names.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, forgetRelayed, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent } from './supervision.ts'
+import { closesItself, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
 import { scanTail } from './session-name.ts'
 import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, WORDS_WINDOW_MS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
@@ -107,7 +108,7 @@ export function parseAsk(e: Record<string, unknown>): { fields: AskFields } | { 
   const count = given.filter(text => text !== null).length
   if (given.slice(0, count).some(text => text === null)) return { error: 'the choices run from choice_a on, with no letter skipped.' }
   if (count === 1) return { error: 'a question offers no choice, or two to five: one choice is no choice.' }
-  const choices = given.slice(0, count).map((text, i) => ({ letter: LETTERS[i] as string, text: text as string }))
+  const choices = given.slice(0, count).flatMap((text, i) => (text === null ? [] : [{ letter: LETTERS[i] ?? '', text }]))
   const letter = trimmed(e['recommended'])?.toUpperCase() ?? null
   const why = trimmed(e['why'])
   if (count === 0 && letter !== null) return { error: 'recommended names one of the choices: a question without choices recommends none.' }
@@ -156,29 +157,99 @@ export function askedEntry(fields: AskFields, sender: AskedSender, id: string, n
 }
 
 const isText = (value: unknown): value is string => typeof value === 'string'
-const ASKED_STATUSES: readonly string[] = ['open', 'answered', 'withdrawn']
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0
+const ASKED_STATUSES: readonly Asked['status'][] = ['open', 'answered', 'withdrawn']
+const ANSWER_BYS: readonly AskedAnswer['by'][] = ['tab', 'pane', 'coordinator', 'sender', 'message']
+const DELIVERY_STATES: readonly NonNullable<Asked['delivery']>['state'][] = ['pending', 'sent', 'delivered', 'failed']
+const REPLICA_STATES: readonly NonNullable<Asked['replica']>['state'][] = ['sent', 'acked', 'failed']
+
+// Each optional text of a record: its value when a text, `null` when present and of another type.
+function texts<K extends string>(read: Record<string, unknown>, keys: readonly K[]): Partial<Record<K, string>> | null {
+  const kept: Partial<Record<K, string>> = {}
+  for (const key of keys) {
+    const value = read[key]
+    if (value === undefined) continue
+    if (!isText(value)) return null
+    kept[key] = value
+  }
+  return kept
+}
+
+function answerOf(read: unknown): AskedAnswer | null | undefined {
+  if (read === null) return null
+  if (!isRecord(read)) return undefined
+  const by = ANSWER_BYS.find(known => known === read['by'])
+  const [text, at, settler] = [read['text'], read['at'], read['settler']]
+  const extra = texts(read, ['author', 'record'] as const)
+  return by !== undefined && isText(text) && isText(at) && isText(settler) && extra !== null ? { text, by, at, settler, ...extra } : undefined
+}
+
+function deliveryOf(read: unknown): Asked['delivery'] | null {
+  if (!isRecord(read)) return null
+  const state = DELIVERY_STATES.find(known => known === read['state'])
+  const [at, attempts] = [read['at'], read['attempts']]
+  const extra = texts(read, ['reason'] as const)
+  return state !== undefined && isText(at) && isCount(attempts) && extra !== null ? { state, at, attempts, ...extra } : null
+}
+
+function replicaOf(read: unknown): Asked['replica'] | null {
+  if (!isRecord(read)) return null
+  const state = REPLICA_STATES.find(known => known === read['state'])
+  const [seq, attempts, at] = [read['seq'], read['attempts'], read['at']]
+  const extra = texts(read, ['reason'] as const)
+  return state !== undefined && typeof seq === 'number' && isCount(attempts) && isText(at) && extra !== null ? { seq, state, attempts, at, ...extra } : null
+}
 
 /** An object `ask` stored, read back with each field of its type; null for anything else, the relay's entries included. */
 export function parseAsked(text: string): Asked | null {
-  let e: unknown
+  let o: unknown
   try {
-    e = JSON.parse(text)
+    o = JSON.parse(text)
   } catch {
     return null
   }
-  if (typeof e !== 'object' || e === null || Array.isArray(e)) return null
-  const o = e as Record<string, unknown>
-  const sender = o['sender'] as Record<string, unknown> | null | undefined
-  const fine = o['v'] === ASK_VERSION
-    && [o['id'], o['subject'], o['context'], o['ask'], o['blocks'], o['at']].every(isText)
-    && typeof sender === 'object' && sender !== null && ['session', 'name', 'role', 'machine'].every(key => isText(sender[key]))
-    && Array.isArray(o['choices']) && o['choices'].every((c: unknown) => typeof c === 'object' && c !== null && isText((c as AskedChoice).letter) && isText((c as AskedChoice).text))
-    && (o['recommended'] === null || isText(o['recommended'])) && (o['why'] === null || isText(o['why']))
-    && isText(o['status']) && ASKED_STATUSES.includes(o['status'])
-    && typeof o['seq'] === 'number'
-    && (o['consent'] === undefined || parseConsentSubject(o['consent']) !== undefined)
-    && (o['origin'] === undefined || (typeof o['origin'] === 'object' && o['origin'] !== null && ['machine', 'address'].every(key => isText((o['origin'] as Record<string, unknown>)[key]))))
-  return fine ? o as unknown as Asked : null
+  if (!isRecord(o) || o['v'] !== ASK_VERSION) return null
+  const [id, subject, context, ask, blocks, at, recommended, why, seq] = [o['id'], o['subject'], o['context'], o['ask'], o['blocks'], o['at'], o['recommended'], o['why'], o['seq']]
+  if (!isText(id) || !isText(subject) || !isText(context) || !isText(ask) || !isText(blocks) || !isText(at) || typeof seq !== 'number') return null
+  if ((recommended !== null && !isText(recommended)) || (why !== null && !isText(why))) return null
+  const status = ASKED_STATUSES.find(known => known === o['status'])
+  const senderRead = o['sender']
+  if (status === undefined || !isRecord(senderRead)) return null
+  const [session, name, role, machine] = [senderRead['session'], senderRead['name'], senderRead['role'], senderRead['machine']]
+  if (!isText(session) || !isText(name) || !isText(role) || !isText(machine)) return null
+  const choicesRead = o['choices']
+  if (!Array.isArray(choicesRead)) return null
+  const choices: AskedChoice[] = []
+  for (const c of choicesRead) {
+    if (!isRecord(c) || !isText(c['letter']) || !isText(c['text'])) return null
+    choices.push({ letter: c['letter'], text: c['text'] })
+  }
+  const answer = answerOf(o['answer'] ?? null)
+  if (answer === undefined) return null
+  const consent = o['consent'] === undefined ? undefined : parseConsentSubject(o['consent'])
+  if (o['consent'] !== undefined && consent === undefined) return null
+  const originRead = o['origin']
+  const origin = originRead === undefined ? undefined
+    : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address']) ? { machine: originRead['machine'], address: originRead['address'] } : null
+  const delivery = o['delivery'] === undefined ? undefined : deliveryOf(o['delivery'])
+  const replica = o['replica'] === undefined ? undefined : replicaOf(o['replica'])
+  const claimedRead = o['claimed']
+  const claimed = claimedRead === undefined ? undefined
+    : isRecord(claimedRead) && isText(claimedRead['typed']) && isText(claimedRead['at']) ? { typed: claimedRead['typed'], at: claimedRead['at'] } : null
+  const movedFrom = o['movedFrom']
+  if (origin === null || delivery === null || replica === null || claimed === null || (movedFrom !== undefined && !isText(movedFrom))) return null
+  return {
+    v: ASK_VERSION, id, sender: { session, name, role, machine }, subject, context, ask, choices, recommended, why, blocks,
+    status, at, answer, seq,
+    ...(o['urgent'] === true ? { urgent: true as const } : {}),
+    ...(consent !== undefined ? { consent } : {}),
+    ...(origin !== undefined ? { origin } : {}),
+    ...(delivery !== undefined ? { delivery } : {}),
+    ...(replica !== undefined ? { replica } : {}),
+    ...(movedFrom !== undefined ? { movedFrom } : {}),
+    ...(claimed !== undefined ? { claimed } : {}),
+  }
 }
 
 /** The question in the method's shape, numbered among the questions asked in its turn, its id after the number. */
@@ -212,7 +283,7 @@ export function askedAsEntry(entry: Asked): RoundEntry {
 
 /** Every object `ask` stored in this machine's round, open or not; a file that is no such object is skipped. */
 export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
-  const dir = `${await stateDir($)}/round`
+  const dir = `${await stateDir($)}/${ROUND_DIR}`
   const found: Asked[] = []
   for (const file of await $.fs.list(dir).catch(() => [])) {
     if (file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
@@ -226,14 +297,14 @@ export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
  * The open questions a session asked with `ask`, each rewritten under its lock by `change` (null
  * leaves it): what its session's end and its hand-over do to them. Answers the objects written.
  */
-async function changeOpenAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
+async function changeOpenAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, session: string, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
   return changeAsked($, entry => entry.sender.session === session, change)
 }
 
 // The open questions `takes` selects, each read again and rewritten under its lock by `change`,
 // then pushed to the coordinator on another machine. A replica is its owner's to change: never here.
-async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (entry: Asked) => boolean, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
-  const dir = `${await stateDir($)}/round`
+async function changeAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, takes: (entry: Asked) => boolean, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
+  const dir = `${await stateDir($)}/${ROUND_DIR}`
   const changed: Asked[] = []
   for (const entry of await readAsked($)) {
     if (entry.status !== 'open' || entry.origin !== undefined || !takes(entry)) continue
@@ -256,20 +327,20 @@ async function changeAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, takes: (
 }
 
 /** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. Answers the objects withdrawn. */
-export async function withdrawAsked($: Held, session: string, why: string, now: Date = new Date()): Promise<Asked[]> {
+export async function withdrawAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, session: string, why: string, now: Date = new Date()): Promise<Asked[]> {
   return withdrawWhere($, entry => entry.sender.session === session, why, now)
 }
 
 /** Questions moved to a successor by its name alone that no session of that name runs: withdrawn by their asker, as its end would. */
-export async function withdrawAskedIds($: Held, ids: readonly string[], why: string, now: Date = new Date()): Promise<Asked[]> {
+export async function withdrawAskedIds($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, ids: readonly string[], why: string, now: Date = new Date()): Promise<Asked[]> {
   return ids.length === 0 ? [] : withdrawWhere($, entry => entry.sender.session === '' && ids.includes(entry.id), why, now)
 }
 
-async function withdrawWhere($: Held, takes: (entry: Asked) => boolean, why: string, now: Date): Promise<Asked[]> {
+async function withdrawWhere($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, takes: (entry: Asked) => boolean, why: string, now: Date): Promise<Asked[]> {
   const at = now.toISOString()
   const withdrawn: Asked[] = []
   for (const id of await openAskedIds($, takes)) {
-    const done = await closeOwnAsked($, id, takes, at, entry => planWithdrawal(entry as never, why, at, false))
+    const done = await closeOwnAsked($, id, takes, at, entry => planWithdrawal(entry, why, at, false))
     if (done === null) continue
     withdrawn.push(done)
     await logLine($, 'question', `${id} withdrawn by its asker: ${why}`)
@@ -278,7 +349,7 @@ async function withdrawWhere($: Held, takes: (entry: Asked) => boolean, why: str
 }
 
 /** Its session handed over to a successor it learnt: its open questions are the successor's, still open. Answers the objects moved. */
-export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, session: string, successor: { session: string; name: string }): Promise<Asked[]> {
+export async function moveAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, session: string, successor: { session: string; name: string }): Promise<Asked[]> {
   const moved = await changeOpenAsked($, session, entry => ({
     ...entry, sender: { ...entry.sender, session: successor.session, name: successor.name }, movedFrom: session, seq: entry.seq + 1,
   }))
@@ -290,10 +361,10 @@ export async function moveAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, ses
  * Questions moved to a successor by its name alone, whose session a live record of that name now
  * names (`named`, by id): their session written, so its end and its hand-over find them.
  */
-export async function nameMovedAsked($: Host<'env' | 'fs' | 'process' | 'clock'>, named: ReadonlyMap<string, string>): Promise<void> {
+export async function nameMovedAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, named: ReadonlyMap<string, string>): Promise<void> {
   if (named.size === 0) return
   const written = await changeAsked($, entry => entry.sender.session === '' && named.has(entry.id), entry => ({
-    ...entry, sender: { ...entry.sender, session: named.get(entry.id) as string }, seq: entry.seq + 1,
+    ...entry, sender: { ...entry.sender, session: named.get(entry.id) ?? entry.sender.session }, seq: entry.seq + 1,
   }))
   for (const entry of written) await logLine($, 'question', `${entry.id} now names its successor's session ${entry.sender.session}`)
 }
@@ -305,7 +376,7 @@ const TYPED_CAP = 500
  * A prompt the operator typed in the asker's own tab (never the model's, never a command): its open
  * questions are claimed with his words, and leave the pane at once. Answers the ids claimed.
  */
-export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 'session'>, kind: string, text: string, now: Date = new Date()): Promise<string[]> {
+export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, kind: string, text: string, now: Date = new Date()): Promise<string[]> {
   if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return []
   const said = text.trim()
   const typed = said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
@@ -319,7 +390,7 @@ export async function claimAsked($: Host<'env' | 'fs' | 'process' | 'clock' | 's
  * consent recorded when they name « Accorder » alone (in the coordinator's tab, when they open with it), unless the turn's operator wait keeps it
  * (`kept`): then it is open again, drawn again.
  */
-export async function settleClaimed($: Held, kept: readonly string[], now: Date = new Date()): Promise<void> {
+export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, kept: readonly string[], now: Date = new Date()): Promise<void> {
   const at = now.toISOString()
   const session = await $.session.id()
   await changeOpenAsked($, session, entry => {
@@ -334,12 +405,11 @@ export async function settleClaimed($: Held, kept: readonly string[], now: Date 
     let refused = false
     // Read before the lock, as the lock cannot: whether the coordinator here was shown it.
     const shown = await closesItself($, id)
-    const done = await closeOwnAsked($, id, takes, at, entry => {
-      const asked = entry as unknown as Asked
+    const done = await closeOwnAsked($, id, takes, at, asked => {
       const typed = asked.claimed?.typed ?? ''
       const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? (coordinator && asked.consent ? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : undefined) : null
       refused = !!asked.consent && (!chosen || !grants(chosen.text))
-      return planClaimed(entry, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
+      return planClaimed(asked, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
     })
     if (done === null) continue
     await logLine($, 'question', `${id} answered in its asker's tab`)
@@ -355,15 +425,15 @@ async function openAskedIds($: Host<'env' | 'fs'>, takes: (entry: Asked) => bool
 // One question asked here closed by the module through `closeRound`, read again under its lock and
 // left as it is unless still open and selected by `takes`. A write that fails is one log line, so
 // the others still close. Answers the object closed, or null.
-async function closeOwnAsked($: Held, id: string, takes: (entry: Asked) => boolean, at: string, plan: (entry: Fields) => Plan): Promise<Asked | null> {
+async function closeOwnAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, id: string, takes: (entry: Asked) => boolean, at: string, plan: (entry: Asked) => Plan): Promise<Asked | null> {
   try {
     // Its asker closes it: nothing is sent, so the closer's name is never read.
     const me: Me = { session: await $.session.id(), name: '', role: '' }
-    const closed = await closeRound($, `${await stateDir($)}/round/${id}.json`, current => {
+    const closed = await closeRound($, `${await stateDir($)}/${ROUND_DIR}/${id}.json`, current => {
       const fresh = current === undefined ? null : parseAsked(current)
-      return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh as unknown as Fields)
+      return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh)
     }, me, at)
-    return closed === null || 'error' in closed ? null : closed.plan.entry as unknown as Asked
+    return closed === null || 'error' in closed ? null : parseAsked(JSON.stringify(closed.plan.entry))
   } catch (err) {
     await logLine($, 'question', `${id} not changed: ${messageOf(err)}`)
     return null
@@ -380,7 +450,7 @@ export function askedGroups(entries: readonly Asked[]): Asked[][] {
   const urgentFirst = (a: Asked, b: Asked) => Number(b.urgent === true) - Number(a.urgent === true) || byAt(a, b)
   const groups = new Map<string, Asked[]>()
   for (const entry of entries.filter(e => e.status === 'open' && !e.claimed).sort(byAt)) groups.set(entry.sender.session, [...(groups.get(entry.sender.session) ?? []), entry])
-  const first = (group: readonly Asked[]) => [...group].sort(urgentFirst)[0] as Asked
+  const first = (group: readonly Asked[]) => group.reduce((best, entry) => (urgentFirst(entry, best) < 0 ? entry : best))
   return [...groups.values()].sort((a, b) => urgentFirst(first(a), first(b))).map(group => [...group].sort(urgentFirst))
 }
 
@@ -465,7 +535,7 @@ const OWN_ANSWERS: readonly string[] = ['tab', 'pane', 'coordinator']
 export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promise<Asked | null> {
   const key = askedKey(entry)
   const archived: Asked[] = []
-  const dir = `${await stateDir($)}/round/archive`
+  const dir = `${await stateDir($)}/${ROUND_DIR}/${ROUND_ARCHIVE_DIR}`
   for (const file of await $.fs.list(dir).catch(() => [])) {
     if (file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
     const read = parseAsked(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
@@ -483,7 +553,7 @@ export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promis
 }
 
 /** What the tool answers to one call; `now` is the instant it records. */
-export async function callAsk($: Held, e: Record<string, unknown>, now: Date = new Date()): Promise<Answer> {
+export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'tool'>, e: Record<string, unknown>, now: Date = new Date()): Promise<Answer> {
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
   const parsed = parseAsk(e)
   if ('error' in parsed) return refuse(parsed.error)
@@ -499,7 +569,7 @@ export async function callAsk($: Held, e: Record<string, unknown>, now: Date = n
   const entry: Asked = record?.answer
     ? { ...made, status: 'answered', answer: { text: record.answer.text, by: record.answer.by, at: record.answer.at, settler: me.name, record: record.id } }
     : made
-  const path = `${await stateDir($)}/round/${entry.id}.json`
+  const path = `${await stateDir($)}/${ROUND_DIR}/${entry.id}.json`
   let taken = false
   try {
     await updateOver(storeIo($), path, current => {
@@ -531,7 +601,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const who = await whoAmI($)
   if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once the host names it.')
   const me: Me = { ...who, session: await $.session.id() }
-  const path = `${await stateDir($)}/round/${request.id}.json`
+  const path = `${await stateDir($)}/${ROUND_DIR}/${request.id}.json`
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
@@ -568,7 +638,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
  * session sent, a tool result or text an agent wrote), and judgeWords finds them a plain grant of
  * that subject. The record's time is the turn's own. Answers the tool's reply.
  */
-export async function settleWords($: Held, words: Words, now: Date = new Date()): Promise<Answer> {
+export async function settleWords($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'tool'>, words: Words, now: Date = new Date()): Promise<Answer> {
   const who = await whoAmI($)
   if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor records a consent, once the host names it.')
   const judged = judgeWords(words, now.getTime())
@@ -616,18 +686,33 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
   if (said === '') return null
   const who = await whoAmI($)
   const me: Me = { session: await $.session.id(), name: who?.name ?? "the coordinator's pane", role: who?.role ?? 'coordinator' }
-  const path = `${await stateDir($)}/round/${id}.json`
+  const path = `${await stateDir($)}/${ROUND_DIR}/${id}.json`
   const at = now.toISOString()
   try {
     const closed = await closeRound($, path, current => {
       const entry = current === undefined ? null : parseAsked(current)
-      return entry === null ? null : planPane(entry as unknown as Fields, said, me, at)
+      return entry === null ? null : planPane(entry, said, me, at)
     }, me, at, () => logLine($, 'question', `${id} answered in the pane`))
-    return closed === null || 'error' in closed ? null : closed.plan.entry as unknown as Asked
+    return closed === null || 'error' in closed ? null : parseAsked(JSON.stringify(closed.plan.entry))
   } catch (err) {
     await logLine($, 'question', `${id} not answered from the pane: ${messageOf(err)}`)
     return null
   }
+}
+
+// The fields a consent record is written from, read off a closed entry: a relay's entry or an object
+// `ask` stored (its question in `ask`). Null when it asks no consent or a field is not of its type.
+function consentEntryOf(entry: Fields): ConsentEntry | null {
+  const [id, question] = [entry['id'], typeof entry['ask'] === 'string' ? entry['ask'] : entry['question']]
+  const consent = parseConsentSubject(entry['consent'])
+  const choicesRead = entry['choices']
+  if (!isText(id) || !isText(question) || consent === undefined || !Array.isArray(choicesRead)) return null
+  const choices: AskedChoice[] = []
+  for (const c of choicesRead) {
+    if (!isRecord(c) || !isText(c['letter']) || !isText(c['text'])) return null
+    choices.push({ letter: c['letter'], text: c['text'] })
+  }
+  return { id, question, choices, consent }
 }
 
 /**
@@ -639,47 +724,50 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
  * what its steps said, the refusal, or null; a write that fails throws.
  */
 export async function closeRound(
-  $: Held, path: string, decide: (current: string | undefined) => Plan | { error: string } | null, me: Me, at: string,
+  $: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, path: string, decide: (current: string | undefined) => Plan | { error: string } | null, me: Me, at: string,
   written?: () => Promise<void>,
 ): Promise<{ plan: Plan; said: string[] } | { error: string } | null> {
-  let plan: Plan | { error: string } | null = null
+  const held: { plan: Plan | { error: string } | null } = { plan: null }
   await updateOver(storeIo($), path, current => {
-    plan = decide(current)
+    const plan = held.plan = decide(current)
     return plan === null || 'error' in plan ? undefined : `${JSON.stringify(plan.entry)}\n`
   })
-  const done = plan as Plan | { error: string } | null
+  const done = held.plan
   if (done === null) return null
   if ('error' in done) return { error: done.error }
   await written?.()
   const said: string[] = []
   if (done.consentBy !== null) {
-    const question = typeof done.entry['ask'] === 'string' ? done.entry['ask'] : done.entry['question']
-    const missed = await writeConsent($, { ...done.entry, question } as never, done.consentText, done.consentBy, at)
+    const entry = consentEntryOf(done.entry)
+    const missed = entry === null ? null : await writeConsent($, entry, done.consentText, done.consentBy, at)
     if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
   }
-  if (done.relayed) await forgetRelayed($, done.entry as never)
+  const relay = done.entry['v'] === ASK_VERSION ? null : parseRoundEntry(JSON.stringify(done.entry))
+  const asked = done.entry['v'] === ASK_VERSION ? parseAsked(JSON.stringify(done.entry)) : null
+  if (done.relayed && relay !== null) await forgetRelayed($, relay)
   if (done.told) {
     // The notice reads a relay entry's fields: an object `ask` stored is told as one.
-    const asked = done.entry['v'] === ASK_VERSION ? parseAsked(JSON.stringify(done.entry)) : null
-    await tellSettled($, [{ entry: asked ? askedAsEntry(asked) : done.entry, answer: done.entry['answer'] }] as never)
+    const told = asked ? askedAsEntry(asked) : relay
+    const answer = done.entry['answer']
+    if (told !== null && isRoundAnswer(answer)) await tellSettled($, [{ entry: told, answer }])
   }
   if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
   if (done.deliver === 'remote') {
     const refused = await sendReply($, String(done.entry['id']))
     said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
   }
-  if (done.deliver !== 'remote' && done.entry['v'] === ASK_VERSION) await replicate($, done.entry as unknown as Asked)
+  if (done.deliver !== 'remote' && asked !== null) await replicate($, asked)
   return { plan: done, said }
 }
 
 // The answer sent to its asker at once — its session while it has a row here (two sessions may share
 // a name), else its name — then its outcome written on the entry while it still holds that answer:
 // delivered, or failed with the host's reason, which the pane then shows.
-async function deliverSettled($: Held, path: string, done: Plan, me: Me, at: string): Promise<string> {
+async function deliverSettled($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, path: string, done: Plan, me: Me, at: string): Promise<string> {
   let reason: string | null = null
   try {
     const live = done.asker.session !== '' && sessionKey(done.asker.session) in await readSessions($)
-    const sent = await $.session.send({ to: (live ? { sessionId: done.asker.session } : done.asker.name) as string, text: settledMessage(done.entry, me) })
+    const sent = await $.session.send({ to: live ? { sessionId: done.asker.session } : done.asker.name, text: settledMessage(done.entry, me) })
     if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
   } catch (err) {
     reason = messageOf(err)
@@ -699,7 +787,7 @@ async function deliverSettled($: Held, path: string, done: Plan, me: Me, at: str
 }
 
 // Whether the session is an agent at its start; a role that cannot be told keeps the tool.
-async function agentAtStart($: Held): Promise<boolean> {
+async function agentAtStart($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<boolean> {
   try {
     return await sessionRole($, await $.session.id()) === 'agent'
   } catch (err) {
