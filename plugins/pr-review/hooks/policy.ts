@@ -4,7 +4,7 @@
 // walkthrough refuses without them. No $ here, so the guards and their .catch
 // nets decide the same way, and the tests read the rules without an engine.
 
-import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { gitSubcommand, innerLine, readCommands } from '../core/shell.ts'
 
 export type Skill = 'start-review' | 'process-comments' | 'auto-fix-loop'
 
@@ -195,22 +195,32 @@ export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows
 
 // The options and the words of a push that rewrite nothing on the remote: a plain push.
 const PLAIN_PUSH_FLAGS = new Set(['-u', '--set-upstream', '--tags', '--follow-tags', '--no-verify', '-v', '--verbose', '-q', '--quiet', '-n', '--dry-run'])
-// A remote, a branch or a `local:remote` refspec: a word that neither forces (`+`) nor deletes (`:remote`).
-const PLAIN_PUSH_WORD = /^[A-Za-z0-9_][A-Za-z0-9_./@:{}^~-]*$/
+// A remote, a branch or a `local:remote` refspec: a word that neither forces (`+`) nor deletes (`:remote`, `local:`).
+const PLAIN_PUSH_WORD = /^[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*(:[A-Za-z0-9_][A-Za-z0-9_./@{}^~-]*)?$/
+// The wrappers that feed a command words the line does not show.
+const FEEDING = /^(.*\/)?(xargs|parallel)$/
 
-// Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push.
+// Whether one `git push` argv is plain: any option or word it cannot vouch for reads as a forced push,
+// and so does a configuration given on the line (`git -c remote.origin.push=+HEAD push`).
 function isPlainArgv(argv: readonly string[], at: number): boolean {
+  if (argv.slice(1, at).some((word) => word === '-c' || word.startsWith('--config'))) return false
   return argv.slice(at + 1).every((word) => (word.startsWith('-') ? PLAIN_PUSH_FLAGS.has(word) : PLAIN_PUSH_WORD.test(word)))
 }
 
-// Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
-// core's shell reader: each command of a list or a pipe, wrappers and assignments skipped,
-// `sh -c` / `bash -lc` read again. `eval` joins its words into a line read the same way.
+/*
+ * Each `git push` of the command, as `plain` or not; a command that runs none gives an empty list.
+ * core's shell reader: each command of a list or a pipe, wrappers and assignments skipped, `eval`
+ * and `sh -c` read again at any depth. A push whose words the line does not show (a command
+ * substitution among them, a wrapper such as xargs that feeds it) is not plain.
+ */
 function pushes(command: string): boolean[] {
-  return simpleCommands(command).flatMap((argv): boolean[] => {
-    if (argv[0] === 'eval') return pushes(argv.slice(1).join(' '))
-    const at = gitSubcommand(argv)?.at
-    return at !== undefined && argv[at] === 'push' ? [isPlainArgv(argv, at)] : []
+  return readCommands(command).flatMap((cmd): boolean[] => {
+    const shown = cmd.substitutions.length === 0
+    const inner = innerLine(cmd.argv)
+    if (inner !== undefined) return pushes(inner).map((plain) => plain && shown)
+    const at = gitSubcommand(cmd.argv)?.at
+    if (at === undefined || cmd.argv[at] !== 'push') return []
+    return [shown && !cmd.wrappers.some((wrapper) => FEEDING.test(wrapper)) && isPlainArgv(cmd.argv, at)]
   })
 }
 

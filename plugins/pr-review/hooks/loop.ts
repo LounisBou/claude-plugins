@@ -476,7 +476,7 @@ export function register(on: any): void {
   // Each agent a review pass launches carries the findings-block request in its own prompt, and
   // its answer is read. The hook never changes the call's input: the host's auto mode reviews the
   // call before the hooks run, and refuses one a hook rewrote. A reader whose prompt lacks the
-  // request runs all the same, and leaves one line in the journal; it hands back no block.
+  // request runs all the same, and leaves one line in the journal.
   // The host may run the agent in the background: core's record of the launch then names the
   // agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call

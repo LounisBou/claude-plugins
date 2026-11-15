@@ -129,8 +129,8 @@ and every skill keeps its own route.
   its agentId for a SendMessage, and keeps its place); an agent still without a readable
   block (or one that fails) leaves the severity unknown, and the record's detail and
   `findings`' answer name that agent by its `subagent_type`. A background agent whose
-  turn ends in error or aborted is silent at once, and a stop is held while an agent
-  without its block waits to be asked again. Every agent launched during a pass is a
+  turn ends in error or aborted is silent at once, and a stop while an agent
+  without its block waits to be asked again goes through, noted in the journal. Every agent launched during a pass is a
   reader of it, whatever its type, but a norms agent (`norms:…`), left as it is.
   A clean review writes `pass`. A loop stopped by the pass limit writes `fail`. A reviewer's loop (`review_only`) ends
   after its one pass and records its findings' verdict. A `fail` is judged by the
@@ -150,8 +150,8 @@ and every skill keeps its own route.
   session and each skill reads that it passed.
 
 The matcher reads the command an answer starts with, after an optional `ok,` or
-`yes,`. It refuses consent given in other words (`go ahead`, `yes`, `please apply
-it`), as the skills themselves do, and a command inside a negation, an aside or a
+`yes,`. It notes consent given in other words (`go ahead`, `yes`, `please apply
+it`) as no grant, as the skills themselves do, and a command inside a negation, an aside or a
 question (`don't fix this one`, `why not post now`, `fix?`). `hooks/tests/policy.test.ts`
 pins each of those cases.
 

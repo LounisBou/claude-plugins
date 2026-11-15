@@ -39,13 +39,14 @@ export async function observed($: any, code: string, now: () => Date = () => new
       at, random: randomPart(), source: { plugin: PLUGIN, code }, context: { session: SESSION.test(id) ? id : null, role: null },
       trust: 'computed', evidence: [{ type: 'refusal', code }], kind: 'escape',
     })
-    if (event === undefined) return
-    await appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, !pruned)
+    if (event === undefined) throw new Error(`the code ${code} breaks the journal's contract`)
+    const prune = !pruned
     pruned = true
+    await appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, prune)
   } catch (err: any) {
     // An observation that cannot be written is one line in the host's log; the call it describes goes through.
     try {
-      $.ui.log(`pr-review: the journal could not be written: ${String(err?.message ?? err)}`)
+      $.ui.log(`pr-review: the journal could not be written or pruned: ${String(err?.message ?? err)}`)
     } catch {
       // A session with no log has nothing to tell.
     }

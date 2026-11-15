@@ -133,7 +133,7 @@ test('a push that rewrites nothing is noted; a forced or deleting push asks the 
       expect(pushQuestion(skill, bash(plain))).toBeNull()
       expect(noted(decide(skill, bash(plain), 'push'))).toBe('pr-review.push.ungranted')
     }
-    for (const forced of ['git push -f', 'git push --force origin main', 'git push --force-with-lease', 'git push origin +main', 'git push origin :old', 'git push --delete origin old', 'git push --mirror', 'git push -fu origin x', 'git push origin $BRANCH', 'git status; git push --force', 'eval "git push -f"']) {
+    for (const forced of ['git push -f', 'git push --force origin main', 'git push --force-with-lease', 'git push origin +main', 'git push origin :old', 'git push --delete origin old', 'git push --mirror', 'git push -fu origin x', 'git push origin $BRANCH', 'git status; git push --force', 'eval "git push -f"', 'git push origin $(echo +main)', 'git push `echo --force` origin main', 'echo --force | xargs git push origin main', 'git -c remote.origin.push=+HEAD push origin', 'sh -c "sh -c \'git push -f\'"', 'git push origin foo:', 'bash -c "git push origin $(echo -f)"']) {
       expect(pushQuestion(skill, bash(forced))).toContain('forced push now?')
       expect(decide(skill, bash(forced), 'push')).toBeNull()
     }

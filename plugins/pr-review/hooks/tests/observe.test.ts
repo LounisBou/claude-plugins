@@ -36,6 +36,6 @@ test('a journal that cannot be written is one line in the log, and the call goes
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe('ran')
   expect(logged.length).toBe(1)
-  expect(logged[0]).toContain('the journal could not be written')
+  expect(logged[0]).toContain('the journal could not be written or pruned')
   expect(logged[0]).toContain('disk full')
 })
