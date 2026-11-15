@@ -16,7 +16,7 @@ export type Event = { readonly v: 1; readonly ts: string; readonly event: EventN
 
 /** A Bash command line is kept to this many characters, once redacted. */
 export const LINE_MAX = 400
-/** Free text kept (a description, a verdict) is cut to this, once redacted. */
+/** Free text kept (a description, a title) is cut to this, once redacted. */
 export const TEXT_MAX = 80
 /** A question's header is cut to this, once redacted. */
 export const HEADER_MAX = 12
@@ -26,7 +26,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, verdict: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -429,50 +429,36 @@ function flag(argv: readonly string[], name: string): string | undefined {
   return at >= 0 ? argv[at + 1] : undefined
 }
 
-/** The launcher's spawn or close, and the dispatch record's writes, read from a Bash line. */
-export function orchestrationOf(command: string): { event: 'agent_spawned' | 'agent_closed' | 'dispatch'; fields: Fields }[] {
+/**
+ * The launcher's spawn or close, read from a Bash line. The dispatch record's writes are not read
+ * here: its script publishes each one in the orchestrator's journal, and the sweep takes them from
+ * there (`lib/sweep.ts`).
+ */
+export function orchestrationOf(command: string): { event: 'agent_spawned' | 'agent_closed'; fields: Fields }[] {
   let commands: string[][]
   try {
     commands = simpleCommands(command)
   } catch {
     return []
   }
-  const out: { event: 'agent_spawned' | 'agent_closed' | 'dispatch'; fields: Fields }[] = []
+  const out: { event: 'agent_spawned' | 'agent_closed'; fields: Fields }[] = []
   for (const raw of commands) {
-    const at = raw.findIndex(word => /(?:^|\/)(?:iterm-agent|dispatch-record)\.(?:sh|ts)$/.test(word))
+    const at = raw.findIndex(word => /(?:^|\/)iterm-agent\.(?:sh|ts)$/.test(word))
     if (at < 0) continue
     const argv = raw.slice(at)
-    const script = BASENAME(argv[0] ?? '')
     const sub = argv[1]
-    if (script.startsWith('iterm-agent') && sub === 'spawn') {
+    if (sub === 'spawn') {
       const title = flag(argv, '--title')
       const role = argv.includes('--auditor') ? 'auditor' : argv.includes('--coordinator-successor') ? 'coordinator' : roleOf(title, true)
       out.push({ event: 'agent_spawned', fields: { kind: 'session', title, role, tier: flag(argv, '--tier'), model: flag(argv, '--model'), effort: flag(argv, '--effort'), permission_mode: flag(argv, '--permission-mode') } })
-    } else if (script.startsWith('iterm-agent') && sub === 'close') {
+    } else if (sub === 'close') {
       out.push({ event: 'agent_closed', fields: { kind: 'session', title: flag(argv, '--title') ?? argv.slice(2).find(w => !w.startsWith('-')) } })
-    } else if (script.startsWith('dispatch-record') && sub !== undefined && sub !== 'summary') {
-      const record = argv[2]
-      const row = argv[3] !== undefined && !argv[3].startsWith('-') ? argv[3] : undefined
-      out.push({
-        event: 'dispatch',
-        fields: {
-          sub,
-          record: record === undefined ? undefined : BASENAME(record),
-          row,
-          class: flag(argv, '--class'),
-          tier: flag(argv, '--tier'),
-          model: flag(argv, '--model'),
-          effort: flag(argv, '--effort'),
-          head: flag(argv, '--head'),
-          verdict: flag(argv, '--verdict'),
-        },
-      })
     }
   }
   return out
 }
 
-/** The `tool_call` event, and the events the call's arguments carry (a question, a spawn, a dispatch). */
+/** The `tool_call` event, and the events the call's arguments carry (a question, a spawn). */
 export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number | undefined): Event[] {
   const e = record(input)
   const tool = text(e['tool']) ?? 'unknown'

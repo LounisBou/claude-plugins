@@ -74,7 +74,6 @@ test('append: a secret straddling a length limit is redacted whole before the cu
     const events = [
       ...bash(`echo ${'x'.repeat(LINE_MAX - 16)} ${value}`),
       ...bash(`echo ${'x'.repeat(LINE_MAX - 16)} ${SECRET}`),
-      ...bash(`dispatch-record.ts close /r/record.jsonl 68 --verdict '${'v'.repeat(TEXT_MAX - 12)} ${value}'`),
       agentSpawned(at, S, { description: `${'d'.repeat(TEXT_MAX - 12)} ${SECRET}` }, { agentId: 'a1' }),
     ]
     assert.deepEqual(append(dir, events.map(e => JSON.stringify(e)).join('\n'), secrets).refused, [])
@@ -82,7 +81,6 @@ test('append: a secret straddling a length limit is redacted whole before the cu
     // Each secret starts ten characters before its limit: a cut first would keep that much of it.
     assert.ok(!stored.includes(value.slice(0, 4)), stored)
     assert.ok(!stored.includes(SECRET.slice(0, 4)), stored)
-    assert.ok(stored.includes('"verdict":"vvvv'))
     assert.deepEqual(check(dir, secrets), [])
   })
 })

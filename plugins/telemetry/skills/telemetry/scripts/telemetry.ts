@@ -7,8 +7,9 @@
 //                                                         the export a session's end starts: at most once a day,
 //                                                         detached unless --foreground
 //   telemetry.ts backfill --config <dir> <transcript>...  one session_summary per past transcript
-//   telemetry.ts sweep    [--auto] --config <dir>         the sessions that never ended, summarized, and the settled
-//                                                         round questions; with --auto, at most once a day
+//   telemetry.ts sweep    [--auto] --config <dir>         the sessions that never ended, summarized, the settled
+//                                                         round questions and the dispatch record's writes the
+//                                                         orchestrator's journal holds; with --auto, at most once a day
 //   telemetry.ts report   --config <dir> [--week <first day>] [--tool <owner/name>]...
 //                                                         the week's cost, delay, questions, refusals and figures
 //
@@ -178,9 +179,9 @@ export function run(args: readonly string[], deps: Deps): number {
     }
     case 'sweep': {
       if (operands.includes('--auto') && !claimSweep(stateDir, deps.now())) return 0
-      const result = sweep({ config, stateDir, secrets, moduleDir: deps.env['ORCHESTRATOR_MODULE_DIR'], now: deps.now() })
+      const result = sweep({ config, stateDir, secrets, moduleDir: deps.env['ORCHESTRATOR_MODULE_DIR'], journalDir: deps.env['ORCHESTRATOR_JOURNAL_DIR'], now: deps.now() })
       for (const reason of result.refused) deps.err(`telemetry: a line was refused (${reason})`)
-      deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded`)
+      deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded, ${result.dispatches} dispatch(es) recorded`)
       return 0
     }
     default:

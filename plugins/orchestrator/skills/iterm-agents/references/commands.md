@@ -67,7 +67,8 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings; an `Agent:` title also loses the four
     # only an orchestrator calls (mcp__orchestrator__review, supervision, settle,
     # declare_wait); an `Orch:` title also loses the
-    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement). --keep-tool removes a name from
+    # servers it never calls (mcp__cloudflare, mcp__bugs-bot, mcp__norms, mcp__implement); a `Coord:` or `Audit:`
+    # title those and mcp__pr-review, mcp__orchestrator__review, mcp__github__light_ci and record. --keep-tool removes a name from
     # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
     # permission pattern to it. Both repeat, take one name each, and are honoured by every path
     # that builds a launch: a plain spawn, --successor, --wake, --open, --auditor and the

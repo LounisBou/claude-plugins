@@ -5,7 +5,7 @@ import {
   AUDIT_CONTRACT, AUDIT_KINDS, AUDIT_VERSION, auditEvent, CANDIDATE_CONTRACT, CANDIDATE_STATE_CONTRACT, candidateStateDir, candidateStateFile, isDue, judged, moved, parseCandidateState, readCandidateState, retrospectiveStartArgv, scopeFits, eventId, parseCandidate, signatureFrom, journalDir, journalEntryOf, journalFileOf, JOURNAL_MAX_AGE_DAYS,
   JOURNAL_MAX_EVENTS, languagesOf, LEARNING_CONTRACT, LEARNING_VERSION, LEARNING_WINDOW_DAYS, learningEvent, parseAuditEvent,
   answerEvent, answerGiven, findingEvent, repoPath, subjectOf,
-  guardPhase, isEnforceable, LEARNED_GUARD_CONTRACT, learnedDecision, tallyOf, wouldBeRefusals, wouldBeVerdict, type WouldBeVerdict,
+  afterLanding, FORGET_CONTRACT, isSilentGuard, prOutcomeOf, provedWrong, guardPhase, isEnforceable, LEARNED_GUARD_CONTRACT, learnedDecision, tallyOf, wouldBeRefusals, wouldBeVerdict, type WouldBeVerdict,
   foldDropped, foldedText, foldWeekly, JOURNAL_FOLD_FILE, mergeFolded, parseFold, parseFolded, parseJournalEvent, parseLearningEvent, pathClassesOf, prRefsOf, prunable, signatureOf,
 } from './learning.ts'
 
@@ -318,12 +318,12 @@ describe('the audit event, version 2 of the contract', () => {
       wait: { wait: 'operator', edge: 'end', span: '20261114T101400Z-00000000', on: 'operator' },
       failure: { failure: 'fix-after-merge', count: null, prs: ['claude-plugins#180'] },
     }
-    for (const kind of AUDIT_KINDS) {
+    for (const kind of AUDIT_KINDS.filter(k => AUDIT_CONTRACT.kind_versions[k] === 2)) {
       const event = { ...STEP, kind, fact: facts[kind] }
       assert.deepEqual(parseAuditEvent(event), event, kind)
     }
-    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure'])
-    assert.equal(AUDIT_VERSION, 2)
+    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'])
+    assert.equal(AUDIT_VERSION, 3)
   })
 
   it('reads a fact whose every field is unknown, as null', () => {
@@ -369,6 +369,22 @@ describe('the audit event, version 2 of the contract', () => {
     assert.equal(parseLearningEvent(STEP), undefined)
     assert.equal(parseAuditEvent(EVENT), undefined)
     assert.equal(parseJournalEvent({ ...STEP, v: 3 }), undefined)
+  })
+
+  it('reads a dispatch at version 3, and no version 2 kind there', () => {
+    const DISPATCH = { ...STEP, v: 3, kind: 'dispatch', fact: { sub: 'open' as const, record: 'claude-orchestrator/briefs/p/dispatch.jsonl', row: 3, class: 'plugin', tier: null, model: 'claude-opus-4-5[1m]', effort: 'high' as const, verdict: null } }
+    assert.deepEqual(parseAuditEvent(DISPATCH), DISPATCH)
+    assert.deepEqual(parseJournalEvent(DISPATCH), DISPATCH)
+    assert.ok(parseAuditEvent({ ...DISPATCH, fact: { ...DISPATCH.fact, sub: 'close', model: null, effort: null, tier: 'light', verdict: 'merged' } }))
+    const broken: Record<string, unknown>[] = [
+      { v: 2 }, { fact: { ...DISPATCH.fact, sub: 'summary' } }, { fact: { ...DISPATCH.fact, tier: 'cheap' } },
+      { fact: { ...DISPATCH.fact, effort: 'huge' } }, { fact: { ...DISPATCH.fact, verdict: 'merged after two rounds' } },
+      { fact: { ...DISPATCH.fact, model: 'two words' } }, { fact: { ...DISPATCH.fact, class: 'Some Class' } }, { fact: { ...DISPATCH.fact, line: 'x' } },
+    ]
+    for (const change of broken) assert.equal(parseAuditEvent({ ...DISPATCH, ...change }), undefined, JSON.stringify(change))
+    assert.equal(parseAuditEvent({ ...STEP, v: 3 }), undefined)
+    const built = auditEvent({ at: AT, random: '0a1b2c3d', source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.open' }, trust: 'computed', kind: 'dispatch', fact: DISPATCH.fact })
+    assert.equal(built?.v, 3)
   })
 
   it('is written as learning-audit.json, beside version 1', () => {
@@ -655,6 +671,12 @@ describe("the candidate's state", () => {
       assert.equal(isDue(grown(5), state), false)
       assert.equal(isDue(grown(6), state), true)
     }
+    const merged = moved(proposed, { state: 'merged', pr: 'owner/name#9' }, AT)
+    assert.ok(typeof merged !== 'string')
+    assert.equal(isDue(candidate, merged), false)
+    const reopened = moved(merged, { state: 'ineffective' }, AT)
+    assert.ok(typeof reopened !== 'string')
+    assert.equal(isDue(candidate, reopened), true)
   })
 
   it('names the state file by the signature, under the learning plugin\'s directory, and the command that starts a retrospective', () => {
@@ -720,5 +742,66 @@ describe('a learned guard: warn, then enforce', () => {
     const byPr = wouldBeRefusals(events, 'github.learned.rule')
     assert.deepEqual([...byPr.keys()], ['owner/name#7', 'owner/name#8'])
     assert.equal(byPr.get('owner/name#7')?.length, 2)
+  })
+})
+
+describe('the outcome of a would-be refusal, and forgetting', () => {
+  const DAY = 86_400_000
+  const EVENTS = ['20261101T101500Z-0a1b2c3d', '20261102T101500Z-0a1b2c3d', '20261103T101500Z-0a1b2c3d']
+  const candidate = parseCandidate({
+    v: 1, signature: 'refusal:github.writing.rule', kind: 'refusal', code: 'github.writing.rule', severity: null, classes: [], languages: [],
+    since: '2026-10-15T10:00:00Z', until: '2026-11-14T10:00:00Z', events: EVENTS, prs: ['owner/name#7', 'owner/name#8'], repos: ['owner/name'],
+  })
+  assert.ok(candidate)
+  const cause = { resolved: true, first_failure: 'the rules are read after the text', counterfactual: 'read first, it passes', evidence: [EVENTS[0]], alternatives: ['the rules changed'], confidence: 'low' }
+  const MERGED_AT = '2026-11-01T00:00:00Z'
+  const stateOf = (rung: string, merged = true) => {
+    const proposed = judged(candidate, { signature: candidate.signature, cause, remedy: { scope: 'project', rung, target: 'owner/name', proof: { type: 'test', path: 'hooks/tests/a.test.ts' } } }, '2026-10-30T00:00:00Z')
+    assert.ok(typeof proposed !== 'string', String(proposed))
+    if (!merged) return proposed
+    const done = moved(proposed, { state: 'merged', pr: 'owner/name#9' }, MERGED_AT)
+    assert.ok(typeof done !== 'string', String(done))
+    return done
+  }
+  const refusalAt = (ms: number, n: number, code = 'github.writing.rule') => learningEvent({
+    at: `${new Date(ms).toISOString().slice(0, 19)}Z`, random: n.toString(16).padStart(8, '0'), kind: 'refusal', source: { plugin: 'github', code }, trust: 'computed',
+  })
+  const merged = Date.parse(MERGED_AT)
+  const many = (from: number, count: number, code?: string) => Array.from({ length: count }, (_, i) => refusalAt(from + i * 3_600_000, i + from / 1000, code)).filter(e => e !== undefined)
+
+  it('reads a pull request corrected when a commit follows the refusal and comes before the merge', () => {
+    assert.deepEqual(prOutcomeOf({ mergedAt: null, commits: ['2026-11-01T00:00:00Z'] }, '2026-11-01T01:00:00Z'), { merged: false, corrected: false })
+    assert.deepEqual(prOutcomeOf({ mergedAt: null, commits: ['2026-11-01T02:00:00Z'] }, '2026-11-01T01:00:00Z'), { merged: false, corrected: true })
+    assert.deepEqual(prOutcomeOf({ mergedAt: '2026-11-01T03:00:00Z', commits: ['2026-11-01T00:00:00Z'] }, '2026-11-01T01:00:00Z'), { merged: true, corrected: false })
+    assert.deepEqual(prOutcomeOf({ mergedAt: '2026-11-01T03:00:00Z', commits: ['2026-11-01T02:00:00Z'] }, '2026-11-01T01:00:00Z'), { merged: true, corrected: true })
+    assert.deepEqual(prOutcomeOf({ mergedAt: '2026-11-01T03:00:00Z', commits: ['2026-11-01T04:00:00Z'] }, '2026-11-01T01:00:00Z'), { merged: true, corrected: false })
+  })
+
+  it('a guard is proved wrong once enough would-be refusals are decided and too few are right', () => {
+    assert.equal(provedWrong(tallyOf(['right', 'wrong', 'wrong'])), false)
+    assert.equal(provedWrong({ right: 3, wrong: 2, open: 9 }), true)
+    assert.equal(provedWrong({ right: 9, wrong: 1, open: 0 }), false)
+  })
+
+  it('a merged remedy waits a window, then holds when its signature fell by half and is ineffective when it did not', () => {
+    assert.equal(FORGET_CONTRACT.fall_ratio, 0.5)
+    assert.equal(afterLanding(stateOf('test', false), [], merged + 40 * DAY), undefined)
+    assert.deepEqual(afterLanding(stateOf('test'), [], merged + 10 * DAY), { verdict: 'pending', due: '2026-12-01T00:00:00Z' })
+    const before = many(merged - 10 * DAY, 4)
+    assert.deepEqual(afterLanding(stateOf('test'), [...before, ...many(merged + DAY, 2)], merged + 31 * DAY), { verdict: 'held', before: 4, after: 2 })
+    assert.deepEqual(afterLanding(stateOf('test'), [...before, ...many(merged + DAY, 3)], merged + 31 * DAY), { verdict: 'ineffective', before: 4, after: 3 })
+    // Another signature, and events outside both windows, are not counted.
+    const other = [...many(merged + DAY, 5, 'github.other.rule'), ...many(merged - 40 * DAY, 5), ...many(merged + 31 * DAY, 5)]
+    assert.deepEqual(afterLanding(stateOf('test'), [...before, ...other], merged + 62 * DAY), { verdict: 'held', before: 4, after: 0 })
+  })
+
+  it('a merged learned guard with no event under its code over two windows is silent; any other is not', () => {
+    const now = merged + 61 * DAY
+    assert.equal(isSilentGuard(stateOf('guard'), [], now), true)
+    assert.equal(isSilentGuard(stateOf('guard'), many(merged + 50 * DAY, 1), now), false)
+    assert.equal(isSilentGuard(stateOf('guard'), many(merged + 50 * DAY, 1, 'github.other.rule'), now), true)
+    assert.equal(isSilentGuard(stateOf('guard'), [], merged + 59 * DAY), false)
+    assert.equal(isSilentGuard(stateOf('test'), [], now), false)
+    assert.equal(isSilentGuard(stateOf('guard', false), [], now), false)
   })
 })

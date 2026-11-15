@@ -12,7 +12,7 @@ Session start and end (role from the title, model, effort, launch latency, time 
 turn, duration, cost, context), each turn's end (duration, tokens, context, the session's
 cumulative cost and the turn's own), each tool call (tool, MCP server, outcome, who refused it,
 duration, a redacted Bash line), subagents (each of their runs) and launched sessions spawned and closed, questions put
-to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), and the dispatch record's writes. Every line names the session that acted (`title` and `role`, once the
+to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), and the dispatch record's writes (read from the events its script publishes in the orchestrator's journal). Every line names the session that acted (`title` and `role`, once the
 module has learned them; `parent` and `launch_tier` in a session the orchestrator's launcher spawned for an orchestrator, on a tier) and each GitHub act the repository, pull request and head it names
 (`target`). No prompt, answer, message or tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
@@ -34,7 +34,8 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   transcript.
 - `telemetry.ts sweep [--auto] --config <dir>`: over the last seven day files, one
   `session_summary` (`source: sweep`) per session idle for a day that never reached its end, and one
-  `question` event per settled question of the orchestrator's round. A session's end starts it,
+  `question` event per settled question of the orchestrator's round, and one `dispatch` event per
+  `dispatch` entry of the orchestrator's journal (`source: journal`, once per entry). A session's end starts it,
   detached, at most once a UTC day (`--auto`).
 - `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
   report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It

@@ -7,17 +7,18 @@ import { parseLearningEvent } from '../../core/learning.ts'
 import { register as registerCheck, resetCache } from '../check.ts'
 import { register as registerGuards, resetGuards } from '../guards.ts'
 import { register as registerRecord } from '../record.ts'
-import { fakeDollar, gitRuns, hook, HEAD, mount, nextOf, type FakeSetup } from './fakes.ts'
+import { fakeDollar, gitRuns, hook, HEAD, mount, nextOf, type FakeSetup, type Call, type World, hooksOn } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
 import { observedAs, watchJournal } from './journal.ts'
 
 const PR_12 = { number: 12, head: { sha: HEAD }, base: { ref: 'main' } }
 const SUBJECT = { repo: 'owner/repo', pr: 12, head: HEAD }
 
 function setup(pulls: unknown[] = [PR_12], runs: FakeSetup['runs'] = {}) {
-  const calls: any[] = []
+  const calls: Call[] = []
   const fake = fakeDollar({
     runs: { ...gitRuns(['src/a.ts'], ['src/a.ts']), ...gitRuns(['src/a.ts'], ['src/a.ts'], {}, 'main'), 'git status --porcelain -uno': { stdout: '' }, ...runs },
-    tool: (input: any) => {
+    tool: (input: Call) => {
       calls.push(input)
       if (input.tool === 'mcp__github__gh') return { result: JSON.stringify(pulls) }
       return { result: '/home/u/.claude/pr-records/o/r/' + HEAD + '/norms.json\n' }
@@ -37,13 +38,13 @@ function mounted() {
   return {
     hooks,
     // The check as the person types it: the guards' walkthrough begins, then the scope is computed.
-    scope: async ($: any, args = '') => {
-      for (const h of hooks.filter(h => h.event === 'command.run' && h.matcher?.['command'] === 'norms:check')) await h.handler($, { command: 'norms:check', args }, nextOf().next)
+    scope: async ($: World, args = '') => {
+      for (const h of hooksOn(hooks, 'command.run').filter(h => h.matcher?.['command'] === 'norms:check')) await h.handler($, { command: 'norms:check', args }, nextOf().next)
     },
-    agent: ($: any, name: string, findings: unknown[]) =>
+    agent: ($: World, name: string, findings: unknown[]) =>
       hook(hooks, 'tool.call', { tool: 'Agent' }).handler($, { tool: 'Agent', subagent_type: name }, async () => ({ result: 'Read.\n```json\n' + JSON.stringify({ findings }) + '\n```' })),
-    done: ($: any, input: any) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' }).handler($, input),
-    edit: ($: any) => hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' }, nextOf().next),
+    done: ($: World, input: Readonly<Record<string, unknown>>) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' }).handler($, input, nextOf().next),
+    edit: ($: World) => hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' }, nextOf().next),
   }
 }
 
@@ -93,7 +94,7 @@ test('a check with no finding, or on a branch with no pull request, writes no fi
   const lonely = setup([])
   await m.scope(lonely.$)
   await m.agent(lonely.$, 'norms:norms-magic-values', [{ severity: 'error', file: 'src/a.ts', summary: 's' }])
-  expect((await m.done(lonely.$, { open: 1, fixed: 0, passed: 0 })).result).toBe('record: none — the branch has no pull request')
+  expect(fieldsOf((await m.done(lonely.$, { open: 1, fixed: 0, passed: 0 })))?.['result']).toBe('record: none — the branch has no pull request')
   expect(lonely.journal()).toEqual([])
 })
 
@@ -108,8 +109,8 @@ test('a journal that cannot be written changes nothing of the record: one line i
     return write(path, text)
   }
   const out = await m.done($, { open: 1, fixed: 0, passed: 0 })
-  expect(String(out.result).startsWith('record: /home/u/.claude/pr-records/')).toBe(true)
-  expect(calls.filter(c => c.tool === 'mcp__github__record').map(c => c.result)).toEqual(['fail'])
+  expect(String(fieldsOf(out)?.['result']).startsWith('record: /home/u/.claude/pr-records/')).toBe(true)
+  expect(calls.filter(c => c.tool === 'mcp__github__record').map(c => c['result'])).toEqual(['fail'])
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('norms: the journal could not be written or pruned: disk full')
 })
@@ -123,7 +124,7 @@ test('an observed guard names the pull request the check reads: the scope\'s own
   const [event] = journal()
   expect(parseLearningEvent(event)).toEqual(event)
   expect(event).toMatchObject(observedAs('norms.edit.ungranted'))
-  expect(event.subject).toEqual(SUBJECT)
+  expect(event?.subject).toEqual(SUBJECT)
   // The subject costs the guard no call of its own.
   expect(calls.length).toBe(lookups)
 })
@@ -136,14 +137,14 @@ test('a check given its base reads no pull request at its start: the guard\'s ev
   expect(journal().map(e => e.subject)).toEqual([{ ...SUBJECT, pr: null }])
   await m.agent($, 'norms:norms-magic-values', [{ severity: 'error', file: 'src/a.ts', summary: 's' }])
   await m.done($, { open: 1, fixed: 0, passed: 0 })
-  expect(journal().at(-1).subject).toEqual(SUBJECT)
+  expect(journal().at(-1)?.subject).toEqual(SUBJECT)
 })
 
 test('the end of the session forgets the pull request: a later event names none', async () => {
   const { $, journal } = setup()
   const m = mounted()
   await m.scope($)
-  for (const h of m.hooks.filter(h => h.event === 'session.end')) await h.handler($, { reason: 'exit' }, nextOf().next)
+  for (const h of hooksOn(m.hooks, 'session.end')) await h.handler($, { sessionId: 'sess-1' }, nextOf().next)
   const guards = mount(registerGuards)
   await hook(guards, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
   await hook(guards, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' }, nextOf().next)

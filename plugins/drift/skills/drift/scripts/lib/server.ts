@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
 import { connect } from 'node:net'
-import { KILL_GRACE_MS, signalGroup } from '../../../../core/index.ts'
+import { KILL_GRACE_MS, signalGroup } from '../../../../core/process-group.ts'
 import { DriftError } from './compare.ts'
 
 export interface Server {

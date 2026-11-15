@@ -17,9 +17,9 @@ changed by a pull request that edits this file and the code it governs together.
 
 ## Types and boundaries
 
-- `strict` with the options of `tsconfig.base.json`. No `any`; `unknown` at every boundary.
-  Not held yet for the host's `$`, typed `any` in hook files under the strict check
-  (`specs/program-design.md`, goal 5).
+- `strict` with the options of `tsconfig.base.json`. No `any`; `unknown` at every boundary. The
+  host's `$` and events are core's types (`packages/core/src/host.ts`), and its test kit,
+  `claude-code/testing`, is `packages/core/src/testing.ts`, which `tsconfig.json` maps the name to.
 - Every value read from outside (a file, an event payload, a command's output, an environment
   variable) goes through a validator that returns a typed value or an error. A cast is allowed
   only inside a validator.

@@ -693,7 +693,8 @@ bash "$REC" goals "$R" init --spec none >/dev/null
 
 id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
 check "open prints the row id" "1" "$id1"
-check "the record's audit trail goes to the suite's journal, never to a configuration directory" "1|no" \
+# Three entries: the goals' and the open's dispatch events, and the open's step.
+check "the record's audit trail goes to the suite's journal, never to a configuration directory" "3|no" \
   "$(ls "$ORCHESTRATOR_JOURNAL_DIR" | wc -l | tr -d ' ')|$(JH="$WORK/journal-home"; JR="$WORK/journal-rec.jsonl"
     HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" goals "$JR" init --spec none >/dev/null 2>&1
     HOME="$JH" CLAUDE_CONFIG_DIR= bash "$REC" open "$JR" --class corrective --tier light >/dev/null 2>&1
@@ -3250,8 +3251,8 @@ code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     try:
-        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
-                     '--trust', '--no-verify'])
+        m.cmd_spawn(m.args_from_line('spawn', ['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
+                     '--trust', '--no-verify']))
     except SystemExit as exc:
         code = exc.code or 0
 print(code)
@@ -3586,7 +3587,7 @@ CDECIDE="$ROOT/commands/coordinator-decide.md"
 check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
   "yes|yes|yes|yes|1|yes" \
   "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator-decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/coordinator-decide` |')"
-COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
+COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$ROOT/skills/coordination/references/succession.md" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn $(needs_tier "$@") "$@" 2>&1; }
@@ -5750,7 +5751,7 @@ ia.terminal_for = lambda tty: Accepting()
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
 try:
-    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout'])
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout']))
 except SystemExit as exc:
     print('exit %s' % exc.code)
 else:
@@ -5987,7 +5988,7 @@ ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
@@ -6292,9 +6293,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if mode == 'rotate':
-            ia.cmd_rotate(['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light'])
+            ia.cmd_rotate(ia.args_from_line('rotate', ['--old-tty', tty, '--dir', '/x', '--title', 'T', '--tier', 'light']))
         else:
-            ia.cmd_close(['--tty', tty] + sys.argv[3:])
+            ia.cmd_close(ia.args_from_line('close', ['--tty', tty] + sys.argv[3:]))
 except SystemExit as e:
     code = e.code
 print('exit=%s' % code)
@@ -6627,7 +6628,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_spawn(["--dir", workdir, "--prompt", "p"] + argv)
+        ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p"] + argv))
 except SystemExit as e:
     code = e.code
 def chain(name):
@@ -6721,12 +6722,12 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if scenario in ("survivor", "closed"):
-            ia.cmd_close(["--tty", "/dev/ttys901", "--keep-checkout"])
+            ia.cmd_close(ia.args_from_line('close', ["--tty", "/dev/ttys901", "--keep-checkout"]))
         elif scenario in ("stranger", "mine"):
-            ia.cmd_move(["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"])
+            ia.cmd_move(ia.args_from_line('move', ["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"]))
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
-                         + (["--right-of", "self"] if scenario == "beside" else []))
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
+                         + (["--right-of", "self"] if scenario == "beside" else [])))
 except SystemExit as e:
     code = e.code
 def chain():
@@ -6819,9 +6820,9 @@ code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         if argv[:1] == ["list"]:
-            ia.cmd_list([])
+            ia.cmd_list(None)
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--no-verify"] + argv)
+            ia.cmd_spawn(ia.args_from_line('spawn', ["--dir", workdir, "--prompt", "p", "--no-verify"] + argv))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -6967,7 +6968,7 @@ ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
 check "a takeover hands the predecessor's agents to the successor and removes the predecessor's chain" \
   "1|tmux:/s:@2,tmux:/s:@4|absent" \
   "$(printf '%s' "$res" | grep -c '^took window 0')|$(jq -r .tab_id "$TKSTATE/chains/ttys967.jsonl" | paste -sd, -)|$([ -e "$TKSTATE/chains/ttys966.jsonl" ] && echo present || echo absent)"
@@ -7599,7 +7600,7 @@ def interrupted(argv):
     """The close interrupted: by the keyboard, or by a signal this probe sends itself."""
     calls.append("cmd_close")
     if mode == "sent-interrupt":
-        ia.KILL_SENT.add(argv[1])
+        ia.KILL_SENT.add(argv.tty)
     if mode in ("sigterm", "sighup"):
         signal.raise_signal(signal.SIGTERM if mode == "sigterm" else signal.SIGHUP)
     raise KeyboardInterrupt()
@@ -7624,11 +7625,11 @@ elif mode == "nohup":
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     ia.cmd_close = refused_seeing_hangup
 elif mode in ("sent-gone", "sent-there"):
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), sent(argv.tty))
 elif mode == "raises":
     ia.cmd_close = raises
 elif mode == "vanished":
-    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv[1]))
+    ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: no session found on %s" % argv.tty))
 else:
     ia.cmd_close = lambda argv: (calls.append("cmd_close"), ia.die("close: refused late"))
 class Out(io.StringIO):
@@ -7636,7 +7637,7 @@ class Out(io.StringIO):
     def flush(self):
         if mode == "closed-pipe" and "closed 1 session" in self.getvalue():
             raise BrokenPipeError(32, "Broken pipe")
-rotate = ["--old-tty", "/dev/ttys901", "--dir", "/x", "--title", "T", "--tier", "light"]
+rotate = ["--old-tty", "/dev/ttys901", "--dir", "/", "--title", "Agent: t", "--tier", "light", "--prompt", "p"]
 if len(sys.argv) > 3:
     rotate = ["--old-tty", "/dev/ttys901", "--dir", sys.argv[3], "--title", "Agent: two",
               "--tier", "light", "--prompt", "p"]
@@ -7647,13 +7648,13 @@ if mode.startswith("pipe-"):
     os.close(r)
     os.dup2(w, 1)
     os.close(w)
-    ia.cmd_rotate(rotate)
+    ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 handlers = [signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
 out, err = Out(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_rotate(rotate)
+        ia.cmd_rotate(ia.args_from_line('rotate', rotate))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -7986,7 +7987,7 @@ sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 ia.cmd_spawn = lambda *a, **k: print("spawned")
 try:
-    ia.cmd_rotate(["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"])
+    ia.cmd_rotate(ia.args_from_line('rotate', ["--old-tty", "/dev/ttys901", "--dir", "/x", "--prompt", "p", "--tier"]))
 except SystemExit as e:
     print("exit=%s" % e.code)
 PYEOF
@@ -8066,7 +8067,7 @@ def asked(*args, **kwargs):
     sys.exit(3)
 for method in ('chain_state', 'can_place', 'create', 'find', 'identity'):
     setattr(ia.ITERM, method, asked)
-ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
+ia.cmd_spawn(ia.args_from_line('spawn', sys.argv[3:]))" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
 OUTREFUSED="spawn: refused: this session is an orchestrator ('Orch: rev') outside its home session"
 out=$(outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
 check "an orchestrator not yet moved home (named by --orchestrator, its rename pending) is refused, and iTerm2 is never asked" "1|1|none" \
@@ -8496,7 +8497,7 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home(["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"])
+        ia.cmd_home(ia.args_from_line('home', ["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8614,8 +8615,8 @@ out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.cmd_home_release(["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
-                             "--pane-tty", "/dev/ttys961", "--resumed", resumed])
+        ia.cmd_home_release(ia.args_from_line('home-release', ["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
+                             "--pane-tty", "/dev/ttys961", "--resumed", resumed]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -8772,7 +8773,7 @@ code = 0
 argv = json.loads(sys.argv[5])
 try:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        ia.COMMANDS[argv[0]](argv[1:])
+        ia.COMMANDS[argv[0]](ia.args_from_line(argv[0], argv[1:]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
@@ -10538,10 +10539,11 @@ rm -f "$ASTATE/round/w6.json"
 # time an answer the pane had sent (the operator's report of 2026-10-25). The record keeps the
 # ids printed before while the round holds them, drops the others, and is written by one rename.
 printf '["gone-entry","w1"]\n' > "$ASTATE/round-listed.json"
-ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | sed -n 's/^round \([^ ]*\) .*| open.*/\1/p' | sort | paste -sd, -)
-check "round records the ids of the open entries it printed, keeps those printed before while the round holds them" \
-  "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
-  "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
+# Only the entries whose question it printed: one printed as its header alone is the pane's.
+ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | awk '/^round / { id = ($0 ~ /\| open/) ? $2 : ""; next } /^    / && id != "" { print id; id = "" }' | sort | paste -sd, -)
+check "round records the ids of the open entries whose question it printed, keeps those printed before while the round holds them" \
+  "$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | grep . | sort | paste -sd, -)|0" \
+  "$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
 rm -f "$ASTATE/round-listed.json"
 check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
   "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'call `settle` for it')"
@@ -10968,19 +10970,21 @@ LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANAGENT="mcp__orchestrator__review mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait"
 # The servers an orchestrator never calls: its agents run them.
 LEANORCH="mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement"
+# A coordinator and an auditor lose those and the review tools too.
+LEANWATCH="$LEANORCH mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record"
 check "an agent loses the five unused tools and the four only an orchestrator calls" "$LEANBASE $LEANAGENT" \
   "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and the four servers it never calls, and keeps the four" "$LEANBASE $LEANORCH" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all nine" "$LEANBASE $LEANAGENT" \
   "$(leanl --title-free --title probe | leanset)"
-check "an auditor loses the five and keeps the four only an orchestrator calls" "$LEANBASE" \
+check "an auditor loses the five and the review tools, and keeps the four only an orchestrator calls" "$LEANBASE $LEANWATCH" \
   "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "no role but an agent loses the four only an orchestrator calls: orchestrator, successor, coordinator, auditor" "0|0|0|0" \
   "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset | grep -c 'declare_wait')|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset | grep -c 'declare_wait')|$(crdl --coordinator-successor --title 'Coord: ops' | leanset | grep -c 'declare_wait')|$(audl --auditor --title 'Audit: tm' | leanset | grep -c 'declare_wait')"
 check "--keep-tool brings one of the four back to an agent" "$LEANBASE mcp__orchestrator__supervision mcp__orchestrator__settle mcp__orchestrator__declare_wait" \
   "$(leanl --title 'Agent: x' --keep-tool mcp__orchestrator__review | leanset)"
-check "the coordinator's successor keeps the four" "$LEANBASE" \
+check "the coordinator's successor keeps the four and loses the review tools" "$LEANBASE $LEANWATCH" \
   "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
 check "a successor keeps the four and loses the four servers, as an orchestrator does" "$LEANBASE $LEANORCH" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
@@ -11019,7 +11023,7 @@ check "a name with surrounding whitespace is read without it, for either option,
 check "the same name on both options is refused whatever its padding" "1|1" \
   "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c "^SendFeedback Workflow ScheduleWakeup ReportFindings $LEANWATCH WebSearch$")"
 LEANPS="$WORK/ps-lean.txt"
 printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \

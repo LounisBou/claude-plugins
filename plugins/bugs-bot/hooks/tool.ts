@@ -13,6 +13,9 @@ import {
   READS, TOOL, TOOL_COMMANDS, TOOL_NAME, TOOL_TIMEOUT_MS, argsOf, chosenPython, measuredGateArgs, pythonFile, toolArgv,
   toolText,
 } from './core.ts'
+import { reasonOf, type Host, type On } from '../core/host.ts'
+
+type ToolHost = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'ui'>
 
 /*
  * A tool.call hook that answers in place of next(e) skips the engine's own
@@ -22,7 +25,7 @@ import {
  * passes and a write is put to the person; where nobody can answer (a -p run)
  * the write is refused.
  */
-async function permit($: any, command: string, args: readonly string[]): Promise<string | undefined> {
+async function permit($: ToolHost, command: string, args: readonly string[]): Promise<string | undefined> {
   const own = await $.tool.check({ tool: TOOL, input: { command, args } })
   if (own.decision === 'allow') return undefined
   if (own.decision === 'deny') return own.reason || 'refused by a permission rule'
@@ -42,7 +45,7 @@ async function permit($: any, command: string, args: readonly string[]): Promise
   return `the user refused bugs-bot ${command}`
 }
 
-async function measured($: any, args: string[]): Promise<string[]> {
+async function measured($: ToolHost, args: string[]): Promise<string[]> {
   try {
     const { context } = await $.session.usage()
     return measuredGateArgs(args, context?.tokens, context?.window) ?? args
@@ -53,10 +56,10 @@ async function measured($: any, args: string[]): Promise<string[]> {
 
 // The interpreter that runs this plugin's CLI, chosen as the fixed launcher chooses it: BUGS_BOT_PYTHON
 // when set, else the one bin/setup remembered in the bugs home, else python3 from the PATH.
-async function python($: any): Promise<string> {
+async function python($: ToolHost): Promise<string> {
   const chosen = await $.env.get('BUGS_BOT_PYTHON')
   if (chosen) return chosen
-  const file = pythonFile(await $.env.get('BUGS_BOT_HOME'), await $.env.get('HOME'))
+  const file = pythonFile(await $.env.get('BUGS_BOT_HOME'), (await $.env.get('HOME')) ?? '')
   try {
     return chosenPython((await $.fs.exists(file)) ? String(await $.fs.read(file)) : null)
   } catch {
@@ -64,8 +67,8 @@ async function python($: any): Promise<string> {
   }
 }
 
-export function register(on: any): void {
-  on('session.start', async ($: any, e: any, next: any) => {
+export function register(on: On<ToolHost>): void {
+  on('session.start', async ($, e, next) => {
     await $.tool.register({
       name: TOOL_NAME,
       // Listed with its schema from the start: behind ToolSearch the model would
@@ -88,11 +91,11 @@ export function register(on: any): void {
       },
     })
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($: any, e: any) => {
-    const command = String(e.command ?? '')
-    const raw = argsOf(e.args)
+  on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($, e) => {
+    const command = String(e['command'] ?? '')
+    const raw = argsOf(e['args'])
     if (!TOOL_COMMANDS.includes(command)) return { result: `not a command of this tool: ${command || '(none)'}`, isError: true }
     if (raw === null) return { result: '`args` must be a list of strings', isError: true }
     const refused = await permit($, command, raw)
@@ -102,8 +105,8 @@ export function register(on: any): void {
     try {
       const r = await $.process.run(toolArgv(interpreter, $.plugin.root, command, args), { timeoutMs: TOOL_TIMEOUT_MS })
       return { result: toolText(r.stdout, r.stderr, r.exitCode), isError: r.exitCode !== 0 }
-    } catch (err: any) {
-      return { result: `bugs-bot ${command} could not run: ${String(err?.message ?? err)}`, isError: true }
+    } catch (err) {
+      return { result: `bugs-bot ${command} could not run: ${reasonOf(err)}`, isError: true }
     }
   }).catch(async () => ({ deny: 'bugs-bot: the tool itself failed; run the same command as `bugs-bot <command>` in Bash' }))
 }

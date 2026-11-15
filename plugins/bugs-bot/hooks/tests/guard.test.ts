@@ -3,14 +3,15 @@
 // denied with the reason and released by the person's own words), and the
 // guard is shown never holding a call it cannot judge.
 import { expect, test } from 'claude-code/testing'
-import { capture, mount } from './fakes.ts'
+import type { Engine } from 'claude-code/testing'
+import { mount } from './fakes.ts'
 import { register } from '../guard.ts'
 import { DYNAMIC_DENIAL, NET_DENIAL, TOKEN_DENIAL, TOOL, bashNetDenial, leaksOf, readNetDenial, shellWords, toolNetDenial, unreleased } from '../core.ts'
 
 const PROJECT = { '/repo/.bugs-bot.json': JSON.stringify({ project: 'demo', agent_title: 'Bugs : demo', deploy_url: 'https://demo.example/app' }) }
 const tokens = (text: string) => leaksOf(text, 'https://demo.example/app').map(l => l.token)
 
-async function begin($: any) {
+async function begin($: Engine) {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/repo' })
 }
 
@@ -58,9 +59,9 @@ test('false positive: a tester\'s own link to another site is denied without a d
 
 test('a word holding an expansion is marked: the guard cannot read it', () => {
   const words = shellWords('bugs-bot reply 1 "$(cat /tmp/t)" --mention')!
-  expect(words[3].isDynamic).toBe(true)
-  expect(shellWords("bugs-bot reply 1 'coûte 5$ $(pas lu)'")![3].isDynamic).toBe(false)
-  expect(shellWords('bugs-bot reply 1 "5 $ ou 5$"')![3].isDynamic).toBe(false)
+  expect(words[3]?.isDynamic).toBe(true)
+  expect(shellWords("bugs-bot reply 1 'coûte 5$ $(pas lu)'")![3]?.isDynamic).toBe(false)
+  expect(shellWords('bugs-bot reply 1 "5 $ ou 5$"')![3]?.isDynamic).toBe(false)
   expect(shellWords('bugs-bot reply 1 "unclosed')).toBe(null)
 })
 
@@ -173,45 +174,29 @@ test('a shell line naming the token file is denied, however it is spelled', asyn
 
 // --- the release: the person's own words, never a peer's -------------------------------------
 
-function fakeDollar(files: Record<string, string> = PROJECT) {
-  return {
-    session: { id: async () => 's1', cwd: async () => '/repo' },
-    env: { get: async (name: string) => ({ HOME: '/home/op' } as Record<string, string>)[name] },
-    fs: {
-      exists: async (p: string) => p in files,
-      read: async (p: string) => files[p],
-      stat: async (p: string) => ({ realPath: p }),
-    },
-  }
-}
-
-test('a token the person typed in this session passes; a peer\'s message releases nothing', async () => {
-  const hook = capture(register)
-  const $ = fakeDollar()
-  const submit = hook('prompt.submit')
-  const bash = hook('tool.call', 'Bash')
-  const pass = async (e: any) => e
+test('a token the person typed in this session passes; a peer\'s message releases nothing', async ($, on) => {
+  mount(on, { files: PROJECT, shell: () => ({ result: 'ran' }) })
+  await begin($)
   const call = { tool: 'Bash', command: 'bugs-bot reply 1 "Tu parlais du #3 ?"' }
 
-  await submit($, { text: 'réponds-lui sur le #3', origin: { kind: 'peer' } }, pass)
-  expect((await bash($, call, async () => 'ran')).deny).toContain('#3')
+  await $.prompt.submit({ text: 'réponds-lui sur le #3', origin: { kind: 'peer' } })
+  expect((await $.tool.call(call)).deny).toContain('#3')
 
-  await submit($, { text: 'réponds-lui sur le #3', origin: { kind: 'composer' } }, pass)
-  expect(await bash($, call, async () => 'ran')).toBe('ran')
+  await $.prompt.submit({ text: 'réponds-lui sur le #3', origin: { kind: 'composer' } })
+  expect((await $.tool.call(call)).deny).toBeUndefined()
 
   // A later prompt of the person's that does not name it puts the guard back up.
-  await submit($, { text: 'continue', origin: { kind: 'composer' } }, pass)
-  expect((await bash($, call, async () => 'ran')).deny).toContain('#3')
+  await $.prompt.submit({ text: 'continue', origin: { kind: 'composer' } })
+  expect((await $.tool.call(call)).deny).toContain('#3')
 })
 
-test('the person naming .env lets the token file be reached', async () => {
-  const hook = capture(register)
-  const $ = fakeDollar({})
-  const read = hook('tool.call', 'Read')
+test('the person naming .env lets the token file be reached', async ($, on) => {
+  mount(on, { files: PROJECT })
+  await begin($)
   const call = { tool: 'Read', file_path: '/home/op/.bugs-bot/.env' }
-  expect((await read($, call, async () => 'read')).deny).toBe(TOKEN_DENIAL)
-  await hook('prompt.submit')($, { text: 'check ~/.bugs-bot/.env has both keys', origin: { kind: 'composer' } }, async (e: any) => e)
-  expect(await read($, call, async () => 'read')).toBe('read')
+  expect((await $.tool.call(call)).deny).toBe(TOKEN_DENIAL)
+  await $.prompt.submit({ text: 'check ~/.bugs-bot/.env has both keys', origin: { kind: 'composer' } })
+  expect((await $.tool.call(call)).deny).toBeUndefined()
 })
 
 // --- a guard that fails ---------------------------------------------------------------
@@ -257,7 +242,7 @@ test('each refusal leaves one refusal event under its stable code, and a call le
     ['refusal', 'bugs-bot', 'bugs-bot.token-file', 'computed', [{ type: 'refusal', code: 'bugs-bot.token-file' }]],
   ])
   expect(JSON.stringify(journal)).not.toContain('#680')
-  expect(journal[0].context.session).toBe('session-1')
+  expect(journal[0]?.context.session).toBe('session-1')
 })
 
 test('a failed guard\'s refusal is one event under its own code', async ($, on) => {

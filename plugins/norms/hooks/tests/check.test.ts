@@ -5,7 +5,9 @@ import { expect, test } from 'claude-code/testing'
 import { classify, parseCheckArgs, applicable, classifyAll, contributingExcerpt, fenceFor, projectTypes } from '../scope.ts'
 import { baseOf, register, resetCache } from '../check.ts'
 import { branchPull, openPullAt } from '../record.ts'
-import { mount, hook, nextOf, fakeDollar, gitRuns, BASE, HEAD } from './fakes.ts'
+import { mount, hook, nextOf, fakeDollar, gitRuns, BASE, HEAD, type Call } from './fakes.ts'
+import { fieldsOf, listOf } from '../../core/host.ts'
+import { hostOf } from '../../core/capture.ts'
 
 test('files are classified by check.md Step 2', () => {
   expect(classify('src/auth.ts')).toBe('source')
@@ -69,7 +71,7 @@ test('/norms:check gets the precomputed scope appended, with the resolver\'s bas
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: 'base=develop use ../lib and ../gone as pattern reference' }, next)
-  const args: string = seen[0].args
+  const args = String(fieldsOf(seen[0])?.['args'])
   expect(args.startsWith('base=develop use ../lib and ../gone as pattern reference\n\n<norms-scope>')).toBe(true)
   expect(args).toContain(`base: ${BASE} (from base=develop)`)
   expect(args).toContain('project type: JavaScript/TypeScript')
@@ -111,7 +113,7 @@ test('a norms agent gets the diff of its own files and its own sections at spawn
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-variable-naming', prompt: 'Check naming.', fork: false }, next)
-  const prompt: string = seen[0].prompt
+  const prompt = String(fieldsOf(seen[0])?.['prompt'])
   expect(prompt.startsWith('Check naming.\n\n<norms-context>')).toBe(true)
   expect(prompt).toContain(`base: ${BASE}`)
   expect(prompt).toContain(`head: ${HEAD}`)
@@ -144,9 +146,9 @@ test('a diff past the inline limit goes to a file under the git dir', async () =
   await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-diff-scope', prompt: 'p', fork: false }, next)
   const path = `/repo/.git/norms/${HEAD.slice(0, 12)}-norms-diff-scope.diff`
   expect(written[path]).toBe(big)
-  expect(seen[0].prompt).toContain(`read it from ${path}`)
-  expect(seen[0].prompt).toContain('CONTRIBUTING.md: absent')
-  expect(seen[0].prompt.includes('+x\n+x')).toBe(false)
+  expect(fieldsOf(seen[0])?.['prompt']).toContain(`read it from ${path}`)
+  expect(fieldsOf(seen[0])?.['prompt']).toContain('CONTRIBUTING.md: absent')
+  expect(String(fieldsOf(seen[0])?.['prompt']).includes('+x\n+x')).toBe(false)
 })
 
 test('agents spawned after /norms:check reuse its base instead of resolving again', async () => {
@@ -160,7 +162,7 @@ test('agents spawned after /norms:check reuse its base instead of resolving agai
   const { next, seen } = nextOf()
   await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
   expect(argvs.filter(a => a.includes('resolve_base.sh')).length).toBe(1)
-  expect(seen[0].prompt).toContain('+a')
+  expect(fieldsOf(seen[0])?.['prompt']).toContain('+a')
 })
 
 test('mode=auto in the arguments selects the automatic mode', () => {
@@ -180,7 +182,7 @@ async function scopeArgs(args: string, env: Record<string, string> = {}): Promis
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: `base=develop ${args}` }, next)
-  return seen[0].args
+  return String(fieldsOf(seen[0])?.['args'])
 }
 
 test('a non-empty launcher variable runs the check in automatic mode', async () => {
@@ -197,10 +199,10 @@ test('neither the argument nor a non-empty launcher variable leaves the check in
 })
 
 // The github tool as `call` answers it, for a lookup in Owner/Repo.
-const tool = (call: (input: any) => any) => ({ tool: { call: async (input: any) => call(input) } })
+const tool = (call: (input: Call) => unknown) => hostOf({ tool: { call: async (input: Call) => call(input) } })
 
 test('the pull request\'s base is read through the github tool, and anything unreadable is said, never taken for no pull request', async () => {
-  const ask = async (answer: any) => baseOf(await branchPull(tool(() => answer), 'Owner/Repo', 'feature'))
+  const ask = async (answer: unknown) => baseOf(await branchPull(tool(() => answer), 'Owner/Repo', 'feature'))
   expect(await ask({ result: JSON.stringify([{ base: { ref: 'parent' } }]) })).toEqual({ base: 'parent' })
   expect(await ask({ result: '[]' })).toEqual({})
   expect(await ask({ deny: 'no github' })).toEqual({ why: 'no github' })
@@ -215,8 +217,8 @@ const PR_HEAD = HEAD
 const pulls = (...rows: [string, string, number?][]) => JSON.stringify(rows.map(([sha, ref, number]) => ({ number, head: { sha }, base: { ref } })))
 
 test('on a detached head the base comes from the open pull request whose head is HEAD, in the repository named', async () => {
-  const calls: any[] = []
-  const $ = tool((input: any) => { calls.push(input); return { result: pulls(['c'.repeat(40), 'main'], [PR_HEAD, 'home']) } })
+  const calls: Call[] = []
+  const $ = tool((input: Call) => { calls.push(input); return { result: pulls(['c'.repeat(40), 'main'], [PR_HEAD, 'home']) } })
   expect(baseOf(await openPullAt($, 'Owner/Repo', PR_HEAD))).toEqual({ base: 'home' })
   expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: { format: 'raw' }, repo: 'Owner/Repo' }])
   expect(baseOf(await openPullAt($, 'Owner/Repo', 'd'.repeat(40)))).toEqual({})
@@ -228,7 +230,7 @@ test('several open pull requests with the head are refused, naming them', async 
   expect(await openPullAt($, 'Owner/Repo', PR_HEAD)).toEqual({ why: `2 open pull requests have the head ${PR_HEAD.slice(0, 12)}: Owner/Repo#3, Owner/Repo#4` })
 })
 
-async function detachedCheck(args: string, tool: (input: any) => any) {
+async function detachedCheck(args: string, tool: (input: Call) => any) {
   resetCache()
   const hooks = mount(register)
   const { $, argvs, toolCalls } = fakeDollar({
@@ -247,9 +249,9 @@ async function detachedCheck(args: string, tool: (input: any) => any) {
 test('/norms:check on a detached head resolves the base of the pull request at HEAD', async () => {
   const { run, seen, argvs, toolCalls } = await detachedCheck('', () => ({ result: pulls([PR_HEAD, 'home']) }))
   await run
-  expect(seen[0].args).toContain(`base: ${BASE} (from base=home)`)
+  expect(fieldsOf(seen[0])?.['args']).toContain(`base: ${BASE} (from base=home)`)
   expect(argvs).toContain('bash /plugin/scripts/resolve_base.sh home')
-  expect(toolCalls.map(c => c.command)).toEqual(['pr-list'])
+  expect(toolCalls.map(c => c['command'])).toEqual(['pr-list'])
 })
 
 // The refusal reaches the person as the scope block, so the command does not compute a scope of its own.
@@ -258,21 +260,21 @@ const REFUSAL_TAIL = 'Run no step of the check: print the refused line to the us
 test('/norms:check on a detached head with no pull request at HEAD refuses instead of taking the default branch', async () => {
   const { run, seen, argvs } = await detachedCheck('naming', () => ({ result: pulls(['c'.repeat(40), 'main']) }))
   await run
-  expect(seen[0].args).toBe(`naming\n\n<norms-scope>\nrefused: detached HEAD (${HEAD.slice(0, 12)}) and no open pull request has it as its head: pass the base, /norms:check base=<branch>\n${REFUSAL_TAIL}`)
+  expect(fieldsOf(seen[0])?.['args']).toBe(`naming\n\n<norms-scope>\nrefused: detached HEAD (${HEAD.slice(0, 12)}) and no open pull request has it as its head: pass the base, /norms:check base=<branch>\n${REFUSAL_TAIL}`)
   expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual([])
 })
 
 test('/norms:check on a detached head that several open pull requests have refuses, naming them', async () => {
   const { run, seen, argvs } = await detachedCheck('', () => ({ result: pulls([PR_HEAD, 'main', 3], [PR_HEAD, 'home', 4]) }))
   await run
-  expect(seen[0].args).toContain(`refused: detached HEAD (${HEAD.slice(0, 12)}) and its pull request could not be read (2 open pull requests have the head ${HEAD.slice(0, 12)}: Owner/Repo#3, Owner/Repo#4)`)
+  expect(fieldsOf(seen[0])?.['args']).toContain(`refused: detached HEAD (${HEAD.slice(0, 12)}) and its pull request could not be read (2 open pull requests have the head ${HEAD.slice(0, 12)}: Owner/Repo#3, Owner/Repo#4)`)
   expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual([])
 })
 
 test('/norms:check on a detached head with an explicit base asks the github tool nothing', async () => {
   const { run, seen, toolCalls } = await detachedCheck('base=home', () => { throw new Error('asked') })
   await run
-  expect(seen[0].args).toContain(`base: ${BASE} (from base=home)`)
+  expect(fieldsOf(seen[0])?.['args']).toContain(`base: ${BASE} (from base=home)`)
   expect(toolCalls).toEqual([])
 })
 
@@ -286,7 +288,7 @@ async function branchCheck(answer: () => any) {
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, next)
-  return { $, args: String(seen[0].args), argvs, toolCalls }
+  return { $, args: String(fieldsOf(seen[0])?.['args']), argvs, toolCalls }
 }
 
 test('/norms:check on a branch asks the branch\'s pull request in the repository named, whatever the pull request list holds', async () => {
@@ -328,7 +330,7 @@ test('a reference path is read from the repository the check reads, not from whe
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: 'base=develop use ../lib as pattern reference' }, next)
-  expect(seen[0].args).toContain('external references (validated): ../lib')
+  expect(fieldsOf(seen[0])?.['args']).toContain('external references (validated): ../lib')
 })
 
 test('agents spawned after a shell cd into another repository get the diff of the repository the check read', async () => {
@@ -347,8 +349,8 @@ test('agents spawned after a shell cd into another repository get the diff of th
   })
   const { next, seen } = nextOf()
   await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
-  expect(seen[0].prompt).toContain('+const a = 1')
-  expect(seen[0].prompt).toContain(`diff (git -C /repo diff ${BASE}...HEAD -- <files above>):`)
+  expect(fieldsOf(seen[0])?.['prompt']).toContain('+const a = 1')
+  expect(fieldsOf(seen[0])?.['prompt']).toContain(`diff (git -C /repo diff ${BASE}...HEAD -- <files above>):`)
   expect(argvs.filter(a => !a.startsWith('(/repo) '))).toEqual([])
 })
 
@@ -366,9 +368,9 @@ test('the scope cached for the agents is reused in its own repository only', asy
   const spawn = async () => {
     const { next, seen } = nextOf()
     await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
-    return String(seen[0].prompt)
+    return String(fieldsOf(seen[0])?.['prompt'])
   }
-  expect((state.get('norms/scopeMark') as any).dir).toBe('/a')
+  expect(fieldsOf((state.get('norms/scopeMark')))?.['dir']).toBe('/a')
   expect(await spawn()).toContain('+a')
   expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual(['(/a) bash /plugin/scripts/resolve_base.sh develop'])
   // A mark for another repository: the cache of /a is not its scope.

@@ -176,12 +176,8 @@ test('agent_spawned and agent_closed: a session launched and closed through the 
   assert.deepEqual(orchestrationOf('iterm-agent.sh list'), [])
 })
 
-test('dispatch: the record\'s writes, with the row, the pair and the verdict', () => {
-  const events = toolEvents(AT, S, F('tool.call.dispatch'), F('result.ok'), undefined, 10).slice(1)
-  assert.deepEqual(events, [
-    { ...HEAD, event: 'dispatch', sub: 'open', record: 'record.jsonl', class: 'plugin', model: 'sonnet', effort: 'high' },
-    { ...HEAD, event: 'dispatch', sub: 'close', record: 'record.jsonl', row: '68', verdict: 'merged' },
-  ])
+test('dispatch: the record\'s writes are not read from the command line, its script publishes them', () => {
+  assert.deepEqual(toolEvents(AT, S, F('tool.call.dispatch'), F('result.ok'), undefined, 10).map(e => e.event), ['tool_call'])
   assert.deepEqual(orchestrationOf('dispatch-record.sh summary /r'), [])
 })
 

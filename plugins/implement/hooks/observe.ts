@@ -4,7 +4,8 @@
 // it would have answered as its evidence. Never throws: the journal is an observation, and a call
 // whose line cannot be written goes through all the same.
 import { configDirOf } from '../core/env.ts'
-import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
+import type { Host } from '../core/host.ts'
+import { appendEventOver, journalIoOf, randomPart } from '../core/journal.ts'
 import { journalDir, learningEvent } from '../core/learning.ts'
 
 const PLUGIN = 'implement'
@@ -16,21 +17,9 @@ let pruned = false
 // The time as the contract writes it: to the second, in UTC.
 const stampOf = (date: Date): string => date.toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
 
-// The journal's I/O over the host's nouns: files through `$.fs`, the rename and the removal through `$.process`.
-function ioOf($: any): JournalIo {
-  return {
-    write: (path, text) => $.fs.write(path, text),
-    read: (path) => $.fs.read(path).then((text: unknown) => String(text), () => undefined),
-    run: (argv) => $.process.run(argv, { timeoutMs: 5000 }),
-    mtimeMs: (path) => $.fs.stat(path).then((stat: any) => stat.mtimeMs, () => undefined),
-    sleep: (ms) => $.clock.sleep(ms),
-    now: Date.now,
-    tag: () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    list: (dir) => $.fs.list(dir).then((entries: any[]) => entries.map((entry) => String(entry.name)), () => []),
-  }
-}
+export type ObserveHost = Host<'env' | 'fs' | 'process' | 'session' | 'clock' | 'ui'>
 
-export async function observed($: any, code: string, now: () => Date = () => new Date()): Promise<void> {
+export async function observed($: ObserveHost, code: string, now: () => Date = () => new Date()): Promise<void> {
   try {
     const config = configDirOf({ CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') }, (await $.env.get('HOME')) ?? '')
     const id: string = await $.session.id().catch(() => '')
@@ -40,7 +29,7 @@ export async function observed($: any, code: string, now: () => Date = () => new
       trust: 'computed', evidence: [{ type: 'refusal', code }], kind: 'escape',
     })
     if (event === undefined) throw new Error(`the code ${code} breaks the journal's contract`)
-    await appendEventOver(ioOf($), journalDir(config, PLUGIN), event, at, !pruned)
+    await appendEventOver(journalIoOf($), journalDir(config, PLUGIN), event, at, !pruned)
     pruned = true
   } catch (err: unknown) {
     // An observation that cannot be written is one line in the host's log; the call it describes goes through.

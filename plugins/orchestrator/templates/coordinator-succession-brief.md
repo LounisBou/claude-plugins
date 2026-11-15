@@ -9,7 +9,8 @@ word on a point outranks this brief and the rulebook both.
 
 1. **Read** the rulebook, then the notes once, capped: `head -c 4000 {{NOTES_FILE}}` (the pull
    requests each orchestrator holds, the flags sent, and the sessions already announced to).
-   That list is yours as it stands: you do not re-send the start message to a session it names.
+   That list is yours as it stands: you announce nothing to a session it names — the module routes
+   their questions to you, and none of them needs your name.
    Then the round file `{{ROUND_FILE}}` (« none » when no round is open): the open decision round, every question received
    with its sender and status. Carry the round on from its first question not yet sent, grouped by sender as the
    rulebook says; nothing in it is dropped, and the end line counts it whole.
@@ -42,13 +43,7 @@ word on a point outranks this brief and the rulebook both.
 
    The script says « replaced a stale record: {{PREDECESSOR}} »; `lookup` then prints your
    name. A refusal stops you here, reported to the operator verbatim.
-6. **Announce yourself** to every `Orch:` session step 2's `ListAgents` showed, one
-   `SendMessage` each, this text verbatim, the brackets filled:
-
-   > The coordinator of this machine is now `<your exact name and reference>`, taking over
-   > from `{{PREDECESSOR}}`. Nothing else changes; reply nothing.
-
-7. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab
+6. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab
    is closed, and the `collision` and `unread` lines its `facts` prints, run now with
    `{{COORDINATOR_SH}}`.
 

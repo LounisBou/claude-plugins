@@ -21,12 +21,13 @@ import {
   typedNamesTokenFile, unreleased,
   type Word,
 } from './core.ts'
-import { CODES, refuse, type RefusalCode } from './observe.ts'
+import type { On } from '../core/host.ts'
+import { CODES, refuse, type JournalHost, type RefusalCode } from './observe.ts'
 
 // The last prompt the person typed, by session: what releases a finding.
 let lastTyped: { sessionId: string; text: string } | null = null
 
-async function typed($: any): Promise<string | null> {
+async function typed($: JournalHost): Promise<string | null> {
   try {
     return lastTyped && lastTyped.sessionId === (await $.session.id()) ? lastTyped.text : null
   } catch {
@@ -36,7 +37,7 @@ async function typed($: any): Promise<string | null> {
 
 // The deployment URL of the project the call works on: the project file of the
 // session's directory or a parent. None found: no host is allowed.
-async function deployUrl($: any): Promise<string | null> {
+async function deployUrl($: JournalHost): Promise<string | null> {
   const cwd = await $.session.cwd()
   for (const dir of parentsOf(cwd)) {
     const path = `${dir === '/' ? '' : dir}/${PROJECT_FILE}`
@@ -51,7 +52,7 @@ async function deployUrl($: any): Promise<string | null> {
 }
 
 // The verdict on what a call would post: a denial under its code, or nothing.
-async function judgePosted($: any, words: readonly Word[]): Promise<{ code: RefusalCode; denial: string } | null> {
+async function judgePosted($: JournalHost, words: readonly Word[]): Promise<{ code: RefusalCode; denial: string } | null> {
   if (words.length === 0) return null
   if (words.some(w => w.isDynamic)) return { code: CODES.dynamic, denial: DYNAMIC_DENIAL }
   const url = await deployUrl($)
@@ -59,13 +60,13 @@ async function judgePosted($: any, words: readonly Word[]): Promise<{ code: Refu
   return leaks.length > 0 ? { code: CODES.leak, denial: leakDenial(leaks) } : null
 }
 
-async function tokenPath($: any): Promise<{ file: string; home: string }> {
+async function tokenPath($: JournalHost): Promise<{ file: string; home: string }> {
   const home = String((await $.env.get('HOME')) ?? '')
   return { file: tokenFile(await $.env.get('BUGS_BOT_ENV_FILE'), await $.env.get('BUGS_BOT_HOME'), home), home }
 }
 
 // The real path of a file, every link and `..` resolved; the spelling itself when it does not exist.
-async function realPath($: any, path: string): Promise<string> {
+async function realPath($: JournalHost, path: string): Promise<string> {
   try {
     return (await $.fs.stat(path, { resolve: true })).realPath ?? path
   } catch {
@@ -73,19 +74,19 @@ async function realPath($: any, path: string): Promise<string> {
   }
 }
 
-export function register(on: any): void {
-  on('prompt.submit', async ($: any, e: any, next: any) => {
+export function register(on: On<JournalHost>): void {
+  on('prompt.submit', async ($, e, next) => {
     if (typedByPerson(String(e.origin?.kind ?? ''))) {
       try {
         lastTyped = { sessionId: await $.session.id(), text: String(e.text ?? '') }
       } catch { /* no session id: nothing typed is kept, and the guard stays up */ }
     }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$, e, next) => next(e))
 
   // The shell form: each bugs-bot call of the line, and the token file.
-  on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
-    const command = String(e.command ?? '')
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = String(e['command'] ?? '')
     if (/bugs-bot/.test(command)) {
       const words = shellWords(command)
       if (words === null) {
@@ -104,35 +105,35 @@ export function register(on: any): void {
     const { file, home } = await tokenPath($)
     if (bashNamesTokenFile(command, file, home) && !typedNamesTokenFile(await typed($))) return refuse($, CODES.token, TOKEN_DENIAL)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
-    const denial = bashNetDenial(String(e?.command ?? ''))
+  }).catch(async ($, e, next) => {
+    const denial = bashNetDenial(String(e['command'] ?? ''))
     return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 
   // The tool form: its arguments are the words already.
-  on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($: any, e: any, next: any) => {
-    const args = Array.isArray(e.args) ? e.args.map((a: unknown) => ({ text: String(a), isDynamic: false, isOperator: false })) : []
-    const verdict = await judgePosted($, postedWords(String(e.command ?? ''), args))
+  on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($, e, next) => {
+    const args = Array.isArray(e['args']) ? e['args'].map((a: unknown) => ({ text: String(a), isDynamic: false, isOperator: false })) : []
+    const verdict = await judgePosted($, postedWords(String(e['command'] ?? ''), args))
     if (verdict) return refuse($, verdict.code, verdict.denial)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
-    const denial = toolNetDenial(String(e?.command ?? ''))
+  }).catch(async ($, e, next) => {
+    const denial = toolNetDenial(String(e['command'] ?? ''))
     return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 
   // Read and Grep on the token file (Grep on the directory that holds it too).
-  on('tool.call', { tool: ['Read', 'Grep'] }, async ($: any, e: any, next: any) => {
-    const target = String(e.tool === 'Read' ? e.file_path ?? '' : e.path ?? '')
+  on('tool.call', { tool: ['Read', 'Grep'] }, async ($, e, next) => {
+    const target = String(e['tool'] === 'Read' ? e['file_path'] ?? '' : e['path'] ?? '')
     if (!target) return next(e)
     const { file } = await tokenPath($)
     const real = await realPath($, target)
     const tokenReal = await realPath($, file)
     const holder = tokenReal.slice(0, tokenReal.lastIndexOf('/'))
-    const reaches = real === tokenReal || (e.tool === 'Grep' && real === holder)
+    const reaches = real === tokenReal || (e['tool'] === 'Grep' && real === holder)
     if (reaches && !typedNamesTokenFile(await typed($))) return refuse($, CODES.token, TOKEN_DENIAL)
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
-    const denial = readNetDenial(String(e?.tool === 'Read' ? e?.file_path ?? '' : e?.path ?? ''))
+  }).catch(async ($, e, next) => {
+    const denial = readNetDenial(String(e['tool'] === 'Read' ? e['file_path'] ?? '' : e['path'] ?? ''))
     return denial === null ? next(e) : refuse($, CODES.failed, denial)
   })
 }
