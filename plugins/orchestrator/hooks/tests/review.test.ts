@@ -395,3 +395,43 @@ test('a warning of a row written comes back with its line', async () => {
   expect(await handler()(fx.dollar, { ...FAILED, record: '/b/record.jsonl', row: 4 }))
     .toEqual({ result: `${WRITTEN} · row 4: fail\n${ROUNDS}\nWARNING: verdict: row 4 has no review recorded: recording the verdict anyway` })
 })
+
+// An index with two important findings and one minor, as the review session writes it.
+const INDEX = '1. [important] a.ts:3 — a guard reads no file — 1.md\n2. [minor] b.ts:9 — naming — 2.md\n3. [important] c.ts:1 — no test falls — 3.md\n'
+
+test('an acceptance over an index with important findings sets each aside on its own, with its own reason, or is refused', async () => {
+  const withIndex = (setAsides: unknown[]) => {
+    const fx = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: /b/review-128.md\n', stderr: '' })
+    const read = fx.dollar.fs.read
+    fx.dollar.fs.read = async (p: string) => (p === '/b/review-128.md' ? INDEX : read(p))
+    return { fx, input: { ...ACCEPTED, set_asides: setAsides, record: '/b/record.jsonl', row: 4, findings: '/b/review-128.md' } }
+  }
+  // One blanket point for the whole index is refused, and nothing is written.
+  const blanket = withIndex([{ point: 'the index', reason: 'non-blocking' }])
+  const refused = await handler()(blanket.fx.dollar, blanket.input)
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('2 important finding(s)')
+  expect(blanket.fx.calls).toEqual([])
+  // Two important points with the same reason are refused too.
+  const same = withIndex([{ point: 'a.ts:3', severity: 'important', reason: 'later' }, { point: 'c.ts:1', severity: 'important', reason: 'later' }])
+  expect((await handler()(same.fx.dollar, same.input)).isError).toBe(true)
+  // Each important finding set aside with its own reason against the design is written.
+  const each = withIndex([
+    { point: 'a.ts:3', severity: 'important', reason: 'the design reads that file elsewhere' },
+    { point: 'c.ts:1', severity: 'important', reason: 'covered by the phase 2 test' },
+  ])
+  const out = await handler()(each.fx.dollar, each.input)
+  expect(out.isError).toBe(undefined)
+  expect(each.fx.calls.length).toBe(1)
+})
+
+test('an acceptance over an index with no important finding, or an index that cannot be read, is written as before', async () => {
+  const fx = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: /b/r.md\n', stderr: '' })
+  const read = fx.dollar.fs.read
+  fx.dollar.fs.read = async (p: string) => (p === '/b/r.md' ? '1. [minor] b.ts:9 — naming — 1.md\n' : read(p))
+  await handler()(fx.dollar, { ...ACCEPTED, record: '/b/record.jsonl', row: 4, findings: '/b/r.md' })
+  expect(fx.calls.length).toBe(1)
+  const gone = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: /b/x.md\n', stderr: '' })
+  await handler()(gone.dollar, { ...ACCEPTED, record: '/b/record.jsonl', row: 4, findings: '/b/x.md' })
+  expect(gone.calls.length).toBe(1)
+})
