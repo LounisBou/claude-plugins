@@ -203,6 +203,7 @@ hooks/tests/screen.ts                a tree laid out as the rows a terminal show
 install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
+tests/e2e-host.sh                    the live host the pane's test starts: its module's dependencies and its banner read
 tests/deck-e2e.ts                    the deck built once from this machine's real state, read-only, into a temporary file: one write timed cold and warm, each listed session's own read played in turn, every usage field's type, the totals' sum, the periods' Paris starts and one session's week against routing.py cost checked
 tests/usage-rule.ts                  the deck's usage rule run under node, through the module's own reader in two reads, for the suite to hold it to routing.py cost, and the reader's own answer for one window
 tests/row-rule.ts                    the module's row writer run under node, for the suite to hold the launcher's row_write to the same key, line and temporary file

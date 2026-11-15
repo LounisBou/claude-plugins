@@ -11583,6 +11583,35 @@ exit 1|" "$nt_none"
 OSKILL="$ROOT/skills/orchestrator/SKILL.md"
 OREF="$ROOT/skills/orchestrator/references"
 
+# The live-host E2E (pane-e2e.sh) never drew its pane (2026-11-15): its host runs on the project's
+# settings alone, where `enabledPlugins` is not read, so the module's dependencies (method, github)
+# were "not installed" and the host loaded no module. The script now loads them from this
+# repository, and takes any subscription plan the banner shows. Both decisions are in e2e-host.sh.
+# shellcheck source=e2e-host.sh
+. "$ROOT/tests/e2e-host.sh"
+E2E_NAMES=$(e2e_plugin_args "$ROOT" "$WORK/e2e-copies" && printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | awk '$0 != "--plugin-dir"' | while IFS= read -r d; do basename "$d"; done | paste -sd, -)
+check "the E2E host loads the module and each plugin its manifest depends on, from this repository" \
+  "orchestrator,$(jq -r '[.dependencies[].name] | join(",")' "$ROOT/.claude-plugin/plugin.json")" "$E2E_NAMES"
+e2e_plugin_args "$ROOT" "$WORK/e2e-copies"
+check "each of them is passed to the host as a --plugin-dir folder, the dependencies as copies outside the repository" "yes|2" \
+  "$([ "$(printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | grep -c '^--plugin-dir$')" -eq $(( ${#E2E_PLUGIN_ARGS[@]} / 2 )) ] && echo yes || echo no)|$(printf '%s\n' "${E2E_PLUGIN_ARGS[@]}" | grep -c "^$WORK/e2e-copies/")"
+mkdir -p "$WORK/e2e-dep/.claude-plugin"
+echo '{"name":"lonely","dependencies":[{"name":"absent","marketplace":"acme"}]}' > "$WORK/e2e-dep/.claude-plugin/plugin.json"
+check "a dependency that is no sibling folder refuses, never a host that loads nothing" "1|refused: the plugin depends on 'absent'" \
+  "$(e2e_plugin_args "$WORK/e2e-dep" "$WORK/e2e-copies" 2>"$WORK/e2e-dep.err"; echo $?)|$(cut -c1-39 "$WORK/e2e-dep.err")"
+E2E_HEAD=$' ▐▛███▛█   Claude Code v9.9.9\n▝▜██████▀  Model 1 · Claude %s\n ▝▝   ▝▝   /tmp/x'
+banner() { printf "$E2E_HEAD" "$1"; }
+check "a subscription banner is accepted whatever its plan: Max, Ultra, Pro, Team" "0|0|0|0" \
+  "$(e2e_banner_ok Claude '' "$(banner Max)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Ultra)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Pro)"; echo $?)|$(e2e_banner_ok Claude '' "$(banner Team)"; echo $?)"
+check "the API billing line refuses, a banner with no plan refuses" "1|1" \
+  "$(e2e_banner_ok Claude '' "$(banner Max)"$'\nAPI Usage Billing'; echo $?)|$(e2e_banner_ok Claude '' $' ▐▛███▛█   Claude Code v9.9.9\n▝▜██████▀  Model 1 · API Usage Billing'; echo $?)"
+check "the Claude Code line is no plan: a banner holding only it refuses" "1" \
+  "$(e2e_banner_ok Claude '' $' ▐▛███▛█   Claude Code v9.9.9\n ▝▝   ▝▝   /tmp/x'; echo $?)"
+check "ORCHESTRATOR_E2E_PLAN, when set, names the one plan accepted" "0|1" \
+  "$(e2e_banner_ok Claude Ultra "$(banner Ultra)"; echo $?)|$(e2e_banner_ok Claude Max "$(banner Ultra)"; echo $?)"
+check "pane-e2e.sh starts both of its hosts with the module's dependencies, and names no plan by default" "2|0|0" \
+  "$(grep -c '"\${E2E_PLUGIN_ARGS\[@\]}" --name' "$ROOT/tests/pane-e2e.sh")|$(grep -c -- '--plugin-dir "\$ROOT"' "$ROOT/tests/pane-e2e.sh")|$(grep -c 'ORCHESTRATOR_E2E_PLAN:-Max' "$ROOT/tests/pane-e2e.sh")"
+
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
 [ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"
