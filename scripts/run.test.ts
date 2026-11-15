@@ -349,7 +349,7 @@ describe('plugin-matrix run', () => {
     assert.deepEqual(changed.lines.out, ['{"include":[{"plugin":"alpha","os":"ubuntu-latest","blocking":true},{"plugin":"drift","os":"ubuntu-latest","blocking":true}]}'])
     const main = recorder()
     assert.equal(matrix(root, ['--main'], main), 0)
-    assert.deepEqual(main.lines.out, ['{"include":[{"plugin":"alpha","os":"ubuntu-latest","blocking":true}]}'])
+    assert.deepEqual(main.lines.out, ['{"include":[{"plugin":"no plugin suite","os":"ubuntu-latest","blocking":true}]}'])
     const night = recorder()
     assert.equal(matrix(root, ['--nightly'], night), 0)
     assert.deepEqual(night.lines.out, ['{"include":[{"plugin":"alpha","os":"macos-latest","blocking":true},{"plugin":"drift","os":"macos-latest","blocking":false}]}'])

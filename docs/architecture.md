@@ -227,3 +227,8 @@ or is gone, a cell the pull request did not run, and any lookup that fails. The 
 reports on `main`: a skipped step is a passed job, and a matrix with no cell left runs the cell
 without a suite. It makes the push to `main` a net for what no pull request tested, not a second run
 of what one did.
+
+A push to `main` also runs only the plugins its merge commit changes (its diff against its first
+parent): a change of `packages/core` or `ci/` runs every plugin, a merge that changes none runs the
+cell without a suite, and a diff git cannot read runs every plugin and says so. The night keeps every
+plugin on macOS.

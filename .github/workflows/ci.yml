@@ -111,7 +111,8 @@ jobs:
       - id: matrix
         name: plugin matrix
         # What runs when is scripts/plugin-matrix.ts's: the pull request by its changes, main on
-        # Linux less the cells its tree already passed, the night on macOS.
+        # Linux for the plugins the merge changes less the cells its tree already passed, the night
+        # on macOS for every plugin.
         env:
           TESTED_CELLS: ${{ steps.tested.outputs.covered }}
         run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || github.event_name == 'schedule' && '--nightly' || '--main' }}
