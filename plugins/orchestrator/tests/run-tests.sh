@@ -8196,8 +8196,8 @@ echo "== iterm-agents: the home server's configuration =="
 # is one, in a detached server of the suite's own, killed at once.
 HOMECONF="$ROOT/skills/iterm-agents/tmux/home.conf"
 check "the conf sets each option the home server needs" "1|1|1|1|1|1|1|1|1" \
-  "$(for l in '^set -g focus-events on$' '^set -g extended-keys always$' '^set -g extended-keys-format csi-u$' \
-      "^set -as terminal-features 'xterm\*:extkeys'\$" '^set -g automatic-rename off$' '^set -g mouse on$' \
+  "$(for l in '^set -g focus-events on$' '^set -gq extended-keys always$' '^set -gq extended-keys-format csi-u$' \
+      "^set -asq terminal-features 'xterm\*:extkeys'\$" '^set -g automatic-rename off$' '^set -g mouse on$' \
       '^set -g prefix C-b$' '^bind C-b send-prefix$' '^set-hook -g session-created "set-option @orchestrator-home 1"$'; do
       grep -c -- "$l" "$HOMECONF"; done | paste -sd'|' -)"
 if command -v tmux >/dev/null 2>&1; then
@@ -8240,6 +8240,13 @@ if command -v tmux >/dev/null 2>&1; then
     "$([ -n "$(tmux -L "$CONFSRV" show -gv window-status-separator)" ] && echo yes || echo no)"
   check "the bar, inactive, current and state colours are the chosen ones" "1|1|1|1" \
     "$(tmux -L "$CONFSRV" show -gv status-style | grep -ci 'fg=#ffffff.*bg=#1c1c1c\|bg=#1c1c1c.*fg=#ffffff')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#e4e4e4.*bg=#303030\|bg=#303030.*fg=#e4e4e4')|$(tmux -L "$CONFSRV" show -gv window-status-current-format | grep -ci 'fg=#000000.*bg=#ffd75f\|bg=#ffd75f.*fg=#000000')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#87d7ff')"
+  # An option the running tmux does not know (extended-keys-format before tmux 3.5, extended-keys
+  # and terminal-features before 3.2) must load without an error: the conf is sourced, last so no
+  # check above reads the state it leaves, with those options renamed to ones no tmux has, which
+  # stands for the older tmux.
+  sed 's/extended-keys/no-such-keys/g; s/terminal-features/no-such-features/g' "$HOMECONF" > "$WORK/old-tmux-home.conf"
+  check "a tmux that does not know the extended-keys options and terminal-features loads the conf without an error" "" \
+    "$(tmux -L "$CONFSRV" source-file "$WORK/old-tmux-home.conf" 2>&1)"
   tmux -L "$CONFSRV" kill-server 2>/dev/null
 else
   echo "  skip the conf is not loaded: no tmux"
