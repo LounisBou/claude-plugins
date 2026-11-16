@@ -2758,6 +2758,52 @@ check "repo-review-comments answers the count and one line per comment" \
 check "a compact default is under a tenth of its object" "yes" \
   "$(a=$(gh9 pr-list | wc -c); b=$(gh9 pr-list --json | wc -c); [ $((a * 4)) -lt "$b" ] && echo yes || echo "$a of $b")"
 
+echo "== pr-panel: the pane's rows in one GraphQL query =="
+
+FP="$WORK/fixpanel"; mkdir -p "$FP"
+ghp() { env GH_FIXTURES="$FP" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+python3 - "$FP/graphql.json" <<'PY'
+import json, sys
+
+def pull(number, title, rollup, comments=0, threads=(), draft=False):
+    return {
+        "number": number, "title": title, "url": "https://github.com/acme/thing/pull/%d" % number, "isDraft": draft,
+        "comments": {"totalCount": comments},
+        "reviewThreads": {"nodes": [{"comments": {"totalCount": n}} for n in threads]},
+        "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]},
+    }
+
+def rollup(state, *contexts):
+    return {"state": state, "contexts": {"nodes": list(contexts)}}
+
+run = lambda name, status, conclusion: {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion}
+status = lambda context, state: {"__typename": "StatusContext", "context": context, "state": state}
+nodes = [
+    pull(5, "red", rollup("FAILURE", run("lint", "COMPLETED", "FAILURE"), run("test", "COMPLETED", "SUCCESS"), run("old", "COMPLETED", "CANCELLED"), run("docs", "COMPLETED", "SKIPPED"), status("ci/legacy", "ERROR")), comments=2, threads=(1, 3)),
+    pull(4, "running", rollup("PENDING", run("build", "IN_PROGRESS", None)), draft=True),
+    pull(3, "expected", rollup("EXPECTED")),
+    pull(2, "green", rollup("SUCCESS", run("test", "COMPLETED", "NEUTRAL"))),
+    pull(1, "nothing yet", None),
+]
+json.dump({"repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
+PY
+rows=$(ghp pr-panel)
+check "pr-panel answers one row a pull request, newest first, with its CI and comments" \
+  "5 red FAILURE 6 False|4 running PENDING 0 True|3 expected PENDING 0 False|2 green SUCCESS 0 False|1 nothing yet NONE 0 False" \
+  "$(printf '%s' "$rows" | python3 -c '
+import json, sys
+print("|".join("%d %s %s %s %s" % (r["number"], r["title"], r["ci"], r["comments"], r["draft"]) for r in json.load(sys.stdin)))')"
+check "pr-panel names the checks that failed: a failed or cancelled run and an errored status, not a skipped one" \
+  "lint,old,ci/legacy" \
+  "$(printf '%s' "$rows" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[0]["failed"]))')"
+check "pr-panel counts the comments on the pull request and on its diff" "6" \
+  "$(printf '%s' "$rows" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["comments"])')"
+check "pr-panel is one request, a GraphQL one, whatever the number of pull requests" "1 /graphql" \
+  "$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+print(len(rows), rows[0]["path"])' "$FP/sent.jsonl")"
+
 # --json takes the place of --format raw, and loses to a format named beside it.
 check "--json after the subcommand is read as before it" "7" \
   "$(gh9 --json pr-list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"

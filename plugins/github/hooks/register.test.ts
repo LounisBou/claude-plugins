@@ -311,10 +311,14 @@ test('command failures surface the engine error, not a generic diagnostics line'
   expect(prs.text).toBe('error: no PR 999')
 })
 
-// The list endpoint carries no comment counts: those come from pr-status.
+// What pr-panel answers: a row a PR, its CI and comment count read in the same query.
+const panelRow = (number: number, over: Record<string, unknown> = {}) => ({
+  number, title: 'PR ' + number, url: 'https://github.com/acme/thing/pull/' + number, draft: false,
+  comments: 0, ci: 'SUCCESS', failed: [], ...over,
+})
 const PR_LIST = JSON.stringify([
-  { number: 12, title: 'fix: related PRs', html_url: 'https://github.com/acme/thing/pull/12', draft: false },
-  { number: 11, title: 'feat: minimize nodes', html_url: 'https://github.com/acme/thing/pull/11', draft: true },
+  panelRow(12, { title: 'fix: related PRs' }),
+  panelRow(11, { title: 'feat: minimize nodes', draft: true }),
 ])
 
 const ok = (stdout: string) => ({ exitCode: 0, stdout, stderr: '' })
@@ -328,14 +332,10 @@ function byCommand(replies: Record<string, (e: NounEvents['process.run']) => Run
   }
 }
 
-const prOf = (e: NounEvents['process.run']) => String(runOf(e).args['pr'])
-
-test('/prs reads each listed PR in detail and opens the pane', async ($, on) => {
+test('/prs reads the open PRs in one query and opens the pane', async ($, on) => {
   const runs: GhRun[] = []
   await stubMod(on, runs, [], byCommand({
-    'pr-list': () => ok(PR_LIST),
-    'pr-checks': () => ok(JSON.stringify({ result: 'SUCCESS', failed_checks: [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 0, review_comments: 0 })),
+    'pr-panel': () => ok(PR_LIST),
   }))
   const opened: unknown[] = []
   on('ui.open', (_$, e) => {
@@ -347,12 +347,8 @@ test('/prs reads each listed PR in detail and opens the pane', async ($, on) => 
   const out = await $.command.run({ command: 'prs', args: '' })
   expect(out).toEqual({})
   expect(opened).toEqual([{ id: 'github-prs', title: 'PRs', closeOnEscape: true }])
-  expect(runs.length).toBe(5) // pr-list + (pr-checks, pr-status) x 2
-  expect(runs.filter((r) => r.command === 'pr-status').map((r) => String(r.args['pr'])).sort()).toEqual(['11', '12'])
-  // The module parses the pull request list: it asks the full object, as no caller of the tool does.
-  expect(runs.find((r) => r.command === 'pr-list')?.full).toBe(true)
-  // The comment counts are fields of the full pull request: the compact answer carries none.
-  expect(runs.filter((r) => r.command === 'pr-status').every((r) => r.args['json'] === true)).toBe(true)
+  // One engine run, whatever the number of PRs: no list, no per-PR checks or record.
+  expect(runs.map((r) => r.command)).toEqual(['pr-panel'])
 })
 
 // The colour of the Text a row's Box holds.
@@ -376,9 +372,10 @@ const PANE_EVENT = {
 
 test('the pane renders one row per PR with CI, comments and a refresh button', async ($, on) => {
   await stubMod(on, [], [], byCommand({
-    'pr-list': () => ok(PR_LIST),
-    'pr-checks': () => ok(JSON.stringify({ result: 'FAILURE', failed_checks: ['lint'] })),
-    'pr-status': (e) => ok(JSON.stringify(prOf(e) === '12' ? { comments: 2, review_comments: 1 } : { comments: 0, review_comments: 0 })),
+    'pr-panel': () => ok(JSON.stringify([
+      panelRow(12, { title: 'fix: related PRs', comments: 3, ci: 'FAILURE', failed: ['lint'] }),
+      panelRow(11, { title: 'feat: minimize nodes', draft: true, ci: 'FAILURE', failed: ['lint'] }),
+    ])),
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -394,11 +391,11 @@ test('the pane renders one row per PR with CI, comments and a refresh button', a
 })
 
 test('the pane leaves the title uncoloured and colours only the CI label by state', async ($, on) => {
-  const states: Record<string, string> = { '12': 'FAILURE', '11': 'PENDING' }
   await stubMod(on, [], [], byCommand({
-    'pr-list': () => ok(PR_LIST),
-    'pr-checks': (e) => ok(JSON.stringify({ result: states[prOf(e)], failed_checks: [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 0, review_comments: 0 })),
+    'pr-panel': () => ok(JSON.stringify([
+      panelRow(12, { title: 'fix: related PRs', ci: 'FAILURE' }),
+      panelRow(11, { title: 'feat: minimize nodes', ci: 'PENDING' }),
+    ])),
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -412,15 +409,8 @@ test('the pane leaves the title uncoloured and colours only the CI label by stat
 })
 
 test('the pane colours a SUCCESS label green and an unknown one inactive', async ($, on) => {
-  const many = [100, 99, 94, 93, 92, 91, 90].map((n) => ({
-    number: n, title: 'PR ' + n, html_url: 'https://github.com/acme/thing/pull/' + n, draft: false,
-  }))
   await stubMod(on, [], [], byCommand({
-    'pr-list': () => ok(JSON.stringify(many)),
-    'pr-checks': (e) => prOf(e) === '100'
-      ? { exitCode: 3, stdout: '', stderr: 'error: boom' }
-      : ok(JSON.stringify({ result: 'SUCCESS', failed_checks: [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 0, review_comments: 0 })),
+    'pr-panel': () => ok(JSON.stringify([panelRow(100, { ci: '?' }), panelRow(99)])),
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -434,11 +424,7 @@ test('the pane colours a SUCCESS label green and an unknown one inactive', async
 test('the pane clips a long title so the CI label shows at a narrow width', async ($, on) => {
   const long = 'a very long pull request title that would push the label out of a narrow pane'
   await stubMod(on, [], [], byCommand({
-    'pr-list': () => ok(JSON.stringify([
-      { number: 12, title: long, html_url: 'https://github.com/acme/thing/pull/12', draft: true },
-    ])),
-    'pr-checks': () => ok(JSON.stringify({ result: 'FAILURE', failed_checks: [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 3, review_comments: 0 })),
+    'pr-panel': () => ok(JSON.stringify([panelRow(12, { title: long, draft: true, comments: 3, ci: 'FAILURE' })])),
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -454,29 +440,18 @@ test('the pane clips a long title so the CI label shows at a narrow width', asyn
   await ui.unmount()
 })
 
-test('the pane lists every PR, details the newest five and marks unreadable checks', async ($, on) => {
-  const many = Array.from({ length: 7 }, (_, i) => ({
-    number: 100 - i, title: 'PR ' + (100 - i), html_url: 'https://github.com/acme/thing/pull/' + (100 - i), draft: false,
-  }))
+test('the pane lists every PR the query answers, each with its own CI state', async ($, on) => {
+  const many = [100, 99, 94, 93, 92, 91, 90].map((n) => panelRow(n, { ci: n === 100 ? '?' : n === 90 ? 'NONE' : 'SUCCESS' }))
   const runs: GhRun[] = []
-  await stubMod(on, runs, [], byCommand({
-    'pr-list': () => ok(JSON.stringify(many)),
-    'pr-checks': (e) => prOf(e) === '100'
-      ? { exitCode: 3, stdout: '', stderr: 'error: boom' }
-      : ok(JSON.stringify({ result: 'SUCCESS', failed_checks: [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 0, review_comments: 0 })),
-  }))
+  await stubMod(on, runs, [], byCommand({ 'pr-panel': () => ok(JSON.stringify(many)) }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
 
   const ui = await $.ui.mount({ ...PANE_EVENT })
-  expect(await ui.find({ type: 'Box', key: 'room-100', text: /PR 100/ })).toBeDefined()
   expect(await ui.find({ type: 'Box', key: 'label-100', text: 'CI:?' })).toBeDefined()
-  expect(await ui.find({ type: 'Box', key: 'room-99', text: /PR 99/ })).toBeDefined()
-  expect(await ui.find({ type: 'Box', key: 'label-99', text: 'CI:SUCCESS' })).toBeDefined()
-  expect(await ui.find({ type: 'Box', key: 'room-94', text: /PR 94/ })).toBeDefined()
-  expect(await ui.find({ type: 'Box', key: 'label-94', text: 'CI:–' })).toBeDefined()
-  expect(runs.filter((r) => r.command === 'pr-checks').length).toBe(5)
+  expect(await ui.find({ type: 'Box', key: 'label-94', text: 'CI:SUCCESS' })).toBeDefined()
+  expect(await ui.find({ type: 'Box', key: 'label-90', text: 'CI:NONE' })).toBeDefined()
+  expect(runs.length).toBe(1)
   await ui.unmount()
 })
 
@@ -484,9 +459,7 @@ test('the pane with no open PRs says so and Refresh re-collects', async ($, on) 
   const runs: GhRun[] = []
   let lists = 0
   await stubMod(on, runs, [], byCommand({
-    'pr-list': () => ok((lists += 1) === 1 ? '[]' : PR_LIST),
-    'pr-checks': () => ok(JSON.stringify({ result: 'PENDING', failed_checks: [] })),
-    'pr-status': () => ok('{}'),
+    'pr-panel': () => ok((lists += 1) === 1 ? '[]' : PR_LIST),
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -496,16 +469,14 @@ test('the pane with no open PRs says so and Refresh re-collects', async ($, on) 
 
   await ui.press({ key: 'refresh' })
   expect(await ui.find({ type: 'Text', text: /fix: related PRs/ })).toBeDefined()
-  expect(runs.filter((r) => r.command === 'pr-list').length).toBe(2)
+  expect(runs.filter((r) => r.command === 'pr-panel').length).toBe(2)
   await ui.unmount()
 })
 
 test('a failed Refresh keeps the last rows and shows the error', async ($, on) => {
   let lists = 0
   await stubMod(on, [], [], byCommand({
-    'pr-list': () => (lists += 1) === 1 ? ok(PR_LIST) : { exitCode: 5, stdout: '', stderr: 'error: rate limited\n' },
-    'pr-checks': () => ok(JSON.stringify({ result: 'SUCCESS', failed_checks: [] })),
-    'pr-status': () => ok('{}'),
+    'pr-panel': () => (lists += 1) === 1 ? ok(PR_LIST) : { exitCode: 5, stdout: '', stderr: 'error: rate limited\n' },
   }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
@@ -1943,38 +1914,98 @@ test('a CI toast comes only when a PR read twice reaches an end', () => {
   expect(ciTransitions([row(1, '–')], [row(1, 'FAILURE')])).toEqual([])
 })
 
-function stubPane(on: TestOn, runs: GhRun[], ci: () => string) {
+// The pane as `$.ui.panes()` lists it: shown, behind another tab, or closed.
+type PaneState = 'shown' | 'hidden' | 'closed'
+const PANES = {
+  shown: [{ id: 'github-prs', title: 'PRs', isShown: true, isFocused: false, isPlaced: true }],
+  hidden: [{ id: 'github-prs', title: 'PRs', isShown: false, isFocused: false, isPlaced: true }],
+  closed: [],
+} as const
+
+function stubPane(on: TestOn, runs: GhRun[], ci: () => string, pane: () => PaneState = () => 'shown') {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: PANES[pane()] }))
   return stubMod(on, runs, [], byCommand({
-    'pr-list': () => ok(PR_LIST),
-    'pr-checks': () => ok(JSON.stringify({ result: ci(), failed_checks: ci() === 'FAILURE' ? ['lint'] : [] })),
-    'pr-status': () => ok(JSON.stringify({ comments: 0, review_comments: 0 })),
+    'pr-panel': () => ok(JSON.stringify([
+      panelRow(12, { title: 'fix: related PRs', ci: ci(), failed: ci() === 'FAILURE' ? ['lint'] : [] }),
+      panelRow(11, { title: 'feat: minimize nodes', draft: true, ci: ci(), failed: ci() === 'FAILURE' ? ['lint'] : [] }),
+    ])),
+    'pr-list': () => ok('[]'),
     'pr-comment': () => ok('posted'),
   }))
 }
 
-test('the open pane reads its PRs again on the watch and toasts a CI that ended', async ($, on) => {
+const reads = (runs: GhRun[]) => runs.filter((r) => r.command === 'pr-panel').length
+
+test('the open pane is read again every five minutes, never sooner, and toasts a CI that ended', async ($, on) => {
   const clock = mock.clock(on)
   const runs: GhRun[] = []
   const toasts: string[] = []
   let ci = 'PENDING'
   await stubPane(on, runs, () => ci)
-  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
     return { value: undefined }
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await $.command.run({ command: 'prs', args: '' })
-  expect(runs.filter((r) => r.command === 'pr-list').length).toBe(1)
+  expect(reads(runs)).toBe(1)
 
   ci = 'FAILURE'
-  await clock.advance(WATCH_MS)
-  expect(runs.filter((r) => r.command === 'pr-list').length).toBe(2)
+  await clock.advance(5 * 60_000 - 1)
+  expect(reads(runs)).toBe(1)
+  await clock.advance(1)
+  expect(reads(runs)).toBe(2)
   expect(toasts).toEqual(['#12 CI: FAILURE (lint)', '#11 CI: FAILURE (lint)'])
+  // The refresh is one engine run, not a list and a run or two for each PR.
+  expect(runs.map((r) => r.command)).toEqual(['pr-panel', 'pr-panel'])
 
   const ui = await $.ui.mount({ ...PANE_EVENT })
   expect(await ui.find({ type: 'Box', key: 'room-12', text: /fix: related PRs/ })).toBeDefined()
   expect(await ui.find({ type: 'Box', key: 'label-12', text: 'CI:FAILURE' })).toBeDefined()
+  await ui.unmount()
+  // Drawing a pane whose rows were just read reads nothing.
+  expect(reads(runs)).toBe(2)
+})
+
+test('a pane that is not shown is never read on the watch, and read once when it shows again', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  let pane: PaneState = 'shown'
+  await stubPane(on, runs, () => 'SUCCESS', () => pane)
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+  expect(reads(runs)).toBe(1)
+
+  pane = 'hidden'
+  await clock.advance(5 * 60_000)
+  await clock.advance(5 * 60_000)
+  await clock.advance(5 * 60_000)
+  expect(reads(runs)).toBe(1)
+
+  // It shows again: it is drawn, its rows are older than the interval, one read follows.
+  pane = 'shown'
+  const ui = await $.ui.mount({ ...PANE_EVENT })
+  await clock.settle()
+  expect(reads(runs)).toBe(2)
+  // Drawn again at once: the rows are fresh, no second read.
+  await ui.redraw()
+  await clock.settle()
+  expect(reads(runs)).toBe(2)
+  await ui.unmount()
+})
+
+test('a pane shown again within the interval keeps its rows, with no read', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  await stubPane(on, runs, () => 'SUCCESS')
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  await clock.advance(60_000)
+  const ui = await $.ui.mount({ ...PANE_EVENT })
+  await clock.settle()
+  expect(reads(runs)).toBe(1)
   await ui.unmount()
 })
 
@@ -1993,37 +2024,55 @@ test('closing the pane stops the watch, closing another pane does not', {
   const clock = mock.clock(on)
   const runs: GhRun[] = []
   await stubPane(on, runs, () => 'SUCCESS')
-  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
   await startSession($)
-  const lists = () => runs.filter((r) => r.command === 'pr-list').length
   await $.command.run({ command: 'prs', args: '' })
-  expect(lists()).toBe(1)
+  expect(reads(runs)).toBe(1)
   await $.command.run({ command: 'close-pane', args: 'another-pane' })
   await clock.advance(WATCH_MS)
-  expect(lists()).toBe(2)
+  expect(reads(runs)).toBe(2)
   await $.command.run({ command: 'close-pane', args: 'github-prs' })
   await clock.advance(WATCH_MS)
-  expect(lists()).toBe(2)
+  expect(reads(runs)).toBe(2)
   // Opened again, the pane is watched again.
   await $.command.run({ command: 'prs', args: '' })
   await clock.advance(WATCH_MS)
-  expect(lists()).toBe(4)
+  expect(reads(runs)).toBe(4)
 })
 
-test('a write through the tool reads the open pane again, a read does not', async ($, on) => {
+test('a write through the tool reads the shown pane again, a read does not', async ($, on) => {
   const clock = mock.clock(on)
   const runs: GhRun[] = []
   await stubPane(on, runs, () => 'SUCCESS')
-  on('ui.open', () => ({ value: { isPlaced: true } }))
   await startSession($)
   await $.command.run({ command: 'prs', args: '' })
 
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-list' })
-  expect(runs.filter((r) => r.command === 'pr-list').length).toBe(2)
+  expect(reads(runs)).toBe(1)
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 12, body: 'Fixed' } })
   await clock.settle()
-  expect(runs.filter((r) => r.command === 'pr-list').length).toBe(3)
+  expect(reads(runs)).toBe(2)
+})
+
+test('a write while the pane is not shown reads nothing until it shows again', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  let pane: PaneState = 'hidden'
+  await stubPane(on, runs, () => 'SUCCESS', () => pane)
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 12, body: 'Fixed' } })
+  await clock.settle()
+  expect(reads(runs)).toBe(1)
+
+  // Shown a minute later, well inside the interval: the write made the rows stale, one read follows.
+  await clock.advance(60_000)
+  pane = 'shown'
+  const ui = await $.ui.mount({ ...PANE_EVENT })
+  await clock.settle()
+  expect(reads(runs)).toBe(2)
+  await ui.unmount()
 })
 
 test('no pane open, a write reads nothing more', async ($, on) => {
