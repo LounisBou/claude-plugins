@@ -455,6 +455,8 @@ relay_entry "$OWN" r1 "Orch: Claude plugins" sess-mine open operator
 relay_entry "$OWN" r2 "Orch: Claude plugins" sess-mine open done
 relay_entry "$OWN" r3 "Orch: geo-git-flow" sess-other open operator true
 printf '{"v":2,"id":"torn","status":"open","sender":{"name":"Orch: Cla' > "$OWN/round/torn.json"
+# Sorting before every other file, a torn one must not hide the files after it.
+printf '{"v":2,"id":"0torn","status":"open","sender":{"name":"Orch: Cla' > "$OWN/round/0torn.json"
 printf '{"v":2,"id":"nosender","status":"open","sender":"Orch: Claude plugins"}\n' > "$OWN/round/nosender.json"
 printf '{"v":2,"id":"archived","status":"open","urgent":true,"sender":{"session":"sess-mine","name":"Orch: Claude plugins"}}\n' > "$OWN/round/archive/archived.json"
 own_named() { # <name> <session name> <session id> <expected output> [<state>]

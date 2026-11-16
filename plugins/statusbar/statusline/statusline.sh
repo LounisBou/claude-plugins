@@ -324,17 +324,21 @@ open_questions() {
   [ -n "$operator_kind" ] && [ -d "$state/$dir" ] || return 0
   set -- "$state/$dir"/*.json
   [ -e "$1" ] || return 0
-  # One line a question of the session's: 1 when urgent, else 0. A file that does not parse ends
-  # its own reading only, jq going on to the next.
+  # Only the files that say « open » are read, each by a jq of its own: one that does not parse (a
+  # write caught half-way) stops its jq, so it must not be in a call that holds the others. A line
+  # a question of the session's: 1 when urgent, else 0.
   total=0; urgent=0
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    total=$((total + 1)); [ "$line" = "1" ] && urgent=$((urgent + 1))
-  done <<<"$(jq -r --arg name "$name" --arg sid "$session_id" --arg open "$open_status" --arg operator "$operator_kind" '
-    select(type == "object" and .status == $open)
-    | (if .v == 2 then (.sender | objects | {name, session}) else select(.v == null and .kind == $operator) | {name: .from, session} end) as $asker
-    | select(($name != "" and $asker.name == $name) or ($sid != "" and $asker.session == $sid))
-    | if .urgent == true then 1 else 0 end' "$@" 2>/dev/null)"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      total=$((total + 1)); [ "$line" = "1" ] && urgent=$((urgent + 1))
+    done <<<"$(jq -r --arg name "$name" --arg sid "$session_id" --arg open "$open_status" --arg operator "$operator_kind" '
+      select(type == "object" and .status == $open)
+      | (if .v == 2 then (.sender | objects | {name, session}) else select(.v == null and .kind == $operator) | {name: .from, session} end) as $asker
+      | select(($name != "" and $asker.name == $name) or ($sid != "" and $asker.session == $sid))
+      | if .urgent == true then 1 else 0 end' "$file" 2>/dev/null)"
+  done <<<"$(grep -l "\"status\"[[:space:]]*:[[:space:]]*\"$open_status\"" "$@" 2>/dev/null)"
   [ "$total" -gt 0 ] && printf '%s %s 0\n' "$total" "$urgent"
   return 0
 }
