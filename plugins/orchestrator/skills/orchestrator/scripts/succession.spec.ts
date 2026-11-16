@@ -329,6 +329,18 @@ test('ownersOf names each open row\'s live agent as its note names it, a deferre
   assert.deepEqual(ownersOf({ rows: [rows[5] ?? { id: '', line: '' }], prs: [], agents: [], questions: [] }), ['6 blocker unread: none'])
 })
 
+test('ownersOf reads a deferred row as ruling until its until date, then DEFERRED DUE, which goes back to the operator; a deferred row with no date stays ruling', () => {
+  const DATE = Date.parse('2026-11-28T08:00:00Z')
+  const rows = [
+    { id: '1', line: '', label: 'ONE: 1.0', ruling: 'later', blocker: 'until 2026-11-28T08:00:00Z' },
+    { id: '2', line: '', label: 'TWO: old deferral', ruling: 'later' },
+    { id: '3', line: '', label: 'THREE: old deferral', ruling: 'later', blocker: 'none' },
+  ]
+  const at = (now: number) => ownersOf({ rows, prs: [], agents: [], questions: [] }, blocker => fallOf(blocker, { rows: [], prState: () => undefined, installed: () => '', now }))
+  assert.deepEqual(at(DATE - 1), ['1 ruling', '2 ruling', '3 ruling'])
+  assert.deepEqual(at(DATE), ['1 DEFERRED DUE, ask the operator: relaunch or drop', '2 ruling', '3 ruling'])
+})
+
 test('ownersOf reads the agent a row was dispatched to from its note: a live agent holds its row whatever its label, a shared label word gives no row to another agent', () => {
   // The takeover of 2026-11-15: two rows worked by live agents read READY NOT STARTED, and a third went to the wrong agent.
   const rows = [

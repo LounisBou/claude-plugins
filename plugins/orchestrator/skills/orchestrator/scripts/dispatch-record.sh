@@ -10,7 +10,7 @@
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
-#   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row)
+#   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row; its blocker is first its revisit date, `until <ISO UTC time>`)
 #   dispatch-record.sh undefer <record> <id>
 #   dispatch-record.sh blocker <record> <id> <b>   (what the open row waits on: none | PR <owner/repo>#<n> merged | row <n> closed | release installed | until <ISO UTC time> | measure <what>)
 #   dispatch-record.sh note    <record> <id> "<text>"   (the open row's note of judgment; "" removes it)
@@ -40,6 +40,9 @@
 # second, `Z` only): it falls once that time has passed, read on the clock by the takeover and by
 # the « Lignes prêtes sans agent » line. A blocker that waits on a measure is `measure <what>`
 # (free words): it never falls by itself; the orchestrator sets it to `none` or closes the row.
+# A deferred row carries its revisit date as its blocker, `until <ISO UTC time>`: `defer` refuses a row
+# without one, and `blocker` leaves a deferred row its date. When the date comes, the takeover reads the row
+# DEFERRED DUE and the « Lignes différées » line puts it to the operator, relaunched or dropped.
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then

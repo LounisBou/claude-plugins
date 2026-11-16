@@ -167,11 +167,34 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
     })
 
-    it('is not named with a blocker, a deferral, a closed state, or no blocker said', () => {
+    it('is not named with a blocker, a deferral that has no date, a closed state, or no blocker said', () => {
       for (const change of [{ blocker: 'row 4 closed' }, { blocker: undefined }, { deferred: 'later, 2026-11-14' }, { state: 'closed' }]) {
         assert.deepEqual(ready(rowText(change)), [], JSON.stringify(change))
       }
       assert.deepEqual(ready(rowText({ deferred: ' ' })).length, 1)
+    })
+
+    it('a deferred row comes back on its until date, not before, flagged as deferred; any other blocker is no date', () => {
+      const MOMENT = Date.parse('2026-11-28T08:00:00Z')
+      const deferredAt = (blocker: string | undefined, now: number) =>
+        readyRows({ texts: [rowText({ deferred: 'later, 2026-11-15', blocker })], lines: [], live: new Set(), now })
+      assert.deepEqual(deferredAt('until 2026-11-28T08:00:00Z', MOMENT - 1), [], 'one second before')
+      assert.deepEqual(deferredAt('until 2026-11-28T08:00:00Z', MOMENT), [{ id: 12, keyword: 'TOKENDRIFT', deferred: true }], 'at the date')
+      assert.deepEqual(deferredAt('none', MOMENT), [])
+      assert.deepEqual(deferredAt('measure dashboard p95 under 300 ms', MOMENT), [])
+      assert.deepEqual(deferredAt(undefined, MOMENT), [])
+    })
+
+    it('a due deferred row is held by a live agent or an open pull request as any row is, and comes after the ready rows beside it', () => {
+      const MOMENT = Date.parse('2026-11-28T08:00:00Z')
+      const due = rowText({ deferred: 'later', blocker: 'until 2026-11-28T08:00:00Z' })
+      const at = (text: string, over: { lines?: LedgerLine[]; live?: string[] } = {}) =>
+        readyRows({ texts: [text], lines: over.lines ?? [], live: new Set(over.live ?? []), now: MOMENT })
+      assert.deepEqual(at(due, { live: ['Agent: tokendrift'] }), [])
+      assert.deepEqual(at(due, { lines: [line({ agent: 'Agent: tokendrift' })] }), [])
+      const both = at(rowText({ id: 13, label: 'GATEFIX: a gate' }) + due)
+      assert.deepEqual(both.map(r => [r.id, r.deferred === true]), [[13, false], [12, true]])
+      assert.equal(readyRowsLine(both)?.split('\n').length, 2)
     })
 
     it('names a row with no keyword as such, and only its note can hold it', () => {
@@ -225,6 +248,15 @@ describe('an unattended pull request', () => {
     it('is said in one line, absent when there is none', () => {
       assert.equal(readyRowsLine([]), null)
       assert.equal(readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT' }, { id: 13, keyword: 'GATEFIX' }]), 'Lignes prêtes sans agent : 12 TOKENDRIFT, 13 GATEFIX')
+    })
+
+    it('puts the deferred rows whose date has come to the operator as a question, on a line of their own', () => {
+      const due = { id: 14, keyword: 'LEARNING', deferred: true as const }
+      assert.equal(readyRowsLine([due]), "Lignes différées à leur date de réexamen : 14 LEARNING — à demander à l'opérateur : relancer ou abandonner")
+      assert.equal(
+        readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT' }, due]),
+        "Lignes prêtes sans agent : 12 TOKENDRIFT\nLignes différées à leur date de réexamen : 14 LEARNING — à demander à l'opérateur : relancer ou abandonner",
+      )
     })
   })
 })

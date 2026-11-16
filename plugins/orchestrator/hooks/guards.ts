@@ -706,7 +706,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const passing = async (): Promise<unknown> => {
         // Measured, not refused: nothing held this stop, so no escape is journalled for it.
         const ready = await readiness?.() ?? null
-        if (ready !== null) await logLine($, 'guards', `stop gate: warn ready-rows ${ready}`)
+        if (ready !== null) await logLine($, 'guards', `stop gate: warn ready-rows ${ready.replace(/\s*\n\s*/g, ' ')}`)
         await sweepAtStop?.()
         return next(e)
       }

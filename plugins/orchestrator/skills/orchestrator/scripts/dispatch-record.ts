@@ -958,15 +958,19 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     // One line: the note is printed on its row's line of `summary --open` and of the takeover.
     const value = (args[0] ?? '').replace(/\s+/g, ' ').trim()
     if (cmd === 'blocker' && !blockerValid(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
+    if (cmd === 'blocker' && truthy(rowOf(ctx, id)['deferred']) && untilOf(value) === undefined) die(ctx, `blocker: row ${id} is deferred, its blocker is its revisit date: until <ISO UTC time> (undefer it to give it another blocker), got: ${value}`)
     return rewrite(ctx, id, row => {
       if (cmd === 'note' && value === '') delete row['note']
       else row[cmd] = value
     })
   }
-  // defer: the operator ruled « later » on an open row: it stays open, with his words.
+  // defer: the operator ruled « later » on an open row: it stays open, with his words and a revisit date.
   if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `defer: row ${id} is not open`)
   const ruling = last(options(ctx, 'defer', args, ['--ruling']), '--ruling')
   if (ruling.replace(/\s/g, '') === '') die(ctx, 'defer: --ruling "<the operator\'s words, dated>" is required')
+  // The blocker is the revisit date: on that date the row goes back to the operator, relaunched or dropped.
+  const blocker = rowOf(ctx, id)['blocker']
+  if (typeof blocker !== 'string' || untilOf(blocker) === undefined) die(ctx, `defer: row ${id} needs a revisit date first: dispatch-record.sh blocker <record> ${id} "until <ISO UTC time>"`)
   return rewrite(ctx, id, row => { row['deferred'] = ruling })
 }
 

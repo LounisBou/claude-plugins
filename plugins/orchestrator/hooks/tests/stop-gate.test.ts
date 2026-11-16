@@ -200,7 +200,7 @@ test('an open dispatch row holds the stop and names the row', () => {
   const d = wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: ['r-12 (the report row)'] })
   expect(d.decision).toBe('block')
   expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
-    + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+    + ' — or, if the operator deferred it, set its revisit date (dispatch-record.sh blocker <record> <id> "until <ISO UTC time>"), record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
     + 'and declare a deferred wait.')
 })
 
@@ -407,7 +407,7 @@ test('the done line holds the stop on its agents and on open rows, and no longer
     case: 'not-done',
     reason: 'Not done: Agent: idle-p3 is still there. Finish it, or say what blocks it. '
       + 'Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
-      + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+      + ' — or, if the operator deferred it, set its revisit date (dispatch-record.sh blocker <record> <id> "until <ISO UTC time>"), record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
       + 'and declare a deferred wait.',
   })
 })
