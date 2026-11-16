@@ -86,7 +86,7 @@ describe('deck.json: the orchestrator writes, core reads', () => {
 })
 
 describe('deck.json: the orchestrator writes, statusbar reads the open questions', () => {
-  const show = (deck: string): string => {
+  const show = (deck: string, name = 'Orch: Claude plugins'): string => {
     const state = mkdtempSync(join(tmpdir(), 'deck-state-'))
     writeFileSync(join(state, DECK_FILE), deck)
     const config = join(state, 'statusline-config.txt')
@@ -94,7 +94,7 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
     try {
       // The script's exit status follows its last line: 1 when the second line is empty, as here.
       return spawnSync('bash', ['plugins/statusbar/statusline/statusline.sh'], {
-        input: '{}', encoding: 'utf8', env: { ...process.env, ORCHESTRATOR_STATE_DIR: state, STATUSBAR_CONFIG: config },
+        input: JSON.stringify({ session_name: name }), encoding: 'utf8', env: { ...process.env, ORCHESTRATOR_STATE_DIR: state, STATUSBAR_CONFIG: config },
       }).stdout.replace(/\x1b\[[0-9;]*m/g, '').trim()
     } finally {
       rmSync(state, { recursive: true, force: true })
@@ -106,6 +106,14 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
     assert.equal(show(fresh(1_000)), '✋ 1 (1 urgent)')
     assert.equal(show(fresh(DECK_STALE_AFTER_MS + 60_000)), '✋ 1? (1 urgent)')
     assert.equal(show(GOLDEN_DECK), '✋ 1? (1 urgent)')
+  })
+
+  it('shows it to the sessions that handle the operator\'s questions only', () => {
+    const fresh = GOLDEN_DECK.replace('2026-10-28T14:00:00.000Z', new Date().toISOString())
+    assert.equal(show(fresh, 'Coord: machine'), '✋ 1 (1 urgent)')
+    assert.equal(show(fresh, 'Audit: method'), '✋ 1 (1 urgent)')
+    assert.equal(show(fresh, ''), '')
+    assert.equal(show(fresh, 'Agent: statusbar'), '')
   })
 
   it('keeps its bound above the orchestrator\'s refresh, so a live file is never taken for a frozen one', () => {
