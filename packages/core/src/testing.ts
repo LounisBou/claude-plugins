@@ -71,6 +71,7 @@ export type NounEvents = {
   'ui.log': { readonly text: string }
   'ui.toast': { readonly text: string }
   'ui.open': { readonly id: string; readonly title?: string; readonly focus?: boolean }
+  'ui.panes': Fields
   'clock.sleep': { readonly ms: number }
 }
 

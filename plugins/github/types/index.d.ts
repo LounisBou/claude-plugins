@@ -5,11 +5,10 @@ export type GithubPaneRow = {
   title: string
   url: string
   draft: boolean
-  // null when the PR was not looked up in detail, or the lookup failed.
-  comments: number | null
-  // SUCCESS, FAILURE or PENDING from checks-status, the ready guard's CI
-  // verdict; "?" when the checks could not be read, "–" past the PRs looked
-  // up in detail.
+  // The PR's comments, on it and on its diff.
+  comments: number
+  // SUCCESS, FAILURE or PENDING, as the ready guard reads the head's checks; "?" for a
+  // rollup state the engine does not know.
   ci: string
   // The failed checks' names, when ci is FAILURE.
   failed: string[]

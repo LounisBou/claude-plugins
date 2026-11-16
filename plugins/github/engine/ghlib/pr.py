@@ -47,6 +47,99 @@ def pr_list(args):
     return http.rest("GET", "/repos/%s/%s/pulls?state=open" % (owner, name), paginate=True)
 
 
+# The most open pull requests the panel reads, newest first, in one query.
+_PANEL_PRS = 100
+
+_PANEL_QUERY = """
+query($owner:String!, $name:String!, $first:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
+      nodes {
+        number title url isDraft
+        comments { totalCount }
+        reviewThreads(first:100) { nodes { comments { totalCount } } }
+        commits(last:1) {
+          nodes {
+            commit {
+              statusCheckRollup {
+                state
+                contexts(first:100) {
+                  nodes {
+                    __typename
+                    ... on CheckRun { name status conclusion }
+                    ... on StatusContext { context state }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+# A completed check run that did not pass, in the ready guard's words (fmt.gate_ci): anything but these.
+_PANEL_PASSING = ("SUCCESS", "NEUTRAL", "SKIPPED")
+_PANEL_ROLLUP = {"SUCCESS": "SUCCESS", "FAILURE": "FAILURE", "ERROR": "FAILURE", "PENDING": "PENDING", "EXPECTED": "PENDING"}
+
+
+def _panel_failed(contexts):
+    failed = []
+    for node in contexts:
+        if not isinstance(node, dict):
+            continue
+        if node.get("__typename") == "CheckRun":
+            if node.get("status") == "COMPLETED" and node.get("conclusion") not in _PANEL_PASSING:
+                failed.append(node.get("name") or "?")
+        elif node.get("state") in ("FAILURE", "ERROR"):
+            failed.append(node.get("context") or "?")
+    return failed
+
+
+def _panel_unproven(contexts, draft):
+    """Whether a check run proved nothing, as the ready guard reads it: skipped, and neutral on a draft."""
+    unproven = ("SKIPPED", "NEUTRAL") if draft else ("SKIPPED",)
+    return any(
+        isinstance(n, dict) and n.get("__typename") == "CheckRun" and n.get("status") == "COMPLETED"
+        and n.get("conclusion") in unproven
+        for n in contexts
+    )
+
+
+def _panel_row(pull):
+    commits = (pull.get("commits") or {}).get("nodes") or []
+    commit = (commits[0] if commits else None) or {}
+    rollup = (commit.get("commit") or {}).get("statusCheckRollup") or {}
+    threads = (pull.get("reviewThreads") or {}).get("nodes") or []
+    contexts = (rollup.get("contexts") or {}).get("nodes") or []
+    # No rollup: CI has not reported on the head yet, PENDING as the ready guard reads it. A state
+    # this table does not know reads "?"; a green rollup holding a run that proved nothing is PENDING.
+    ci = _PANEL_ROLLUP.get(rollup.get("state"), "?") if rollup else "PENDING"
+    if ci == "SUCCESS" and _panel_unproven(contexts, bool(pull.get("isDraft"))):
+        ci = "PENDING"
+    return {
+        "number": pull.get("number"),
+        "title": pull.get("title") or "",
+        "url": pull.get("url") or "",
+        "draft": bool(pull.get("isDraft")),
+        "comments": ((pull.get("comments") or {}).get("totalCount") or 0)
+        + sum(((t or {}).get("comments") or {}).get("totalCount") or 0 for t in threads),
+        "ci": ci,
+        "failed": _panel_failed(contexts) if ci == "FAILURE" else [],
+    }
+
+
+def pr_panel(args):
+    """What the PR pane shows, one GraphQL query: the open pull requests, newest first, each with its
+    CI verdict (the head's status check rollup), the checks that failed and its comment count."""
+    owner, name = repo.owner_repo()
+    data = http.graphql(_PANEL_QUERY, {"owner": owner, "name": name, "first": _PANEL_PRS})
+    nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
+    return [_panel_row(p) for p in nodes if isinstance(p, dict)]
+
+
 def pr_status(args):
     owner, name = repo.owner_repo()
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
@@ -464,6 +557,9 @@ def register(subparsers):
 
     parser = subparsers.add_parser("pr-list", help="list open PRs")
     parser.set_defaults(handler=pr_list)
+
+    parser = subparsers.add_parser("pr-panel", help="the open PRs with CI and comment counts, one GraphQL query")
+    parser.set_defaults(handler=pr_panel)
 
     parser = subparsers.add_parser("pr-status", help="get PR state")
     parser.add_argument("pr", type=int)

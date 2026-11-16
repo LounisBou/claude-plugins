@@ -93,13 +93,14 @@ it. `/github:doctor` then confirms everything is ready.
 - **`/checks [pr]`** — combined CI status of a PR, with the failed checks
   named, defaulting to the current branch's. It is the ready guard's verdict
   (« Ready pull requests »): a skipped check, or a neutral one on a draft, is
-  `PENDING`, and the pane shows the same.
+  `PENDING`, and the pane shows the same (a check the base requires that has not reported yet is not counted there).
 - **`/threads [pr]`** — the open review threads of a PR, as a markdown table.
-- **`/prs`** — opens a pane listing every open PR: number, title and draft
-  flag, plus CI state and comment count for the five newest, with a Refresh
-  button. While it is open it reads the PRs again every minute and after each
-  write through the tool, and a toast says when a PR's CI ends in success or
-  failure.
+- **`/prs`** — opens a pane listing the open PRs (the newest 100): number, title and draft
+  flag, CI state and comment count, with a Refresh button, all read in one GraphQL query
+  (`pr-panel`). While it is shown it reads the PRs again every five minutes and after each
+  write through the tool, and a toast says when a PR's CI ends in success or failure. A pane
+  that is not shown (behind another tab, or waiting undrawn) reads nothing; it reads once
+  when it shows again if its rows are older than five minutes or a write made them stale.
 - **`/github:protect [apply] [ci]`** — whether the default branch refuses a force-push and a
   deletion on GitHub itself (a ruleset, or the classic branch protection); `apply` puts
   the ruleset « protect the default branch » in place, administrators included. `ci` also

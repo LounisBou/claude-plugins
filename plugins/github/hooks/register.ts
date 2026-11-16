@@ -53,7 +53,7 @@ export const PANE_ID = 'github-prs'
 // (--stdin-json), and the mod's own (MOD_COMMANDS), answered here.
 // tests/run-tests.sh fails when this list and the two sources disagree.
 export const COMMANDS = [
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files',
+  'pr-get', 'pr-list', 'pr-panel', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files',
   'pr-commits', 'file-at-ref', 'pr-create', 'pr-merge', 'pr-threads',
   'pr-comments', 'pr-issue-comments', 'pr-reviews', 'thread-reply',
   'pr-comment', 'comment-edit', 'comment-delete', 'thread-resolve',
@@ -74,7 +74,7 @@ export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list', 'auto-
 // command missing here is treated as a write, so the safe side is the default. After
 // pr-gate and pr-checks the gate may write the Ready label itself: its act, not the session's.
 export const READS = new Set([
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files', 'pr-commits',
+  'pr-get', 'pr-list', 'pr-panel', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files', 'pr-commits',
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
@@ -599,25 +599,17 @@ function parseChecksStatus(text: string): { result: string; failed: string[] } {
   return { result: String(raw['result']), failed: Array.isArray(failed) ? failed.map(String) : [] }
 }
 
-// pr-status's answer: the comments of the pull request, on it and on its diff, or a throw.
-function parseCommentCount(text: string): number {
+// pr-panel's answer, the rows the pane draws, or a throw naming what is wrong with it.
+function parsePanel(text: string): PaneRow[] {
   const raw: unknown = JSON.parse(text)
-  if (!isRecord(raw)) throw new Error('pr-status answered no object')
-  const count = (value: unknown): number => {
-    if (value === undefined || value === null) return 0
-    if (typeof value !== 'number') throw new Error('pr-status answered a count that is no number')
-    return value
-  }
-  return count(raw['comments']) + count(raw['review_comments'])
-}
-
-// pr-list's answer, as far as the pane reads it, or a throw naming what is wrong with it.
-function parsePrList(text: string): Array<Pick<PaneRow, 'number' | 'title' | 'url' | 'draft'>> {
-  const raw: unknown = JSON.parse(text)
-  if (!Array.isArray(raw)) throw new Error('pr-list answered no list of pull requests')
+  if (!Array.isArray(raw)) throw new Error('pr-panel answered no list of pull requests')
   return raw.map((pull: unknown) => {
-    if (!isRecord(pull) || typeof pull['number'] !== 'number') throw new Error('pr-list answered a pull request with no number')
-    return { number: pull['number'], title: String(pull['title'] ?? ''), url: String(pull['html_url'] ?? ''), draft: Boolean(pull['draft']) }
+    if (!isRecord(pull) || typeof pull['number'] !== 'number') throw new Error('pr-panel answered a pull request with no number')
+    const { title, url, draft, comments, ci, failed } = pull
+    if (typeof title !== 'string' || typeof url !== 'string' || typeof draft !== 'boolean') throw new Error('pr-panel answered a pull request without its title, url or draft flag')
+    if (typeof comments !== 'number' || typeof ci !== 'string') throw new Error('pr-panel answered a pull request without its comment count or CI state')
+    if (!Array.isArray(failed) || !failed.every((name) => typeof name === 'string')) throw new Error('pr-panel answered failed checks that are no list of names')
+    return { number: pull['number'], title, url, draft, comments, ci, failed }
   })
 }
 
@@ -633,14 +625,10 @@ export function checksLine(pr: string, out: string): string {
 
 export type PaneRow = GithubPaneRow
 
-// Each detailed PR costs two engine runs (its checks and its own record,
-// which alone carries the comment counts), so only the newest are detailed.
-export const DETAILED = 5
-
-// How often the open pane reads its PRs again, for CI and review counts that
-// change with nobody asking: one pr-list and two runs per detailed PR, well
-// under GitHub's hourly limit.
-export const WATCH_MS = 60_000
+// How old the open pane's rows may get before they are read again, for the CI and review counts
+// that change with nobody asking: one pr-panel run, a single GraphQL query. Only a visible pane
+// is read (paneShown); a hidden one is read once, when it shows again, if its rows are older.
+export const WATCH_MS = 300_000
 
 // The pane's rows live in the session's state: a reload of the module keeps
 // them, and a write redraws the pane with nobody invalidating it.
@@ -669,6 +657,9 @@ const sessionGrants = new Set<string>()
 let refreshing = false
 // The timer reading the PRs while the pane is open.
 let watch: { cancel: () => void } | undefined
+// When the rows were last read (or tried), and whether a write since then makes them stale at once.
+let readAt: number | undefined
+let dirty = false
 
 // The width of the label column: CI:SUCCESS, CI:FAILURE and CI:PENDING.
 const LABEL_COLUMN = 10
@@ -680,42 +671,34 @@ function ciColor(ci: string): string {
   return 'inactive'
 }
 
-async function detail($: Mod, pr: number): Promise<{ ci: string; failed: string[]; comments: number | null }> {
-  const [checks, status] = await Promise.allSettled([
-    runGh($, 'pr-checks', { pr, format: 'checks-status' }),
-    runGh($, 'pr-status', { pr, json: true }),
-  ])
-  let ci = '?'
-  let failed: string[] = []
-  let comments: number | null = null
+const collectRows = async ($: Mod): Promise<PaneRow[]> => parsePanel(await runGh($, 'pr-panel'))
+
+// Whether a surface draws the pane now: open, shown and placed. A host that cannot say reads as
+// shown, the way the pane behaved before it looked.
+async function paneShown($: Mod): Promise<boolean> {
   try {
-    if (checks.status === 'fulfilled') {
-      const parsed = parseChecksStatus(checks.value)
-      ci = parsed.result
-      failed = parsed.failed
-    }
+    const mine = (await $.ui.panes()).find((p) => p.id === PANE_ID)
+    return mine !== undefined && mine.isShown !== false && mine.isPlaced !== false
   } catch {
-    // Unreadable checks stay "?": never shown as a state they are not.
+    return true
   }
-  try {
-    if (status.status === 'fulfilled') comments = parseCommentCount(status.value)
-  } catch {
-    // Unreadable record: no count shown.
-  }
-  return { ci, failed, comments }
 }
 
-async function collectRows($: Mod): Promise<PaneRow[]> {
-  const prs = parsePrList(await runGh($, 'pr-list'))
-  const details = await Promise.all(
-    prs.slice(0, DETAILED).map((p) => detail($, p.number)),
-  )
-  return prs.map((p, i) => ({
-    ...p,
-    comments: details[i]?.comments ?? null,
-    ci: details[i]?.ci ?? '–',
-    failed: details[i]?.failed ?? [],
-  }))
+// The clock's now, NaN when the host cannot say: nothing then looks old, so a drawn pane never reads in a loop.
+const nowMs = ($: Mod): Promise<number> => Promise.resolve($.clock.now()).then(Number, () => NaN)
+
+// How much younger than the watch the rows may be when the timer fires: a read is stamped a few
+// awaits after its tick, so the next tick finds them a little under WATCH_MS old.
+export const TICK_SLACK_MS = 10_000
+
+// The rows are due when a write made them stale or they are older than the watch. The timer is
+// itself the cadence (fromTimer): it reads when the rows are within the slack of the interval,
+// and when the clock cannot say how old they are; a drawing never does, or it would read in a loop.
+async function due($: Mod, fromTimer: boolean): Promise<boolean> {
+  if (dirty || readAt === undefined) return true
+  const age = await nowMs($) - readAt
+  if (Number.isNaN(age)) return fromTimer
+  return age >= WATCH_MS - (fromTimer ? TICK_SLACK_MS : 0)
 }
 
 // The CI changes worth a toast between two reads: a PR read in both whose
@@ -737,6 +720,9 @@ export function ciTransitions(before: PaneRow[], after: PaneRow[]): string[] {
 async function refresh($: Mod): Promise<void> {
   if (refreshing) return
   refreshing = true
+  // Stamped before the read, a failed one too: a pane drawn again must not read again at once.
+  dirty = false
+  readAt = await nowMs($)
   await update($, pane, (p) => ({ ...p, refreshing: true }))
   try {
     const before = (await read($, pane)).rows
@@ -753,12 +739,17 @@ async function refresh($: Mod): Promise<void> {
   }
 }
 
+// The pane is read again when it is shown and its rows are due; a hidden pane reads nothing.
+async function refreshIfDue($: Mod, fromTimer: boolean, shown?: boolean): Promise<void> {
+  if (await due($, fromTimer) && (shown ?? await paneShown($))) await refresh($)
+}
+
 // One timer while the pane is open; a reload of the module cancels it with
 // the old copy, and the next /prs or Refresh starts it again.
 function startWatch($: Mod): void {
   if (watch) return
   watch = $.clock.every(WATCH_MS, () => {
-    void refresh($)
+    void refreshIfDue($, true)
   })
 }
 
@@ -2704,8 +2695,12 @@ export function register(on: On<Mod>): void {
       if (ready) await ready.ran()
       result = await afterRead($, e, result)
       if (GATE_READS.has(e.command)) result = withNote(result, ran.err)
-      // A write changes what the open pane shows: read it again, unawaited.
-      if (watch && !READS.has(e.command)) void refresh($)
+      // A write changes what the open pane shows: its rows are stale, read again at once when the
+      // pane is shown, else when it shows again. Unawaited.
+      if (watch && !READS.has(e.command)) {
+        dirty = true
+        void refreshIfDue($, false)
+      }
       return { result }
     } catch (err: unknown) {
       return { result: reasonOf(err), isError: true }
@@ -2733,6 +2728,9 @@ export function register(on: On<Mod>): void {
   on('command.run', { command: 'prs' }, async ($, e, next) => {
     if (!ownedCommands.has('prs')) return next(e)
     try {
+      // Stamped before the read, as refresh does: a write during it stays dirty.
+      readAt = await nowMs($)
+      dirty = false
       const rows = await collectRows($)
       await update($, pane, (p) => ({ ...p, rows, error: null }))
       await $.ui.open({ id: PANE_ID, title: 'PRs', closeOnEscape: true })
@@ -2772,6 +2770,8 @@ export function register(on: On<Mod>): void {
     if (e.requestId !== PANE_ID) return next(e)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const width = e.props?.bodyColumns ?? 80
+    // Drawn means shown: a pane whose rows are due is read again, and redrawn when the read ends.
+    if (watch) void refreshIfDue($, false, true)
     const state = await read($, pane)
     const rows = state.rows.length === 0
       ? [Text({ key: 'empty', children: [state.refreshing ? 'Loading…' : 'No open PRs'] })]
