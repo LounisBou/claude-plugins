@@ -286,9 +286,15 @@ ctx_gate_tokens() {
 # when some are open: <stale> is 1 when the stamp is older than the bound, the last count the frozen
 # deck holds, marked as stale by the caller; 0 while it is fresh. Nothing when none are open, when the
 # file is absent, torn, of another version, or stamped ahead past the bound (a stamp from the future is
-# no live file either). Reads only; nothing here is written.
+# no live file either). Reads only; nothing here is written. The count is the machine's, so only the
+# sessions that handle the operator's questions show it: an orchestrator, a coordinator or an auditor
+# (a name of those prefixes, a blank before its colon or none). Any other session prints nothing.
 open_questions() {
-  local reader="$here/../core/deck-reader.json" state file version stale
+  local reader="$here/../core/deck-reader.json" state file version stale name=${session_name#\"}
+  case $name in
+    Orch:*|"Orch :"*|Coord:*|"Coord :"*|Audit:*|"Audit :"*) ;;
+    *) return 0 ;;
+  esac
   [ -f "$contract" ] && [ -f "$reader" ] || return 0
   IFS=' ' read -r state file version stale <<<"$(jq -r --slurpfile o "$contract" \
     '"\($o[0].measure.module_dir) \(.file) \(.deck_version) \(.stale_after_ms)"' "$reader" 2>/dev/null)"

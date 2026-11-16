@@ -335,7 +335,9 @@ echo "== open questions: the deck's round =="
 # marked « ? » and dimmed, urgent ones red, so the operator sees what was open when it froze.
 Q_ONLY=$(config_with SHOW_DIRECTORY=1 SHOW_BRANCH=0 SHOW_PR=0 SHOW_MODEL=0 SHOW_SESSION_NAME=0 \
   SHOW_CONTEXT=0 SHOW_USAGE=0 SHOW_LINES_CHANGED=0)
-Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
+# Only the sessions that handle the operator's questions show the count: a name of an orchestration
+# session (Orch:, Coord:, Audit:); the cases below run in one.
+Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"Orch: Claude plugins\"}"
 
 # deck_at <age in seconds> -> the stamp of a deck written that long ago, as the orchestrator writes it
 deck_at() {
@@ -369,6 +371,22 @@ check_deck "a deck written two minutes ago still counts" "$(deck_state fresh "$(
 check_deck "a deck written four minutes ago is stale: its last count, marked" "$(deck_state stale "$(deck_text 3 0 240)")" "plain │ ✋ 3?"
 check_deck "a stale deck keeps its urgent ones apart" "$(deck_state stale_urgent "$(deck_text 3 1 240)")" "plain │ ✋ 3? (1 urgent)"
 check_deck "a stale deck with nothing open shows nothing" "$(deck_state stale_none "$(deck_text 0 0 240)")" "plain"
+
+# The count is the machine's: a session that does not handle the operator's questions shows none,
+# a brand-new one (no name) included, whatever the deck holds.
+Q_BUSY=$(deck_state busy "$(deck_text 3 2 5)")
+check_named() { # <name> <session name> <expected output>
+  ORCHESTRATOR_STATE_DIR="$Q_BUSY" check "$1" "$Q_ONLY" \
+    "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"$2\"}" "$3"
+}
+check_named "an orchestrator session shows the count" "Orch: Claude plugins" "plain │ ✋ 3 (2 urgent)"
+check_named "a coordinator session shows the count" "Coord: machine" "plain │ ✋ 3 (2 urgent)"
+check_named "an auditor session shows the count" "Audit: method" "plain │ ✋ 3 (2 urgent)"
+check_named "a blank before the colon still shows the count" "Orch : Claude plugins" "plain │ ✋ 3 (2 urgent)"
+check_named "an agent session shows nothing" "Agent: statusbar" "plain"
+check_named "a session of another name shows nothing" "my session" "plain"
+check_named "an unnamed (brand-new) session shows nothing" "" "plain"
+check_named "a prefix inside a name is no orchestration session" "Review Orch: x" "plain"
 
 # Colours of the deck segment, read raw: the fresh count keeps its colour, the stale one is dimmed
 # (red once urgent), the marked « ? » is what tells it from a live count.
