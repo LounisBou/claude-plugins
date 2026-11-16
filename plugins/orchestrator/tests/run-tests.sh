@@ -8204,14 +8204,6 @@ if command -v tmux >/dev/null 2>&1; then
   check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
     "1|always|off|1" \
     "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
-  # An option the running tmux does not know (extended-keys-format before tmux 3.5, extended-keys
-  # and terminal-features before 3.2) must load without an error: the conf is sourced here with
-  # those options renamed to ones no tmux has, which stands for the older tmux.
-  oldconf="$(mktemp)"
-  sed 's/extended-keys/no-such-keys/; s/terminal-features/no-such-features/' "$HOMECONF" > "$oldconf"
-  check "a tmux that does not know the extended-keys options and terminal-features loads the conf without an error" "" \
-    "$(tmux -L "$CONFSRV" source-file "$oldconf" 2>&1)"
-  rm -f "$oldconf"
   # extended-keys-format came with tmux 3.5: an older one ignores the line, and has nothing to read.
   if tmux -L "$CONFSRV" show -gv extended-keys-format >/dev/null 2>&1; then
     check "and its extended keys are sent in the csi-u format" "csi-u" "$(tmux -L "$CONFSRV" show -gv extended-keys-format)"
@@ -8245,6 +8237,13 @@ if command -v tmux >/dev/null 2>&1; then
     "$([ -n "$(tmux -L "$CONFSRV" show -gv window-status-separator)" ] && echo yes || echo no)"
   check "the bar, inactive, current and state colours are the chosen ones" "1|1|1|1" \
     "$(tmux -L "$CONFSRV" show -gv status-style | grep -ci 'fg=#ffffff.*bg=#1c1c1c\|bg=#1c1c1c.*fg=#ffffff')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#e4e4e4.*bg=#303030\|bg=#303030.*fg=#e4e4e4')|$(tmux -L "$CONFSRV" show -gv window-status-current-format | grep -ci 'fg=#000000.*bg=#ffd75f\|bg=#ffd75f.*fg=#000000')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#87d7ff')"
+  # An option the running tmux does not know (extended-keys-format before tmux 3.5, extended-keys
+  # and terminal-features before 3.2) must load without an error: the conf is sourced, last so no
+  # check above reads the state it leaves, with those options renamed to ones no tmux has, which
+  # stands for the older tmux.
+  sed 's/extended-keys/no-such-keys/g; s/terminal-features/no-such-features/g' "$HOMECONF" > "$WORK/old-tmux-home.conf"
+  check "a tmux that does not know the extended-keys options and terminal-features loads the conf without an error" "" \
+    "$(tmux -L "$CONFSRV" source-file "$WORK/old-tmux-home.conf" 2>&1)"
   tmux -L "$CONFSRV" kill-server 2>/dev/null
 else
   echo "  skip the conf is not loaded: no tmux"
