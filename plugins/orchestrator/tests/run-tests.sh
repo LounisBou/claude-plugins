@@ -4823,6 +4823,8 @@ check "the repository is passed on to every gh call of the base branch's follow"
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "MERGED $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
 check "the interval is passed on to the watch" "1" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 3 >/dev/null; grep -c -e '--watch --fail-fast --interval 3' "$CW/gh-calls")"
+check "the default interval is 30 s, passed on to the watch" "1" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 >/dev/null; grep -c -e '--watch --fail-fast --interval 30$' "$CW/gh-calls")"
 check "no loop on gh pr view: two reads in all, before and after the watch" "2" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; grep -c '^pr view' "$CW/gh-calls")"
 check "without a pull request number: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" | sed 's/.*|//')"

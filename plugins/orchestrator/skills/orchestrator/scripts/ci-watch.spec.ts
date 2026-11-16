@@ -160,7 +160,7 @@ test('the command line: a number, then known options; the bounds are numbers', (
   assert.equal(bad(['7'], { CI_WATCH_BASE_WAIT: 'x' }), 'unread 7 CI_WATCH_BASE_WAIT is a number of seconds|5')
   assert.equal(bad(['7'], { CI_WATCH_MERGE_WAIT: 'x' }), 'unread 7 CI_WATCH_MERGE_WAIT is a number of seconds|5')
   const parsed = parseArgs(['7', '--no-base', '--repo', 'o/r', '--base-workflow', 'CI'], { HOME: '/h', CI_WATCH_BASE_WORKFLOWS: 'A,B' })
-  assert.deepEqual([parsed.base, parsed.repo, parsed.workflows, parsed.interval, parsed.registerWait, parsed.stateDir], [false, 'o/r', ['CI'], '10', 180, '/h/.claude/claude-orchestrator'])
+  assert.deepEqual([parsed.base, parsed.repo, parsed.workflows, parsed.interval, parsed.registerWait, parsed.stateDir], [false, 'o/r', ['CI'], '30', 180, '/h/.claude/claude-orchestrator'])
   assert.deepEqual(parseArgs(['7'], { CI_WATCH_BASE_WORKFLOWS: 'Lint,CI,\nX' }).workflows, ['Lint', 'CI'])
 })
 
@@ -311,6 +311,15 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
   assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved 7 ${HA} ${HB}|3`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread 7 workflow runs of the head still unfinished: 201|5')
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+})
+
+test('a bound shorter than the default interval is slept to its end, never past it', async () => {
+  // The default interval is 30 s: a register bound of 10 s sleeps 10 s, not one whole interval.
+  let clock = 0
+  const sleeps: number[] = []
+  const deps = { ...fake({ view: [`OPEN ${HA}`], reg: ['none'] }), now: () => clock, sleep: async (seconds: number) => { sleeps.push(seconds); clock += seconds * 1000 } }
+  assert.equal((await watch(options(['7', '--repo', 'o/r'], { CI_WATCH_REGISTER_WAIT: '10' }), deps)).line, `no-checks 7 ${HA}`)
+  assert.deepEqual(sleeps, [10])
 })
 
 test('a head with a third-party check alone is no green: it waits for the repository\'s own run, within the bound', async () => {
