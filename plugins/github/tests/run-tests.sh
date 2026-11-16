@@ -2058,6 +2058,14 @@ gh7 pr-create --title T --body-file "$WORK/related-body.md" --head feature-x --d
 check "a related pull request that cannot be read leaves pr-create succeeding and is printed" "0 12 1" \
   "$(echo $? | tr -d '\n') $(cat "$WORK/out7") $(grep -c '^error: related pull request acme/api#5' "$WORK/err7")"
 
+new7 create-related-odd
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+printf '%s' '"not a pull request"' > "$F7/GET_repos_acme_api_pulls_5.json"
+printf '%s' '{"state":"open","body":"Adds B.\n\n**Related PRs:** None"}' > "$F7/GET_repos_acme_front_pulls_6.json"
+gh7 pr-create --title T --body-file "$WORK/related-body.md" --head feature-x --draft --format pr-number >"$WORK/out7" 2>"$WORK/err7"
+check "an unreadable answer for a related pull request leaves pr-create succeeding, and the next one is still updated" "0 12 1 1" \
+  "$(echo $? | tr -d '\n') $(cat "$WORK/out7") $(grep -c '^error: related pull request acme/api#5' "$WORK/err7") $(sent7 | grep -c 'PATCH /repos/acme/front/pulls/6')"
+
 new7 ready-label-fails
 printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
 printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_7_labels.json"

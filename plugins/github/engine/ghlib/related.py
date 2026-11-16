@@ -48,7 +48,7 @@ def with_item(body, url):
     if not section or not match or _key(match) in named(body.replace("\r\n", "\n")):
         return None
     at, end = section
-    if lines[at].strip()[len(_LABEL):].strip() == "none":
+    if lines[at].strip()[len(_LABEL):].strip().lower() == "none":
         lines[at] = _LABEL
     lines.insert(end, "- " + url)
     return newline.join(lines)
@@ -64,6 +64,8 @@ def backfill(url, body):
         label = "%s/%s#%s" % (owner, name, number)
         try:
             pull = http.rest("GET", path)
+            if not isinstance(pull, dict):
+                raise errors.ApiError("unexpected answer")
             text = pull.get("body") or ""
             if pull.get("state") != "open" or not text:
                 continue
