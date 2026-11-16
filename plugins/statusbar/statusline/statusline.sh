@@ -279,36 +279,68 @@ ctx_gate_tokens() {
   jq -r '.gate_tokens // empty' "$file" 2>/dev/null
 }
 
-# The operator's open questions: the count the orchestrator publishes in the machine's deck.json
-# (its `round`), the file the Stream Deck reads. Core's contracts say where it lies (the module's directory
-# in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it),
-# its version, its name and how old its stamp may be (deck-reader.json). Prints "<open> <urgent> <stale>"
-# when some are open: <stale> is 1 when the stamp is older than the bound, the last count the frozen
-# deck holds, marked as stale by the caller; 0 while it is fresh. Nothing when none are open, when the
-# file is absent, torn, of another version, or stamped ahead past the bound (a stamp from the future is
-# no live file either). Reads only; nothing here is written. The count is the machine's, so only the
-# sessions that handle the operator's questions show it: an orchestrator, a coordinator or an auditor
-# (a name of those prefixes, a blank before its colon or none). Any other session prints nothing.
+# The operator's open questions, for the sessions that handle them: an orchestrator, a coordinator
+# or an auditor (a name of those prefixes, a blank before its colon or none); any other session
+# prints nothing. Core's contracts say where the orchestrator's state lies (the module's directory
+# in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it).
+# Prints "<open> <urgent> <stale>" when some are open, nothing when none are. Reads only; nothing
+# here is written.
+#
+# An orchestrator or an auditor counts the questions IT asked: the round's entries (round-reader.json
+# names the directory and the rule, `<state>/round/<id>.json`, one file each), the open ones that ask
+# the operator and whose asker is the session by name (a successor keeps its predecessor's), else by
+# id. Each file is live, so the count is never stale (<stale> is 0); a torn file counts for nothing.
+# A coordinator watches every orchestration: it keeps the machine's total, the `round` of the
+# machine's deck.json (its version, its name and how old its stamp may be: deck-reader.json), where
+# <stale> is 1 when the stamp is older than the bound, the last count the frozen deck holds, marked as
+# stale by the caller. A deck absent, torn, of another version, or stamped ahead past the bound (a
+# stamp from the future is no live file either) gives nothing.
 open_questions() {
-  local reader="$here/../core/deck-reader.json" state file version stale name=${session_name#\"}
+  local reader="$here/../core/deck-reader.json" rounds="$here/../core/round-reader.json"
+  local state file version stale dir total urgent line open_status operator_kind name=${session_name#\"} own=1
   case $name in
-    Orch:*|"Orch :"*|Coord:*|"Coord :"*|Audit:*|"Audit :"*) ;;
+    Orch:*|"Orch :"*|Audit:*|"Audit :"*) ;;
+    Coord:*|"Coord :"*) own=0 ;;
     *) return 0 ;;
   esac
-  [ -f "$contract" ] && [ -f "$reader" ] || return 0
+  [ -f "$contract" ] && [ -f "$reader" ] && [ -f "$rounds" ] || return 0
   IFS=' ' read -r state file version stale <<<"$(jq -r --slurpfile o "$contract" \
     '"\($o[0].measure.module_dir) \(.file) \(.deck_version) \(.stale_after_ms)"' "$reader" 2>/dev/null)"
   [ -n "$stale" ] || return 0
   if [ -n "${ORCHESTRATOR_STATE_DIR:-}" ]; then state=$ORCHESTRATOR_STATE_DIR
   else state="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$state"
   fi
-  [ -f "$state/$file" ] || return 0
-  jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
-    select(.version == $version and (.generated_at | type) == "string"
-           and (.round.open | type) == "number" and (.round.urgent | type) == "number")
-    | (($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000) as $age
-    | select(($age >= 0 or ($age | fabs) <= $stale) and .round.open > 0)
-    | "\(.round.open) \(.round.urgent) \(if $age > $stale then 1 else 0 end)"' "$state/$file" 2>/dev/null
+  if [ "$own" = "0" ]; then
+    [ -f "$state/$file" ] || return 0
+    jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
+      select(.version == $version and (.generated_at | type) == "string"
+             and (.round.open | type) == "number" and (.round.urgent | type) == "number")
+      | (($now - (.generated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) * 1000) as $age
+      | select(($age >= 0 or ($age | fabs) <= $stale) and .round.open > 0)
+      | "\(.round.open) \(.round.urgent) \(if $age > $stale then 1 else 0 end)"' "$state/$file" 2>/dev/null
+    return 0
+  fi
+  IFS=' ' read -r dir open_status operator_kind <<<"$(jq -r '"\(.dir) \(.open_status) \(.operator_kind)"' "$rounds" 2>/dev/null)"
+  [ -n "$operator_kind" ] && [ -d "$state/$dir" ] || return 0
+  set -- "$state/$dir"/*.json
+  [ -e "$1" ] || return 0
+  # Only the files that say « open » are read, each by a jq of its own: one that does not parse (a
+  # write caught half-way) stops its jq, so it must not be in a call that holds the others. A line
+  # a question of the session's: 1 when urgent, else 0.
+  total=0; urgent=0
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      total=$((total + 1)); [ "$line" = "1" ] && urgent=$((urgent + 1))
+    done <<<"$(jq -r --arg name "$name" --arg sid "$session_id" --arg open "$open_status" --arg operator "$operator_kind" '
+      select(type == "object" and .status == $open)
+      | (if .v == 2 then (.sender | objects | {name, session}) else select(.v == null and .kind == $operator) | {name: .from, session} end) as $asker
+      | select(($name != "" and $asker.name == $name) or ($sid != "" and $asker.session == $sid))
+      | if .urgent == true then 1 else 0 end' "$file" 2>/dev/null)"
+  done <<<"$(grep -l "\"status\"[[:space:]]*:[[:space:]]*\"$open_status\"" "$@" 2>/dev/null)"
+  [ "$total" -gt 0 ] && printf '%s %s 0\n' "$total" "$urgent"
+  return 0
 }
 
 # >= 80% is roughly the auto-compaction threshold: context loss is close.

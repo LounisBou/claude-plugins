@@ -6,6 +6,7 @@
 // wait (no `v`, the asker under `from` and `session`). Nothing of the question's or the answer's
 // words is part of this contract: a reader gets the letter the answer names, never its text.
 import { answersChoice } from './consent-record.ts'
+import { ROUND_DIR } from './orchestration.ts'
 
 export const ROUND_STATUSES = ['open', 'answered', 'withdrawn', 'closed'] as const
 export type RoundStatus = typeof ROUND_STATUSES[number]
@@ -81,3 +82,20 @@ export function parseRoundQuestion(value: unknown): RoundQuestion | undefined {
       : { at: answeredAt, by, withdrawn, letter: withdrawn ? null : answersChoice(said, choices)?.letter ?? null },
   }
 }
+
+/**
+ * The data half for a reader in another language that counts a session's open questions, as
+ * statusbar's `statusline.sh` does: the directory of the entries under the orchestrator's state
+ * directory, and the rule it applies to each file (`npm run core` writes it as `round-reader.json`).
+ * An entry is the session's open question when its status is `open`, it asks the operator (an `ask`
+ * object, `v: 2`, always does; a relayed entry says so by its `kind`), and its asker is the session
+ * by name (`sender.name` of an `ask` object, `from` of a relayed entry; a successor keeps its
+ * predecessor's name) or else by id (`sender.session`, `session`): the fields `parseRoundQuestion`
+ * reads, tested against it (`scripts/contracts.test.ts`).
+ */
+export const ROUND_READER_CONTRACT = {
+  version: 1,
+  dir: ROUND_DIR,
+  open_status: 'open',
+  operator_kind: 'operator',
+} as const

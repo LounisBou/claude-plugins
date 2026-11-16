@@ -155,13 +155,18 @@ orchestrator's context gate, read from the session's measure file the orchestrat
 writes (`docs/contracts.md` of the repository, « Measure file »).
 
 When the orchestrator plugin runs on the machine, line 1 of an orchestration session ends with `✋ N`
-(red, `✋ N (U urgent)`, once U of the N are urgent): the operator's open questions, read from the `round` of the machine's
-`deck.json` (`docs/contracts.md` of the repository, « `deck.json` »). When its stamp is older than the
-contract's bound (`deck-reader.json`), the deck is stale: the last count it holds shows marked `✋ N?`,
-dimmed, or red with `(U urgent)` while one is urgent. The count is the machine's, so only the sessions
-that handle the operator's questions show it: those named `Orch:`, `Coord:` or `Audit:`; any other
-session, a brand-new one included, shows nothing. Nothing shows when none is open, when the file is
-absent or torn, of another version, or stamped ahead past the bound. The file is only read.
+(red, `✋ N (U urgent)`, once U of the N are urgent): the operator's open questions
+(`docs/contracts.md` of the repository, « Round files » and « `deck.json` »). Each session counts
+**its own**: an `Orch:` or `Audit:` session counts the open questions to the operator that it asked, read
+from the round's files under the orchestrator's state directory (`round/<id>.json`; the directory and
+the rule are core's, `round-reader.json`): the asker is the session by name (a successor keeps its
+predecessor's), else by id. Another orchestration's questions are not counted. The files are live, so
+the count is never stale. A `Coord:` session, which watches every orchestration, shows the machine's
+total, the `round` of the machine's `deck.json`; when its stamp is older than the contract's bound
+(`deck-reader.json`), the deck is stale: the last count it holds shows marked `✋ N?`, dimmed, or red
+with `(U urgent)` while one is urgent. Any other session, a brand-new one included, shows nothing.
+Nothing shows when none is open, when the round is empty or absent, or, for a coordinator, when the deck
+is absent or torn, of another version, or stamped ahead past the bound. The files are only read.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.

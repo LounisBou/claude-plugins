@@ -330,14 +330,14 @@ ctx: 5% │ 5h: 10% ▓░░░░░░░░░ → 2h13 │ +1/-0"
 echo "== open questions: the deck's round =="
 
 # The orchestrator publishes deck.json under its state directory and rewrites it at least once a
-# minute; the status line shows the round's open count while the file is fresh. A file stamped more
+# minute; a coordinator's status line shows the machine's round open count while the file is fresh. A file stamped more
 # than three minutes ago (core's deck-reader.json) is a stale one: it still shows its last count,
 # marked « ? » and dimmed, urgent ones red, so the operator sees what was open when it froze.
 Q_ONLY=$(config_with SHOW_DIRECTORY=1 SHOW_BRANCH=0 SHOW_PR=0 SHOW_MODEL=0 SHOW_SESSION_NAME=0 \
   SHOW_CONTEXT=0 SHOW_USAGE=0 SHOW_LINES_CHANGED=0)
-# Only the sessions that handle the operator's questions show the count: a name of an orchestration
-# session (Orch:, Coord:, Audit:); the cases below run in one.
-Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"Orch: Claude plugins\"}"
+# Only a coordinator shows the machine's total: the cases below run in one. An orchestrator and an
+# auditor count their own questions (the next section).
+Q_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"Coord: machine\"}"
 
 # deck_at <age in seconds> -> the stamp of a deck written that long ago, as the orchestrator writes it
 deck_at() {
@@ -372,17 +372,18 @@ check_deck "a deck written four minutes ago is stale: its last count, marked" "$
 check_deck "a stale deck keeps its urgent ones apart" "$(deck_state stale_urgent "$(deck_text 3 1 240)")" "plain │ ✋ 3? (1 urgent)"
 check_deck "a stale deck with nothing open shows nothing" "$(deck_state stale_none "$(deck_text 0 0 240)")" "plain"
 
-# The count is the machine's: a session that does not handle the operator's questions shows none,
-# a brand-new one (no name) included, whatever the deck holds.
+# The machine's total is the coordinator's: a session that does not handle the operator's questions
+# shows none, a brand-new one (no name) included, and an orchestrator or an auditor shows its own
+# questions, never the deck's.
 Q_BUSY=$(deck_state busy "$(deck_text 3 2 5)")
 check_named() { # <name> <session name> <expected output>
   ORCHESTRATOR_STATE_DIR="$Q_BUSY" check "$1" "$Q_ONLY" \
     "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"$2\"}" "$3"
 }
-check_named "an orchestrator session shows the count" "Orch: Claude plugins" "plain │ ✋ 3 (2 urgent)"
-check_named "a coordinator session shows the count" "Coord: machine" "plain │ ✋ 3 (2 urgent)"
-check_named "an auditor session shows the count" "Audit: method" "plain │ ✋ 3 (2 urgent)"
-check_named "a blank before the colon still shows the count" "Orch : Claude plugins" "plain │ ✋ 3 (2 urgent)"
+check_named "a coordinator session shows the machine's count" "Coord: machine" "plain │ ✋ 3 (2 urgent)"
+check_named "a blank before the colon still shows the count" "Coord : machine" "plain │ ✋ 3 (2 urgent)"
+check_named "an orchestrator session does not show the machine's count" "Orch: Claude plugins" "plain"
+check_named "an auditor session does not show the machine's count" "Audit: method" "plain"
 check_named "an agent session shows nothing" "Agent: statusbar" "plain"
 check_named "a session of another name shows nothing" "my session" "plain"
 check_named "an unnamed (brand-new) session shows nothing" "" "plain"
@@ -427,6 +428,62 @@ if [ "$actual" = "plain │ ✋ 2" ]; then
 else
   printf '  FAIL %s (got: %s)\n' "without ORCHESTRATOR_STATE_DIR the deck is the config directory's" "$actual"; fail=$((fail + 1))
 fi
+
+# An orchestrator or an auditor counts the questions it asked itself: the round's entries, one file
+# each under the state directory's round/. An open question that asks the operator, whose asker is the
+# session by name (a successor keeps its predecessor's), else by id; the other sessions' are not its.
+round_state() { # <name> -> a state directory with an empty round
+  mkdir -p "$WORK/state-$1/round/archive"; printf '%s\n' "$WORK/state-$1"
+}
+# ask_entry <state> <file> <session name> <session id> <status> [<urgent>] [<kind: omit for ask>]
+ask_entry() {
+  printf '{"v":2,"id":"%s","status":"%s","urgent":%s,"sender":{"session":"%s","name":"%s","role":"orchestrator"}}\n' \
+    "$2" "$5" "${6:-false}" "$4" "$3" > "$1/round/$2.json"
+}
+relay_entry() { # <state> <file> <from> <session id> <status> <kind> [<urgent>]
+  printf '{"id":"%s","from":"%s","session":"%s","status":"%s","kind":"%s","urgent":%s}\n' \
+    "$2" "$3" "$4" "$5" "$6" "${7:-false}" > "$1/round/$2.json"
+}
+OWN=$(round_state own)
+ask_entry "$OWN" a1 "Orch: Claude plugins" sess-mine open
+ask_entry "$OWN" a2 "Orch: Claude plugins" sess-mine open true
+ask_entry "$OWN" a3 "Orch: Claude plugins" sess-old open
+ask_entry "$OWN" a4 "Orch: Claude plugins" sess-mine answered
+ask_entry "$OWN" a5 "Orch: geo-git-flow" sess-other open true
+ask_entry "$OWN" a6 "Orch: geo-git-flow" sess-other open
+relay_entry "$OWN" r1 "Orch: Claude plugins" sess-mine open operator
+relay_entry "$OWN" r2 "Orch: Claude plugins" sess-mine open done
+relay_entry "$OWN" r3 "Orch: geo-git-flow" sess-other open operator true
+printf '{"v":2,"id":"torn","status":"open","sender":{"name":"Orch: Cla' > "$OWN/round/torn.json"
+# Sorting before every other file, a torn one must not hide the files after it.
+printf '{"v":2,"id":"0torn","status":"open","sender":{"name":"Orch: Cla' > "$OWN/round/0torn.json"
+printf '{"v":2,"id":"nosender","status":"open","sender":"Orch: Claude plugins"}\n' > "$OWN/round/nosender.json"
+printf '{"v":2,"id":"archived","status":"open","urgent":true,"sender":{"session":"sess-mine","name":"Orch: Claude plugins"}}\n' > "$OWN/round/archive/archived.json"
+own_named() { # <name> <session name> <session id> <expected output> [<state>]
+  ORCHESTRATOR_STATE_DIR="${5:-$OWN}" check "$1" "$Q_ONLY" \
+    "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"$2\",\"session_id\":\"$3\"}" "$4"
+}
+own_named "an orchestrator counts its own questions, by its name, asked or relayed" "Orch: Claude plugins" sess-mine "plain │ ✋ 4 (1 urgent)"
+own_named "another orchestrator counts its own, not the first one's" "Orch: geo-git-flow" sess-other "plain │ ✋ 3 (2 urgent)"
+own_named "a successor, under its predecessor's name, counts its predecessor's questions" "Orch: Claude plugins" sess-new "plain │ ✋ 4 (1 urgent)"
+own_named "a renamed session still counts the questions its id asked" "Orch: renamed" sess-other "plain │ ✋ 3 (2 urgent)"
+own_named "an auditor counts its own questions" "Audit: method" sess-nobody "plain"
+own_named "an unnamed session shows nothing, whatever its id asked" "" sess-mine "plain"
+own_named "a session with no id counts by its name" "Orch: Claude plugins" "" "plain │ ✋ 4 (1 urgent)"
+own_named "a session that asked nothing shows nothing" "Orch: nobody" sess-none "plain"
+own_named "a state with no round shows nothing" "Orch: Claude plugins" sess-mine "plain" "$WORK/state-missing"
+own_named "an empty round shows nothing" "Orch: Claude plugins" sess-mine "plain" "$(round_state empty)"
+OWN_AUDIT=$(round_state audit)
+ask_entry "$OWN_AUDIT" a1 "Audit: method" sess-audit open true
+own_named "an auditor shows the open question it asked, urgent" "Audit: method" sess-audit "plain │ ✋ 1 (1 urgent)" "$OWN_AUDIT"
+own_named "a deck's total is not the orchestrator's count" "Orch: Claude plugins" sess-mine "plain" "$Q_BUSY"
+check_colour_own() {
+  ORCHESTRATOR_STATE_DIR="$OWN_AUDIT" STATUSBAR_CONFIG="$Q_ONLY" bash "$SCRIPT" \
+    <<<"{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"session_name\":\"Audit: method\",\"session_id\":\"sess-audit\"}" | grep -qF $'\033[0;31m✋ 1 (1 urgent)'
+}
+check_colour_own \
+  && { printf '  ok   %s\n' "an own urgent count is red"; pass=$((pass + 1)); } \
+  || { printf '  FAIL %s\n' "an own urgent count is red"; fail=$((fail + 1)); }
 
 # The count is yellow, red once one of the questions is urgent.
 count_color() {
