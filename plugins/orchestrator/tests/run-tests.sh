@@ -8234,6 +8234,11 @@ if command -v tmux >/dev/null 2>&1; then
   done
   check "each state renders its icon in both blocks, an unknown state none" \
     " ● | ● / ○ | ○ / ✋ | ✋ / ✓ | ✓ / ⚠ | ⚠ / | /" "$stateicons"
+  # The held state, a wait on the orchestrator, shows its own pause icon in both blocks, never the
+  # operator's hand.
+  tmux -L "$CONFSRV" set -w -t home:1 @state held 2>/dev/null
+  check "the held state renders the pause icon in both blocks, not the operator's hand" " ⏸ | ⏸ " \
+    "$(tmux -u -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')"
   check "the status line shows no session name" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-left}' 2>/dev/null)"
   check "the status line shows nothing on its right: no pane title, no clock" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-right}' 2>/dev/null)"
   check "the current window's format is bold" "1" \

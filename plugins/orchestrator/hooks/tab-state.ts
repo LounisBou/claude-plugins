@@ -6,8 +6,9 @@
 import type { WaitKind } from './relay.ts'
 
 // One word each: a turn started, a turn ended with nothing pending, a wait on the operator
-// written, a delivery written, the context past its gate.
-export type TabState = 'busy' | 'idle' | 'asks' | 'done' | 'gate'
+// written, a wait on the orchestrator written (held), a delivery written, the context past its
+// gate. `asks` is the operator's alone: a window that waits on its orchestrator is `held`.
+export type TabState = 'busy' | 'idle' | 'asks' | 'held' | 'done' | 'gate'
 
 // The session option the home command's conf sets on every session it makes: an agent is a
 // window of a session that carries it.
@@ -45,11 +46,13 @@ export function stateArgv(bin: string, target: TabTarget, state: TabState): stri
   return [bin, '-S', target.socket, 'set-option', '-w', '-t', target.pane, STATE_OPTION, state]
 }
 
-// What a turn's end leaves on the window: the wait its session wrote (the operator is asked
-// something, or a delivery is in), else the gate, else nothing pending.
+// What a turn's end leaves on the window: the wait its session wrote (a delivery is in; the
+// operator is asked something; or the session waits on its orchestrator), else the gate, else
+// nothing pending.
 export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean): TabState {
   if (waiting === 'done' || waiting === 'delivered') return 'done'
-  if (waiting) return 'asks'
+  if (waiting === 'operator') return 'asks'
+  if (waiting) return 'held'
   return pastGate ? 'gate' : 'idle'
 }
 
