@@ -175,7 +175,9 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const { pr, interval } = options
   const repo = options.repo === undefined ? [] : ['-R', options.repo]
   const gh = (args: readonly string[], extra: Parameters<Run>[1] = {}): Promise<Ran> => deps.run(['gh', ...args.slice(0, 2), ...insertRepo(args.slice(2), repo)], extra)
-  const sleep = (): Promise<void> => deps.sleep(Number(interval))
+  // One interval, but never past the bound the loop checks after its read: a bound shorter than
+  // the interval, or the last part of one, is slept to its end and no further.
+  const sleep = (bound: number): Promise<void> => deps.sleep(Math.max(0, Math.min(Number(interval), (bound - deps.now()) / 1000)))
   const fail = (what: string, ran: Ran, fallback = 'no answer'): Said => unread(pr, `${what} failed: ${firstLine(ran.stderr) || fallback}`)
   let settled = false
   let log = logPath(options, false)
@@ -275,7 +277,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
           return during ? new Said(`merged ${pr} ${sha} no push run on ${branch} filtered=${left.size}`, 0)
             : new Said(`base-no-run ${pr} ${sha} filtered=${left.size}`, 7)
         }
-        await sleep()
+        await sleep(deadline)
         continue
       }
       for (const [first, workflow] of fresh) {
@@ -356,7 +358,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       if (Number(count) > 0) break
     }
     if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${first}`, 2)
-    await sleep()
+    await sleep(deadline)
   }
 
   ensureLogDir()
@@ -407,7 +409,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
         deadline = deps.now() + options.registerWait * 1000
       } else {
         if (deps.now() >= deadline) throw unread(pr, `workflow runs of the head still unfinished: ${pending.join(' ')}`)
-        await sleep()
+        await sleep(deadline)
       }
       continue
     }
@@ -416,7 +418,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       // The head may move meanwhile, and the bound is the one a run is waited for within.
       if (!(await awaitsCi(resolved, current.head))) break
       if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
-      await sleep()
+      await sleep(deadline)
       current = await reread(first)
       continue
     }
@@ -450,7 +452,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
         // Auto-merge will merge: wait for it, bounded, and follow the base branch.
         const until = deps.now() + options.mergeWait * 1000
         while (deps.now() < until) {
-          await sleep()
+          await sleep(until)
           current = await reread(first)
           if (!current.auto) break
         }

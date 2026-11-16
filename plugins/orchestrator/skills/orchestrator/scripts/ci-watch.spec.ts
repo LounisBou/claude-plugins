@@ -313,6 +313,15 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread 7 gh run list failed: gh: HTTP 502|5')
 })
 
+test('a bound shorter than the default interval is slept to its end, never past it', async () => {
+  // The default interval is 30 s: a register bound of 10 s sleeps 10 s, not one whole interval.
+  let clock = 0
+  const sleeps: number[] = []
+  const deps = { ...fake({ view: [`OPEN ${HA}`], reg: ['none'] }), now: () => clock, sleep: async (seconds: number) => { sleeps.push(seconds); clock += seconds * 1000 } }
+  assert.equal((await watch(options(['7', '--repo', 'o/r'], { CI_WATCH_REGISTER_WAIT: '10' }), deps)).line, `no-checks 7 ${HA}`)
+  assert.deepEqual(sleeps, [10])
+})
+
 test('a head with a third-party check alone is no green: it waits for the repository\'s own run, within the bound', async () => {
   // Only a secret scanner has registered and passed: the gate still counts the required `ci` as running.
   const alone = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:1'] }
