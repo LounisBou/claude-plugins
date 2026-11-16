@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, http, meta, repo
+from . import bodies, errors, fmt, http, meta, related, repo
 
 
 def _current_branch():
@@ -356,13 +356,16 @@ def pr_create(args):
     created = http.rest("POST", "/repos/%s/%s/pulls" % (owner, name), payload)
     # A new pull request has no record at its head, so it is never ready: Not Ready, draft or not.
     label = None
+    named = []
     if isinstance(created, dict) and created.get("number"):
         label = meta.follow_readiness(owner, name, created["number"], "not-ready")
+        # The open pull requests it names under Related PRs name it in return.
+        named = related.backfill(created.get("html_url", ""), payload["body"])
     if args.json or args.format:
         return created
     # One line by default; the full pull request with --json, or under a --format that reads it.
     args.format = "pr-created"
-    return {"pull": created, "repo": "%s/%s" % (owner, name), "labels": [label] if label else []}
+    return {"pull": created, "repo": "%s/%s" % (owner, name), "labels": [label] if label else [], "related": named}
 
 
 _MERGE_POLL = 3

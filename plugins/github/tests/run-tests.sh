@@ -2032,6 +2032,32 @@ check "a network failure while labelling leaves pr-create succeeding" "0 12" "$(
 check "a network failure while labelling is printed on its own line" "1" "$(grep -c '^error: label' "$WORK/err7")"
 check "a network failure while labelling prints no traceback" "0" "$(grep -c 'Traceback' "$WORK/err7")"
 
+new7 create-related
+NEWPR=https://github.com/acme/thing/pull/12
+printf '%s' '{"number":12,"html_url":"'$NEWPR'"}' > "$F7/POST_repos_acme_thing_pulls.json"
+printf '%s' '{"state":"open","body":"Adds A.\n\n**TODO Staging:** none\n\n**TODO Prod:** none\n\n**PRs Dependency:** none\n\n**Related PRs:** none"}' > "$F7/GET_repos_acme_api_pulls_5.json"
+printf '%s' '{"state":"open","body":"Adds B.\n\n**PRs Dependency:** none\n\n**Related PRs:**\n- https://github.com/acme/api/pull/5"}' > "$F7/GET_repos_acme_front_pulls_6.json"
+printf '%s' '{"state":"closed","body":"Adds C.\n\n**Related PRs:** none"}' > "$F7/GET_repos_acme_front_pulls_8.json"
+printf '%s' '{"state":"open","body":"Adds D.\n\n**Related PRs:**\n- '$NEWPR'"}' > "$F7/GET_repos_acme_front_pulls_9.json"
+printf '%s' '{"state":"open","body":"Adds E.\n\n**PRs Dependency:**\n- https://github.com/acme/front/pull/5\n\n**Related PRs:** none"}' > "$F7/GET_repos_acme_front_pulls_10.json"
+printf '%s\n' 'Adds the new one.' '' '**PRs Dependency:**' '- https://github.com/acme/front/pull/10' '' '**Related PRs:**' \
+  '- https://github.com/acme/api/pull/5' '- https://github.com/acme/front/pull/6' '- https://github.com/acme/front/pull/8' \
+  '- https://github.com/acme/front/pull/9' > "$WORK/related-body.md"
+check "pr-create names the new pull request in the open ones its Related PRs list" \
+  "acme/thing#12 $NEWPR head  labels Not Ready related acme/api#5, acme/front#6" \
+  "$(gh7 pr-create --title T --body-file "$WORK/related-body.md" --head feature-x --draft)"
+check "pr-create writes the new pull request into a Related PRs section holding none, and after the last item of a list" \
+  'PATCH /repos/acme/api/pulls/5 {"body": "Adds A.\n\n**TODO Staging:** none\n\n**TODO Prod:** none\n\n**PRs Dependency:** none\n\n**Related PRs:**\n- '$NEWPR'"}
+PATCH /repos/acme/front/pulls/6 {"body": "Adds B.\n\n**PRs Dependency:** none\n\n**Related PRs:**\n- https://github.com/acme/api/pull/5\n- '$NEWPR'"}' \
+  "$(sent7 | grep PATCH)"
+
+new7 create-related-fails
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$F7/GET_repos_acme_api_pulls_5.json"
+gh7 pr-create --title T --body-file "$WORK/related-body.md" --head feature-x --draft --format pr-number >"$WORK/out7" 2>"$WORK/err7"
+check "a related pull request that cannot be read leaves pr-create succeeding and is printed" "0 12 1" \
+  "$(echo $? | tr -d '\n') $(cat "$WORK/out7") $(grep -c '^error: related pull request acme/api#5' "$WORK/err7")"
+
 new7 ready-label-fails
 printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
 printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_7_labels.json"

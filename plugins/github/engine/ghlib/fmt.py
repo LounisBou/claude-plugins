@@ -199,13 +199,14 @@ def _pr_summary(obj):
 
 def _pr_created(obj):
     pull = obj.get("pull") or {}
-    return "%s#%s %s head %s labels %s" % (
+    line = "%s#%s %s head %s labels %s" % (
         obj.get("repo"),
         pull.get("number"),
         pull.get("html_url", ""),
         (pull.get("head") or {}).get("sha", ""),
         ", ".join(obj.get("labels") or []) or "none",
     )
+    return line + (" related " + ", ".join(obj["related"]) if obj.get("related") else "")
 
 
 def _threads(obj, resolved):
